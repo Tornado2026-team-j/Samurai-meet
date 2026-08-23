@@ -1,0 +1,128 @@
+name: Frontend CI
+
+concurrency:
+  group: frontend-ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Bun quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: チェックアウト
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Bun をセットアップ
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      - name: Bun依存キャッシュを復元
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('frontend/bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+
+      - name: 依存を固定lockfileから復元
+        run: bun install --frozen-lockfile
+
+      - name: 型検査
+        run: bun run typecheck
+
+      - name: Lint
+        run: bun run lint
+
+      - name: テスト
+        run: bun run test
+
+  dependency-audit:
+    name: Bun dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: チェックアウト
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Bun をセットアップ
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      - name: Bun依存キャッシュを復元
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('frontend/bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+
+      - name: 依存を固定lockfileから復元
+        run: bun install --frozen-lockfile
+
+      - name: 既知の依存脆弱性を検査
+        run: bun run security:audit
+
+  report:
+    name: Frontend CI report
+    if: ${{ always() }}
+    needs: [quality, dependency-audit]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: 実行結果をサマリーへ出力
+        env:
+          QUALITY: ${{ needs.quality.result }}
+          AUDIT: ${{ needs.dependency-audit.result }}
+        run: |
+          {
+            echo "# Frontend CI"
+            echo
+            echo "| 検査 | 結果 |"
+            echo "| --- | --- |"
+            echo "| Bun quality | ${QUALITY} |"
+            echo "| Bun dependency audit | ${AUDIT} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: PR コメントを更新
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]' }}
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        env:
+          QUALITY: ${{ needs.quality.result }}
+          AUDIT: ${{ needs.dependency-audit.result }}
+        with:
+          script: |
+            const marker = '<!-- samurai-meet-frontend-ci -->';
+            const body = `${marker}\n## Frontend CI\n\n| 検査 | 結果 |\n| --- | --- |\n| Bun quality | ${process.env.QUALITY} |\n| Bun dependency audit | ${process.env.AUDIT} |\n\n[実行ログ](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`;
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.find((comment) => comment.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ ...context.repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ ...context.repo, issue_number: context.issue.number, body });
+            }
+
+      - name: 失敗時に集約チェックを失敗させる
+        if: ${{ needs.quality.result != 'success' || needs.dependency-audit.result != 'success' }}
+        run: exit 1
