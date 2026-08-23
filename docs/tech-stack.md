@@ -19,8 +19,8 @@ Samurai Meet は、次の分担で実装します。
 | OAuth / Passkey 検証 | Google ID Token、WebAuthn assertion 検証 | Go | `backend/internal/auth` |
 | 画像 API | アップロード、認可、メタデータ、削除 | Go | `backend/internal/image` |
 | 画像変換・検査 | リサイズ、サムネイル、EXIF 除去、形式検査 | Go | 画像処理ライブラリを採用。運用要件により専用 worker 化 |
-| 永続化 | ユーザー、カード、マッチ、チャット、評価 | SQL | PostgreSQL（運用） / SQLite（開発・テスト） |
-| 距離検索 | 現在地と募集カードの距離判定 | SQL + Go | PostgreSQL / PostGIS、SQLite / Go 計算 |
+| 永続化 | ユーザー、カード、マッチ、チャット、評価 | SQL | PostgreSQL（開発・CI・運用） |
+| 距離検索 | 現在地と募集カードの距離判定 | SQL | PostgreSQL / PostGIS |
 | セッション失効 | Access Token の検証、Refresh Token ローテーション | Go + SQL | `sessions`, `refresh_tokens` |
 | DB migration | テーブル、制約、インデックス、RLS 方針 | SQL | `backend/migrations/*.sql` |
 | テスト | UI、API、業務ロジック、E2E | TypeScript / Go / SQL | Jest/Vitest、Go test、API/E2E テスト |
@@ -34,8 +34,8 @@ Samurai Meet は、次の分担で実装します。
 | Passkey | TypeScript で OS の Passkey API を呼び出す | Go で challenge と credential を検証 | `passkey_credentials` |
 | プロフィール | TSX のフォーム、入力検証、表示 | Go の CRUD、公開項目の制御 | `profiles`, `photos` |
 | 本人確認 | TypeScript で申請状態を表示 | Go で申請・Webhook・状態遷移 | `identity_verifications`、本人確認プロバイダー |
-| 現在地 | TypeScript で OS の位置情報許可・取得 | Go で精度・期限・権限を検証 | PostgreSQL / PostGIS の `user_locations`、SQLite は Go 計算 |
-| キーワード検索 | TypeScript で検索条件とカード表示 | Go で条件検証・距離検索・並び替え | `recruitment_cards`、PostgreSQL / PostGIS、SQLite |
+| 現在地 | TypeScript で OS の位置情報許可・取得 | Go で精度・期限・権限を検証 | PostgreSQL / PostGIS の `user_locations` |
+| キーワード検索 | TypeScript で検索条件とカード表示 | Go で条件検証・距離検索・並び替え | `recruitment_cards`、PostgreSQL / PostGIS |
 | 募集カード | TypeScript で作成・編集 UI | Go で状態遷移・期限切れ処理 | `recruitment_cards` |
 | マッチング | TypeScript で関心・承認状態表示 | Go で重複防止・相互承認・認可 | `matches` |
 | チャット | TypeScript で WebSocket、キャッシュ、再接続 | Go で接続認証・配送・順序確定 | `messages` |
@@ -70,13 +70,13 @@ Samurai Meet は、次の分担で実装します。
 ### 3.3 SQL で行う処理
 
 - テーブル、外部キー、UNIQUE / CHECK 制約
-- PostgreSQL / PostGIS による距離検索、SQLite の場合は Go による距離計算
+- PostgreSQL / PostGIS による距離検索
 - 検索用インデックス
 - 集計値の再計算、データ保持・削除用の DB 処理
 
 ## 4. 採用しない実装
 
-- クライアントから PostgreSQL / SQLite へ直接接続・更新しない。
+- クライアントから PostgreSQL や画像ストレージへ直接接続・更新しない。
 - 距離判定や「公開半径内か」の判定をクライアントだけで完結させない。
 - Google のメールアドレスをサービスの主キーにしない。
 - 秘密鍵、Key-A、Recovery Key の平文を Go API のログや DB に保存しない。

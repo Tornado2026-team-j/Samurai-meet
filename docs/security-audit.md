@@ -43,7 +43,7 @@
 | SEC-014 | Refresh API のレート制限 | PARTIAL | 認証系制限はあるが、token hash・IP・端末単位の値が未確定 |
 | SEC-015 | 端末保存領域 | PASS | Refresh Token は Secure Storage、Access Token は短期利用 |
 | SEC-016 | ログへの秘密情報混入 | PASS | token、Key-A、Key-B、Recovery Key をログ出力しない仕様 |
-| SEC-017 | PostgreSQL / SQLite の競合制御 | PASS | 行ロック / `BEGIN IMMEDIATE` の方針がある |
+| SEC-017 | PostgreSQL の競合制御 | PASS | Refresh Token は行ロックとトランザクションで競合を防ぐ方針 |
 | SEC-018 | 位置情報・写真の公開範囲 | PASS | 正確な位置を返さず、画像ストレージも非公開と定義 |
 | SEC-019 | チャット専用 token | PASS | `aud`、`chat_id`、`sid`、scope を限定した短命 token を定義 |
 | SEC-020 | QUIC 0-RTT の再送 | P1 | 1-RTT 前の状態変更禁止と実装テストが必要 |
@@ -103,7 +103,7 @@ Refresh はローテーションするため、サーバーが更新に成功し
 sequenceDiagram
     participant App as Mobile App
     participant API as Go API
-    participant DB as PostgreSQL / SQLite
+    participant DB as PostgreSQL
 
     App->>App: Access Token の残り時間を確認
     App->>API: POST /auth/refresh

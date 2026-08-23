@@ -86,7 +86,6 @@ Chat Token を更新する場合も短い重複期間と `token_seq` を利用�
 - 接続中は 15〜30 秒ごとの heartbeat で `sessions.revoked_at` とチャット状態を確認する。
 - ログアウト、端末失効、ブロック、アカウント停止を検知したら、接続を閉じる。
 - PostgreSQL の複数 API インスタンスでは `LISTEN / NOTIFY` を追加できる。
-- SQLite は単一プロセスの開発・テストを前提にし、heartbeat / polling で確認する。
 - Chat Token だけでは新しいチャット接続を無制限に作れないよう、ユーザー・チャット単位の接続数制限を設ける。
 
 ## 7. 0-RTT の扱い
@@ -108,7 +107,7 @@ QUIC の 0-RTT アプリケーションデータは攻撃者に再送される�
 | QUIC / WebTransport クライアント | TypeScript + native module。Expo の対応状況を PoC で確認 |
 | Chat Token 発行・検証 | Go |
 | QUIC / HTTP/3 サーバー | Go。採用ライブラリを PoC で決定 |
-| 参加者・セッション・ブロック判定 | Go + PostgreSQL / SQLite |
+| 参加者・セッション・ブロック判定 | Go + PostgreSQL |
 | 失効通知 | PostgreSQL `LISTEN / NOTIFY` または heartbeat / polling |
 
 Expo の標準機能だけで QUIC / WebTransport クライアントが利用できない場合は、MVP では既存の WebSocket を使い、同じ Chat Token の認可モデルを適用します。

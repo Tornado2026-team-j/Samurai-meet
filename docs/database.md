@@ -2,10 +2,8 @@
 
 ## 1. 採用方針
 
-- DB エンジンは PostgreSQL と SQLite のみとする。
-- 本番・ステージングは PostgreSQL、ローカル開発・単体テストは SQLite を利用する。
+- DB エンジンは PostgreSQL のみとする。本番、開発、CI は同一の PostgreSQL スキーマを利用する。
 - PostgreSQL では PostGIS 拡張を利用できる。PostGIS は別 DB ではなく PostgreSQL の拡張である。
-- SQLite では距離計算を Go 側で行う。
 - 距離検索のため PostGIS を有効化する。
 - DB の主キーは UUID とする。
 - `users` は認証アカウント、`profiles` は公開プロフィールとして分離する。
@@ -217,7 +215,7 @@ erDiagram
 | `used_at` | timestamptz | ローテーション済み日時 |
 | `revoked_at` | timestamptz | 個別失効日時 |
 
-Refresh 処理はトランザクション内で対象 token の更新と新 token の追加を一体化します。PostgreSQL では対象 token を `SELECT ... FOR UPDATE` でロックし、SQLite では `BEGIN IMMEDIATE` 等の書き込みトランザクションで競合を防ぎます。使用済み token が再度送られた場合は、同じ `family_id` のセッションを失効させます。
+Refresh 処理は PostgreSQL のトランザクション内で対象 token の更新と新 token の追加を一体化します。対象 token は `SELECT ... FOR UPDATE` でロックします。使用済み token が別の request ID で再度送られた場合は、同じ `family_id` のセッションを失効させます。
 
 ### `refresh_attempts`
 
@@ -233,18 +231,12 @@ Refresh 処理はトランザクション内で対象 token の更新と新 toke
 
 同一 `session_id`・`request_id` の再送だけに同じレスポンスを返します。異なる `request_id` で旧 Refresh Token が送られた場合は、冪等な再送ではなく token reuse として扱います。
 
-## 7. PostgreSQL と SQLite の使い分け
+## 7. PostgreSQL の運用方針
 
-| 項目 | PostgreSQL | SQLite |
-| --- | --- | --- |
-| 用途 | 本番・ステージング | ローカル開発・単体テスト |
-| 同時接続 | 複数 API インスタンスを想定 | 単一プロセスを基本とする |
-| 距離検索 | PostGIS 拡張 | Go の Haversine 計算 |
-| migration | PostgreSQL 方言を基準に管理 | 互換 SQL またはテスト用 migration。時刻型などの差異を吸収 |
-| セッション失効 | `sessions` / `refresh_tokens` | 同じテーブルを SQLite に作成 |
-| 通知 | 必要に応じて PostgreSQL `LISTEN / NOTIFY` | heartbeat / polling |
-
-SQLite を本番の複数サーバー間セッション共有に使わない。DB エンジンを追加せずに水平スケールする場合は PostgreSQL を利用する。
+- migration は PostgreSQL 方言を基準に管理し、開発・CI・本番で同じ migration を適用する。
+- 距離検索は PostGIS の geography 型と GiST インデックスを使う。
+- セッション失効と Refresh Token の競合制御は、PostgreSQL の行ロックとトランザクションで行う。
+- 複数 API インスタンスへの即時通知が必要になった場合は、PostgreSQL の `LISTEN / NOTIFY` を利用する。
 
 ## 8. データ保持
 
