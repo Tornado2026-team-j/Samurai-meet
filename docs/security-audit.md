@@ -1,0 +1,174 @@
+# セキュリティ最終監査（設計ドキュメント）
+
+## 監査情報
+
+| 項目 | 内容 |
+| --- | --- |
+| 対象 | `docs/` 配下の認証、セッション、API、DB、WebSocket、画像、位置情報仕様 |
+| 実施日 | 2026-08-23 |
+| 監査範囲 | 設計・要件レビュー |
+| ソースコード | 未実装のため対象外 |
+| 判定 | 条件付き承認。P1 項目を解消するまで本番リリース不可 |
+
+> 本書の PASS は、仕様上の対策が記載されていることを示します。実装が安全であることを示すものではありません。
+
+## 1. 総合判定
+
+自動トークン更新は採用して問題ありません。ただし、次の構成を守ることが条件です。
+
+1. Access Token は短命な JWS 署名付き JWT とする。
+2. JWT の署名検証だけで認証を完了させず、DB の `sessions` を毎回確認する。
+3. Refresh Token は端末の Secure Storage に保存し、DB にはハッシュだけを保存する。
+4. Refresh のたびにローテーションし、使用済み token の再利用時は token family を失効する。
+5. ログアウト・端末失効・アカウント停止は DB を正本として即時反映する。
+6. WebSocket は接続時・heartbeat 時にセッションを再検証する。
+
+## 2. 監査チェックリスト
+
+| 監査 ID | 項目 | 判定 | コメント |
+| --- | --- | --- | --- |
+| SEC-001 | JWS / JWT の署名検証 | PASS | `iss`、`aud`、`iat`、`exp`、署名を検証する仕様がある |
+| SEC-002 | JWT の失効確認 | PASS | `sid` から `sessions` を確認する仕様がある |
+| SEC-003 | Refresh Token の平文保存禁止 | PASS | DB はハッシュのみ、端末は Secure Storage と定義 |
+| SEC-004 | Refresh Token ローテーション | PASS | 使用ごとに新 token を発行する仕様がある |
+| SEC-005 | Refresh Token 再利用検知 | PASS | 再利用時に token family を失効する仕様がある |
+| SEC-006 | 自動更新のタイミング | PASS | 残り 30 秒、アプリ復帰、401、WebSocket 再接続で更新 |
+| SEC-007 | 同時 Refresh の抑制 | PASS | クライアントの single-flight を定義 |
+| SEC-008 | 通信失敗時の Refresh 再送 | P1 | 同じ token の盲目的な再送をどう扱うか未確定 |
+| SEC-009 | Google 直後の権限分離 | PASS | Passkey 前は短命の `pre_auth_token` に限定 |
+| SEC-010 | `pre_auth_token` の一回性 | P1 | DB での使用済み管理・scope・失効処理を実装前に確定する |
+| SEC-011 | JWS 署名鍵のローテーション | P1 | `kid`、許可アルゴリズム、旧鍵の移行期間が未確定 |
+| SEC-012 | WebSocket の失効反映 | PARTIAL | heartbeat は定義済み。実装時の切断・再接続テストが必要 |
+| SEC-013 | Key-B の信頼境界 | P1 | 生成、配布、KMS、再発行、漏えい時の対応が未確定 |
+| SEC-014 | Refresh API のレート制限 | PARTIAL | 認証系制限はあるが、token hash・IP・端末単位の値が未確定 |
+| SEC-015 | 端末保存領域 | PASS | Refresh Token は Secure Storage、Access Token は短期利用 |
+| SEC-016 | ログへの秘密情報混入 | PASS | token、Key-A、Key-B、Recovery Key をログ出力しない仕様 |
+| SEC-017 | PostgreSQL / SQLite の競合制御 | PASS | 行ロック / `BEGIN IMMEDIATE` の方針がある |
+| SEC-018 | 位置情報・写真の公開範囲 | PASS | 正確な位置を返さず、画像ストレージも非公開と定義 |
+| SEC-019 | チャット専用 token | PASS | `aud`、`chat_id`、`sid`、scope を限定した短命 token を定義 |
+| SEC-020 | QUIC 0-RTT の再送 | P1 | 1-RTT 前の状態変更禁止と実装テストが必要 |
+| SEC-021 | QUIC / Expo 実装可否 | P1 | native module / WebTransport の PoC が未実施 |
+
+## 3. P1 必須対応
+
+### SEC-008 Refresh 通信失敗時の再送
+
+Refresh はローテーションするため、サーバーが更新に成功した後、レスポンスだけが失われるケースを考慮する必要があります。古い Refresh Token をそのまま再送すると、正当な再試行でも token reuse と判定され、セッション全体が失効する可能性があります。
+
+採用案は `refresh_request_id` とサーバー側の冪等性記録です。同一 `session_id`・`request_id` の再送だけ 30 秒間同じ結果を返し、レスポンスは暗号化して保存します。Refresh Token の平文は DB に保存しません。実装が間に合わない場合の安全側フォールバックは、古い token を再送せず再ログインを要求することです。
+
+ここで重要なのは、旧 Access Token と旧 Refresh Token を分けることです。旧 Access Token は自身の `exp` まで自然に有効ですが、旧 Refresh Token は同じ冪等リクエスト以外では即時に reuse として扱います。
+
+### SEC-010 `pre_auth_token`
+
+`pre_auth_token` は通常 API に使えないよう、次を必須にします。
+
+- 有効期限は 5 分以内。
+- `aud = passkey`、scope は Passkey 登録・認証だけ。
+- 一回使用したら DB 上で失効。
+- `user_id` と OAuth 認証イベントに紐付ける。
+- Access Token、Refresh Token、プロフィール、チャット、Key-B を取得できない。
+
+### SEC-011 JWS 鍵管理
+
+- JWS header の `alg` を許可リストで検証し、`none` や想定外アルゴリズムを拒否する。
+- header に `kid` を付け、検証鍵をバージョン管理する。
+- 署名鍵は KMS / Secret Manager に保存し、リポジトリやアプリに埋め込まない。
+- 鍵ローテーション時は現行鍵と直前鍵だけを短期間検証可能にする。
+- 鍵漏えい時は該当 `kid` を無効化し、全セッション失効または再認証を行う。
+
+### SEC-013 Key-B
+
+- Key-B の平文をログ、DB、クライアント永続領域へ保存しない。
+- 発行条件を「Google 認証 + Passkey + DB セッション有効」に限定する。
+- Key-B の取得を監査ログに残す。
+- 端末失効、Recovery、アカウント削除時の再発行・失効を定義する。
+- Key-B だけで暗号化データを復号できないことをテストする。
+
+## 4. QUIC / WebTransport 監査
+
+- QUIC の TLS 1.3 は通信路の機密性・完全性を提供するが、Samurai Meet のユーザー・マッチ・セッション認可はアプリケーション token で別途検証する。
+- Chat Token は通常の Access Token と別の `aud`、`scope`、`chat_id` を持たせる。
+- Refresh Token は QUIC / WebTransport / WebSocket 上へ送信しない。
+- Chat Token は通常の Access Token の Refresh とは別の短命 token とし、期限・切り替え間隔はチャット transport の負荷試験で決定する。
+- `token_seq` の巻き戻しを拒否し、失効した `sid`、マッチ終了、ブロック、停止を heartbeat で切断する。
+- QUIC 0-RTT のアプリケーションデータは再送され得るため、1-RTT handshake 完了前のメッセージ送信、既読更新、写真送信、通報、評価を禁止する。
+- Expo の標準機能だけで QUIC / WebTransport を利用できるか、native module を含めて PoC で確認する。未対応なら WebSocket をフォールバックとする。
+
+根拠： [RFC 9001（QUIC を TLS で保護）](https://www.rfc-editor.org/rfc/rfc9001)、[RFC 9114（HTTP/3）](https://www.rfc-editor.org/rfc/rfc9114)。RFC 9001 は 0-RTT のアプリケーションデータが再送され得るため、再送時に影響が出る操作へ使わないよう説明しています。
+
+## 5. 自動更新の安全なシーケンス
+
+```mermaid
+sequenceDiagram
+    participant App as Mobile App
+    participant API as Go API
+    participant DB as PostgreSQL / SQLite
+
+    App->>App: Access Token の残り時間を確認
+    App->>API: POST /auth/refresh
+    API->>API: Refresh Token をハッシュ化
+    API->>DB: セッション・期限・未使用状態を原子的に確認
+    DB-->>API: 有効
+    API->>DB: 旧 token を使用済みにし、新 token hash を保存
+    API-->>App: 新 Access Token + 新 Refresh Token
+    App->>App: Secure Storage を新 token に置換
+
+    Note over API,DB: 失効済み・使用済み・期限切れなら更新拒否
+    Note over App,API: 通信結果不明時は古い token を盲目的に再送しない
+```
+
+## 6. テスト必須項目
+
+### セッション
+
+- 有効な JWT でも `sessions.revoked_at` 設定後は REST が `401` になる。
+- ログアウト直後に WebSocket が閉じる。
+- 全端末ログアウトで全セッションが利用不能になる。
+- ユーザー停止時に既存 token が利用不能になる。
+
+### Refresh
+
+- 有効な Refresh Token で一度だけ更新できる。
+- 使用済み token の再利用で token family が失効する。
+- 期限切れ、別ユーザー、別セッションの token を拒否する。
+- 同時 Refresh が二重発行や誤失効を起こさない。
+- サーバー成功後にレスポンスが失われた場合の方針どおりに動く。
+- Access Token が残り 30 秒を超えているときに不要な更新をしない。
+- アプリのバックグラウンド中に定期更新しない。
+
+### Chat Token / QUIC
+
+- Chat Token を REST、プロフィール、Recovery、Key-B、別チャットへ利用できない。
+- Chat Token の期限前に次の token へ切り替えられる。
+- 古い `token_seq` への巻き戻しを拒否する。
+- 1-RTT handshake 前のメッセージ送信・既読・写真・状態変更を拒否する。
+- セッション失効、ブロック、マッチ終了で QUIC / WebSocket 接続を閉じる。
+- QUIC が利用できない場合も、同じ認可ルールの WebSocket fallback が動く。
+
+### 認証・鍵
+
+- Google 認証だけでは通常 API を利用できない。
+- `pre_auth_token` の期限切れ・二回使用・scope 外利用を拒否する。
+- `alg` 改ざん、`kid` 不正、issuer / audience 不正を拒否する。
+- Key-B 取得に Passkey 再認証が必要になる。
+- Recovery Key、Key-A、Key-B、Refresh Token がログ・クラッシュレポートに出ない。
+
+## 7. リリース判定
+
+### 本番リリース前に必須
+
+- [ ] SEC-008 の通信失敗時ポリシーを決定・実装
+- [ ] SEC-010 の `pre_auth_token` 一回性を実装
+- [ ] SEC-011 の JWS `kid` / 鍵ローテーションを実装
+- [ ] SEC-013 の Key-B 信頼境界を設計レビュー
+- [ ] SEC-020 の 0-RTT 禁止を実機・統合テスト
+- [ ] SEC-021 の QUIC / WebTransport native PoC
+- [ ] 上記テスト項目を自動テスト化
+- [ ] 依存ライブラリの脆弱性スキャン
+- [ ] ステージングでログアウト・端末失効・Refresh reuse の実機テスト
+- [ ] 外部セキュリティレビューまたは侵入テスト
+
+### 監査結論
+
+自動更新の採用自体は妥当です。現時点の docs は、通常時の自動更新・DB 失効・token rotation・チャット専用 token の基本設計を満たしています。一方、通信結果が失われた Refresh の再試行、`pre_auth_token`、JWS 鍵ローテーション、Key-B、QUIC 0-RTT、native client の詳細が未確定のため、現段階の結論は「条件付き承認」です。
