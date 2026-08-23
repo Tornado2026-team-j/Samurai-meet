@@ -351,6 +351,47 @@ CREATE INDEX idx_notifications_user_unread ON notifications(user_id, is_read);
 
 ---
 
+## 🔐 認証フロー
+
+Google OAuth2によるユーザー識別に加え、Passkeyと端末Secure Storageを組み合わせ、暗号化データ（画像等）の復号鍵をサーバーとクライアントで分散管理する方式。
+
+```mermaid
+flowchart TD
+    A[初回登録] --> B[Google OAuth2でユーザー識別]
+    B --> C[Passkey登録]
+    C --> D[端末で Key-A をランダム生成]
+    D --> E[Key-Aを端末のSecure Storageへ保存]
+    D --> F[Recovery Keyを生成]
+    F --> G[Recovery Keyをユーザーに表示・保存してもらう]
+    F --> H[Recovery KeyでKey-Aを暗号化]
+    H --> I[暗号化済みKey-Aのみサーバー保存]
+
+    J[通常ログイン] --> K[Google OAuth2でユーザー識別]
+    K --> L[Passkey認証]
+    L --> M{認証成功?}
+    M -- No --> N[拒否]
+    M -- Yes --> O[サーバーから Key-B を取得]
+
+    E --> P[端末のKey-A]
+    O --> Q[Key-A + Key-B]
+    P --> Q
+    Q --> R[HKDFで復号鍵を導出]
+    R --> S[AES-GCMで画像・データを復号]
+
+    T[新端末 / 端末紛失] --> U[Google OAuth2でユーザー識別]
+    U --> V[Recovery Keyを入力]
+    V --> W[暗号化済みKey-Aをサーバーから取得]
+    W --> X[端末上でKey-Aを復号]
+    X --> Y[新端末のSecure Storageへ保存]
+    Y --> L
+```
+
+- **初回登録**：Google OAuth2でユーザーを識別後、Passkeyを登録。端末上でKey-Aをランダム生成し、Secure Storageに保存。同時にRecovery Keyを生成してユーザーに表示・保存してもらい、Recovery KeyでKey-Aを暗号化した上で暗号化済みKey-Aのみをサーバーに保存する（サーバーは平文のKey-Aを保持しない）。
+- **通常ログイン**：Google OAuth2 + Passkey認証に成功したらサーバーからKey-Bを取得し、端末のKey-Aと合わせてHKDFで復号鍵を導出、AES-GCMで画像・データを復号する。
+- **新端末 / 端末紛失時**：Google OAuth2でユーザーを識別後、Recovery Keyを入力し、サーバーから暗号化済みKey-Aを取得。端末上で復号したKey-Aを新端末のSecure Storageへ保存し、通常ログインのPasskey認証フローへ合流する。
+
+---
+
 ## 📝 補足
 
 - 上記技術スタックは現時点での**候補**であり、開発初期に確定される想定
