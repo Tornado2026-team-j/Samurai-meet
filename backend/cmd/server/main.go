@@ -12,8 +12,11 @@ func main() {
 	cfg := config.Load()
 
 	server := &http.Server{
-		Addr:    cfg.HTTPAddr,
-		Handler: httpapi.NewRouter(),
+		Addr: cfg.HTTPAddr,
+		Handler: httpapi.NewRouterWithOptions(httpapi.RouterOptions{
+			Environment:     cfg.Environment,
+			DevClientOrigin: cfg.DevClientOrigin,
+		}),
 	}
 
 	log.Printf("backend server listening on %s (environment=%s)", cfg.HTTPAddr, cfg.Environment)

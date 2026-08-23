@@ -19,3 +19,22 @@ func TestHealthz(t *testing.T) {
 		t.Fatalf("Content-Type = %q", got)
 	}
 }
+
+func TestDevelopmentCORSAllowsOnlyDevClientOrigin(t *testing.T) {
+	handler := NewRouterWithOptions(RouterOptions{
+		Environment:     "development",
+		DevClientOrigin: "http://127.0.0.1:5173",
+	})
+	req := httptest.NewRequest(http.MethodOptions, "/healthz", nil)
+	req.Header.Set("Origin", "http://127.0.0.1:5173")
+	res := httptest.NewRecorder()
+
+	handler.ServeHTTP(res, req)
+
+	if res.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", res.Code, http.StatusNoContent)
+	}
+	if got := res.Header().Get("Access-Control-Allow-Origin"); got != "http://127.0.0.1:5173" {
+		t.Fatalf("Access-Control-Allow-Origin = %q", got)
+	}
+}
