@@ -1,4 +1,4 @@
-CREATE TABLE users (
+CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
     google_subject_id TEXT NOT NULL UNIQUE,
     status TEXT NOT NULL CHECK (status IN ('active', 'suspended', 'deleted')),
@@ -7,7 +7,7 @@ CREATE TABLE users (
     deleted_at TEXT
 );
 
-CREATE TABLE passkey_credentials (
+CREATE TABLE IF NOT EXISTS passkey_credentials (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
     credential_id TEXT NOT NULL UNIQUE,
@@ -18,7 +18,7 @@ CREATE TABLE passkey_credentials (
     FOREIGN KEY (user_id) REFERENCES users(id)
 );
 
-CREATE TABLE auth_challenges (
+CREATE TABLE IF NOT EXISTS auth_challenges (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
     type TEXT NOT NULL CHECK (type IN ('pre_auth', 'passkey_register', 'passkey_login')),
@@ -30,7 +30,7 @@ CREATE TABLE auth_challenges (
     FOREIGN KEY (user_id) REFERENCES users(id)
 );
 
-CREATE TABLE sessions (
+CREATE TABLE IF NOT EXISTS sessions (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
     family_id TEXT NOT NULL,
@@ -44,7 +44,7 @@ CREATE TABLE sessions (
     FOREIGN KEY (user_id) REFERENCES users(id)
 );
 
-CREATE TABLE refresh_tokens (
+CREATE TABLE IF NOT EXISTS refresh_tokens (
     id TEXT PRIMARY KEY,
     session_id TEXT NOT NULL,
     token_hash TEXT NOT NULL UNIQUE,
@@ -55,7 +55,7 @@ CREATE TABLE refresh_tokens (
     FOREIGN KEY (session_id) REFERENCES sessions(id)
 );
 
-CREATE TABLE refresh_attempts (
+CREATE TABLE IF NOT EXISTS refresh_attempts (
     id TEXT PRIMARY KEY,
     session_id TEXT NOT NULL,
     request_id TEXT NOT NULL,
@@ -67,7 +67,7 @@ CREATE TABLE refresh_attempts (
     FOREIGN KEY (session_id) REFERENCES sessions(id)
 );
 
-CREATE TABLE key_envelopes (
+CREATE TABLE IF NOT EXISTS key_envelopes (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
     encrypted_key_a TEXT NOT NULL,
@@ -80,11 +80,11 @@ CREATE TABLE key_envelopes (
     UNIQUE (user_id, key_version)
 );
 
-CREATE INDEX idx_sessions_active_by_user
+CREATE INDEX IF NOT EXISTS idx_sessions_active_by_user
     ON sessions (user_id, revoked_at, expires_at);
 
-CREATE INDEX idx_refresh_tokens_by_session
+CREATE INDEX IF NOT EXISTS idx_refresh_tokens_by_session
     ON refresh_tokens (session_id, used_at, revoked_at);
 
-CREATE INDEX idx_refresh_attempts_expiry
+CREATE INDEX IF NOT EXISTS idx_refresh_attempts_expiry
     ON refresh_attempts (expires_at);
