@@ -8,10 +8,10 @@ on:
   push:
     branches:
       - main
-      - "codex/**"
     paths:
       - "backend/**"
       - ".github/workflows/backend-ci.yml"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -33,6 +33,11 @@ jobs:
           go-version-file: backend/go.mod
           check-latest: true
 
+      - name: Python をセットアップ
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
       - name: フォーマットを検査
         run: test -z "$(gofmt -l $(find . -name '*.go' -type f))"
 
@@ -44,3 +49,6 @@ jobs:
 
       - name: ビルド
         run: go build ./cmd/server
+
+      - name: フロントエンド接続を想定したスモークテスト
+        run: python tests/frontend_smoke_test.py

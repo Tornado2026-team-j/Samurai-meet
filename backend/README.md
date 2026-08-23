@@ -34,3 +34,12 @@ go run ./cmd/server
 - UUID と UTC 時刻はアプリケーション側で生成・保存する方針です。
 
 詳細は [認証仕様](../docs/features/auth.md)、[DB 仕様](../docs/database.md)、[API 仕様](../docs/api.md) を参照してください。
+
+## フロントエンド接続スモークテスト
+
+```powershell
+cd backend
+python tests/frontend_smoke_test.py
+```
+
+実際にバックエンドを起動し、フロントエンドが利用する `/healthz` と `/readyz` の JSON 応答を確認します。追加パッケージは不要です。
