@@ -13,6 +13,7 @@ CI は責務ごとに独立して実行する。依存関係・静的解析を�
 | `Security checks` | Dependency Review、Google OSV Scanner、`govulncheck`、`gosec`、TruffleHog、zizmor | `Security checks / Security report` |
 | `CodeQL` | Go と TypeScript のセマンティック静的解析 | `CodeQL / Analyze (go)`、`CodeQL / Analyze (javascript-typescript)` |
 | `Supply-chain security` | OpenSSF Scorecard | push・定期実行（PRの必須対象外） |
+| `PR CI report` | 完了済み必須チェックを1コメントに集約 | PRのCI完了後（必須対象外） |
 
 `Backend CI`、`Frontend CI`、`Security checks`、`CodeQL` は以下のタイミングで動きます。
 
@@ -22,7 +23,7 @@ CI は責務ごとに独立して実行する。依存関係・静的解析を�
 
 PR ごとに同じ CI が重複した場合は、古い実行を自動キャンセルします。通常 CI は PostgreSQL 16 をサービスとして起動し、Go test、ビルド、HTTP スモークテスト、Python の鍵生成テストを実行します。Security checks は Google OSV Scanner による依存脆弱性検査、Go の公式 `govulncheck`、`gosec`、TruffleHog、zizmorを並列に実行します。OpenSSF Scorecard は main への push と毎週の定期実行で供給網を監査します。
 
-各ワークフローは最後の集約ジョブで `$GITHUB_STEP_SUMMARY` にMarkdown表を出力する。内部PRでは既存のBotコメントを更新して結果を返す。外部forkとDependabot PRでは、書込トークンを前提にせずサマリーだけを出力する。
+各ワークフローは最後の集約ジョブで `$GITHUB_STEP_SUMMARY` にMarkdown表を出力する。PRへの通知は `PR CI report` が1件だけ作成・更新するため、Backend・Frontend・Securityの完了ごとにコメントが増えない。`workflow_run` はデフォルトブランチ上の定義で起動するため、この集約は本ワークフローが `main` にマージされた後のPRから有効になる。fork由来のコードをチェックアウトせず、チェック結果だけを読んでコメントする。
 
 必須チェックとして指定する名前は次です。
 
@@ -55,6 +56,8 @@ GitHub の **Settings → Branches → Branch protection rules → Add rule** �
 - Restrict deletions
 
 直接 push を許可する必要がある緊急対応時も、後で必ず PR と監査記録を残す。
+
+Dependency Review を必須にする前に、**Settings → Advanced Security → Dependency graph** を有効にする。無効な状態ではDependency Reviewは実行できず、PRを失敗として扱う。
 
 ## 今後の追加
 

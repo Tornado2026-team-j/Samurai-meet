@@ -83,9 +83,6 @@ jobs:
     if: ${{ always() }}
     needs: [quality, dependency-audit]
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: write
     steps:
       - name: 実行結果をサマリーへ出力
         env:
@@ -100,28 +97,6 @@ jobs:
             echo "| Bun quality | ${QUALITY} |"
             echo "| Bun dependency audit | ${AUDIT} |"
           } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: PR コメントを更新
-        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]' }}
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
-        env:
-          QUALITY: ${{ needs.quality.result }}
-          AUDIT: ${{ needs.dependency-audit.result }}
-        with:
-          script: |
-            const marker = '<!-- samurai-meet-frontend-ci -->';
-            const body = `${marker}\n## Frontend CI\n\n| 検査 | 結果 |\n| --- | --- |\n| Bun quality | ${process.env.QUALITY} |\n| Bun dependency audit | ${process.env.AUDIT} |\n\n[実行ログ](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`;
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-            });
-            const existing = comments.find((comment) => comment.body.includes(marker));
-            if (existing) {
-              await github.rest.issues.updateComment({ ...context.repo, comment_id: existing.id, body });
-            } else {
-              await github.rest.issues.createComment({ ...context.repo, issue_number: context.issue.number, body });
-            }
 
       - name: 失敗時に集約チェックを失敗させる
         if: ${{ needs.quality.result != 'success' || needs.dependency-audit.result != 'success' }}

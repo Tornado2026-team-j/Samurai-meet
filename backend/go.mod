@@ -1,6 +1,6 @@
 module github.com/Tornado2026-team-j/Samurai-meet/backend
 
-go 1.26.0
+go 1.26.7
 
 require (
 	github.com/coreos/go-oidc/v3 v3.20.0
