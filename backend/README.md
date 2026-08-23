@@ -2,6 +2,8 @@
 
 ユーザー登録・ログイン保持のバックエンド基盤です。
 
+起動・ブラウザ確認・自動テストの詳しい手順は [テスト方法](TESTING.md) を参照してください。
+
 ## 現在の内容
 
 - 標準ライブラリによる HTTP サーバー
@@ -12,6 +14,21 @@
 Google OAuth、Passkey、JWS の発行・検証、DB 接続は後続コミットで実装します。
 
 ## 起動
+
+初回は `.env.example` をコピーして `backend/.env` を作成し、必要な値を設定します。`.env` は Git に含めません。
+
+```powershell
+cd backend
+Copy-Item .env.example .env
+```
+
+開発用の JWS 署名鍵は、次のスクリプトで生成できます。出力された `JWS_SIGNING_KEY` だけを `.env` に設定してください。
+
+```powershell
+python scripts/generate_dev_keys.py --server-only
+```
+
+引数なしでは、端末側 Key-A / Recovery Key のフローを手動確認するためのテスト値も出力します。これらは `.env`、DB、ログへ保存しません。
 
 ```powershell
 cd backend
