@@ -1,0 +1,187 @@
+name: Security checks
+
+concurrency:
+  group: security-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-review:
+    name: Dependency review
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: 依存関係の変更を検査
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: moderate
+          deny-licenses: GPL-2.0, GPL-3.0, AGPL-1.0, AGPL-3.0
+
+  osv-pr:
+    name: OSV dependency vulnerability scan
+    if: ${{ github.event_name == 'pull_request' }}
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable-pr.yml@6e4298ebc4db23e847df9b2e2de2939d6f066c67 # v2.5.1
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    with:
+      fail-on-vuln: true
+      scan-args: |-
+        --include-git-root
+        -r
+        ./
+
+  osv-full:
+    name: OSV full vulnerability scan
+    if: ${{ github.event_name != 'pull_request' }}
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@6e4298ebc4db23e847df9b2e2de2939d6f066c67 # v2.5.1
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    with:
+      fail-on-vuln: true
+      scan-args: |-
+        --include-git-root
+        -r
+        ./
+
+  go-security:
+    name: Go vulnerability and static security scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: チェックアウト
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Go をセットアップ
+        uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
+        with:
+          go-version-file: backend/go.mod
+          check-latest: true
+          cache: true
+
+      - name: 既知脆弱性を検査
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+
+      - name: Go の危険な実装を検査
+        run: go run github.com/securego/gosec/v2/cmd/gosec@v2.28.0 -exclude-generated ./...
+
+  secret-scan:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: チェックアウト
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: 秘密情報の混入を検査
+        uses: trufflesecurity/trufflehog@bcfcf73aaf4759d4dadc2783177c245a02792318 # v3.97.0
+        with:
+          version: v3.97.0
+
+  workflow-security:
+    name: GitHub Actions workflow security scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      security-events: write
+    steps:
+      - name: チェックアウト
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: GitHub Actions ワークフローを静的検査
+        uses: zizmorcore/zizmor-action@3dc1ecc9bcb9e94e9b2c709687979e1298497054 # v0.6.2
+
+  report:
+    name: Security report
+    if: ${{ always() }}
+    needs: [dependency-review, osv-pr, osv-full, go-security, secret-scan, workflow-security]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: 実行結果をサマリーへ出力
+        env:
+          DEPENDENCY_REVIEW: ${{ needs.dependency-review.result }}
+          OSV_PR: ${{ needs.osv-pr.result }}
+          OSV_FULL: ${{ needs.osv-full.result }}
+          GO_SECURITY: ${{ needs.go-security.result }}
+          SECRET_SCAN: ${{ needs.secret-scan.result }}
+          WORKFLOW_SECURITY: ${{ needs.workflow-security.result }}
+        run: |
+          {
+            echo "# Security checks"
+            echo
+            echo "| 検査 | 結果 |"
+            echo "| --- | --- |"
+            echo "| Dependency review | ${DEPENDENCY_REVIEW} |"
+            echo "| OSV PR scan | ${OSV_PR} |"
+            echo "| OSV full scan | ${OSV_FULL} |"
+            echo "| Go vulnerability and static security scan | ${GO_SECURITY} |"
+            echo "| Secret scan | ${SECRET_SCAN} |"
+            echo "| GitHub Actions workflow security scan | ${WORKFLOW_SECURITY} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: PR コメントを更新
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]' }}
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        env:
+          DEPENDENCY_REVIEW: ${{ needs.dependency-review.result }}
+          OSV_PR: ${{ needs.osv-pr.result }}
+          GO_SECURITY: ${{ needs.go-security.result }}
+          SECRET_SCAN: ${{ needs.secret-scan.result }}
+          WORKFLOW_SECURITY: ${{ needs.workflow-security.result }}
+        with:
+          script: |
+            const marker = '<!-- samurai-meet-security-report -->';
+            const body = `${marker}\n## Security checks\n\n| 検査 | 結果 |\n| --- | --- |\n| Dependency review | ${process.env.DEPENDENCY_REVIEW} |\n| OSV dependency vulnerability scan | ${process.env.OSV_PR} |\n| Go vulnerability and static security scan | ${process.env.GO_SECURITY} |\n| Secret scan | ${process.env.SECRET_SCAN} |\n| GitHub Actions workflow security scan | ${process.env.WORKFLOW_SECURITY} |\n\n[実行ログ](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`;
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.find((comment) => comment.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ ...context.repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ ...context.repo, issue_number: context.issue.number, body });
+            }
+
+      - name: 失敗時に集約チェックを失敗させる
+        if: >-
+          ${{
+            (needs.dependency-review.result != 'success' && needs.dependency-review.result != 'skipped') ||
+            (needs.osv-pr.result != 'success' && needs.osv-pr.result != 'skipped') ||
+            (needs.osv-full.result != 'success' && needs.osv-full.result != 'skipped') ||
+            needs.go-security.result != 'success' ||
+            needs.secret-scan.result != 'success' ||
+            needs.workflow-security.result != 'success'
+          }}
+        run: exit 1
