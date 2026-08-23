@@ -1,0 +1,46 @@
+name: Backend CI
+
+on:
+  pull_request:
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-ci.yml"
+  push:
+    branches:
+      - main
+      - "codex/**"
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Go test and build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: チェックアウト
+        uses: actions/checkout@v4
+
+      - name: Go をセットアップ
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          check-latest: true
+
+      - name: フォーマットを検査
+        run: test -z "$(gofmt -l $(find . -name '*.go' -type f))"
+
+      - name: 静的検査
+        run: go vet ./...
+
+      - name: テスト
+        run: go test ./...
+
+      - name: ビルド
+        run: go build ./cmd/server

@@ -1,0 +1,6 @@
+# ローカルの Go ビルド成果物
+/server
+/server.exe
+
+# このリポジトリ内で一時的に指定する Go ビルドキャッシュ
+/.tmp-go-cache/
