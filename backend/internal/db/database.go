@@ -10,16 +10,15 @@ import (
 
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/config"
 	_ "github.com/jackc/pgx/v5/stdlib"
-	_ "modernc.org/sqlite"
 )
 
 // Open connects to the configured database. Credentials are never logged.
 func Open(ctx context.Context, cfg config.DatabaseConfig) (*sql.DB, error) {
-	driver, dsn, err := connection(cfg)
+	dsn, err := connection(cfg)
 	if err != nil {
 		return nil, err
 	}
-	database, err := sql.Open(driver, dsn)
+	database, err := sql.Open("pgx", dsn)
 	if err != nil {
 		return nil, err
 	}
@@ -27,31 +26,14 @@ func Open(ctx context.Context, cfg config.DatabaseConfig) (*sql.DB, error) {
 		database.Close()
 		return nil, err
 	}
-	if cfg.Driver == "sqlite" {
-		if _, err := database.ExecContext(ctx, "PRAGMA foreign_keys = ON"); err != nil {
-			database.Close()
-			return nil, err
-		}
-	}
 	return database, nil
 }
 
-func connection(cfg config.DatabaseConfig) (string, string, error) {
-	switch cfg.Driver {
-	case "sqlite":
-		if cfg.SQLitePath == "" {
-			return "", "", fmt.Errorf("SQLITE_PATH is required")
-		}
-		return "sqlite", "file:" + cfg.SQLitePath + "?_pragma=foreign_keys(1)", nil
-	case "postgres":
-		if cfg.Host == "" || cfg.Port == "" || cfg.Name == "" || cfg.User == "" {
-			return "", "", fmt.Errorf("DB_HOST, DB_PORT, DB_NAME, and DB_USER are required for postgres")
-		}
-		dsn := fmt.Sprintf("host=%s port=%s dbname=%s user=%s password=%s sslmode=%s search_path=%s", cfg.Host, cfg.Port, cfg.Name, cfg.User, cfg.Password, cfg.SSLMode, cfg.Schema)
-		return "pgx", dsn, nil
-	default:
-		return "", "", fmt.Errorf("unsupported DB_DRIVER %q", cfg.Driver)
+func connection(cfg config.DatabaseConfig) (string, error) {
+	if cfg.Host == "" || cfg.Port == "" || cfg.Name == "" || cfg.User == "" {
+		return "", fmt.Errorf("DB_HOST, DB_PORT, DB_NAME, and DB_USER are required")
 	}
+	return fmt.Sprintf("host=%s port=%s dbname=%s user=%s password=%s sslmode=%s search_path=%s", cfg.Host, cfg.Port, cfg.Name, cfg.User, cfg.Password, cfg.SSLMode, cfg.Schema), nil
 }
 
 // ApplyInitialMigration applies the auth/session schema once at startup.
@@ -75,4 +57,21 @@ func ApplyInitialMigration(ctx context.Context, database *sql.DB, path string) e
 		}
 	}
 	return transaction.Commit()
+}
+
+// ApplyMigrations applies every ordered .sql migration in a directory.
+func ApplyMigrations(ctx context.Context, database *sql.DB, directory string) error {
+	entries, err := os.ReadDir(filepath.Clean(directory))
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") || strings.HasSuffix(entry.Name(), ".down.sql") {
+			continue
+		}
+		if err := ApplyInitialMigration(ctx, database, filepath.Join(directory, entry.Name())); err != nil {
+			return fmt.Errorf("apply %s: %w", entry.Name(), err)
+		}
+	}
+	return nil
 }

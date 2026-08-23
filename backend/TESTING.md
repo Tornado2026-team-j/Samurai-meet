@@ -16,7 +16,7 @@ cd backend
 Copy-Item .env.example .env
 ```
 
-メイン DB は PostgreSQL です。運用時は `DB_DRIVER=postgres` として `DB_HOST`、`DB_PORT`、`DB_NAME`、`DB_USER`、`DB_PASSWORD`、`DB_SCHEMA` を設定します。SQLite はローカル開発・CI テストだけに使い、`DB_DRIVER=sqlite` と `SQLITE_PATH` を設定します。画像本体の保存には使いません。
+メイン DB は PostgreSQL です。運用・ローカル開発・CI のすべてで `DB_HOST`、`DB_PORT`、`DB_NAME`、`DB_USER`、`DB_PASSWORD`、`DB_SCHEMA` を設定します。ローカルでは `docker compose -f docker-compose.dev.yml up -d` で PostgreSQL を起動できます。
 
 ## 2. バックエンドを起動する
 
@@ -68,6 +68,12 @@ go test ./...
 go build ./cmd/server
 python tests/frontend_smoke_test.py
 python -m unittest discover -s scripts -p "test_*.py"
+```
+
+`frontend_smoke_test.py` は PostgreSQL 接続が必要です。ローカルで実行する前に、別ターミナルで `docker compose -f docker-compose.dev.yml up -d` を実行し、次を設定します。
+
+```powershell
+$env:RUN_DATABASE_SMOKE_TEST = "1"
 ```
 
 | コマンド | 確認内容 |

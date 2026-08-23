@@ -29,6 +29,8 @@ class FrontendSmokeTest(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls) -> None:
+        if os.environ.get("RUN_DATABASE_SMOKE_TEST") != "1":
+            raise unittest.SkipTest("PostgreSQL を起動し RUN_DATABASE_SMOKE_TEST=1 を設定すると実行します")
         cls.port = unused_local_port()
         cls.base_url = f"http://127.0.0.1:{cls.port}"
         environment = os.environ.copy()

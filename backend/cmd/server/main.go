@@ -20,7 +20,7 @@ func main() {
 		log.Fatalf("database connection failed: %v", err)
 	}
 	defer database.Close()
-	if err := db.ApplyInitialMigration(startupContext, database, "migrations/0001_auth_sessions.sql"); err != nil {
+	if err := db.ApplyMigrations(startupContext, database, "migrations"); err != nil {
 		log.Fatalf("database migration failed: %v", err)
 	}
 

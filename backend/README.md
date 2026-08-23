@@ -8,7 +8,7 @@
 
 - 標準ライブラリによる HTTP サーバー
 - `GET /healthz` と `GET /readyz`
-- PostgreSQL をメインにした認証・セッション migration（SQLite は開発・CI テスト用）
+- PostgreSQL を使う認証・セッション migration
 - Access Token 1 分、Refresh 再送の冪等性 30 秒を表すドメイン型
 
 Google OAuth、Passkey、JWS の発行・検証、DB 接続は後続コミットで実装します。
@@ -47,7 +47,7 @@ go run ./cmd/server
 `migrations/0001_auth_sessions.sql` は、ユーザー、Passkey、仮認証、セッション、Refresh Token、Refresh 再送の冪等性記録を作成します。
 
 - 運用環境：PostgreSQL（メイン DB）
-- ローカル開発・CI テスト：SQLite。画像本体の保存には利用しない
+- ローカル開発・CI テスト：PostgreSQL
 - UUID と UTC 時刻はアプリケーション側で生成・保存する方針です。
 
 詳細は [認証仕様](../docs/features/auth.md)、[DB 仕様](../docs/database.md)、[API 仕様](../docs/api.md) を参照してください。

@@ -1,0 +1,14 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: samurai_meet
+      POSTGRES_USER: samurai_meet_app
+      POSTGRES_PASSWORD: samurai_meet_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - samurai_meet_postgres:/var/lib/postgresql/data
+
+volumes:
+  samurai_meet_postgres:

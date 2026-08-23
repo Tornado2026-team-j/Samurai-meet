@@ -24,8 +24,29 @@ jobs:
       run:
         working-directory: backend
     env:
-      DB_DRIVER: sqlite
-      SQLITE_PATH: samurai-meet-ci.db
+      TEST_POSTGRES: "1"
+      RUN_DATABASE_SMOKE_TEST: "1"
+      DB_HOST: 127.0.0.1
+      DB_PORT: "5432"
+      DB_NAME: samurai_meet
+      DB_USER: samurai_meet_app
+      DB_PASSWORD: samurai_meet_password
+      DB_SSLMODE: disable
+      DB_SCHEMA: public
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: samurai_meet
+          POSTGRES_USER: samurai_meet_app
+          POSTGRES_PASSWORD: samurai_meet_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U samurai_meet_app -d samurai_meet"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - name: チェックアウト
         uses: actions/checkout@v4

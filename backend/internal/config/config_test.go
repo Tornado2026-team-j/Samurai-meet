@@ -36,7 +36,6 @@ func TestLoadDotEnvRejectsInvalidLine(t *testing.T) {
 }
 
 func TestLoadReadsSeparateDatabaseSettings(t *testing.T) {
-	t.Setenv("DB_DRIVER", "postgres")
 	t.Setenv("DB_HOST", "db.internal")
 	t.Setenv("DB_PORT", "5433")
 	t.Setenv("DB_NAME", "samurai_meet_test")
@@ -45,7 +44,7 @@ func TestLoadReadsSeparateDatabaseSettings(t *testing.T) {
 	t.Setenv("DB_SCHEMA", "app")
 
 	cfg := Load()
-	if got := cfg.Database; got.Driver != "postgres" || got.Host != "db.internal" || got.Port != "5433" || got.Name != "samurai_meet_test" || got.User != "test_user" || got.Password != "test_password" || got.Schema != "app" {
+	if got := cfg.Database; got.Host != "db.internal" || got.Port != "5433" || got.Name != "samurai_meet_test" || got.User != "test_user" || got.Password != "test_password" || got.Schema != "app" {
 		t.Fatalf("Database = %+v", got)
 	}
 }

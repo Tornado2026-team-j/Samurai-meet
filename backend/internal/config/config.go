@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -16,21 +17,34 @@ type Config struct {
 	Environment     string
 	DevClientOrigin string
 	Database        DatabaseConfig
+	ImageStorage    ImageStorageConfig
+	GoogleOIDC      GoogleOIDCConfig
+	WebAuthn        WebAuthnConfig
+	JWS             JWSConfig
+}
+
+type GoogleOIDCConfig struct{ ClientID, ClientSecret, RedirectURI string }
+type WebAuthnConfig struct{ RPID, RPOrigin, RPDisplayName string }
+type JWSConfig struct{ SigningKey, Issuer, Audience string }
+
+type ImageStorageConfig struct {
+	Directory                    string
+	ProfileWrappingPrivateKeyPEM string
+	CiphertextCacheMaxBytes      int
+	CiphertextCacheTTLSeconds    int
 }
 
 // DatabaseConfig holds separately managed database connection settings.
 // The database adapter builds a driver-specific connection string from these
 // values; a password is never logged.
 type DatabaseConfig struct {
-	Driver     string
-	SQLitePath string
-	Host       string
-	Port       string
-	Name       string
-	User       string
-	Password   string
-	SSLMode    string
-	Schema     string
+	Host     string
+	Port     string
+	Name     string
+	User     string
+	Password string
+	SSLMode  string
+	Schema   string
 }
 
 func Load() Config {
@@ -43,17 +57,32 @@ func Load() Config {
 		Environment:     valueOrDefault("APP_ENV", "development"),
 		DevClientOrigin: valueOrDefault("DEV_CLIENT_ORIGIN", "http://127.0.0.1:5173"),
 		Database: DatabaseConfig{
-			Driver:     valueOrDefault("DB_DRIVER", "postgres"),
-			SQLitePath: valueOrDefault("SQLITE_PATH", "samurai-meet.db"),
-			Host:       valueOrDefault("DB_HOST", "127.0.0.1"),
-			Port:       valueOrDefault("DB_PORT", "5432"),
-			Name:       valueOrDefault("DB_NAME", "samurai_meet"),
-			User:       valueOrDefault("DB_USER", "samurai_meet_app"),
-			Password:   os.Getenv("DB_PASSWORD"),
-			SSLMode:    valueOrDefault("DB_SSLMODE", "disable"),
-			Schema:     valueOrDefault("DB_SCHEMA", "public"),
+			Host:     valueOrDefault("DB_HOST", "127.0.0.1"),
+			Port:     valueOrDefault("DB_PORT", "5432"),
+			Name:     valueOrDefault("DB_NAME", "samurai_meet"),
+			User:     valueOrDefault("DB_USER", "samurai_meet_app"),
+			Password: os.Getenv("DB_PASSWORD"),
+			SSLMode:  valueOrDefault("DB_SSLMODE", "disable"),
+			Schema:   valueOrDefault("DB_SCHEMA", "public"),
 		},
+		ImageStorage: ImageStorageConfig{
+			Directory:                    valueOrDefault("IMAGE_STORAGE_DIR", "storage/images"),
+			ProfileWrappingPrivateKeyPEM: os.Getenv("PROFILE_WRAPPING_PRIVATE_KEY_PEM"),
+			CiphertextCacheMaxBytes:      intValueOrDefault("IMAGE_CIPHERTEXT_CACHE_MAX_BYTES", 256*1024*1024),
+			CiphertextCacheTTLSeconds:    intValueOrDefault("IMAGE_CIPHERTEXT_CACHE_TTL_SECONDS", 300),
+		},
+		GoogleOIDC: GoogleOIDCConfig{os.Getenv("GOOGLE_CLIENT_ID"), os.Getenv("GOOGLE_CLIENT_SECRET"), os.Getenv("GOOGLE_REDIRECT_URI")},
+		WebAuthn:   WebAuthnConfig{valueOrDefault("WEBAUTHN_RP_ID", "localhost"), valueOrDefault("WEBAUTHN_RP_ORIGIN", "http://localhost:5173"), valueOrDefault("WEBAUTHN_RP_DISPLAY_NAME", "Samurai Meet")},
+		JWS:        JWSConfig{os.Getenv("JWS_SIGNING_KEY"), valueOrDefault("JWS_ISSUER", "samurai-meet-api"), valueOrDefault("JWS_AUDIENCE", "samurai-meet-mobile")},
 	}
+}
+
+func intValueOrDefault(key string, fallback int) int {
+	value, err := strconv.Atoi(os.Getenv(key))
+	if err != nil || value <= 0 {
+		return fallback
+	}
+	return value
 }
 
 // LoadDotEnv loads a simple KEY=VALUE file without overriding existing
