@@ -23,6 +23,9 @@ jobs:
     defaults:
       run:
         working-directory: backend
+    env:
+      DB_DRIVER: sqlite
+      SQLITE_PATH: samurai-meet-ci.db
     steps:
       - name: チェックアウト
         uses: actions/checkout@v4

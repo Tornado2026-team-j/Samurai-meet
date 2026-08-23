@@ -16,7 +16,7 @@ cd backend
 Copy-Item .env.example .env
 ```
 
-このリポジトリには開発用の `backend/.env` がすでにある場合もあります。SQLite は `DB_DRIVER=sqlite` と `SQLITE_PATH` のまま使えます。PostgreSQL を使う場合は、`DB_DRIVER=postgres` に変更して `DB_HOST`、`DB_PORT`、`DB_NAME`、`DB_USER`、`DB_PASSWORD`、`DB_SCHEMA` を設定します。
+メイン DB は PostgreSQL です。運用時は `DB_DRIVER=postgres` として `DB_HOST`、`DB_PORT`、`DB_NAME`、`DB_USER`、`DB_PASSWORD`、`DB_SCHEMA` を設定します。SQLite はローカル開発・CI テストだけに使い、`DB_DRIVER=sqlite` と `SQLITE_PATH` を設定します。画像本体の保存には使いません。
 
 ## 2. バックエンドを起動する
 

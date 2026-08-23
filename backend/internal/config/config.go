@@ -43,7 +43,7 @@ func Load() Config {
 		Environment:     valueOrDefault("APP_ENV", "development"),
 		DevClientOrigin: valueOrDefault("DEV_CLIENT_ORIGIN", "http://127.0.0.1:5173"),
 		Database: DatabaseConfig{
-			Driver:     valueOrDefault("DB_DRIVER", "sqlite"),
+			Driver:     valueOrDefault("DB_DRIVER", "postgres"),
 			SQLitePath: valueOrDefault("SQLITE_PATH", "samurai-meet.db"),
 			Host:       valueOrDefault("DB_HOST", "127.0.0.1"),
 			Port:       valueOrDefault("DB_PORT", "5432"),
