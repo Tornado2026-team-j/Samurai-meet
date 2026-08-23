@@ -1,15 +1,28 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/config"
+	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/db"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/httpapi"
 )
 
 func main() {
 	cfg := config.Load()
+	startupContext, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	database, err := db.Open(startupContext, cfg.Database)
+	if err != nil {
+		log.Fatalf("database connection failed: %v", err)
+	}
+	defer database.Close()
+	if err := db.ApplyInitialMigration(startupContext, database, "migrations/0001_auth_sessions.sql"); err != nil {
+		log.Fatalf("database migration failed: %v", err)
+	}
 
 	server := &http.Server{
 		Addr: cfg.HTTPAddr,
