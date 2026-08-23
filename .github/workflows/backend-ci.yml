@@ -1,5 +1,9 @@
 name: Backend CI
 
+concurrency:
+  group: backend-ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 on:
   pull_request:
     paths:
@@ -20,6 +24,7 @@ jobs:
   test:
     name: Go test and build
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: backend
@@ -56,6 +61,7 @@ jobs:
         with:
           go-version-file: backend/go.mod
           check-latest: true
+          cache: true
 
       - name: Python をセットアップ
         uses: actions/setup-python@v5
