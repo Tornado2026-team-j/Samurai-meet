@@ -23,10 +23,10 @@
     "expo-linking": "~57.0.4",
     "expo-router": "~57.0.9",
     "expo-status-bar": "~57.0.1",
-    "react": "19.2.3",
-    "react-native": "0.86.2",
-    "react-native-safe-area-context": "~5.7.0",
-    "react-native-screens": "4.26.0"
+    "react": "19.2.8",
+    "react-native": "0.87.0",
+    "react-native-safe-area-context": "~5.9.0",
+    "react-native-screens": "4.27.0"
   },
   "devDependencies": {
     "@types/bun": "^1.4.0",
