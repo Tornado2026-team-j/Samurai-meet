@@ -103,8 +103,7 @@ Request：
 ```json
 {
   "code": "authorization_code",
-  "code_verifier": "pkce_verifier",
-  "redirect_uri": "https://samurai-meet.disnana.com/auth/callback"
+  "state": "oauth_state"
 }
 ```
 

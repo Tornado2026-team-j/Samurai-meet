@@ -69,8 +69,7 @@ Google authorization code をバックエンドで交換・検証します。
 ```json
 {
   "code": "google_authorization_code",
-  "code_verifier": "pkce_verifier",
-  "redirect_uri": "https://samurai-meet.disnana.com/auth/callback"
+  "state": "oauth_state"
 }
 ```
 

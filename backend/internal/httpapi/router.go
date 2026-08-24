@@ -3,6 +3,8 @@ package httpapi
 import (
 	"encoding/json"
 	"net/http"
+
+	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/auth"
 )
 
 // APIV1Prefix is the public API namespace used by both the mobile app and web
@@ -15,6 +17,7 @@ type RouterOptions struct {
 	Environment     string
 	DevClientOrigin string
 	ClientOrigin    string
+	OAuthLogin      *auth.OAuthLoginService
 }
 
 func NewRouter() http.Handler {
@@ -29,6 +32,10 @@ func NewRouterWithOptions(options RouterOptions) http.Handler {
 	mux.HandleFunc("/readyz", readyz)
 	mux.HandleFunc(APIV1Prefix+"/healthz", healthz)
 	mux.HandleFunc(APIV1Prefix+"/readyz", readyz)
+	if options.OAuthLogin != nil {
+		mux.HandleFunc(APIV1Prefix+"/auth/google/start", googleStart(options.OAuthLogin))
+		mux.HandleFunc(APIV1Prefix+"/auth/google/exchange", googleExchange(options.OAuthLogin))
+	}
 
 	return withCORS(withJSONContentType(mux), options)
 }
