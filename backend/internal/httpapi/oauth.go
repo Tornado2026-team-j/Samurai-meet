@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -17,6 +18,11 @@ func googleStart(service *auth.OAuthLoginService) http.HandlerFunc {
 		}
 		http.Redirect(w, r, url, http.StatusFound)
 	}
+}
+
+func googleCallbackPage(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = fmt.Fprint(w, `<!doctype html><meta charset="utf-8"><title>Google ログイン処理中</title><pre id="result">Google ログインを処理しています。</pre><script>const p=new URLSearchParams(location.search),o=document.querySelector('#result');fetch('/api/v1/auth/google/exchange',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:p.get('code'),state:p.get('state')})}).then(async r=>({status:r.status,body:await r.json()})).then(x=>o.textContent=JSON.stringify(x,null,2)).catch(e=>o.textContent='失敗: '+e.message);</script>`)
 }
 func googleExchange(service *auth.OAuthLoginService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

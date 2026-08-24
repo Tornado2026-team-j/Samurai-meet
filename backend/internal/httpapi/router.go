@@ -35,6 +35,7 @@ func NewRouterWithOptions(options RouterOptions) http.Handler {
 	if options.OAuthLogin != nil {
 		mux.HandleFunc(APIV1Prefix+"/auth/google/start", googleStart(options.OAuthLogin))
 		mux.HandleFunc(APIV1Prefix+"/auth/google/exchange", googleExchange(options.OAuthLogin))
+		mux.HandleFunc("/auth/callback", googleCallbackPage)
 	}
 
 	return withCORS(withJSONContentType(mux), options)
