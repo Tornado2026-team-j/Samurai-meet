@@ -1,6 +1,6 @@
 name: PR CI report
 
-on:
+on: # zizmor: ignore[dangerous-triggers] -- PRコードをcheckout・実行せず、GitHub APIのチェック結果だけを固定文面でコメントする。
   workflow_run:
     workflows:
       - Backend CI

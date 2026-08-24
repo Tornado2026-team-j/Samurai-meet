@@ -41,12 +41,16 @@ func (s *Store) SaveCiphertext(userID, photoID string, ciphertext io.Reader) (pa
 	temporaryName := temporary.Name()
 	defer os.Remove(temporaryName)
 	if err := temporary.Chmod(0o600); err != nil {
-		temporary.Close()
+		if closeErr := temporary.Close(); closeErr != nil {
+			return "", "", fmt.Errorf("set temporary file permissions: %w (close failed: %v)", err, closeErr)
+		}
 		return "", "", err
 	}
 	hash := sha256.New()
 	if _, err := io.Copy(io.MultiWriter(temporary, hash), ciphertext); err != nil {
-		temporary.Close()
+		if closeErr := temporary.Close(); closeErr != nil {
+			return "", "", fmt.Errorf("write ciphertext: %w (close failed: %v)", err, closeErr)
+		}
 		return "", "", err
 	}
 	if err := temporary.Close(); err != nil {

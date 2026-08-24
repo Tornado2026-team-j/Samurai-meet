@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/pem"
 	"errors"
+	"math/big"
 )
 
 // PublicWrappingKey is a browser-compatible JWK for RSA-OAEP-256.
@@ -40,10 +41,7 @@ func ParseWrappingPrivateKey(encodedPEM string) (*rsa.PrivateKey, error) {
 }
 
 func PublicJWK(key *rsa.PublicKey) PublicWrappingKey {
-	exponent := []byte{byte(key.E >> 16), byte(key.E >> 8), byte(key.E)}
-	for len(exponent) > 1 && exponent[0] == 0 {
-		exponent = exponent[1:]
-	}
+	exponent := big.NewInt(int64(key.E)).Bytes()
 	return PublicWrappingKey{"RSA", "RSA-OAEP-256", "enc", base64.RawURLEncoding.EncodeToString(key.N.Bytes()), base64.RawURLEncoding.EncodeToString(exponent)}
 }
 

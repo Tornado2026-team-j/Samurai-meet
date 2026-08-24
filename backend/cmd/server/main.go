@@ -25,7 +25,8 @@ func main() {
 	}
 
 	server := &http.Server{
-		Addr: cfg.HTTPAddr,
+		Addr:              cfg.HTTPAddr,
+		ReadHeaderTimeout: 10 * time.Second,
 		Handler: httpapi.NewRouterWithOptions(httpapi.RouterOptions{
 			Environment:     cfg.Environment,
 			DevClientOrigin: cfg.DevClientOrigin,
