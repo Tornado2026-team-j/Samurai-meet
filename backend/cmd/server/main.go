@@ -76,6 +76,7 @@ func main() {
 			Environment:         cfg.Environment,
 			AllowExpoGoRedirect: cfg.AllowExpoGoRedirect,
 			DevClientOrigin:     cfg.DevClientOrigin,
+			DevClientDir:        cfg.DevClientDir,
 			ClientOrigin:        cfg.ClientOrigin,
 			OAuthLogin:          oauthLogin,
 			Sessions:            sessions,

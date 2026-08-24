@@ -38,7 +38,7 @@ class DevClientHandler(SimpleHTTPRequestHandler):
 
     def _handle_request(self) -> None:
         parsed = urlsplit(self.path)
-        if not parsed.path.startswith("/api/"):
+        if not (parsed.path.startswith("/api/") or parsed.path == "/auth/callback"):
             super().do_GET()
             return
 

@@ -17,6 +17,7 @@ type Config struct {
 	Environment         string
 	AllowExpoGoRedirect bool
 	DevClientOrigin     string
+	DevClientDir        string
 	ClientOrigin        string
 	Database            DatabaseConfig
 	ImageStorage        ImageStorageConfig
@@ -61,6 +62,7 @@ func Load() Config {
 		Environment:         valueOrDefault("APP_ENV", "development"),
 		AllowExpoGoRedirect: boolValueOrDefault("ALLOW_EXPO_GO_REDIRECT", false),
 		DevClientOrigin:     valueOrDefault("DEV_CLIENT_ORIGIN", "http://127.0.0.1:5173"),
+		DevClientDir:        valueOrDefault("DEV_CLIENT_DIR", "dev-client"),
 		ClientOrigin:        os.Getenv("CLIENT_ORIGIN"),
 		Database: DatabaseConfig{
 			Host:     valueOrDefault("DB_HOST", "127.0.0.1"),

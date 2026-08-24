@@ -3,6 +3,7 @@ package httpapi
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/account"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/auth"
@@ -20,6 +21,7 @@ type RouterOptions struct {
 	Environment         string
 	AllowExpoGoRedirect bool
 	DevClientOrigin     string
+	DevClientDir        string
 	ClientOrigin        string
 	OAuthLogin          *auth.OAuthLoginService
 	Sessions            *auth.SessionService
@@ -76,6 +78,11 @@ func NewRouterWithOptions(options RouterOptions) http.Handler {
 	if options.Sessions != nil && options.Accounts != nil {
 		mux.HandleFunc(APIV1Prefix+"/me", deleteAccount(options.Accounts, options.Sessions))
 	}
+	if (options.Environment == "development" || options.Environment == "test") && strings.TrimSpace(options.DevClientDir) != "" {
+		// The browser test panel is deliberately available only outside production.
+		// API and OAuth callback routes above are more specific and take precedence.
+		mux.Handle("/", http.FileServer(http.Dir(options.DevClientDir)))
+	}
 
 	return withCORS(withJSONContentType(mux), options)
 }
@@ -111,7 +118,9 @@ func readyz(w http.ResponseWriter, _ *http.Request) {
 
 func withJSONContentType(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		if strings.HasPrefix(r.URL.Path, APIV1Prefix+"/") || r.URL.Path == "/healthz" || r.URL.Path == "/readyz" || r.URL.Path == "/auth/callback" {
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		}
 		next.ServeHTTP(w, r)
 	})
 }
