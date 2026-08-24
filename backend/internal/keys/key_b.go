@@ -83,8 +83,30 @@ func (s *KeyBService) GetOrCreate(ctx context.Context, userID string, now time.T
 		return KeyBMaterial{}, err
 	}
 	created := now.UTC().Format(time.RFC3339Nano)
-	if _, err = tx.ExecContext(ctx, `INSERT INTO key_b_materials (id,user_id,key_version,wrap_key_id,ciphertext,nonce,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$7)`, newID(), userID, version, s.wrapKeyID, ciphertext, nonce, created); err != nil {
+	result, err := tx.ExecContext(ctx, `INSERT INTO key_b_materials (id,user_id,key_version,wrap_key_id,ciphertext,nonce,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$7) ON CONFLICT (user_id) DO NOTHING`, newID(), userID, version, s.wrapKeyID, ciphertext, nonce, created)
+	if err != nil {
 		return KeyBMaterial{}, err
+	}
+	createdRows, err := result.RowsAffected()
+	if err != nil {
+		return KeyBMaterial{}, err
+	}
+	if createdRows == 1 {
+		if err = tx.Commit(); err != nil {
+			return KeyBMaterial{}, err
+		}
+		return KeyBMaterial{KeyVersion: version, KeyB: base64.RawURLEncoding.EncodeToString(raw)}, nil
+	}
+
+	if err = tx.QueryRowContext(ctx, `SELECT key_version,wrap_key_id,ciphertext,nonce FROM key_b_materials WHERE user_id=$1 FOR UPDATE`, userID).Scan(&version, &storedWrapID, &ciphertext, &nonce); err != nil {
+		return KeyBMaterial{}, err
+	}
+	if storedWrapID != s.wrapKeyID {
+		return KeyBMaterial{}, ErrKeyBUnavailable
+	}
+	raw, err = s.open(userID, version, ciphertext, nonce)
+	if err != nil || len(raw) != 32 {
+		return KeyBMaterial{}, ErrKeyBUnavailable
 	}
 	if err = tx.Commit(); err != nil {
 		return KeyBMaterial{}, err

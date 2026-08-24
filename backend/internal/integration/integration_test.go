@@ -163,6 +163,31 @@ func TestAuthKeyImageAndAccountLifecycle(t *testing.T) {
 		t.Fatalf("wrong Key-B wrapping key error = %v, want %v", err, keys.ErrKeyBUnavailable)
 	}
 
+	concurrentUserID := randomID(t)
+	if _, err := database.Exec(`INSERT INTO users (id,google_subject_id,status,created_at,updated_at) VALUES ($1,$2,'active',$3,$3)`, concurrentUserID, "integration-google-"+concurrentUserID, now.Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	start := make(chan struct{})
+	keyBResults := make(chan keys.KeyBMaterial, 2)
+	keyBErrors := make(chan error, 2)
+	for i := 0; i < 2; i++ {
+		go func() {
+			<-start
+			material, getErr := keyBService.GetOrCreate(context.Background(), concurrentUserID, now)
+			keyBResults <- material
+			keyBErrors <- getErr
+		}()
+	}
+	close(start)
+	firstConcurrent, firstConcurrentErr := <-keyBResults, <-keyBErrors
+	secondConcurrent, secondConcurrentErr := <-keyBResults, <-keyBErrors
+	if firstConcurrentErr != nil || secondConcurrentErr != nil {
+		t.Fatalf("concurrent Key-B retrieval errors = %v, %v", firstConcurrentErr, secondConcurrentErr)
+	}
+	if firstConcurrent != secondConcurrent {
+		t.Fatalf("concurrent Key-B retrieval returned different values: first=%+v second=%+v", firstConcurrent, secondConcurrent)
+	}
+
 	profileKey, err := rsa.GenerateKey(rand.Reader, 3072)
 	if err != nil {
 		t.Fatal(err)
