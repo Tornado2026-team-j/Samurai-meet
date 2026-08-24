@@ -1,124 +1,112 @@
 # 機能仕様：認証・アカウント復旧
 
+最終更新: 2026-08-24
+
+この文書は認証の設計方針です。現在のHTTP契約は [backend/API_SPEC.md](../../backend/API_SPEC.md) を優先します。
+
 ## 1. 対象
 
-- Google OAuth2 / OIDC による登録・ログイン
-- Passkey の登録・認証
-- セッション管理、ログアウト、アカウント削除
-- Key-A、Key-B、Recovery Key による暗号化データ復旧
+- Google OAuth2 / OIDCによるユーザー識別と登録
+- Passkey / WebAuthnの登録、追加、認証、解除
+- JWS Access Token、PostgreSQL session、Refresh Token rotation
+- Key-A、Key-B、Recovery Keyによる端末側暗号化データ復旧
+- 退会時のsession失効、DB論理削除、暗号文画像とcacheの削除
 
-対応要件：FR-001、FR-002、FR-003、FR-015、C-002、C-005
+## 2. 実装済みと未実装
 
-## 2. 画面・クライアント実装
+| 項目 | 状態 |
+| --- | --- |
+| Google OIDC / PKCE / callback | 実装済み |
+| Expo Goへのhandoffと中断再開 | 実装済み |
+| JWS Access Token / Refresh rotation | 実装済み |
+| logout / session管理 | 実装済み |
+| Passkey HTTP儀式 | 実装済み。実端末はDevelopment Buildで検証する |
+| Key-A / Recovery Key envelope HTTP | 未実装 |
+| 端末側画像暗号化と写真HTTP API | 部品のみ |
+| 退会削除オーケストレーション | 未実装 |
+
+## 3. クライアント構成
 
 | 画面 / 処理 | ファイル案 | 言語 |
 | --- | --- | --- |
 | ログイン | `frontend/app/(auth)/login.tsx` | TypeScript / TSX |
-| 初回登録 | `frontend/app/(auth)/register.tsx` | TypeScript / TSX |
 | 認証状態 | `frontend/hooks/useAuth.ts` | TypeScript |
-| Google OAuth 開始 | `frontend/services/api.ts` | TypeScript |
-| Passkey 呼び出し | `frontend/services/auth.ts`（追加推奨） | TypeScript + OS API |
-| Key-A / Recovery Key | `frontend/services/crypto.ts`（追加推奨） | TypeScript + Secure Storage |
+| Google OAuth開始・handoff | `frontend/services/api.ts` | TypeScript |
+| Passkey呼び出し | `frontend/services/auth.ts` | TypeScript + iOS/Android OS API |
+| Key-A / Recovery Key / AES-GCM | `frontend/services/crypto.ts` | TypeScript + Secure Storage |
+| 最小動作確認 | `backend/expo-test/App.tsx` | TypeScript / Expo |
 
-## 3. 初回登録フロー
+Expo GoはOAuth・session・Secure Storageの確認に使用します。Passkey native moduleはDevelopment Buildでのみ確認します。
 
-1. ユーザーが「Google で登録」を選択する。
-2. Google OAuth2 / OIDC を PKCE 付きで実行する。
-3. Go API が ID Token の issuer、audience、署名、expiry、`sub` を検証する。
-4. `google_subject_id` に紐づくサービス用 `user_id` を作成する。
-5. ユーザーが Passkey を登録する。
-6. 端末上で 256 bit の Key-A を生成し、Secure Storage に保存する。
-7. 高エントロピーの Recovery Key を生成し、ユーザーへ一度だけ表示する。
-8. Recovery Key から導出した鍵で Key-A を暗号化し、envelope を API へ保存する。
-9. プロフィール作成画面へ遷移する。
+## 4. Google OAuthとhandoff
 
-## 4. 通常ログインフロー
+1. アプリがランダムなhandoff verifierをSecure Storageへ保存する。
+2. verifierのSHA-256 Base64URLを`handoff_challenge`としてAPIへ送る。
+3. APIがGoogle用stateとPKCE verifierをPostgreSQLへ10分保存し、Googleへリダイレクトする。
+4. Google callbackでOIDC `sub`を検証し、ユーザーをupsertする。
+5. APIがhandoff codeのhashとchallengeを10分保存し、アプリURIへリダイレクトする。
+6. アプリがhandoff codeとverifierを`/auth/google/exchange`へ送り、セッションを受け取る。
+7. サーバーは応答を暗号化保存するため、DB commit直後のアプリクラッシュでも同じverifierで再交換できる。
 
-1. Google OAuth2 / OIDC でユーザーを識別する。
-2. 端末の Passkey を要求する。
-3. Go API が challenge と assertion を検証する。
-4. 成功時にアクセストークン、リフレッシュトークンを発行する。
-5. 認証済みセッションに限り Key-B の取得を許可する。
-6. 端末の Key-A と Key-B から HKDF で暗号化データ用の鍵を導出する。
+Google Consoleに登録するredirect URIは次の一つだけです。
 
-## 5. セッション方式と更新タイミング
+```text
+https://samurai-meet.disnana.com/auth/callback
+```
 
-リフレッシュトークンは技術上の必須要件ではありませんが、モバイルで長時間ログインを維持しつつ Access Token を短命にするため採用します。
+アプリへ戻すdeep linkはGoogle Consoleへ登録しません。本番は`samuraimeet://auth`、Expo Go開発時は`exp://<host>/--/auth`です。
 
-| 項目 | 仕様（暫定） |
+## 5. Passkey
+
+### 登録
+
+Google exchangeまたは既存sessionで得たAccess Tokenで登録optionsを取得し、WebAuthn APIへ渡します。verifyでは`X-Passkey-Ceremony-Token`とcredential JSONを送ります。challengeはDBで一回だけ消費し、credential JSON、公開鍵、sign counterを保存します。
+
+### ログイン
+
+login optionsのbodyを空にするとdiscoverable loginです。assertionのcredential IDまたはuser handleから所有ユーザーを検索し、WebAuthnの署名、origin、RP ID、user verification、sign counterを検証します。成功時は通常のJWS/Refresh sessionを作成します。
+
+### 追加・解除
+
+既存Access Tokenで登録を何本でも追加できます。credential一覧を表示し、所有者一致を確認してから個別解除します。最後のcredentialを解除してもGoogle OAuthログインは残りますが、Passkeyだけでのログインはできなくなります。
+
+## 6. セッションと更新タイミング
+
+| 項目 | 方針 |
 | --- | --- |
-| Access Token | JWS 署名付き JWT。寿命 1 分（案）。`sid` で `sessions.id` と紐付ける |
-| Refresh Token | 256 bit 以上の不透明乱数。寿命 30 日アイドル / 90 日絶対 |
-| 保存 | 端末は Secure Storage、DB は Refresh Token のハッシュのみ |
-| ローテーション | Refresh のたびに新 token を発行し、旧 Refresh Token は原則即時使用済みにする |
-| 再利用検知 | 使用済み token の再利用時は同じ token family を失効 |
+| Access Token | HS256 JWS-JWT、TTL 1分、`sid`でDB sessionに紐づける |
+| Refresh Token | 32byte以上のopaque乱数、DBはSHA-256 hashのみ |
+| session | 絶対期限90日、アイドル期限30日 |
+| 旧Access Token | 自身のexpまでは有効。ただしDB session失効確認を必須にする |
+| 旧Refresh Token | 原則即時使用済み。同じrequest IDの再送だけ30秒許可 |
+| reuse | 別request IDの使用済みtokenはsession familyごと失効 |
 
-更新タイミング：
+クライアントは次のタイミングで更新します。
 
-- ログイン成功時に Access / Refresh の両方を発行する。
-- アプリ起動・フォアグラウンド復帰時、Access Token の残りが 30 秒以下なら更新する。
-- API 呼び出し前、残り 30 秒以下なら更新する。
-- `401 TOKEN_EXPIRED` のときだけ一度更新して、元の API を一度だけ再試行する。
-- 新 Access Token 発行後も、旧 Access Token は自身の `exp` まで受け付ける。
-- 通信結果が不明な Refresh は、同じ `refresh_request_id` の再送だけを 30 秒許可する。
-- WebSocket 接続前・期限直前に更新し、失効は heartbeat で検知して接続を閉じる。
-- アプリがバックグラウンドにいる間は定期更新しない。
-- Key-B 取得、Recovery、端末登録、アカウント削除などは Refresh だけでなく直近の Passkey 再認証を要求する。
+- アプリ起動・フォアグラウンド復帰・API呼び出し前に残り時間を確認する。
+- 残り30秒以下ならsingle-flightでRefreshを一つだけ実行する。
+- 通信結果が不明なら同じ`request_id`で一度だけ再送する。
+- Refresh失敗、reuse検知、handoff verifier不一致時はtokenと一時状態を削除して再ログインする。
+- バックグラウンド中に定期Refreshしない。
 
-## 6. 新端末・端末紛失フロー
+## 7. 新端末・Recovery Key
 
-1. Google 認証を行う。
-2. Recovery Key を端末上で入力する。
-3. API から暗号化済み Key-A の envelope を取得する。
-4. Recovery Key から導出した鍵で端末上のみ Key-A を復号する。
-5. 新端末の Secure Storage に Key-A を保存する。
-6. 新端末の Passkey を登録する。
-7. 新端末を有効化し、必要に応じて旧端末を失効させる。
+実装時の目標フローは次のとおりです。
 
-Recovery Key を紛失した場合に、運営者が復号できる設計にするかは要確認です。復号不能設計の場合、そのリスクを登録時に明示します。
+1. 端末でKey-Aを生成しSecure Storageへ保存する。
+2. Recovery Keyを一度だけ表示し、ユーザーに保存させる。
+3. Recovery Keyから導出した鍵でKey-AをAES-256-GCM暗号化する。
+4. 暗号化済みKey-AとKDFパラメータだけを`key_envelopes`へ保存する。
+5. 新端末ではGoogle認証、Recovery Key入力、端末上の復号、Secure Storage保存を行う。
+6. 復旧途中でアプリが終了しても、状態と入力要求を再開できるようにする。
 
-## 7. API / DB
+Recovery Keyの平文をサーバー、ログ、DBへ送らない。Recovery Key紛失時に運営者が復号できるかは、復号不能設計のリスクを明示したうえでプロダクト決定する。
 
-詳細は [API 仕様書](../api.md) と [DB 仕様書](../database.md) を参照します。
+## 8. 監査不変条件
 
-| 用途 | API | テーブル |
-| --- | --- | --- |
-| Google 認証 | `GET /auth/google/start`、`POST /auth/google/exchange` | `users` |
-| Passkey 登録・認証 | `/auth/passkey/*` | `passkey_credentials` |
-| セッション更新 | `POST /auth/refresh` | `sessions`、`refresh_tokens`、`refresh_attempts` |
-| ログアウト | `POST /auth/logout` | `sessions`、`refresh_tokens` |
-| 全端末ログアウト | `POST /auth/logout-all` | `sessions`、`refresh_tokens` |
-| 端末セッション管理 | `GET /me/sessions`、`DELETE /me/sessions/{id}` | `sessions` |
-| Key envelope 取得 | `POST /recovery/restore` | `key_envelopes` |
-| 新端末登録 | `POST /recovery/devices` | `passkey_credentials`、監査ログ |
-
-## 8. セキュリティ要件
-
-- Google のメールアドレスを主キーにしない。安定した OIDC `sub` を利用する。
-- OAuth の `state`、PKCE、redirect URI を検証する。
-- Access Token、Refresh Token、Key-A、Key-B、Recovery Key をログへ出力しない。
-- Recovery Key の試行回数、レート制限、失敗時のアカウント保護を実装する。
-- Key-A は API へ平文で送らない。
-- Access Token の署名検証後、必ず `sessions.revoked_at` とユーザー状態を確認する。
-- Refresh Token の平文を DB やログへ保存しない。
-- 旧 Access Token と旧 Refresh Token を区別する。旧 Access Token は `exp` まで、旧 Refresh Token は同一冪等リクエスト以外を拒否する。
-- 暗号方式、鍵長、nonce の再利用防止、鍵ローテーションはセキュリティレビューで確定する。
-
-## 9. 受け入れ条件
-
-- Google の初回ログインで新規ユーザーが一度だけ作成される。
-- 同じ Google `sub` で再ログインすると同じ `user_id` になる。
-- Passkey 登録後、認証に成功しないと通常セッションを作成できない。
-- Recovery Key で新端末へ Key-A を復旧できる。
-- 間違った Recovery Key を一定回数以上試すと制限される。
-- Access Token の期限が切れる前に、Refresh Token で自動更新できる。
-- ログアウト後、DB のセッション失効によって Access Token と Refresh Token の両方が利用できない。
-- 使用済み Refresh Token の再利用でセッション family が失効する。
-- ログアウト後のアクセストークンが API で利用できない。
-
-## 10. 要確認
-
-- Google 認証だけでログインを完了させず、常に Passkey を必須にするか。
-- Key-B の生成・保管場所、発行条件、ローテーション。
-- Passkey が利用できない端末の代替認証。
-- アカウント削除後の認証資格情報と暗号化 envelope の扱い。
+- Googleのemailを主キーにせず、OIDC `sub`を利用する。
+- redirect URI、OAuth state、Google PKCE、アプリhandoff challengeを検証する。
+- Access/Refresh token、handoff code、Key-A/Key-B/Recovery Keyをログへ出さない。
+- JWS署名だけで認証完了とせず、DBのsessionとuser statusを確認する。
+- Refresh TokenをWebSocket / QUICへ送らない。チャット用tokenは別audienceで発行する。
+- 端末側画像暗号化の秘密鍵をAPIへ平文送信しない。

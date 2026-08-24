@@ -1,192 +1,236 @@
-# バックエンド API 仕様
+# バックエンド API 仕様（実装基準）
 
 最終更新: 2026-08-24
 
-この文書は Expo / React Native クライアントとの契約です。**実装済み**と**実装予定**を必ず区別します。実装予定の API をクライアントから本番利用してはいけません。
+この文書は、現在のGo実装とExpoテストクライアントの契約です。状態は次の記号で表します。
+
+- **実装済み**: 現在のサーバーコードにルートと処理が存在する。
+- **準備中**: DBまたは部品は存在するが、HTTP契約が未実装。
+- **予定**: 仕様のみで、クライアントから呼び出してはいけない。
 
 ## 1. 共通
 
-- Base URL（ローカル）: `http://127.0.0.1:8080/api/v1`
-- Base URL（本番）: `https://samurai-meet.disnana.com/api/v1`
+- 本番 Base URL: `https://samurai-meet.disnana.com/api/v1`
+- ローカル Base URL: `http://127.0.0.1:8080/api/v1`
+- すべての業務APIはGo APIを経由する。SQLiteは使用しない。
 - Content-Type: `application/json; charset=utf-8`
-- 認証済み API: `Authorization: Bearer <access_token>`
-- Access Token: JWS / JWT、寿命 1 分
-- Refresh Token: 256 bit 不透明 token。Secure Storage のみへ保存し、ログ/URL/LocalStorage へ出さない
-- 以下の認証・業務APIにある `/auth/...` は Base URL からの相対パスであり、公開URLは `/api/v1/auth/...` となる。
+- 時刻: UTCのRFC3339文字列
+- サービス内部ID:現在は暗号学的乱数から作るopaque `TEXT`。クライアントは形式を仮定しない。
+- 保護API: `Authorization: Bearer <access_token>`
 
-### 共通エラー形式（実装予定）
+### 1.1 エラー
 
-```json
-{
-  "error": {
-    "code": "TOKEN_EXPIRED",
-    "message": "アクセストークンの有効期限が切れています。"
-  }
-}
-```
-
-| HTTP | code | クライアント動作 |
-| --- | --- | --- |
-| 400 | `VALIDATION_ERROR` | 入力を修正して再送 |
-| 401 | `TOKEN_EXPIRED` | Refresh を一度だけ行い、元リクエストを一度だけ再送 |
-| 401 | `SESSION_REVOKED` | 保存済み token を消去し、ログイン画面へ |
-| 403 | `FORBIDDEN` | 操作を中止し理由を表示 |
-| 409 | `REFRESH_REUSE_DETECTED` | token を消去し、再ログインへ |
-
-## 2. 現在実装済み API
-
-### `GET /api/v1/healthz`
-
-認証不要。サーバープロセスの生存確認です。
+現行実装のエラーは、移行期間中は次の簡易形式です。
 
 ```json
-{ "status": "ok" }
+{ "error": "refresh_failed" }
 ```
 
-### `GET /api/v1/readyz`
+クライアントはHTTPステータスと`error`を組み合わせて処理します。Access Tokenの期限切れ・セッション失効は401、Refresh Token再利用検知は409です。
 
-認証不要。起動済み API の ready 状態です。
+## 2. ヘルスチェック（実装済み）
 
-```json
-{ "status": "ready" }
+| Method | Path | 認証 | 成功レスポンス |
+| --- | --- | --- | --- |
+| GET | `/healthz` または `/api/v1/healthz` | 不要 | `{ "status": "ok" }` |
+| GET | `/readyz` または `/api/v1/readyz` | 不要 | `{ "status": "ready" }` |
+
+Expoテストクライアントの「状態を更新」は`/api/v1/readyz`を呼びます。
+
+## 3. Google OAuth2 / OIDC（実装済み）
+
+### 3.1 開始
+
+`GET /api/v1/auth/google/start`
+
+必須query:
+
+| 名前 | 説明 |
+| --- | --- |
+| `app_redirect_uri` | OAuth完了後に戻すアプリURI |
+| `handoff_challenge` | アプリが保持するhandoff verifierのSHA-256 Base64URL |
+
+許可URI:
+
+- 本番アプリ: `samuraimeet://auth`
+- 開発用Expo Go: `samuraimeettest://auth` または `exp://<host>/--/auth`
+- `exp://` は`APP_ENV=development`、`test`、またはローカル専用の`ALLOW_EXPO_GO_REDIRECT=true`のときだけ許可する。
+- Google Consoleに登録するURIはアプリURIではなく、常に `https://samurai-meet.disnana.com/auth/callback`。
+
+サーバーはOAuth stateとGoogle用PKCE verifierをPostgreSQLへ10分保存し、Googleへリダイレクトします。stateはhashだけを検索キーにし、callbackで一回だけ消費します。
+
+### 3.2 Google callback
+
+`GET /auth/callback`
+
+Googleからauthorization codeを受け取り、OIDCのissuer、audience、署名、期限、`sub`を検証します。成功時は、DBに保存したアプリURIへ次の一回限りhandoff codeを付けて302します。
+
+```text
+<app_redirect_uri>?handoff_code=<one-time-code>
 ```
 
-## 3. 認証 API（実装予定）
+サーバーはhandoff codeのhash、ユーザー、challenge、期限（10分）を保存します。handoff code自体をログへ出しません。
 
-### `GET /api/v1/auth/google/start`
+### 3.3 アプリへの交換
 
-Google OAuth2 / OIDC を開始します。クライアントは `state` と PKCE verifier を端末メモリに保持します。
+`POST /api/v1/auth/google/exchange`
 
-| query | 必須 | 説明 |
-| --- | --- | --- |
-| `state` | はい | CSRF 対策のランダム値 |
-| `app_redirect_uri` | はい | 登録済みアプリ固有のdeep link URI |
-| `handoff_challenge` | はい | アプリが保持するhandoff verifierのSHA-256 challenge |
-
-### `POST /api/v1/auth/google/exchange`
-
-Google authorization code をバックエンドで交換・検証します。
+Request:
 
 ```json
 {
   "handoff_code": "callbackから受け取った一回限りコード",
-  "handoff_verifier": "Secure Storageに保存した検証値"
+  "handoff_verifier": "Secure Storageに保存したverifier"
 }
 ```
+
+Response:
 
 ```json
 {
   "data": {
-    "user_id": "uuid",
-    "is_new_user": true,
-    "requires_passkey": true,
-    "pre_auth_token": "短命token",
-    "pre_auth_token_expires_at": "2026-08-24T00:05:00Z"
+    "user_id": "opaque-user-id",
+    "session_id": "opaque-session-id",
+    "access_token": "JWS形式のJWT",
+    "refresh_token": "256bit以上のopaque token"
   }
 }
 ```
 
-`pre_auth_token` は 5 分・一回限りで、Passkey API にしか使えません。通常 API、画像 API、Key-B API には使えません。
+交換時にセッションとRefresh Tokenを作成します。DBコミット後にアプリが落ちても、handoff codeの期限内で同じverifierを使えば、暗号化して保存した同じ応答を再取得できます。
 
-### Passkey API
+## 4. Passkey / WebAuthn
 
-| API | 用途 | 状態 |
+DBのchallengeは5分で期限切れになり、登録・認証の完了を問わず一回だけ消費します。WebAuthnのcredential JSON、公開鍵、sign counterをPostgreSQLへ保存します。
+
+### 4.1 登録 options（実装済み）
+
+`POST /api/v1/auth/passkey/register/options`
+
+- Authorization必須（Google OAuth exchangeまたは既存Passkeyで得たAccess Token）。
+- Response:
+
+```json
+{
+  "data": {
+    "ceremony_token": "5分だけ有効なopaque token",
+    "options": { "publicKey": "WebAuthnの登録options" }
+  }
+}
+```
+
+### 4.2 登録 verify（実装済み）
+
+`POST /api/v1/auth/passkey/register/verify`
+
+- Authorization必須。
+- Header: `X-Passkey-Ceremony-Token: <ceremony_token>`
+- Body: OS / WebAuthn APIが返したcredential JSONをそのまま送る。
+- 成功: `200 { "status": "registered" }`
+
+### 4.3 ログイン options（実装済み）
+
+`POST /api/v1/auth/passkey/login/options`
+
+Bodyを空にするとdiscoverable loginです。既知ユーザーで行う場合だけ次を送れます。
+
+```json
+{ "user_id": "opaque-user-id" }
+```
+
+Responseの`data.ceremony_token`と`data.options`は登録optionsと同じ形式です。ログインoptions自体にはAccess Tokenは不要です。
+
+### 4.4 ログイン verify（実装済み）
+
+`POST /api/v1/auth/passkey/login/verify`
+
+- Header: `X-Passkey-Ceremony-Token: <ceremony_token>`
+- Body: OS / WebAuthn APIが返したassertion JSONをそのまま送る。
+- 成功: Google exchangeと同じ`data`形式で新しいセッションを返す。
+- 成功時にcredentialのsign counterと`last_used_at`を更新する。
+
+### 4.5 登録済みPasskeyの管理（実装済み）
+
+| Method | Path | 説明 |
 | --- | --- | --- |
-| `POST /auth/passkey/register/options` | registration challenge を取得 | 実装予定 |
-| `POST /auth/passkey/register/verify` | credential を検証・保存し通常 session を作成 | 実装予定 |
-| `POST /auth/passkey/login/options` | login challenge を取得 | 実装予定 |
-| `POST /auth/passkey/login/verify` | assertion を検証し通常 session を作成 | 実装予定 |
+| GET | `/api/v1/auth/passkey` | 自分のcredential ID、作成日時、最終利用日時を取得 |
+| DELETE | `/api/v1/auth/passkey/{credential_id}` | 自分のcredentialだけを削除 |
 
-Passkey 成功後の token 応答:
+## 5. JWS Access Token / Refresh Token
 
-```json
-{
-  "data": {
-    "access_token": "jws.jwt",
-    "access_token_expires_at": "2026-08-24T00:01:00Z",
-    "refresh_token": "opaque-token",
-    "session_id": "uuid"
-  }
-}
-```
+### 5.1 Token policy
 
-### `POST /auth/refresh`
+| Token | 現行値 | 保存 |
+| --- | --- | --- |
+| Access Token | HS256 JWS-JWT、TTL 1分 | アプリのメモリ優先。Secure Storageへ長期保存しない |
+| Refresh Token | 32byte opaque乱数 | アプリSecure Storage。DBはSHA-256 hashのみ |
+| Session | 絶対期限90日、アイドル期限30日 | PostgreSQL `sessions` |
+| 同一Refresh再送 | 30秒 | PostgreSQL `refresh_attempts`に暗号化レスポンスを保存 |
+
+署名鍵はAPIだけが保持します。JWS claimsの`sid`は`sessions.id`、`sub`は`users.id`です。APIは署名と期限だけでなく、`sid`のセッション状態、期限、アイドル期限、ユーザー状態をDBで確認します。
+
+### 5.2 更新
+
+`POST /api/v1/auth/refresh`
+
+Request（新クライアントは`request_id`を使用。互換のため`refresh_request_id`も受理）:
 
 ```json
 {
   "refresh_token": "opaque-token",
-  "refresh_request_id": "uuid"
+  "request_id": "client-generated-id"
 }
 ```
 
-- Access Token の残りが 30 秒以下のときだけ実行する。
-- 同じ `refresh_request_id` は 30 秒だけ同じ結果を再取得できる。
-- 別の request ID で使用済み Refresh Token を送った場合、同じ token family を失効する。
-- 新しい token を Secure Storage へ保存してから旧 token を置換する。
+処理は対象Refresh Tokenを`FOR UPDATE`でロックし、次を一つのPostgreSQL transactionで実行します。
 
-### ログアウト・セッション（実装予定）
+1. sessionがactive、絶対期限内、アイドル期限内か確認。
+2. 未使用なら旧tokenを`used_at`にし、新Refresh Tokenと新Access Tokenを発行。
+3. 同じsession・同じrequest ID・同じ旧token hashの成功記録が30秒以内なら、暗号化した同じ応答を返す。
+4. 使用済みtokenが別request IDで送られたらreuseとみなし、sessionと全Refresh Tokenを失効し、409を返す。
 
-| API | 動作 |
-| --- | --- |
-| `POST /auth/logout` | 現在 session と Refresh Token を失効 |
-| `POST /auth/logout-all` | 全端末の session と Refresh Token を失効 |
-| `GET /me/sessions` | 自端末の session 一覧を取得 |
-| `DELETE /me/sessions/{session_id}` | 指定端末を失効 |
+成功レスポンスはGoogle exchangeと同じ`data`形式です。新しいtokenをSecure Storageへ保存してから、アプリ側の旧tokenを置き換えます。
 
-## 4. 画像 API（実装予定）
+### 5.3 セッション管理（実装済み）
 
-### 端末側暗号化の原則
+| Method | Path | 説明 |
+| --- | --- | --- |
+| POST | `/api/v1/auth/logout` | 現在のsessionとそのRefresh Tokenを失効 |
+| POST | `/api/v1/auth/logout-all` | ユーザーの全sessionを失効 |
+| GET | `/api/v1/me/sessions` | 有効なsession一覧。token値は返さない |
+| DELETE | `/api/v1/me/sessions/{session_id}` | 所有者の指定sessionを失効 |
 
-1. 端末で画像ごとのランダムな 256 bit 画像鍵を生成する。
-2. 端末で AES-256-GCM 暗号化する。
-3. 暗号文、nonce、暗号文 SHA-256、鍵ラップ情報だけを送信する。
-4. 画像平文、Key-A、Key-B、Recovery Key を送信・ログ保存しない。
+失効後のAccess Tokenは署名が正しくても、DBのsession確認で拒否されます。
 
-### `GET /crypto/profile-wrapping-key`
+## 6. 画像・鍵・業務APIの状態
 
-プロフィール画像用のサーバー公開鍵（RSA-OAEP-256 JWK）を返します。端末は画像鍵をこの公開鍵でラップします。
+| 機能 | 状態 | 現行の根拠 |
+| --- | --- | --- |
+| 暗号文専用privateファイル保存 | 部品実装済み | `internal/image` |
+| 暗号文キャッシュ | 部品実装済み | `internal/image/cache.go` |
+| プロフィール画像鍵のRSA-OAEPラップ | 部品実装済み | `internal/image/wrapping.go` |
+| 端末Key-A / Recovery Key envelope HTTP | 準備中 | `key_envelopes` migrationのみ |
+| 写真upload/download/delete HTTP | 予定 | API route未接続 |
+| 退会オーケストレーション | 予定 | session失効・DB論理削除・ファイル削除を一体化する |
+| チャットQUIC用短命Chat Token | 予定 | Access/Refreshとは別audienceで実装する |
 
-```json
-{
-  "data": {
-    "kty": "RSA",
-    "alg": "RSA-OAEP-256",
-    "use": "enc",
-    "n": "base64url-modulus",
-    "e": "AQAB",
-    "key_version": "v1"
-  }
-}
-```
+未接続の画像・Recovery APIをフロントエンドから呼び出してはいけません。画像平文、Key-A、Key-B、Recovery Key、Refresh TokenをAPIログへ出さない不変条件は実装済み部品にも適用します。
 
-### `POST /photos`
+## 7. クライアント更新手順
 
-`multipart/form-data` またはバイナリ upload の詳細は実装と同時に確定します。必須メタデータは以下です。
+1. 起動、フォアグラウンド復帰、API呼び出し前にAccess Tokenの残り時間を確認する。
+2. 残り30秒以下ならクライアント内single-flightでRefreshを一つだけ実行する。
+3. 通信結果が不明なら同じ`request_id`で30秒以内に一度だけ再送する。
+4. 409 `refresh_reuse_detected`、Refresh失敗、handoff失敗時はAccess/Refreshと一時verifierを削除してログイン画面へ戻す。
+5. Refresh TokenはWebSocket・QUICのURLやメッセージへ送らない。Chat TokenはRESTで別発行する。
 
-| フィールド | 説明 |
-| --- | --- |
-| `visibility` | `private` または `profile` |
-| `ciphertext` | AES-GCM 暗号文 |
-| `nonce` | Base64URL nonce |
-| `cipher_sha256` | 暗号文の SHA-256 hex |
-| `key_version` | 鍵バージョン |
-| `wrapped_image_key` | private は端末鍵、profile は RSA-OAEP-256 でラップした画像鍵 |
+## 8. 実装追加時の必須更新
 
-暗号文は private フォルダに保存し、PostgreSQL の `photos` テーブルにはメタデータだけを保存します。
+実装を追加したら、同じ変更で次を更新します。
 
-### 削除と退会
-
-`DELETE /photos/{photo_id}` と退会処理では、DB の公開状態を失効し、暗号文ファイルを削除し、メモリの暗号文キャッシュも即時無効化します。
-
-## 5. フロントエンドの token 更新規約
-
-1. アプリ起動・フォアグラウンド復帰・API 呼び出し前に Access Token の残り時間を確認する。
-2. 残り 30 秒以下なら single-flight で一つだけ Refresh を実行する。
-3. `401 TOKEN_EXPIRED` の場合だけ Refresh して元リクエストを一度だけ再送する。
-4. Refresh の結果が不明なら、**同じ** `refresh_request_id` だけを再送する。
-5. 失敗したら Access / Refresh Token を両方消し、Google + Passkey ログインへ戻る。
-6. バックグラウンド中に定期 Refresh をしない。
-
-## 6. 実装を追加する人へ
-
-API を実装したら、同じコミットでこの文書、[STATUS.md](STATUS.md)、[TODO.md](TODO.md)、`docs/api.md` を更新する。仕様と実装が食い違う場合、実装前に仕様を明確化する。
+- `backend/API_SPEC.md`
+- `backend/STATUS.md`
+- `backend/TODO.md`
+- `docs/features/auth.md` または該当機能仕様
+- `docs/database.md` とmigration README
+- Go単体テスト、PostgreSQL統合テスト、Expoクライアントの型検査

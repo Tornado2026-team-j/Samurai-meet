@@ -2,33 +2,62 @@
 
 最終更新: 2026-08-24
 
-## 明日: 外部認証の実接続
+## 完了済み（再確認用）
 
-- [ ] Google Cloud Console で OAuth クライアントを作成し、`GOOGLE_CLIENT_ID`、`GOOGLE_CLIENT_SECRET`、`GOOGLE_REDIRECT_URI` を `backend/.env` に設定する。
-- [ ] Google Cloud Console の許可済み redirect URI を `GOOGLE_REDIRECT_URI` と完全一致させる。
-- [ ] Passkey 用の実ドメインを決め、`WEBAUTHN_RP_ID` と `WEBAUTHN_RP_ORIGIN` を設定する。本番では HTTPS を必須にする。
-- [ ] `GET /auth/google/start` と `POST /auth/google/exchange` を実環境の Google アカウントで通す。
-- [ ] Passkey の登録・認証儀式を実端末 / 実ブラウザで通す。
+- [x] Google OIDC、PKCE、DB state、単一Web callback、アプリhandoff
+- [x] アプリ中断後のhandoff再交換とSecure Storage保存
+- [x] JWS Access Token、PostgreSQL session、Refresh rotation、reuse失効
+- [x] logout / logout-all / session一覧 / session個別失効
+- [x] Passkeyの登録・認証・追加・一覧・解除API
+- [x] Expo Go用OAuth/sessionテストクライアントと「状態を更新」ボタン
+- [x] PostgreSQL migration、Go/Python/Bun CI、失敗時PRコメント集約
 
-## 認証 API の実装
+## 1. 次の実装: 端末鍵とRecovery Key
 
-- [ ] Google `sub` を `users.google_subject_id` に保存・取得するリポジトリを実装する。
-- [ ] OAuth の `state` と PKCE verifier を DB に短期保存し、コールバックで一回使用にする。
-- [ ] `pre_auth_token`、Passkey challenge、credential の永続化を実装する。
-- [ ] Passkey 成功後にセッション、Access Token、Refresh Token を発行する。
-- [ ] `POST /auth/refresh` のトークン回転、30 秒の同一 `refresh_request_id` 再送、別 request ID の reuse 時の family 失効を実装する。
-- [ ] ログアウト、全端末ログアウト、セッション一覧、個別失効 API を HTTP ルーターへ接続する。
+- [ ] Key-Aを端末Secure Storageで生成・保存するTypeScript crypto serviceを追加する。
+- [ ] Recovery Keyを表示前に一度だけ生成し、再表示不可のUIにする。
+- [ ] Recovery KeyからHKDF用の鍵を導出し、Key-AをAES-256-GCMで端末上暗号化する。
+- [ ] `key_envelopes`の作成・取得・ローテーションAPIを追加する。
+- [ ] Recovery Keyの試行回数、レート制限、監査イベント、失敗時のロックを追加する。
+- [ ] Recovery / Key-B / 新端末登録 / 退会を直近Passkey認証必須にする。
+- [ ] 復旧途中にアプリが落ちても、状態を再開できる有限状態機械をクライアントへ追加する。
 
-## 画像暗号化・鍵管理
+## 2. 次の実装: 暗号化画像
 
-- [ ] Expo 側で Key-A + Key-B から画像鍵を導出し、AES-256-GCM で暗号化してからアップロードする。
-- [ ] プロフィール画像用の RSA 公開鍵を API で配信し、端末側で画像鍵を RSA-OAEP-256 ラップする。
-- [ ] サーバー用 RSA 秘密鍵を `.env` ではなく KMS / Secret Manager へ移す。
-- [ ] 画像アップロード、ダウンロード、プロフィール画像の復号・配信 API を認可と接続する。
-- [ ] 退会トランザクションから DB 論理削除、Refresh Token 失効、暗号文ファイル削除、キャッシュ無効化を順に実行する。
+- [ ] 端末で画像ごとの256bit画像鍵を作り、AES-256-GCMで暗号化する。
+- [ ] `GET /crypto/profile-wrapping-key`でRSA-OAEP-256公開鍵を配信する。
+- [ ] `POST /photos`、`GET /photos/{id}`、`DELETE /photos/{id}`を認証・所有権確認と接続する。
+- [ ] private画像は端末鍵ラップ、profile画像はサーバー公開鍵ラップという種別を明示する。
+- [ ] MIME、暗号文サイズ、nonce長、SHA-256、key versionをサーバーで検証する。
+- [ ] ダウンロードは認証済みストリームと暗号文cacheだけを使い、平文画像をcacheしない。
+- [ ] upload途中・DB失敗・再試行・孤児ファイルのcleanupをテストする。
 
-## 検証・運用
+## 3. 次の実装: 退会・削除の確実性
 
-- [ ] Docker Compose の PostgreSQL を起動して `RUN_DATABASE_SMOKE_TEST=1` の HTTP スモークテストを実行する。
-- [ ] CI の PostgreSQL サービス上で migration / HTTP スモークテストが緑であることを確認する。
-- [ ] Google OAuth・Passkey 実接続後にセキュリティ監査を再実施する。
+- [ ] `DELETE /me`を実装し、ユーザーをdeletedにして全sessionを即時失効する。
+- [ ] photos metadataの削除状態とprivate暗号文ファイル削除を同じ業務workflowで扱う。
+- [ ] cache keyを全削除し、削除漏れを定期reconcilerで検出する。
+- [ ] 削除証跡を監査ログへ記録する。ただし画像平文、鍵、tokenを記録しない。
+- [ ] バックアップ保持期間と物理削除の運用手順を確定する。
+
+## 4. Passkey本番確認
+
+- [ ] Development BuildへPasskey native moduleを追加する（Expo Goでは検証しない）。
+- [ ] iOS Associated Domains / Android assetlinksを本番ドメインで設定する。
+- [ ] 登録、同一端末ログイン、別端末discoverable login、credential追加・解除を実機で通す。
+- [ ] sign counter、clone warning、バックアップ可能credentialの方針を監査する。
+
+## 5. API・業務機能
+
+- [ ] `/me`、プロフィール、本人確認、募集カード、位置情報、キーワード検索を実装する。
+- [ ] マッチ・相互評価・ブロック・通報を実装する。
+- [ ] WebSocket / QUIC用Chat TokenをAccess/Refreshとは別audienceで実装する。
+- [ ] チャットの暗号文、写真添付、冪等client message ID、失効heartbeatを実装する。
+
+## 6. CI・運用
+
+- [ ] PostgreSQL統合テストでOAuth handoff、Refresh同時実行、reuse失効、Passkey challenge一回性を追加する。
+- [ ] 実DBでmigration再実行が安全であることを確認する。
+- [ ] OSVのExpo `image-size`期限付き例外を2026-09-07までに再評価する。
+- [ ] 本番では`ALLOW_EXPO_GO_REDIRECT=false`にし、Development Buildの固定schemeだけを許可する。
+- [ ] Go、Bun、GitHub Actionsの依存更新後に監査と分割コミットを行う。

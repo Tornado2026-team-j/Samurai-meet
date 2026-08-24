@@ -19,11 +19,11 @@ Samurai Meet は、次の分担で実装します。
 | OAuth / Passkey 検証 | Google ID Token、WebAuthn assertion 検証 | Go | `backend/internal/auth` |
 | 画像 API | アップロード、認可、メタデータ、削除 | Go | `backend/internal/image` |
 | 画像変換・検査 | リサイズ、サムネイル、EXIF 除去、形式検査 | Go | 画像処理ライブラリを採用。運用要件により専用 worker 化 |
-| 永続化 | ユーザー、カード、マッチ、チャット、評価 | SQL | PostgreSQL（開発・CI・運用） |
+| 永続化 | ユーザー、カード、マッチ、チャット、評価 | Go + SQL | PostgreSQL（開発・CI・運用） |
 | 距離検索 | 現在地と募集カードの距離判定 | SQL | PostgreSQL / PostGIS |
 | セッション失効 | Access Token の検証、Refresh Token ローテーション | Go + SQL | `sessions`, `refresh_tokens` |
-| DB migration | テーブル、制約、インデックス、RLS 方針 | SQL | `backend/migrations/*.sql` |
-| テスト | UI、API、業務ロジック、E2E | TypeScript / Go / SQL | Jest/Vitest、Go test、API/E2E テスト |
+| DB migration | テーブル、制約、インデックス、削除方針 | SQL | `backend/migrations/*.sql`、PostgreSQLのみ |
+| テスト | UI、API、業務ロジック、E2E、鍵生成 | TypeScript / Go / Python / SQL | Bun test、Go test、Python unittest、API/E2E テスト |
 | 設定・デプロイ | 環境変数、CI、コンテナ、監視設定 | YAML / Dockerfile / Bash 等 | リポジトリと実行環境で管理 |
 
 ## 2. 機能別の実装担当

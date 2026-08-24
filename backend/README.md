@@ -9,11 +9,12 @@
 ## 現在の内容
 
 - 標準ライブラリによる HTTP サーバー
-- 公開API: `GET /api/v1/healthz` と `GET /api/v1/readyz`
-- PostgreSQL を使う認証・セッション migration
-- Access Token 1 分、Refresh 再送の冪等性 30 秒を表すドメイン型
+- 公開API: health/readiness、Google OAuth handoff、Passkey、JWS/Refresh、session管理
+- PostgreSQLを使う認証・セッション・OAuth・Passkey・画像メタデータ migration
+- Access Token 1分、Refresh rotation、同一Refresh再送の冪等性30秒
+- Expo Go用OAuth/session操作クライアント（`backend/expo-test`）
 
-Google OAuth、Passkey、JWS の発行・検証は後続コミットで実装します。PostgreSQL 接続と migration は起動時に実行します。
+画像upload、Recovery Key envelope、退会削除workflowは次段階です。PostgreSQL接続とmigrationは起動時に実行します。
 
 ## 起動
 
@@ -46,11 +47,11 @@ go run ./cmd/server
 
 ## DB migration
 
-`migrations/0001_auth_sessions.sql` は、ユーザー、Passkey、仮認証、セッション、Refresh Token、Refresh 再送の冪等性記録を作成します。
+`migrations/0001_auth_sessions.sql`以降は、ユーザー、Passkey、challenge、OAuth、セッション、Refresh Token、画像メタデータを作成します。
 
 - 運用環境：PostgreSQL（メイン DB）
 - ローカル開発・CI テスト：PostgreSQL
-- UUID と UTC 時刻はアプリケーション側で生成・保存する方針です。
+- 現在のサービスIDはアプリケーションが生成するopaque TEXT、時刻はUTC RFC3339文字列です。
 
 詳細は [認証仕様](../docs/features/auth.md)、[DB 仕様](../docs/database.md)、[API 仕様](../docs/api.md) を参照してください。
 

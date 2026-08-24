@@ -1,250 +1,164 @@
-# DB 仕様書
+# DB仕様書（PostgreSQL）
+
+最終更新: 2026-08-24
 
 ## 1. 採用方針
 
-- DB エンジンは PostgreSQL のみとする。本番、開発、CI は同一の PostgreSQL スキーマを利用する。
-- PostgreSQL では PostGIS 拡張を利用できる。PostGIS は別 DB ではなく PostgreSQL の拡張である。
-- 距離検索のため PostGIS を有効化する。
-- DB の主キーは UUID とする。
-- `users` は認証アカウント、`profiles` は公開プロフィールとして分離する。
-- 画像本体は DB へ保存せず、非公開ストレージのキーを保存する。
-- migration は `backend/migrations/*.sql` で管理する。
-- クライアントから DB を直接更新せず、Go API の認証・認可を通す。
+- DBはPostgreSQLのみ。本番、開発、CIで同じSQL migrationを使う。
+- SQLiteは採用しない。暗号化画像本体もDBへ保存しない。
+- クライアントからDBへ直接接続させず、Go APIの認証・認可を通す。
+- 現在のmigrationはサービスIDをopaque `TEXT`で保存する。将来UUIDへ変更する場合は全API、ファイルパス、migrationを同時に更新する。
+- migrationは`backend/migrations/*.sql`をファイル名順に適用する。アプリ起動時に同じDDLを再実行できる形にしている。
 
-## 2. ER 概要
+## 2. 現在のmigration
 
-```mermaid
-erDiagram
-    users ||--|| profiles : has
-    users ||--o{ passkey_credentials : owns
-    users ||--o{ auth_challenges : uses
-    users ||--o{ sessions : opens
-    sessions ||--o{ refresh_tokens : rotates
-    sessions ||--o{ refresh_attempts : retries
-    users ||--o{ user_locations : updates
-    users ||--o{ recruitment_cards : creates
-    recruitment_cards ||--o{ matches : receives
-    users ||--o{ matches : requests
-    matches ||--o{ messages : contains
-    messages ||--o{ photos : attaches
-    users ||--o{ photos : owns
-    matches ||--o{ reviews : receives
-    users ||--o{ reviews : writes
-    users ||--o{ profile_likes : sends
-    users ||--o{ profile_likes : receives
-    users ||--o{ reports : submits
-    users ||--o{ blocks : blocks
-```
+| ファイル | 内容 |
+| --- | --- |
+| `0001_init.sql` | 初期プレースホルダー（既存環境互換） |
+| `0001_auth_sessions.sql` | users、Passkey credential、challenge、session、Refresh Token、retry、key envelope |
+| `0002_images.sql` | photosの暗号文メタデータ |
+| `0003_oauth_states.sql` | Google OAuth state |
+| `0004_mobile_oauth_handoffs.sql` | アプリhandoffとchallenge |
+| `0005_oauth_handoff_retry.sql` | crash-safe handoff応答 |
+| `0006_refresh_attempt_nonce.sql` | Refresh応答nonce |
+| `0007_passkey_storage.sql` | discoverable challengeのnullable user、credential JSON |
 
-## 3. テーブル定義
+注意: 現行の簡易migration runnerはSQLファイルを順番に実行する。migration履歴テーブルによる本番適用管理を導入する場合は、既存環境の適用済み状態を確認してから切り替える。
 
-### 3.1 `users`
+## 3. 認証テーブル
 
-| カラム | 型 | 制約 / 用途 |
+### `users`
+
+| カラム | 型 | 用途 |
 | --- | --- | --- |
-| `id` | uuid | PK。サービス用個人識別 ID |
-| `google_subject_id` | text | NOT NULL、UNIQUE。Google OIDC の `sub` |
+| `id` | text | サービス用個人識別ID、PK |
+| `google_subject_id` | text | Google OIDC `sub`、UNIQUE |
 | `status` | text | `active / suspended / deleted` |
-| `created_at` | timestamptz | NOT NULL |
-| `updated_at` | timestamptz | NOT NULL |
-| `deleted_at` | timestamptz | 論理削除時のみ |
+| `created_at` / `updated_at` | text | UTC RFC3339 |
+| `deleted_at` | text | 論理削除時 |
 
-### 3.2 `profiles`
+### `passkey_credentials`
 
-| カラム | 型 | 制約 / 用途 |
+| カラム | 型 | 用途 |
 | --- | --- | --- |
-| `user_id` | uuid | PK、`users.id` への FK |
-| `name` | text | 表示名。長さ制限を設定 |
-| `nationality_code` | char(2) | ISO 3166-1 等 |
-| `icon_photo_id` | uuid | `photos.id`。任意 |
-| `identity_status` | text | `unverified / pending / verified / rejected / expired` |
-| `likes_count` | integer | `DEFAULT 0`、0 以上 |
-| `monster` | jsonb または text | 仕様未確定 |
-| `bio` | text | 任意の自己紹介 |
-| `created_at` / `updated_at` | timestamptz | NOT NULL |
+| `id` | text | credential recordのPK |
+| `user_id` | text | `users.id`へのFK |
+| `credential_id` | text | WebAuthn credential IDのBase64URL、UNIQUE |
+| `public_key` | text | COSE公開鍵のBase64URL（legacy fallback） |
+| `credential_json` | text | WebAuthn libraryのcredential JSON |
+| `sign_count` | bigint | clone検知用カウンタ |
+| `created_at` | text | 登録日時 |
+| `last_used_at` | text | 最終認証日時 |
 
-### 3.3 `recruitment_cards`
-
-| カラム | 型 | 制約 / 用途 |
-| --- | --- | --- |
-| `id` | uuid | PK |
-| `owner_user_id` | uuid | `users.id` への FK |
-| `available_date` | date | 交流可能日 |
-| `start_time` / `end_time` | time | 時間帯 |
-| `timezone` | text | IANA タイムゾーン |
-| `keywords` | text[] または正規化テーブル | 検索用 |
-| `visibility_radius_km` | smallint | `1 / 3 / 5` の CHECK |
-| `location` | geography(Point, 4326) | 距離検索用。外部へ正確な値を返さない |
-| `status` | text | `draft / open / matched / closed / expired` |
-| `expires_at` | timestamptz | 期限切れ処理用 |
-| `created_at` / `updated_at` | timestamptz | NOT NULL |
-
-### 3.4 `matches`
-
-| カラム | 型 | 制約 / 用途 |
-| --- | --- | --- |
-| `id` | uuid | PK |
-| `card_id` | uuid | `recruitment_cards.id` への FK |
-| `requester_user_id` | uuid | 関心を送ったユーザー |
-| `owner_user_id` | uuid | 募集カード作成者 |
-| `status` | text | `pending / accepted / rejected / blocked / expired / completed` |
-| `matched_at` | timestamptz | 相互承認時 |
-| `created_at` / `updated_at` | timestamptz | NOT NULL |
-
-制約：`UNIQUE(card_id, requester_user_id)`。`requester_user_id <> owner_user_id` も CHECK する。
-
-### 3.5 `messages`
-
-| カラム | 型 | 制約 / 用途 |
-| --- | --- | --- |
-| `id` | uuid | PK、サーバー側で採番 |
-| `match_id` | uuid | `matches.id` への FK |
-| `sender_user_id` | uuid | 送信者 |
-| `message_type` | text | `text / photo / system` |
-| `ciphertext` | bytea または text | 暗号化本文。暗号化方式確定後に決定 |
-| `nonce` | bytea | AEAD 用 nonce |
-| `key_version` | text | 鍵ローテーション用 |
-| `client_message_id` | text | 冪等性制御。`match_id` と一意にする |
-| `sent_at` | timestamptz | サーバー確定時刻 |
-| `read_at` | timestamptz | 既読時刻 |
-| `deleted_at` | timestamptz | 論理削除 |
-
-### 3.6 `photos`
-
-| カラム | 型 | 制約 / 用途 |
-| --- | --- | --- |
-| `id` | uuid | PK |
-| `owner_user_id` | uuid | 所有者 |
-| `message_id` | uuid | チャット添付時。アイコンは NULL 可 |
-| `storage_key` | text | 非公開ストレージのキー |
-| `mime_type` | text | サーバーで再検証 |
-| `size_bytes` | bigint | サイズ上限を検証 |
-| `width` / `height` | integer | 表示用 |
-| `encrypted` | boolean | クライアント暗号化済みか |
-| `nonce` | bytea | 暗号化時のみ |
-| `created_at` / `deleted_at` | timestamptz | 保持・削除管理 |
-
-### 3.7 認証・暗号化・安全系テーブル
-
-| テーブル | 主なカラム | 目的 |
-| --- | --- | --- |
-| `passkey_credentials` | `user_id`, `credential_id`, `public_key`, `sign_count` | Passkey 公開鍵と端末資格情報 |
-| `auth_challenges` | `user_id`, `type`, `token_hash`, `scope`, `expires_at`, `used_at` | `pre_auth_token` と Passkey challenge の一回性・期限管理 |
-| `sessions` | `id`, `user_id`, `status`, `created_at`, `last_seen_at`, `expires_at`, `revoked_at`, `revoked_reason` | JWS 署名付き JWT の `sid` と紐づくログインセッション |
-| `refresh_tokens` | `id`, `session_id`, `token_hash`, `issued_at`, `expires_at`, `used_at`, `revoked_at` | Refresh Token のローテーションと再利用検知。平文は保存しない |
-| `refresh_attempts` | `session_id`, `request_id`, `old_token_hash`, `response_ciphertext`, `expires_at` | 通信結果が失われた同一 Refresh 操作を 30 秒だけ冪等に再取得 |
-| `key_envelopes` | `user_id`, `encrypted_key_a`, `nonce`, `kdf_params`, `key_version` | 暗号化済み Key-A。Recovery Key 平文は保存しない |
-| `user_locations` | `user_id`, `location`, `accuracy_m`, `captured_at`, `expires_at` | 最新位置。履歴を原則保存しない |
-| `identity_verifications` | `user_id`, `provider`, `status`, `provider_reference`, `verified_at` | 本人確認状態とプロバイダー参照値 |
-| `reviews` | `match_id`, `reviewer_user_id`, `reviewee_user_id`, `rating`, `comment` | 相互評価。レビュー方式は要確認 |
-| `profile_likes` | `sender_user_id`, `receiver_user_id`, `created_at` | いいねの原票。一人一回を一意制約 |
-| `reports` | `reporter_user_id`, `target_type`, `target_id`, `reason`, `status` | 通報と運営処理 |
-| `blocks` | `blocker_user_id`, `blocked_user_id`, `created_at` | 表示・チャット・関心の遮断 |
-| `audit_logs` | `actor_user_id`, `action`, `target`, `request_id`, `created_at` | 管理・セキュリティ監査 |
-
-## 4. インデックス・制約
-
-- `users.google_subject_id`：UNIQUE
-- `recruitment_cards.location`：GiST 空間インデックス
-- `recruitment_cards(status, available_date, expires_at)`：検索用複合インデックス
-- `recruitment_cards.keywords`：GIN または正規化キーワードテーブルのインデックス
-- `messages(match_id, sent_at)`：履歴取得用
-- `matches(card_id, requester_user_id)`：UNIQUE
-- `reviews(match_id, reviewer_user_id)`：UNIQUE
-- `profile_likes(sender_user_id, receiver_user_id)`：UNIQUE
-- `blocks(blocker_user_id, blocked_user_id)`：UNIQUE
-- `sessions(user_id, revoked_at, expires_at)`：有効セッション確認用
-- `auth_challenges(token_hash)`：UNIQUE。仮認証 token のハッシュ検索用
-- `refresh_tokens(token_hash)`：UNIQUE。Refresh Token のハッシュ検索用
-- `refresh_tokens(session_id, used_at, revoked_at)`：ローテーション・失効確認用
-- `refresh_attempts(session_id, request_id)`：UNIQUE。同一 Refresh 操作の冪等性用
-- 公開カードは `status = open`、`expires_at > now()`、かつ距離が半径以内の場合だけ返す。
-- 位置情報と本人確認の詳細は、一般ユーザー向け SELECT 経路から除外する。
-
-## 5. migration 方針
-
-1. `0001_init.sql`：`users`, `profiles`, `recruitment_cards`, `matches`, `messages`, `photos`
-2. `0002_auth.sql`：`passkey_credentials`, `auth_challenges`, `sessions`, `refresh_tokens`, `refresh_attempts`, `key_envelopes`
-3. `0003_location.sql`：PostGIS、`user_locations`、地理空間インデックス
-4. `0004_review.sql`：`reviews`, `profile_likes`
-5. `0005_safety.sql`：`reports`, `blocks`, `audit_logs`
-
-各 migration は前方適用可能な形で管理し、本番 DB へ手動 SQL を直接実行しない。削除・カラム変更は、ロールバックまたは段階的移行の手順を用意する。
-
-## 6. `sessions` / `refresh_tokens` の詳細
+credential JSONは検証に必要な情報を保持する。DBアクセス権限を持つ運用者でも、秘密鍵を得られない設計にする。
 
 ### `auth_challenges`
 
 | カラム | 型 | 用途 |
 | --- | --- | --- |
-| `id` | uuid | challenge ID |
-| `user_id` | uuid | `users.id` |
+| `id` | text | challenge recordのPK |
+| `user_id` | text nullable | 登録・既知ユーザーloginは設定。discoverable loginはNULL |
 | `type` | text | `pre_auth / passkey_register / passkey_login` |
-| `token_hash` | bytea または text | 仮認証 token / challenge のハッシュ |
-| `scope` | text[] または text | 許可する操作。`pre_auth` は Passkey 関連だけ |
-| `expires_at` | timestamptz | 5 分以内を基本とする |
-| `used_at` | timestamptz | 一回使用後に設定 |
-| `created_at` | timestamptz | 作成日時 |
+| `token_hash` | text | ceremony tokenのSHA-256 hash、UNIQUE |
+| `scope` | text | WebAuthn `SessionData` JSON |
+| `expires_at` | text | 現在5分 |
+| `used_at` | text | 一回使用後 |
+| `created_at` | text | 作成日時 |
 
-`used_at IS NULL` かつ `expires_at > now()` の challenge だけを受け付けます。`pre_auth_token` の平文は DB やログへ保存しません。
+`used_at IS NULL`かつ期限内だけを受け付け、検証処理の前に行ロックして一回使用にする。ceremony token平文はDBへ保存しない。
+
+### `oauth_states`
+
+`state_hash`、Google PKCE `code_verifier`、`app_redirect_uri`、`handoff_challenge`、期限、使用日時を持つ。state平文ではなくhashを検索し、callbackで一回消費する。
+
+### `oauth_handoffs`
+
+`code_hash`、`user_id`、アプリhandoff challenge、期限、使用日時、暗号化済み応答とnonceを持つ。handoff codeは一回限りだが、同じverifierによる期限内の再送だけは同じ応答を返す。
+
+## 4. セッションテーブル
 
 ### `sessions`
 
 | カラム | 型 | 用途 |
 | --- | --- | --- |
-| `id` | uuid | セッション ID。JWT の `sid` に入れる |
-| `user_id` | uuid | `users.id` |
+| `id` | text | JWS `sid`、PK |
+| `user_id` | text | `users.id` |
+| `family_id` | text | Refresh rotationの失効単位 |
 | `status` | text | `active / revoked / expired` |
-| `family_id` | uuid | Refresh Token のローテーション単位 |
-| `device_name` | text | ユーザーが識別する端末名。任意 |
-| `created_at` | timestamptz | セッション作成日時 |
-| `last_seen_at` | timestamptz | 最終 API / Refresh 利用時刻 |
-| `expires_at` | timestamptz | 絶対期限 |
-| `revoked_at` | timestamptz | 失効日時 |
-| `revoked_reason` | text | `logout / logout_all / reuse_detected / admin / expired` 等 |
+| `device_name` | text nullable | 端末表示名 |
+| `created_at` / `last_seen_at` | text | 作成・最終利用 |
+| `expires_at` | text | 絶対期限（現在90日） |
+| `revoked_at` / `revoked_reason` | text | 失効情報 |
+
+Access Token検証時も`sessions.status`、`expires_at`、アイドル期限、`users.status`を確認する。ログアウト後に署名が正しい旧Access Tokenを受け付けない。
 
 ### `refresh_tokens`
 
 | カラム | 型 | 用途 |
 | --- | --- | --- |
-| `id` | uuid | Refresh Token の世代 ID |
-| `session_id` | uuid | `sessions.id` |
-| `token_hash` | bytea または text | 平文ではなくハッシュを保存 |
-| `issued_at` | timestamptz | 発行日時 |
-| `expires_at` | timestamptz | アイドル・絶対期限の判定 |
-| `used_at` | timestamptz | ローテーション済み日時 |
-| `revoked_at` | timestamptz | 個別失効日時 |
+| `id` | text | token世代ID |
+| `session_id` | text | session FK |
+| `token_hash` | text | Refresh TokenのSHA-256、平文禁止、UNIQUE |
+| `issued_at` / `expires_at` | text | 発行・絶対期限 |
+| `used_at` / `revoked_at` | text | rotation・失効 |
 
-Refresh 処理は PostgreSQL のトランザクション内で対象 token の更新と新 token の追加を一体化します。対象 token は `SELECT ... FOR UPDATE` でロックします。使用済み token が別の request ID で再度送られた場合は、同じ `family_id` のセッションを失効させます。
+Refreshは対象行を`FOR UPDATE`し、旧token使用済み化、新token追加、session最終利用更新をtransactionで行う。
 
 ### `refresh_attempts`
 
 | カラム | 型 | 用途 |
 | --- | --- | --- |
-| `id` | uuid | 冪等性記録 ID |
-| `session_id` | uuid | `sessions.id` |
-| `request_id` | uuid | クライアントが Refresh ごとに生成する ID |
-| `old_token_hash` | bytea または text | その操作で使用した旧 token のハッシュ |
-| `response_ciphertext` | bytea または text | 新 token を含むレスポンスの暗号化データ。平文は保存しない |
-| `expires_at` | timestamptz | 30 秒後に失効 |
-| `created_at` | timestamptz | 作成日時 |
+| `id` | text | retry recordのPK |
+| `session_id` | text | session FK |
+| `request_id` | text | クライアントがRefreshごとに作るID |
+| `old_token_hash` | text | 旧token hash |
+| `response_ciphertext` | text | tokenを含む応答の暗号文 |
+| `response_nonce` | text | AES-GCM nonce |
+| `expires_at` / `created_at` | text | 現在retryは30秒 |
 
-同一 `session_id`・`request_id` の再送だけに同じレスポンスを返します。異なる `request_id` で旧 Refresh Token が送られた場合は、冪等な再送ではなく token reuse として扱います。
+同じsession・request ID・旧token hashだけ同じ応答を復号して返す。別request IDの使用済みtokenはreuseとして全Refresh Tokenとsessionを失効する。
 
-## 7. PostgreSQL の運用方針
+## 5. 画像・鍵テーブル
 
-- migration は PostgreSQL 方言を基準に管理し、開発・CI・本番で同じ migration を適用する。
-- 距離検索は PostGIS の geography 型と GiST インデックスを使う。
-- セッション失効と Refresh Token の競合制御は、PostgreSQL の行ロックとトランザクションで行う。
-- 複数 API インスタンスへの即時通知が必要になった場合は、PostgreSQL の `LISTEN / NOTIFY` を利用する。
+### `photos`
 
-## 8. データ保持
+| カラム | 型 | 用途 |
+| --- | --- | --- |
+| `id` | text | 写真ID、PK |
+| `owner_user_id` | text | 所有者FK |
+| `visibility` | text | `private / profile` |
+| `storage_path` | text | private保存領域の相対キー、UNIQUE |
+| `cipher_sha256` | text | 保存暗号文のハッシュ |
+| `nonce` | text | AES-256-GCM nonce |
+| `algorithm` | text | 現在`AES-256-GCM`のみ |
+| `key_version` | text | 鍵ローテーション |
+| `wrapped_image_key` | text | 端末鍵またはRSA-OAEPラップ済み画像鍵 |
+| `wrapping_algorithm` | text | ラップ方式 |
+| `created_at` / `deleted_at` | text | 作成・論理削除 |
 
-保持期間は法務・運用と確定する。少なくとも次を個別に決定する。
+画像平文はDBにもprivateフォルダにも保存しない。メモリcacheも暗号文のみとし、削除時はDBの公開状態、ファイル、cacheを一体で無効化する。
 
-- 最新位置と期限切れ位置
-- 期限切れ募集カード
-- チャット本文と写真
-- 本人確認プロバイダー参照値
-- 通報・監査ログ
-- バックアップ上の削除データ
+### `key_envelopes`
+
+Key-AをRecovery Keyから導出した鍵で暗号化したenvelopeを保存する。`encrypted_key_a`、nonce、KDFパラメータ、key versionだけを保持し、Key-A、Key-B、Recovery Keyの平文を保持しない。HTTP APIは未実装。
+
+## 6. これから追加するテーブル・制約
+
+- `profiles`: 名前、国籍、icon photo、本人確認状態、likes、monster
+- `recruitment_cards`: 日時、時間帯、keywords、表示半径1/3/5km
+- `matches`、`messages`、`reviews`、`user_locations`
+- `identity_verifications`、`reports`、`blocks`、`audit_logs`
+
+これらはAPI実装時にmigrationを追加し、PostgreSQL integration test、API仕様書、機能仕様書を同じ変更で更新する。
+
+## 7. 削除・保持
+
+退会では次の順序を固定する。
+
+1. 新規認証・新規API利用を拒否する。
+2. 全sessionとRefresh Tokenを失効する。
+3. users/photosを論理削除する。
+4. private暗号文ファイルとメモリcacheを削除する。
+5. 削除結果を監査ログへ記録する（秘密情報は記録しない）。
+
+バックアップ上の物理削除期限、チャット保持期間、監査ログ保持期間は運用・法務決定後にmigrationと運用手順へ反映する。

@@ -5,60 +5,70 @@
 ## 現在の構成
 
 ```text
-Expo / Dev Client
-  ├─ Google OAuth2 / OIDC（実接続設定待ち）
-  ├─ Passkey / WebAuthn（HTTP 儀式の実装待ち）
-  └─ 暗号化済み画像アップロード（HTTP API の実装待ち）
-        │
-Go API
-  ├─ PostgreSQL: ユーザー、認証、セッション、画像メタデータ
-  └─ private ファイル領域: 暗号化済み画像本体のみ
+Expo Go / Development Build
+  ├─ Google OAuth2 / OIDC + PKCE + handoff
+  ├─ JWS Access Token / Refresh Token rotation
+  └─ Passkey/WebAuthn（Development Buildで実端末検証）
+        │ HTTPS / Cloudflare Tunnel
+Go API :8080
+  ├─ PostgreSQL（users / OAuth / Passkey / sessions / photos metadata）
+  └─ private file storage（暗号文画像のみ）
 ```
 
-SQLite は使用しない。画像本体は DB に保存しない。
+SQLiteは廃止し、DBはPostgreSQLだけです。画像本体はDBへ入れず、`IMAGE_STORAGE_DIR`配下に暗号文として保存します。
 
 ## 実装済み
 
-- PostgreSQL 接続と `migrations/` の順次適用
-- Docker Compose / GitHub Actions の PostgreSQL
-- JWS Access Token の HS256 署名・検証（寿命 1 分）
-- 256 bit 不透明 Refresh Token の生成・ハッシュ化
-- Google OIDC の PKCE 認可 URL、コード交換、ID Token 検証部品
-- WebAuthn Relying Party 初期化部品
-- 暗号文専用の画像保存、SHA-256、容量/TTL 付き暗号文キャッシュ
-- RSA-OAEP-256 によるプロフィール画像鍵ラップ
-- `photos` migration
+- PostgreSQL接続、ordered migration、CI PostgreSQL integration
+- Google OIDCのissuer / audience / signature / expiry / `sub`検証
+- OAuth state、Google PKCE verifier、アプリhandoff challengeのDB一回性
+- Expo Goの`exp://.../--/auth`と本番`samuraimeet://auth`への復帰
+- アプリ中断後のhandoff再交換（サーバー側暗号化レスポンスの再取得）
+- HS256 JWS Access Token（TTL 1分）とDB session失効確認
+- 256bit opaque Refresh Token、SHA-256 hash保存、30日アイドル / 90日絶対期限
+- Refresh Token rotation、同一`request_id`の30秒再送、別request IDのreuse時session family失効
+- ログアウト、全端末ログアウト、セッション一覧、個別セッション失効
+- WebAuthnの登録options / verify、discoverable login options / verify、credential一覧 / 削除
+- credential JSON、公開鍵、sign counter、challengeのPostgreSQL保存
+- 暗号文専用画像保存、SHA-256、容量/TTL付き暗号文キャッシュ
+- RSA-OAEP-256によるプロフィール画像鍵ラップ部品
+- Expo Go開発クライアント、`状態を更新`、Secure Storageでのtoken保持
+- Go test / build、PostgreSQL integration、Python smoke、Expo typecheck / Bun auditのCI
 
-## 未実装: 次に行うこと
+## 現在の実接続確認
 
-詳細は [TODO.md](TODO.md) を参照。
+- 本番API: `https://samurai-meet.disnana.com/api/v1`
+- Cloudflare Tunnel: `127.0.0.1:8080`
+- Google Console callback: `https://samurai-meet.disnana.com/auth/callback`
+- ローカル`.env`ではExpo Go試験のため`ALLOW_EXPO_GO_REDIRECT=true`を設定済み。運用環境ではfalseにする。
+- Expo GoはSDK54を使用する。Passkeyの実端末確認はExpo GoではなくDevelopment Buildで行う。
 
-特に OAuth / Passkey の HTTP API、ユーザー・credential・session repository、Refresh 回転、画像 upload/download API、退会オーケストレーションは未実装である。現時点で「ログイン可能」とは扱わない。
+## 未実装・次に行うこと
 
-## 環境変数
+詳細は [TODO.md](TODO.md) と [API_SPEC.md](API_SPEC.md) を参照します。
 
-ベースは [`.env.example`](.env.example)。ローカルでは PostgreSQL を起動する。
+1. Key-A / Key-B / Recovery Keyの端末暗号化フローと`key_envelopes` HTTP API
+2. 端末側AES-256-GCM画像暗号化、upload/download/delete API
+3. プロフィール画像の公開鍵配信、サーバー復号が必要な範囲の認可
+4. 退会オーケストレーション（DB論理削除、全session失効、暗号文ファイル削除、cache無効化）
+5. 本番Development BuildのPasskey実端末テストとiOS/Android association設定
+6. チャット用QUIC/WebTransport短命token（Access/Refreshと別audience）
+7. レート制限、監査ログ、本人確認、プロフィール・募集・検索API
 
-```powershell
-cd backend
-docker compose -f docker-compose.dev.yml up -d
-Copy-Item .env.example .env
-```
+## セキュリティ不変条件
 
-Google OAuth の実接続には、`GOOGLE_CLIENT_ID`、`GOOGLE_CLIENT_SECRET`、`GOOGLE_REDIRECT_URI` が必要。Passkey 実接続には、`WEBAUTHN_RP_ID` と `WEBAUTHN_RP_ORIGIN` が必要。
-
-## セキュリティ上の不変条件
-
-- Access Token、Refresh Token、Key-A、Key-B、Recovery Key、画像平文をログへ出さない。
-- DB に Refresh Token の平文を保存しない。
-- private 画像領域には暗号文だけを保存する。
-- メモリキャッシュには暗号文だけを置く。
-- プロフィール画像は端末で暗号化し、画像鍵をサーバー公開鍵でラップする。
-- 退会ではセッション失効、DB 論理削除、暗号文ファイル削除、キャッシュ無効化を必ず同一の業務フローで行う。
+- Access Token、Refresh Token、Key-A、Key-B、Recovery Key、handoff code、画像平文をログへ出さない。
+- DBへRefresh Token、Recovery Key、Key-Aの平文を保存しない。
+- DB失効確認なしにJWSの署名だけで保護APIを通さない。
+- Refresh TokenをWebSocket/QUICのURLやメッセージへ送らない。
+- private画像領域とメモリcacheには暗号文だけを置く。
+- 退会時はDB状態と暗号文ファイル・cacheの削除結果を監査できるようにする。
+- `ALLOW_EXPO_GO_REDIRECT=true`は開発確認専用で、本番公開設定へ持ち込まない。
 
 ## 引き継ぎ時の確認順
 
-1. `TODO.md` で未実装と外部設定待ちを確認する。
-2. `docs/features/auth.md`、`docs/api.md`、`docs/database.md` と本ファイルを突き合わせる。
-3. `go test ./...` と GitHub Actions を確認する。
-4. 実装後は本ファイル、TODO、API / DB / 認証仕様を同じコミットで更新する。
+1. `go test ./...` と `go build ./cmd/server`を実行する。
+2. `backend/API_SPEC.md`、`docs/features/auth.md`、`docs/database.md`と実装を突き合わせる。
+3. `backend/expo-test`で`bun install --frozen-lockfile`、`bun run typecheck`、`bun run security:audit`を実行する。
+4. PostgreSQLを起動し、`TEST_POSTGRES=1`と`RUN_DATABASE_SMOKE_TEST=1`で統合テストを実行する。
+5. OAuth / Passkey / 鍵復旧を実端末で確認した後、`docs/security-audit.md`を更新する。
