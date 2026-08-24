@@ -84,6 +84,10 @@ jobs:
           check-latest: true
           cache: true
 
+      - name: 非推奨のOpenPGP実装を禁止
+        run: >-
+          ! rg -n 'golang\.org/x/crypto/openpgp' --glob '*.go' .
+
       - name: 既知脆弱性を検査
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
 
