@@ -11,13 +11,16 @@ import (
 // client. A single public domain routes this path to the Go backend.
 const APIV1Prefix = "/api/v1"
 
-// NewRouter returns the initial HTTP routes. Authentication routes are added
-// after the OAuth, Passkey, and database repositories are implemented.
+// NewRouter returns the HTTP routes. Optional services are omitted when the
+// corresponding production secret/configuration is not available.
 type RouterOptions struct {
-	Environment     string
-	DevClientOrigin string
-	ClientOrigin    string
-	OAuthLogin      *auth.OAuthLoginService
+	Environment         string
+	AllowExpoGoRedirect bool
+	DevClientOrigin     string
+	ClientOrigin        string
+	OAuthLogin          *auth.OAuthLoginService
+	Sessions            *auth.SessionService
+	Passkeys            *auth.PasskeyService
 }
 
 func NewRouter() http.Handler {
@@ -33,9 +36,24 @@ func NewRouterWithOptions(options RouterOptions) http.Handler {
 	mux.HandleFunc(APIV1Prefix+"/healthz", healthz)
 	mux.HandleFunc(APIV1Prefix+"/readyz", readyz)
 	if options.OAuthLogin != nil {
-		mux.HandleFunc(APIV1Prefix+"/auth/google/start", googleStart(options.OAuthLogin))
+		mux.HandleFunc(APIV1Prefix+"/auth/google/start", googleStart(options.OAuthLogin, options.Environment, options.AllowExpoGoRedirect))
 		mux.HandleFunc(APIV1Prefix+"/auth/google/exchange", googleExchange(options.OAuthLogin))
-		mux.HandleFunc("/auth/callback", googleCallback(options.OAuthLogin))
+		mux.HandleFunc("/auth/callback", googleCallback(options.OAuthLogin, options.Environment, options.AllowExpoGoRedirect))
+	}
+	if options.Sessions != nil {
+		mux.HandleFunc(APIV1Prefix+"/auth/refresh", refreshSession(options.Sessions))
+		mux.HandleFunc(APIV1Prefix+"/auth/logout", logoutSession(options.Sessions))
+		mux.HandleFunc(APIV1Prefix+"/auth/logout-all", logoutAllSessions(options.Sessions))
+		mux.HandleFunc(APIV1Prefix+"/me/sessions", listSessions(options.Sessions))
+		mux.HandleFunc(APIV1Prefix+"/me/sessions/", revokeSession(options.Sessions))
+	}
+	if options.Passkeys != nil && options.Sessions != nil {
+		mux.HandleFunc(APIV1Prefix+"/auth/passkey/register/options", passkeyRegisterOptions(options.Passkeys, options.Sessions))
+		mux.HandleFunc(APIV1Prefix+"/auth/passkey/register/verify", passkeyRegisterVerify(options.Passkeys, options.Sessions))
+		mux.HandleFunc(APIV1Prefix+"/auth/passkey/login/options", passkeyLoginOptions(options.Passkeys))
+		mux.HandleFunc(APIV1Prefix+"/auth/passkey/login/verify", passkeyLoginVerify(options.Passkeys))
+		mux.HandleFunc(APIV1Prefix+"/auth/passkey", passkeyList(options.Passkeys, options.Sessions))
+		mux.HandleFunc(APIV1Prefix+"/auth/passkey/", passkeyRemove(options.Passkeys, options.Sessions))
 	}
 
 	return withCORS(withJSONContentType(mux), options)

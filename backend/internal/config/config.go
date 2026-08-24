@@ -13,15 +13,16 @@ import (
 // Config contains the process-level settings required before external services
 // such as PostgreSQL, Google OAuth, and Passkey are connected.
 type Config struct {
-	HTTPAddr        string
-	Environment     string
-	DevClientOrigin string
-	ClientOrigin    string
-	Database        DatabaseConfig
-	ImageStorage    ImageStorageConfig
-	GoogleOIDC      GoogleOIDCConfig
-	WebAuthn        WebAuthnConfig
-	JWS             JWSConfig
+	HTTPAddr            string
+	Environment         string
+	AllowExpoGoRedirect bool
+	DevClientOrigin     string
+	ClientOrigin        string
+	Database            DatabaseConfig
+	ImageStorage        ImageStorageConfig
+	GoogleOIDC          GoogleOIDCConfig
+	WebAuthn            WebAuthnConfig
+	JWS                 JWSConfig
 }
 
 type GoogleOIDCConfig struct{ ClientID, ClientSecret, RedirectURI string }
@@ -54,10 +55,11 @@ func Load() Config {
 	}
 
 	return Config{
-		HTTPAddr:        valueOrDefault("HTTP_ADDR", ":8080"),
-		Environment:     valueOrDefault("APP_ENV", "development"),
-		DevClientOrigin: valueOrDefault("DEV_CLIENT_ORIGIN", "http://127.0.0.1:5173"),
-		ClientOrigin:    os.Getenv("CLIENT_ORIGIN"),
+		HTTPAddr:            valueOrDefault("HTTP_ADDR", ":8080"),
+		Environment:         valueOrDefault("APP_ENV", "development"),
+		AllowExpoGoRedirect: boolValueOrDefault("ALLOW_EXPO_GO_REDIRECT", false),
+		DevClientOrigin:     valueOrDefault("DEV_CLIENT_ORIGIN", "http://127.0.0.1:5173"),
+		ClientOrigin:        os.Getenv("CLIENT_ORIGIN"),
 		Database: DatabaseConfig{
 			Host:     valueOrDefault("DB_HOST", "127.0.0.1"),
 			Port:     valueOrDefault("DB_PORT", "5432"),
@@ -82,6 +84,14 @@ func Load() Config {
 func intValueOrDefault(key string, fallback int) int {
 	value, err := strconv.Atoi(os.Getenv(key))
 	if err != nil || value <= 0 {
+		return fallback
+	}
+	return value
+}
+
+func boolValueOrDefault(key string, fallback bool) bool {
+	value, err := strconv.ParseBool(os.Getenv(key))
+	if err != nil {
 		return fallback
 	}
 	return value

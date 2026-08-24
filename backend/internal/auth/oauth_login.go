@@ -54,10 +54,13 @@ func (s *OAuthLoginService) Complete(ctx context.Context, code, state string, no
 	defer tx.Rollback()
 	created := now.UTC().Format(time.RFC3339Nano)
 	candidateID := newID()
-	var userID string
-	err = tx.QueryRowContext(ctx, `INSERT INTO users (id,google_subject_id,status,created_at,updated_at) VALUES ($1,$2,'active',$3,$3) ON CONFLICT (google_subject_id) DO UPDATE SET updated_at=EXCLUDED.updated_at RETURNING id`, candidateID, identity.Subject, created).Scan(&userID)
+	var userID, userStatus string
+	err = tx.QueryRowContext(ctx, `INSERT INTO users (id,google_subject_id,status,created_at,updated_at) VALUES ($1,$2,'active',$3,$3) ON CONFLICT (google_subject_id) DO UPDATE SET updated_at=EXCLUDED.updated_at RETURNING id,status`, candidateID, identity.Subject, created).Scan(&userID, &userStatus)
 	if err != nil {
 		return OAuthHandoff{}, err
+	}
+	if userStatus != "active" {
+		return OAuthHandoff{}, errors.New("user is not active")
 	}
 	handoff, err := randomBase64URL(32)
 	if err != nil {

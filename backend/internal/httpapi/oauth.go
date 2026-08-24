@@ -10,20 +10,29 @@ import (
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/auth"
 )
 
-const expoTestRedirectURI = "samuraimeettest://auth"
+const (
+	productionAppRedirectURI = "samuraimeet://auth"
+	expoTestRedirectURI      = "samuraimeettest://auth"
+)
 
-func allowedAppRedirectURI(raw string) bool {
+func allowedAppRedirectURI(raw, environment string, allowExpoGo bool) bool {
+	if raw == productionAppRedirectURI {
+		return true
+	}
+	if !allowExpoGo && environment != "development" && environment != "test" {
+		return false
+	}
 	if raw == expoTestRedirectURI {
 		return true
 	}
 	uri, err := url.Parse(raw)
-	return err == nil && uri.Scheme == "exp" && strings.Contains(uri.Path, "/--/auth")
+	return err == nil && uri.Scheme == "exp" && uri.Host != "" && uri.User == nil && strings.HasSuffix(uri.Path, "/--/auth") && uri.Fragment == ""
 }
 
-func googleStart(service *auth.OAuthLoginService) http.HandlerFunc {
+func googleStart(service *auth.OAuthLoginService, environment string, allowExpoGo bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		redirectURI, challenge := r.URL.Query().Get("app_redirect_uri"), r.URL.Query().Get("handoff_challenge")
-		if !allowedAppRedirectURI(redirectURI) || challenge == "" {
+		if !allowedAppRedirectURI(redirectURI, environment, allowExpoGo) || challenge == "" {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_app_redirect"})
 			return
 		}
@@ -36,7 +45,7 @@ func googleStart(service *auth.OAuthLoginService) http.HandlerFunc {
 	}
 }
 
-func googleCallback(service *auth.OAuthLoginService) http.HandlerFunc {
+func googleCallback(service *auth.OAuthLoginService, environment string, allowExpoGo bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		result, err := service.Complete(r.Context(), r.URL.Query().Get("code"), r.URL.Query().Get("state"), time.Now())
 		if err != nil {
@@ -44,7 +53,7 @@ func googleCallback(service *auth.OAuthLoginService) http.HandlerFunc {
 			return
 		}
 		uri, err := url.Parse(result.AppRedirectURI)
-		if err != nil || !allowedAppRedirectURI(result.AppRedirectURI) {
+		if err != nil || !allowedAppRedirectURI(result.AppRedirectURI, environment, allowExpoGo) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_app_redirect"})
 			return
 		}
