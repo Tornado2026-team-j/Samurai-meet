@@ -134,6 +134,9 @@ jobs:
       - name: 型検査
         run: bun run typecheck
 
+      - name: クライアント暗号primitiveテスト
+        run: bun test
+
       - name: 既知の依存脆弱性を検査
         run: bun run security:audit
 
