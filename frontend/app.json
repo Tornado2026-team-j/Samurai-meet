@@ -9,6 +9,10 @@
     "experiments": {
       "typedRoutes": true
     },
-    "plugins": ["expo-router"]
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      "expo-web-browser"
+    ]
   }
 }
