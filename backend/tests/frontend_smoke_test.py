@@ -59,7 +59,7 @@ class FrontendSmokeTest(unittest.TestCase):
                 output = cls.server.stdout.read() if cls.server.stdout else ""
                 raise RuntimeError(f"バックエンドの起動に失敗しました:\n{output}")
             try:
-                with urlopen(f"{cls.base_url}/healthz", timeout=1) as response:
+                with urlopen(f"{cls.base_url}/api/v1/healthz", timeout=1) as response:
                     if response.status == 200:
                         return
             except URLError:
@@ -82,14 +82,14 @@ class FrontendSmokeTest(unittest.TestCase):
             return response.status, response.headers["Content-Type"], json.load(response)
 
     def test_health_check_is_available_to_the_frontend(self) -> None:
-        status, content_type, body = self.get_json("/healthz")
+        status, content_type, body = self.get_json("/api/v1/healthz")
 
         self.assertEqual(status, 200)
         self.assertIn("application/json", content_type)
         self.assertEqual(body, {"status": "ok"})
 
     def test_readiness_check_is_available_to_the_frontend(self) -> None:
-        status, content_type, body = self.get_json("/readyz")
+        status, content_type, body = self.get_json("/api/v1/readyz")
 
         self.assertEqual(status, 200)
         self.assertIn("application/json", content_type)

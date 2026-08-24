@@ -69,7 +69,7 @@
 - `GET /chats/{id}/messages`
 - `POST /chats/{id}/messages`
 - `POST /chats/{id}/transport-token`
-- WebSocket：`wss://api.example.com/v1/ws/chats/{chat_id}`
+- WebSocket：`wss://samurai-meet.disnana.com/api/v1/ws/chats/{chat_id}`
 - QUIC / WebTransport：採用方式決定後に endpoint を確定
 - テーブル：`matches`、`messages`、`photos`
 

@@ -30,6 +30,7 @@ func main() {
 		Handler: httpapi.NewRouterWithOptions(httpapi.RouterOptions{
 			Environment:     cfg.Environment,
 			DevClientOrigin: cfg.DevClientOrigin,
+			ClientOrigin:    cfg.ClientOrigin,
 		}),
 	}
 

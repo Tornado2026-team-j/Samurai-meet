@@ -6,11 +6,13 @@
 
 ## 1. 共通
 
-- Base URL（開発）: `http://127.0.0.1:8080`
+- Base URL（ローカル）: `http://127.0.0.1:8080/api/v1`
+- Base URL（本番）: `https://samurai-meet.disnana.com/api/v1`
 - Content-Type: `application/json; charset=utf-8`
 - 認証済み API: `Authorization: Bearer <access_token>`
 - Access Token: JWS / JWT、寿命 1 分
 - Refresh Token: 256 bit 不透明 token。Secure Storage のみへ保存し、ログ/URL/LocalStorage へ出さない
+- 以下の認証・業務APIにある `/auth/...` は Base URL からの相対パスであり、公開URLは `/api/v1/auth/...` となる。
 
 ### 共通エラー形式（実装予定）
 
@@ -33,7 +35,7 @@
 
 ## 2. 現在実装済み API
 
-### `GET /healthz`
+### `GET /api/v1/healthz`
 
 認証不要。サーバープロセスの生存確認です。
 
@@ -41,7 +43,7 @@
 { "status": "ok" }
 ```
 
-### `GET /readyz`
+### `GET /api/v1/readyz`
 
 認証不要。起動済み API の ready 状態です。
 
@@ -51,7 +53,7 @@
 
 ## 3. 認証 API（実装予定）
 
-### `GET /auth/google/start`
+### `GET /api/v1/auth/google/start`
 
 Google OAuth2 / OIDC を開始します。クライアントは `state` と PKCE verifier を端末メモリに保持します。
 
@@ -60,7 +62,7 @@ Google OAuth2 / OIDC を開始します。クライアントは `state` と PKCE
 | `state` | はい | CSRF 対策のランダム値 |
 | `code_challenge` | はい | PKCE S256 challenge |
 
-### `POST /auth/google/exchange`
+### `POST /api/v1/auth/google/exchange`
 
 Google authorization code をバックエンドで交換・検証します。
 
@@ -68,7 +70,7 @@ Google authorization code をバックエンドで交換・検証します。
 {
   "code": "google_authorization_code",
   "code_verifier": "pkce_verifier",
-  "redirect_uri": "samuraimeet://auth/callback"
+  "redirect_uri": "https://samurai-meet.disnana.com/auth/callback"
 }
 ```
 

@@ -9,11 +9,11 @@
 ## 現在の内容
 
 - 標準ライブラリによる HTTP サーバー
-- `GET /healthz` と `GET /readyz`
+- 公開API: `GET /api/v1/healthz` と `GET /api/v1/readyz`
 - PostgreSQL を使う認証・セッション migration
 - Access Token 1 分、Refresh 再送の冪等性 30 秒を表すドメイン型
 
-Google OAuth、Passkey、JWS の発行・検証、DB 接続は後続コミットで実装します。
+Google OAuth、Passkey、JWS の発行・検証は後続コミットで実装します。PostgreSQL 接続と migration は起動時に実行します。
 
 ## 起動
 
@@ -61,4 +61,4 @@ cd backend
 python tests/frontend_smoke_test.py
 ```
 
-実際にバックエンドを起動し、フロントエンドが利用する `/healthz` と `/readyz` の JSON 応答を確認します。追加パッケージは不要です。
+実際にバックエンドを起動し、フロントエンドが利用する `/api/v1/healthz` と `/api/v1/readyz` の JSON 応答を確認します。追加パッケージは不要です。

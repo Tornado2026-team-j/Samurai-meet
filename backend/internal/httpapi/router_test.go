@@ -7,7 +7,7 @@ import (
 )
 
 func TestHealthz(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	req := httptest.NewRequest(http.MethodGet, APIV1Prefix+"/healthz", nil)
 	res := httptest.NewRecorder()
 
 	NewRouter().ServeHTTP(res, req)
@@ -25,7 +25,7 @@ func TestDevelopmentCORSAllowsOnlyDevClientOrigin(t *testing.T) {
 		Environment:     "development",
 		DevClientOrigin: "http://127.0.0.1:5173",
 	})
-	req := httptest.NewRequest(http.MethodOptions, "/healthz", nil)
+	req := httptest.NewRequest(http.MethodOptions, APIV1Prefix+"/healthz", nil)
 	req.Header.Set("Origin", "http://127.0.0.1:5173")
 	res := httptest.NewRecorder()
 
@@ -35,6 +35,25 @@ func TestDevelopmentCORSAllowsOnlyDevClientOrigin(t *testing.T) {
 		t.Fatalf("status = %d, want %d", res.Code, http.StatusNoContent)
 	}
 	if got := res.Header().Get("Access-Control-Allow-Origin"); got != "http://127.0.0.1:5173" {
+		t.Fatalf("Access-Control-Allow-Origin = %q", got)
+	}
+}
+
+func TestProductionCORSAllowsOnlyPublicOrigin(t *testing.T) {
+	handler := NewRouterWithOptions(RouterOptions{
+		Environment:  "production",
+		ClientOrigin: "https://samurai-meet.disnana.com",
+	})
+	req := httptest.NewRequest(http.MethodOptions, APIV1Prefix+"/healthz", nil)
+	req.Header.Set("Origin", "https://samurai-meet.disnana.com")
+	res := httptest.NewRecorder()
+
+	handler.ServeHTTP(res, req)
+
+	if res.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", res.Code, http.StatusNoContent)
+	}
+	if got := res.Header().Get("Access-Control-Allow-Origin"); got != "https://samurai-meet.disnana.com" {
 		t.Fatalf("Access-Control-Allow-Origin = %q", got)
 	}
 }

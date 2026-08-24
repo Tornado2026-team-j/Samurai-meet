@@ -5,11 +5,16 @@ import (
 	"net/http"
 )
 
+// APIV1Prefix is the public API namespace used by both the mobile app and web
+// client. A single public domain routes this path to the Go backend.
+const APIV1Prefix = "/api/v1"
+
 // NewRouter returns the initial HTTP routes. Authentication routes are added
 // after the OAuth, Passkey, and database repositories are implemented.
 type RouterOptions struct {
 	Environment     string
 	DevClientOrigin string
+	ClientOrigin    string
 }
 
 func NewRouter() http.Handler {
@@ -18,16 +23,24 @@ func NewRouter() http.Handler {
 
 func NewRouterWithOptions(options RouterOptions) http.Handler {
 	mux := http.NewServeMux()
+	// Keep direct probes for local process and infrastructure checks. Product
+	// clients must use the versioned public namespace below.
 	mux.HandleFunc("/healthz", healthz)
 	mux.HandleFunc("/readyz", readyz)
+	mux.HandleFunc(APIV1Prefix+"/healthz", healthz)
+	mux.HandleFunc(APIV1Prefix+"/readyz", readyz)
 
 	return withCORS(withJSONContentType(mux), options)
 }
 
 func withCORS(next http.Handler, options RouterOptions) http.Handler {
+	allowedOrigin := options.ClientOrigin
+	if allowedOrigin == "" && options.Environment == "development" {
+		allowedOrigin = options.DevClientOrigin
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if options.Environment == "development" && r.Header.Get("Origin") == options.DevClientOrigin {
-			w.Header().Set("Access-Control-Allow-Origin", options.DevClientOrigin)
+		if allowedOrigin != "" && r.Header.Get("Origin") == allowedOrigin {
+			w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
 			w.Header().Set("Vary", "Origin")
 			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")

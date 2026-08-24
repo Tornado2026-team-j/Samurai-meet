@@ -638,15 +638,15 @@ flowchart LR
 
 | メソッド | パス | 概要 |
 | --- | --- | --- |
-| `GET` | `/v1/auth/google/start` | Google 認証開始 |
-| `POST` | `/v1/auth/google/exchange` | 認可コードをセッションへ交換 |
-| `POST` | `/v1/auth/passkey/register/options` | Passkey 登録オプション取得 |
-| `POST` | `/v1/auth/passkey/register/verify` | Passkey 登録結果検証 |
-| `POST` | `/v1/auth/passkey/login/options` | Passkey 認証オプション取得 |
-| `POST` | `/v1/auth/passkey/login/verify` | Passkey 認証結果検証 |
-| `POST` | `/v1/auth/refresh` | Refresh Token のローテーションと Access Token 更新 |
-| `POST` | `/v1/auth/logout` | ログアウト |
-| `POST` | `/v1/auth/logout-all` | 全端末のセッション失効 |
+| `GET` | `/api/v1/auth/google/start` | Google 認証開始 |
+| `POST` | `/api/v1/auth/google/exchange` | 認可コードをセッションへ交換 |
+| `POST` | `/api/v1/auth/passkey/register/options` | Passkey 登録オプション取得 |
+| `POST` | `/api/v1/auth/passkey/register/verify` | Passkey 登録結果検証 |
+| `POST` | `/api/v1/auth/passkey/login/options` | Passkey 認証オプション取得 |
+| `POST` | `/api/v1/auth/passkey/login/verify` | Passkey 認証結果検証 |
+| `POST` | `/api/v1/auth/refresh` | Refresh Token のローテーションと Access Token 更新 |
+| `POST` | `/api/v1/auth/logout` | ログアウト |
+| `POST` | `/api/v1/auth/logout-all` | 全端末のセッション失効 |
 | `GET` | `/v1/me/sessions` | 自分のログインセッション一覧 |
 | `DELETE` | `/v1/me/sessions/{id}` | 指定セッションの失効 |
 | `GET` | `/v1/me` | 自分のアカウント・プロフィール取得 |
@@ -671,7 +671,7 @@ flowchart LR
 
 ### 11.2 WebSocket
 
-- 接続先（案）：`wss://api.example.com/v1/ws/chats/{chat_id}`
+- 接続先：`wss://samurai-meet.disnana.com/api/v1/ws/chats/{chat_id}`
 - 接続時に API セッションを検証する。
 - クライアントイベント例：`message.send`、`message.read`、`typing.start`、`typing.stop`
 - サーバーイベント例：`message.created`、`message.ack`、`message.read`、`error`

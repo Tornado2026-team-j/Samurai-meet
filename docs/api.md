@@ -4,12 +4,12 @@
 
 ### 1.1 基本
 
-- Base URL（案）：`https://api.example.com/v1`
+- Base URL：`https://samurai-meet.disnana.com/api/v1`
 - データ形式：JSON / UTF-8
 - 日時：ISO 8601、保存は UTC、表示はユーザーのタイムゾーン
 - ID：UUID
 - 認証：`Authorization: Bearer <access_token>`
-- すべての業務 API は Go API を経由する。
+- すべての業務 API は Go API を経由する。この文書のパスは上記 Base URL からの相対パスである。
 
 ### 1.2 共通レスポンス
 
@@ -94,7 +94,7 @@ Access Token の claims（案）：
 
 Google OAuth2 / OIDC の認証を開始します。モバイルでは PKCE を利用します。
 
-認証後、アプリへ認可コードを返し、アプリは `POST /auth/google/exchange` を呼び出します。
+認証後、単一のWebコールバック `https://samurai-meet.disnana.com/auth/callback` へ戻し、アプリは `POST /auth/google/exchange` を呼び出します。
 
 ### `POST /auth/google/exchange`
 
@@ -104,7 +104,7 @@ Request：
 {
   "code": "authorization_code",
   "code_verifier": "pkce_verifier",
-  "redirect_uri": "samuraimeet://auth/callback"
+  "redirect_uri": "https://samurai-meet.disnana.com/auth/callback"
 }
 ```
 

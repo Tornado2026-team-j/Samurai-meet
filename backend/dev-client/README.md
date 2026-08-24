@@ -5,12 +5,11 @@
 ```powershell
 # terminal 1
 cd backend
-$env:APP_ENV = "development"
 go run ./cmd/server
 
 # terminal 2
 cd backend/dev-client
-python -m http.server 5173 --bind 127.0.0.1
+python server.py
 ```
 
-`http://127.0.0.1:5173` を開き、API URL に `http://127.0.0.1:8080` を指定します。API は開発環境かつ `DEV_CLIENT_ORIGIN`（既定値 `http://127.0.0.1:5173`）と一致する Origin だけに CORS を許可します。
+`http://127.0.0.1:5173` を開き、API URL に `http://127.0.0.1:8080/api/v1` を指定します。公開ドメインでは同一オリジンの `/api/v1` を開発プロキシがバックエンドへ中継します。プロダクトAPIの契約は常に `/api/v1` です。

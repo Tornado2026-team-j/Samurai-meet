@@ -36,8 +36,8 @@ backend server listening on :8080 (environment=development)
 PowerShell から API を直接確認する場合は、別のターミナルで実行します。
 
 ```powershell
-Invoke-RestMethod http://127.0.0.1:8080/healthz
-Invoke-RestMethod http://127.0.0.1:8080/readyz
+Invoke-RestMethod http://127.0.0.1:8080/api/v1/healthz
+Invoke-RestMethod http://127.0.0.1:8080/api/v1/readyz
 ```
 
 どちらも `status` が返れば成功です。
@@ -48,15 +48,19 @@ Invoke-RestMethod http://127.0.0.1:8080/readyz
 
 ```powershell
 cd backend/dev-client
-python -m http.server 5173 --bind 127.0.0.1
+python server.py
 ```
 
-ブラウザで `http://127.0.0.1:5173` を開きます。画面の API URL は既定値の `http://127.0.0.1:8080` のままで構いません。
+ブラウザで `http://127.0.0.1:5173` を開きます。画面の API URL は既定値の `http://127.0.0.1:8080/api/v1` のままで構いません。
 
 - **ヘルスチェック**: `{ "status": "ok" }` が返ることを確認
 - **Readiness 確認**: `{ "status": "ready" }` が返ることを確認
 
 開発クライアントは `APP_ENV=development` のときだけ、`http://127.0.0.1:5173` からの通信を許可します。ポートを変更する場合は、`backend/.env` の `DEV_CLIENT_ORIGIN` も同じ URL に変更してください。
+
+既存のCloudflare Tunnelが `127.0.0.1:5173` を向いている場合、公開ドメインでは開発クライアントが同一オリジンの `/api/v1/*` を `127.0.0.1:8080` へプロキシします。API用の別サブドメインやDBポートの公開は不要です。
+
+Cloudflare Tunnel経由の本番構成では、単一の `samurai-meet.disnana.com` を使う。先に `/api/` を Go API の `127.0.0.1:8080` へ、残りをフロントエンドへルーティングする。`HTTP_ADDR=127.0.0.1:8080`、`APP_ENV=production`、`CLIENT_ORIGIN=https://samurai-meet.disnana.com` を設定し、DBのポートはTunnelで公開しない。
 
 ## 4. 自動テストを実行する
 
@@ -80,7 +84,7 @@ $env:RUN_DATABASE_SMOKE_TEST = "1"
 | --- | --- |
 | `go test ./...` | セッション判定、`.env` 読込、CORS、HTTP ルーター |
 | `go build ./cmd/server` | サーバーがビルドできること |
-| `frontend_smoke_test.py` | サーバーを実際に起動し、ブラウザ相当の HTTP リクエストで `/healthz` と `/readyz` を検証 |
+| `frontend_smoke_test.py` | サーバーを実際に起動し、ブラウザ相当の HTTP リクエストで `/api/v1/healthz` と `/api/v1/readyz` を検証 |
 | `unittest discover ...` | 開発用鍵生成スクリプトが 32 bytes の値を生成すること |
 
 すべて成功すると、Python テストでは `OK` と表示されます。

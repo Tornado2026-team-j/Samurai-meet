@@ -16,6 +16,7 @@ type Config struct {
 	HTTPAddr        string
 	Environment     string
 	DevClientOrigin string
+	ClientOrigin    string
 	Database        DatabaseConfig
 	ImageStorage    ImageStorageConfig
 	GoogleOIDC      GoogleOIDCConfig
@@ -56,6 +57,7 @@ func Load() Config {
 		HTTPAddr:        valueOrDefault("HTTP_ADDR", ":8080"),
 		Environment:     valueOrDefault("APP_ENV", "development"),
 		DevClientOrigin: valueOrDefault("DEV_CLIENT_ORIGIN", "http://127.0.0.1:5173"),
+		ClientOrigin:    os.Getenv("CLIENT_ORIGIN"),
 		Database: DatabaseConfig{
 			Host:     valueOrDefault("DB_HOST", "127.0.0.1"),
 			Port:     valueOrDefault("DB_PORT", "5432"),

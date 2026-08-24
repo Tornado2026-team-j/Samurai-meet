@@ -10,7 +10,7 @@
     <main>
       <h1>Backend Dev Client</h1>
       <p>開発環境の API をブラウザから手動確認するための専用クライアントです。</p>
-      <label>API URL<input id="api-url" type="url" value="http://127.0.0.1:8080" /></label>
+      <label>API URL<input id="api-url" type="url" value="http://127.0.0.1:8080/api/v1" /></label>
       <div class="actions">
         <button data-path="/healthz">ヘルスチェック</button>
         <button data-path="/readyz">Readiness 確認</button>
@@ -18,6 +18,6 @@
       <section><h2>結果</h2><pre id="result" aria-live="polite">まだ実行していません。</pre></section>
       <section><h2>認証 API</h2><p>Google OAuth、Passkey、Refresh、ログアウトの操作フォームは API 実装と同じ変更でここへ追加します。</p></section>
     </main>
-    <script src="./app.js"></script>
+    <script src="./app.js?v=20260824-1"></script>
   </body>
 </html>
