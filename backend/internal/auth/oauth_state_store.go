@@ -17,9 +17,15 @@ const OAuthStateTTL = 10 * time.Minute
 // The verifier is never sent to the browser, and a state may be consumed once.
 type OAuthStateStore struct{ db *sql.DB }
 
+type OAuthState struct {
+	CodeVerifier     string
+	AppRedirectURI   string
+	HandoffChallenge string
+}
+
 func NewOAuthStateStore(db *sql.DB) *OAuthStateStore { return &OAuthStateStore{db: db} }
 
-func (s *OAuthStateStore) Create(ctx context.Context, now time.Time) (state, verifier string, err error) {
+func (s *OAuthStateStore) Create(ctx context.Context, now time.Time, appRedirectURI, handoffChallenge string) (state, verifier string, err error) {
 	state, err = randomBase64URL(32)
 	if err != nil {
 		return "", "", err
@@ -28,28 +34,28 @@ func (s *OAuthStateStore) Create(ctx context.Context, now time.Time) (state, ver
 	if err != nil {
 		return "", "", err
 	}
-	_, err = s.db.ExecContext(ctx, `INSERT INTO oauth_states (state_hash, code_verifier, expires_at, created_at) VALUES ($1,$2,$3,$4)`, hashOAuthState(state), verifier, now.Add(OAuthStateTTL).UTC().Format(time.RFC3339Nano), now.UTC().Format(time.RFC3339Nano))
+	_, err = s.db.ExecContext(ctx, `INSERT INTO oauth_states (state_hash, code_verifier, app_redirect_uri, handoff_challenge, expires_at, created_at) VALUES ($1,$2,$3,$4,$5,$6)`, hashOAuthState(state), verifier, appRedirectURI, handoffChallenge, now.Add(OAuthStateTTL).UTC().Format(time.RFC3339Nano), now.UTC().Format(time.RFC3339Nano))
 	return state, verifier, err
 }
 
-func (s *OAuthStateStore) Consume(ctx context.Context, state string, now time.Time) (string, error) {
+func (s *OAuthStateStore) Consume(ctx context.Context, state string, now time.Time) (OAuthState, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return "", err
+		return OAuthState{}, err
 	}
 	defer tx.Rollback()
-	var verifier string
-	err = tx.QueryRowContext(ctx, `SELECT code_verifier FROM oauth_states WHERE state_hash=$1 AND used_at IS NULL AND expires_at > $2 FOR UPDATE`, hashOAuthState(state), now.UTC().Format(time.RFC3339Nano)).Scan(&verifier)
+	var result OAuthState
+	err = tx.QueryRowContext(ctx, `SELECT code_verifier, COALESCE(app_redirect_uri, ''), COALESCE(handoff_challenge, '') FROM oauth_states WHERE state_hash=$1 AND used_at IS NULL AND expires_at > $2 FOR UPDATE`, hashOAuthState(state), now.UTC().Format(time.RFC3339Nano)).Scan(&result.CodeVerifier, &result.AppRedirectURI, &result.HandoffChallenge)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", errors.New("OAuth state is invalid, expired, or already used")
+		return OAuthState{}, errors.New("OAuth state is invalid, expired, or already used")
 	}
 	if err != nil {
-		return "", err
+		return OAuthState{}, err
 	}
 	if _, err = tx.ExecContext(ctx, `UPDATE oauth_states SET used_at=$1 WHERE state_hash=$2`, now.UTC().Format(time.RFC3339Nano), hashOAuthState(state)); err != nil {
-		return "", err
+		return OAuthState{}, err
 	}
-	return verifier, tx.Commit()
+	return result, tx.Commit()
 }
 
 func hashOAuthState(state string) string {

@@ -60,7 +60,8 @@ Google OAuth2 / OIDC を開始します。クライアントは `state` と PKCE
 | query | 必須 | 説明 |
 | --- | --- | --- |
 | `state` | はい | CSRF 対策のランダム値 |
-| `code_challenge` | はい | PKCE S256 challenge |
+| `app_redirect_uri` | はい | 登録済みアプリ固有のdeep link URI |
+| `handoff_challenge` | はい | アプリが保持するhandoff verifierのSHA-256 challenge |
 
 ### `POST /api/v1/auth/google/exchange`
 
@@ -68,8 +69,8 @@ Google authorization code をバックエンドで交換・検証します。
 
 ```json
 {
-  "code": "google_authorization_code",
-  "state": "oauth_state"
+  "handoff_code": "callbackから受け取った一回限りコード",
+  "handoff_verifier": "Secure Storageに保存した検証値"
 }
 ```
 

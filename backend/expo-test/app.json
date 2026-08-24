@@ -1,1 +1,17 @@
-{"expo":{"name":"Samurai Meet Backend Test","slug":"samurai-meet-backend-test","scheme":"samuraimeettest"}}
+{
+  "expo": {
+    "name": "Samurai Meet Backend Test",
+    "slug": "samurai-meet-backend-test",
+    "scheme": "samuraimeettest",
+    "ios": {
+      "bundleIdentifier": "com.disnana.samuraimeettest"
+    },
+    "android": {
+      "package": "com.disnana.samuraimeettest"
+    },
+    "plugins": [
+      "expo-web-browser",
+      "expo-secure-store"
+    ]
+  }
+}

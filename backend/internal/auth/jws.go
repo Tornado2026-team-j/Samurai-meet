@@ -1,7 +1,10 @@
 package auth
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -67,4 +70,43 @@ func (s *Signer) Verify(token string, now time.Time) (AccessClaims, error) {
 		return AccessClaims{}, fmt.Errorf("invalid JWS claims")
 	}
 	return c, nil
+}
+
+// Seal protects short-lived server-side retry responses. The signing key is
+// never exposed, and the nonce is safe to persist alongside ciphertext.
+func (s *Signer) Seal(plaintext []byte) (ciphertext, nonce string, err error) {
+	block, err := aes.NewCipher(s.key)
+	if err != nil {
+		return "", "", err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", "", err
+	}
+	rawNonce := make([]byte, gcm.NonceSize())
+	if _, err = rand.Read(rawNonce); err != nil {
+		return "", "", err
+	}
+	sealed := gcm.Seal(nil, rawNonce, plaintext, nil)
+	return base64.RawURLEncoding.EncodeToString(sealed), base64.RawURLEncoding.EncodeToString(rawNonce), nil
+}
+
+func (s *Signer) Open(ciphertext, nonce string) ([]byte, error) {
+	block, err := aes.NewCipher(s.key)
+	if err != nil {
+		return nil, err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+	sealed, err := base64.RawURLEncoding.DecodeString(ciphertext)
+	if err != nil {
+		return nil, err
+	}
+	rawNonce, err := base64.RawURLEncoding.DecodeString(nonce)
+	if err != nil {
+		return nil, err
+	}
+	return gcm.Open(nil, rawNonce, sealed, nil)
 }
