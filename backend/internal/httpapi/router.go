@@ -29,6 +29,7 @@ type RouterOptions struct {
 	SessionHandoffs     *auth.SessionHandoffService
 	Passkeys            *auth.PasskeyService
 	KeyEnvelopes        *keys.Service
+	KeyB                *keys.KeyBService
 	Images              *image.Service
 	Accounts            *account.Service
 }
@@ -74,6 +75,9 @@ func NewRouterWithOptions(options RouterOptions) http.Handler {
 	if options.Sessions != nil && options.KeyEnvelopes != nil {
 		mux.HandleFunc(keyEnvelopePrefix, keyEnvelopeList(options.KeyEnvelopes, options.Sessions))
 		mux.HandleFunc(keyEnvelopePrefix+"/", keyEnvelopeItem(options.KeyEnvelopes, options.Sessions))
+	}
+	if options.Sessions != nil && options.KeyB != nil {
+		mux.HandleFunc(keyBPath, keyB(options.KeyB, options.Sessions))
 	}
 	if options.Images != nil {
 		mux.HandleFunc(APIV1Prefix+"/keys/profile-image", profileWrappingKey(options.Images))

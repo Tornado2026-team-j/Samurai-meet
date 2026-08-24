@@ -88,6 +88,13 @@ func main() {
 	imageCache := image.NewCiphertextCache(cfg.ImageStorage.CiphertextCacheMaxBytes, time.Duration(cfg.ImageStorage.CiphertextCacheTTLSeconds)*time.Second)
 	images := image.NewService(database, imageStore, imageCache, profileWrappingKeyPEM, cfg.ImageStorage.ProfileWrappingKeyVersion, int64(cfg.ImageStorage.MaxUploadBytes))
 	keyEnvelopes := keys.NewService(database)
+	var keyB *keys.KeyBService
+	if cfg.KeyB.WrapKey != "" {
+		keyB, err = keys.NewKeyBService(database, cfg.KeyB.WrapKey, cfg.KeyB.WrapKeyID)
+		if err != nil {
+			log.Fatalf("Key-B initialization failed: %v", err)
+		}
+	}
 	accounts := account.NewService(database, images)
 
 	server := &http.Server{
@@ -105,6 +112,7 @@ func main() {
 			SessionHandoffs:     sessionHandoffs,
 			Passkeys:            passkeys,
 			KeyEnvelopes:        keyEnvelopes,
+			KeyB:                keyB,
 			Images:              images,
 			Accounts:            accounts,
 		}),

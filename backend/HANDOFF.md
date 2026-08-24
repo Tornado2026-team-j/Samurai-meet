@@ -93,8 +93,8 @@ Access Tokenは1分、Refresh Tokenはopaque 32 bytesでDBにはhashだけを保
 
 ### 最優先
 
-- Key-Bサービス、サーバーwrap鍵のKMS/Secret Manager注入、暗号化済みDB material、発行API、Key-A+Key-BのHKDF結合。
-- Key-B、Recovery、Key-A envelope、退会などの高権限APIに共通の直近Passkey認証を適用。
+- Key-BはAES-256-GCM暗号文DB保存と`GET /api/v1/me/key-b`まで実装。KMS/Secret Manager直結、wrap鍵ローテーション、取得監査、Key-A+Key-BのHKDF client統合は未完了。
+- 共通の直近Passkey認証をKey-B、Key-A envelope、退会へ適用済み。Recovery、本人確認変更はAPI未実装。
 - `docs/security-audit.md`のSEC-011（JWS）とSEC-013（Key-B）を実装・テスト後に更新。
 - 0011のPasskey再認証と、Refresh同時実行・handoff再送のPostgreSQL統合テストを追加。
 

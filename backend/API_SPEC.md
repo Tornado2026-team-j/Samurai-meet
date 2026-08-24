@@ -224,10 +224,10 @@ Key-Aそのものではなく、Recovery Keyから端末上で導出した鍵で
 
 | Method | Path | 認証 | 用途 |
 | --- | --- | --- | --- |
-| GET | `/api/v1/me/key-envelopes` | Access Token | 自分のenvelope一覧 |
-| PUT | `/api/v1/me/key-envelopes/{key_version}` | Access Token | envelopeを作成・同一versionを更新 |
-| GET | `/api/v1/me/key-envelopes/{key_version}` | Access Token | 指定version取得 |
-| DELETE | `/api/v1/me/key-envelopes/{key_version}` | Access Token | 指定version削除 |
+| GET | `/api/v1/me/key-envelopes` | Access Token + 5分以内のPasskey再認証 | 自分のenvelope一覧 |
+| PUT | `/api/v1/me/key-envelopes/{key_version}` | Access Token + 5分以内のPasskey再認証 | envelopeを作成・同一versionを更新 |
+| GET | `/api/v1/me/key-envelopes/{key_version}` | Access Token + 5分以内のPasskey再認証 | 指定version取得 |
+| DELETE | `/api/v1/me/key-envelopes/{key_version}` | Access Token + 5分以内のPasskey再認証 | 指定version削除 |
 
 PUT body:
 
@@ -242,7 +242,13 @@ PUT body:
 
 サーバーはBase64URL形式・最小長・JSON形式だけを検証し、KDFを実行したりKey-Aを復号したりしません。
 
-### 6.2 画像（実装済み）
+### 6.2 Key-B（基盤実装済み）
+
+`GET /api/v1/me/key-b`はAccess Tokenと5分以内のPasskey再認証を要求します。レスポンスは`key_version`とBase64URLの`key_b`です。Key-Bはユーザーごとに初回生成し、`KEY_B_WRAP_KEY`（32 byte Base64URL）によるAES-256-GCM暗号文だけを`key_b_materials`へ保存します。平文はレスポンス生成時だけに保持し、ログやDBへ保存しません。wrap鍵IDが保存済み値と異なる場合はfail closedで`503 key_b_unavailable`を返します。
+
+クライアント側のKey-AとのHKDF結合、KMS直結、鍵ローテーションと取得監査ログは未実装です。退会ではKey-B暗号文も削除します。
+
+### 6.3 画像（実装済み）
 
 画像本体はリクエスト前に端末でAES-256-GCM暗号化し、バイナリ暗号文を送ります。SQLite、DBのbytea、平文ファイルは使用しません。
 
@@ -270,11 +276,11 @@ POSTは次のヘッダーを使用します。
 本文は暗号文のみで、既定の最大サイズは20MiBです。Goサーバーのcacheも暗号文だけを保持し、profile配信時に一時生成する平文はcacheしません。
 SVG、GIF、HTMLなどブラウザで解釈され得る未許可MIMEは拒否します。profile配信には`X-Content-Type-Options: nosniff`とCSPも付与します。
 
-### 6.3 退会（実装済み）
+### 6.4 退会（実装済み）
 
-`DELETE /api/v1/me` に `{"confirm":"DELETE"}` を送り、Access Tokenを認証します。処理中に全sessionを失効し、refresh/passkey/challenge/key envelope/handoff/photo metadataを削除し、暗号文画像フォルダとcacheを削除してからユーザー行を削除します。削除後は旧Access TokenもDBのsession行がないため拒否されます。
+`DELETE /api/v1/me` に `{"confirm":"DELETE"}` を送り、Access Tokenと5分以内のPasskey再認証を要求します。処理中に全sessionを失効し、refresh/passkey/challenge/key envelope/handoff/photo metadataを削除し、暗号文画像フォルダとcacheを削除してからユーザー行を削除します。削除後は旧Access TokenもDBのsession行がないため拒否されます。
 
-### 6.4 未実装業務API
+### 6.5 未実装業務API
 
 プロフィール、本人確認、募集、検索、マッチ、評価、チャットQUIC用短命Chat Tokenは引き続き予定です。画像平文、Key-A、Key-B、Recovery Key、Refresh TokenをAPIログへ出さない不変条件は全機能に適用します。
 

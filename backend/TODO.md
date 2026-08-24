@@ -107,9 +107,9 @@ Passkey再認証の直近変更後にも`go test`、Expo typecheck/test、Node�
 
 ## 7. 未着手の設計タスク（次のまとまった作業）
 
-- [ ] Key-Bの信頼境界を確定する。サーバーwrap鍵をKMS/Secret Managerから注入し、Key-B平文をDB・ログ・Secure Storageへ保存しない。
-- [ ] Key-B取得APIを実装し、直近Passkey、session有効性、再発行・失効・退会、Key-AとのHKDF結合を統合テストする。
-- [ ] 高権限APIの共通`requireRecentPasskey`認可を導入し、退会・Key-A envelope・Recovery・本人確認変更へ適用する。
+- [~] Key-Bのサーバー側基盤を実装した。DBにはAES-256-GCM暗号文だけを保存し、wrap鍵は`KEY_B_WRAP_KEY`から注入する。KMS/Secret Manager直結、鍵ローテーション、取得監査ログは未実装。
+- [~] `GET /api/v1/me/key-b`を実装し、直近Passkey・active session・退会時削除と暗号文DB保存をテストした。Key-AとのHKDF結合、client memory-only運用、再発行/失効ポリシーは未実装。
+- [~] 共通`requireRecentPasskey`を導入し、Key-B、Key-A envelope、退会に適用した。Recovery・本人確認変更はAPI自体が未実装。
 - [ ] 画像client encryptionをExpo側へ接続し、Key-A+Key-Bから導出したデータ鍵を使う。サーバーは暗号文だけを保存する。
 - [ ] 画像孤児回収・監査ログ・バックアップの物理削除期限を運用設計する。
 - [ ] `docs/security-audit.md`のSEC-011/013と受入条件を、実装後の判定へ更新する。

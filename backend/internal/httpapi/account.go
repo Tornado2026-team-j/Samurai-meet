@@ -22,6 +22,10 @@ func deleteAccount(service *account.Service, sessions *auth.SessionService) http
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing_or_invalid_access_token"})
 			return
 		}
+		if !requireRecentPasskey(r, sessions, claims) {
+			writeRecentPasskeyRequired(w)
+			return
+		}
 		var input struct {
 			Confirm string `json:"confirm"`
 		}

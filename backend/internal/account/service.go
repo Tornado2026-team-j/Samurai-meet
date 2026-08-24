@@ -53,6 +53,7 @@ func (s *Service) Delete(ctx context.Context, userID string, now time.Time) erro
 		`DELETE FROM pre_auth_tokens WHERE user_id=$1`,
 		`DELETE FROM passkey_credentials WHERE user_id=$1`,
 		`DELETE FROM key_envelopes WHERE user_id=$1`,
+		`DELETE FROM key_b_materials WHERE user_id=$1`,
 		`DELETE FROM oauth_handoffs WHERE user_id=$1`,
 		`DELETE FROM session_handoffs WHERE user_id=$1`,
 		`DELETE FROM photos WHERE owner_user_id=$1`,

@@ -133,6 +133,36 @@ func TestAuthKeyImageAndAccountLifecycle(t *testing.T) {
 		t.Fatalf("key envelope list = %d, err=%v", len(listed), err)
 	}
 
+	keyBService, err := keys.NewKeyBService(database, base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x24}, 32)), "integration-v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstKeyB, err := keyBService.GetOrCreate(context.Background(), userID, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondKeyB, err := keyBService.GetOrCreate(context.Background(), userID, now.Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstKeyB.KeyVersion != "v1" || firstKeyB != secondKeyB {
+		t.Fatalf("Key-B was not stable: first=%+v second=%+v", firstKeyB, secondKeyB)
+	}
+	var storedKeyBCiphertext string
+	if err := database.QueryRow(`SELECT ciphertext FROM key_b_materials WHERE user_id=$1`, userID).Scan(&storedKeyBCiphertext); err != nil {
+		t.Fatal(err)
+	}
+	if storedKeyBCiphertext == firstKeyB.KeyB {
+		t.Fatal("Key-B plaintext was stored in the database")
+	}
+	wrongKeyBService, err := keys.NewKeyBService(database, base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x25}, 32)), "integration-v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := wrongKeyBService.GetOrCreate(context.Background(), userID, now); err != keys.ErrKeyBUnavailable {
+		t.Fatalf("wrong Key-B wrapping key error = %v, want %v", err, keys.ErrKeyBUnavailable)
+	}
+
 	profileKey, err := rsa.GenerateKey(rand.Reader, 3072)
 	if err != nil {
 		t.Fatal(err)
