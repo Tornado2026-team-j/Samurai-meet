@@ -1,0 +1,46 @@
+name: Supply-chain security
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "5 4 * * 1"
+  workflow_dispatch:
+
+permissions: read-all
+
+jobs:
+  scorecard:
+    name: OpenSSF Scorecard
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write
+      id-token: write
+    steps:
+      - name: チェックアウト
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: 供給網を監査
+        uses: ossf/scorecard-action@2d1146689b8cda280b9bc96326124645441f03bc # v2.4.4
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          publish_results: true
+
+      - name: Code Scanning に結果を登録
+        uses: github/codeql-action/upload-sarif@5595ccaf912efad79be6eef63a5619ff05969be3 # v4.37.6
+        with:
+          sarif_file: results.sarif
+
+      - name: 実行結果をサマリーへ出力
+        if: ${{ always() }}
+        run: |
+          {
+            echo "# Supply-chain security"
+            echo
+            echo "OpenSSF Scorecard を実行しました。詳細は Code Scanning の結果を参照してください。"
+          } >> "$GITHUB_STEP_SUMMARY"

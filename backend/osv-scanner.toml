@@ -1,0 +1,4 @@
+[[IgnoredVulns]]
+id = "GO-2026-5932"
+ignoreUntil = 2026-11-24
+reason = "golang.org/x/crypto/openpgp 専用の未修正通知。バックエンドはWebAuthnのOCSP経路のみを使用し、OpenPGPのimportは禁止CIで検査する。"

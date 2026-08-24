@@ -1,0 +1,11 @@
+.idea/
+*.pyc
+frontend/node_modules/
+backend/expo-test/node_modules/
+backend/expo-test/.expo/
+frontend/.expo/
+frontend/.expo-shared/
+frontend/web-build/
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*

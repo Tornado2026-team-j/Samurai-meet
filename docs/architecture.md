@@ -11,7 +11,6 @@ flowchart LR
     Auth[Google OAuth2 / OIDC]
     Passkey[Passkey / WebAuthn]
     DB[(PostgreSQL<br/>+ PostGIS)]
-    LocalDB[(SQLite<br/>開発・テスト)]
     Storage[(Private Image Storage)]
     KMS[KMS / Secret Manager]
     Admin[運営管理 API / UI]
@@ -22,7 +21,6 @@ flowchart LR
     API --> Auth
     API --> Passkey
     API --> DB
-    API -. 開発・テスト .-> LocalDB
     API --> Storage
     API --> KMS
     WS --> DB
@@ -38,7 +36,7 @@ flowchart LR
 | API Handler | HTTP 入出力、認証コンテキスト、エラー変換 | Go |
 | Domain Service | カード公開、距離、マッチ、評価、通報のルール | Go |
 | Repository | SQL、トランザクション、PostGIS クエリ | Go + SQL |
-| Persistence | ユーザー、カード、マッチ、メッセージ等 | PostgreSQL / SQLite |
+| Persistence | ユーザー、カード、マッチ、メッセージ等 | PostgreSQL + PostGIS |
 | File Storage | 写真本体、暗号化済みファイル | 非公開ストレージ |
 | QUIC / HTTP/3 | チャット用の低遅延 transport、Chat Token 検証 | Go + native client module |
 
@@ -128,9 +126,9 @@ stateDiagram-v2
 ## 7. セッション失効の構成
 
 - 運用環境は PostgreSQL の `sessions` テーブルをセッション失効の正本とする。
-- ローカル開発・単体テストは同じスキーマを SQLite に適用する。
+- ローカル開発・CI を含め、PostgreSQL の `sessions` テーブルをセッション失効の正本とする。
 - アクセストークンは JWS 署名付き JWT とし、JWT の `sid` で DB のセッションを参照する。
 - API は署名と有効期限の検証後、`sessions.revoked_at IS NULL`、ユーザー状態、セッション期限を確認する。
 - Redis 等の別セッション DB は導入しない。
 - WebSocket は接続時と heartbeat 時にセッションを再検証し、失効を検知したら接続を閉じる。
-- PostgreSQL の複数 API インスタンスで即時通知が必要になった場合は、PostgreSQL の `LISTEN / NOTIFY` を利用する。SQLite は単一プロセス開発・テストを前提にする。
+- PostgreSQL の複数 API インスタンスで即時通知が必要になった場合は、PostgreSQL の `LISTEN / NOTIFY` を利用する。

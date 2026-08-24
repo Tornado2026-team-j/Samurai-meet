@@ -1,0 +1,96 @@
+name: PR CI report
+
+on: # zizmor: ignore[dangerous-triggers] -- PRコードをcheckout・実行せず、GitHub APIのチェック結果だけを固定文面でコメントする。
+  workflow_run:
+    workflows:
+      - Backend CI
+      - Frontend CI
+      - Security checks
+      - CodeQL
+    types: [completed]
+
+permissions:
+  contents: read
+  checks: read
+  pull-requests: write
+
+jobs:
+  report:
+    name: Consolidated PR report
+    if: >-
+      ${{
+        github.event.workflow_run.event == 'pull_request' &&
+        github.event.workflow_run.pull_requests[0].number
+      }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: 失敗した必須チェックだけをPRコメントへ集約
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        with:
+          script: |
+            const pullRequest = context.payload.workflow_run.pull_requests[0];
+            const requiredChecks = [
+              'CI report',
+              'Frontend CI report',
+              'Security report',
+              'Analyze (go)',
+              'Analyze (javascript-typescript)',
+            ];
+            const { data } = await github.rest.checks.listForRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: context.payload.workflow_run.head_sha,
+              filter: 'latest',
+              per_page: 100,
+            });
+            const checks = new Map(data.check_runs.map((check) => [check.name, check]));
+            const results = requiredChecks.map((name) => ({ name, check: checks.get(name) }));
+
+            if (results.some(({ check }) => !check || check.status !== 'completed')) {
+              core.info('全必須チェックの完了を待機します。');
+              return;
+            }
+
+            const failures = results.filter(({ check }) => check.conclusion !== 'success');
+            const marker = '<!-- samurai-meet-ci-report -->';
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pullRequest.number,
+              per_page: 100,
+            });
+            const existing = comments.find((comment) => comment.body.includes(marker));
+
+            if (failures.length === 0) {
+              if (existing) {
+                await github.rest.issues.deleteComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: existing.id,
+                });
+              }
+              core.info('必須チェックはすべて成功したため、PRコメントは作成しません。');
+              return;
+            }
+
+            const rows = failures.map(({ name, check }) => {
+              const result = check.conclusion ?? 'unknown';
+              return `| ${name} | ❌ ${result} | [ログ](${check.html_url}) |`;
+            });
+            const body = `${marker}\n## CI失敗（要対応）\n\n| チェック | 結果 | 詳細 |\n| --- | --- | --- |\n${rows.join('\n')}\n\n各ログを開き、最初のエラーから修正してください。このコメントは失敗内容の変化時だけ更新され、全成功後は削除されます。`;
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pullRequest.number,
+                body,
+              });
+            }

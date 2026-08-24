@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Samurai Meet Backend Dev Client</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <main>
+      <h1>Backend Dev Client</h1>
+      <p>開発環境の API をブラウザから手動確認するための専用クライアントです。</p>
+      <label>API URL<input id="api-url" type="url" value="http://127.0.0.1:8080/api/v1" /></label>
+      <div class="actions">
+        <button data-path="/healthz">ヘルスチェック</button>
+        <button data-path="/readyz">Readiness 確認</button>
+      </div>
+      <section><h2>結果</h2><pre id="result" aria-live="polite">まだ実行していません。</pre></section>
+      <section>
+        <h2>Google OAuth / セッション</h2>
+        <p class="warning">この開発クライアントは検証専用です。トークンを画面共有・ログ・スクリーンショットへ出さないでください。</p>
+        <div class="actions">
+          <button id="google-login">Googleでログイン</button>
+          <button id="session-refresh">セッションを更新</button>
+          <button id="session-logout">ログアウト</button>
+        </div>
+        <label>Access Token（Passkey登録用・自動入力）<input id="access-token" type="password" autocomplete="off" /></label>
+      </section>
+      <section>
+        <h2>Passkey / WebAuthn</h2>
+        <p id="passkey-support">対応状況を確認しています。</p>
+        <div class="actions">
+          <button id="passkey-register">このブラウザをPasskey登録</button>
+          <button id="passkey-login">Passkeyでログイン</button>
+          <button id="passkey-reauth">Passkeyで再認証</button>
+          <button id="passkey-list">登録済み一覧</button>
+        </div>
+        <label>解除するCredential ID<input id="passkey-id" type="text" autocomplete="off" /></label>
+        <button id="passkey-remove">このCredentialを解除</button>
+        <p>WebテストではRP IDを <code>samurai-meet.disnana.com</code>、Originを <code>https://samurai-meet.disnana.com</code> に合わせます。localhost確認時はサーバーのWebAuthn設定もlocalhostへ合わせてください。</p>
+      </section>
+    </main>
+    <script src="./app.js?v=20260824-2"></script>
+  </body>
+</html>

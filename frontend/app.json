@@ -1,0 +1,14 @@
+{
+  "expo": {
+    "name": "Samurai Meet",
+    "slug": "samurai-meet",
+    "scheme": "samuraimeet",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "experiments": {
+      "typedRoutes": true
+    },
+    "plugins": ["expo-router"]
+  }
+}

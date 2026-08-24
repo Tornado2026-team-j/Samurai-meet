@@ -11,6 +11,7 @@ Samurai Meet の要件・設計・実装方針を、目的ごとに分けて管�
 5. [DB 仕様書](database.md)：テーブル、リレーション、インデックス、保持方針
 6. [機能別仕様書](features/README.md)：各機能の画面、処理、API、DB、受け入れ条件
 7. [セキュリティ最終監査](security-audit.md)：自動更新、セッション失効、P1 対応、リリース判定
+8. [GitHub CI と main ブランチ保護](operations/github-governance.md)：CI の実行内容と管理者向け設定手順
 
 ## 機能別仕様書
 
@@ -40,7 +41,7 @@ Samurai Meet の要件・設計・実装方針を、目的ごとに分けて管�
 
 - フロントエンドの標準言語は TypeScript。
 - バックエンド API、マッチング、WebSocket、画像 API は Go。
-- DB エンジンは PostgreSQL と SQLite のみとする。運用環境は PostgreSQL、ローカル開発・単体テストは SQLite を利用する。
-- PostgreSQL の距離検索では PostGIS 拡張を利用する。SQLite では Go 側の距離計算を利用する。
-- クライアントは原則として Go API 経由で業務データへアクセスする。PostgreSQL / SQLite へモバイルアプリから直接接続しない。
+- DB は PostgreSQL を唯一の正本とする。距離検索には PostgreSQL の PostGIS 拡張を利用する。
+- 暗号化済み画像本体は非公開ファイルストレージ、画像メタデータと削除状態は PostgreSQL に保存する。
+- クライアントは原則として Go API 経由で業務データへアクセスする。PostgreSQL やファイルストレージへモバイルアプリから直接接続しない。
 - 暗号化対象データはクライアント側で扱い、Key-A をサーバーへ平文で送らない。

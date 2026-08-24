@@ -38,7 +38,7 @@ Samurai Meet は、近くにいる日本人・外国人同士が、時間・場�
 
 - クライアント：iOS / Android（Expo、React Native、Expo Router）
 - API サーバー：Go
-- DB：PostgreSQL（運用） / SQLite（ローカル開発・単体テスト）
+- DB：PostgreSQL（開発・CI・運用）
 - リアルタイム通信：WebSocket
 - 認証：Google OAuth2 / OIDC、Passkey
 - 画像保存：自前サーバーまたはプライベートなオブジェクトストレージ
@@ -212,8 +212,8 @@ flowchart LR
 
 - 現在地取得はユーザーの明示的な許可を必要とする。
 - 外国人ユーザーも利用するため、初期 UI は日本語・英語対応を前提とする。
-- DB エンジンは PostgreSQL と SQLite のみとする。PostgreSQL では PostGIS 拡張を利用できるものとする。
-- PostgreSQL では PostGIS による距離検索を行い、SQLite では Go 側で距離を計算する。
+- DB エンジンは PostgreSQL のみとし、PostGIS 拡張を利用する。
+- 距離検索は PostgreSQL / PostGIS で行う。
 - チャットのリアルタイム性は WebSocket で実現する。
 - 画像は DB にバイナリを直接保存せず、ストレージキーとメタデータを DB に保存する。
 - 個人情報の取扱いは、適用される個人情報保護法・GDPR 等を確認して確定する。法的判断は専門家レビューを受ける。
@@ -476,7 +476,6 @@ flowchart LR
     Auth[Google OAuth2 / OIDC]
     Passkey[Passkey / WebAuthn]
     DB[(PostgreSQL + PostGIS)]
-    LocalDB[(SQLite 開発・テスト)]
     Storage[(非公開画像ストレージ)]
     KMS[鍵管理 / Secret Manager]
     Admin[運営管理機能]
@@ -500,8 +499,8 @@ flowchart LR
 | Expo アプリ | 画面、OS 権限、Secure Storage、Key-A、暗号化、REST/WebSocket クライアント |
 | Go API | 認証後のセッション、プロフィール、カード、検索、マッチ、評価、画像認可 |
 | WebSocket | マッチ済みチャットのリアルタイム配送、再接続・認証 |
-| PostgreSQL / SQLite | ユーザー、プロフィール、カード、マッチ、メッセージ、評価、監査データ |
-| PostGIS / Go | PostgreSQL は PostGIS、SQLite は Go で位置情報の距離検索・公開半径判定 |
+| PostgreSQL | ユーザー、プロフィール、カード、マッチ、メッセージ、評価、監査データ |
+| PostGIS | 位置情報の距離検索・公開半径判定 |
 | 画像ストレージ | 暗号化済みまたはアクセス制御済み画像の保存 |
 | KMS / Secret Manager | Key-B、DB 接続情報、署名鍵等の保護 |
 
@@ -639,15 +638,15 @@ flowchart LR
 
 | メソッド | パス | 概要 |
 | --- | --- | --- |
-| `GET` | `/v1/auth/google/start` | Google 認証開始 |
-| `POST` | `/v1/auth/google/exchange` | 認可コードをセッションへ交換 |
-| `POST` | `/v1/auth/passkey/register/options` | Passkey 登録オプション取得 |
-| `POST` | `/v1/auth/passkey/register/verify` | Passkey 登録結果検証 |
-| `POST` | `/v1/auth/passkey/login/options` | Passkey 認証オプション取得 |
-| `POST` | `/v1/auth/passkey/login/verify` | Passkey 認証結果検証 |
-| `POST` | `/v1/auth/refresh` | Refresh Token のローテーションと Access Token 更新 |
-| `POST` | `/v1/auth/logout` | ログアウト |
-| `POST` | `/v1/auth/logout-all` | 全端末のセッション失効 |
+| `GET` | `/api/v1/auth/google/start` | Google 認証開始 |
+| `POST` | `/api/v1/auth/google/exchange` | 認可コードをセッションへ交換 |
+| `POST` | `/api/v1/auth/passkey/register/options` | Passkey 登録オプション取得 |
+| `POST` | `/api/v1/auth/passkey/register/verify` | Passkey 登録結果検証 |
+| `POST` | `/api/v1/auth/passkey/login/options` | Passkey 認証オプション取得 |
+| `POST` | `/api/v1/auth/passkey/login/verify` | Passkey 認証結果検証 |
+| `POST` | `/api/v1/auth/refresh` | Refresh Token のローテーションと Access Token 更新 |
+| `POST` | `/api/v1/auth/logout` | ログアウト |
+| `POST` | `/api/v1/auth/logout-all` | 全端末のセッション失効 |
 | `GET` | `/v1/me/sessions` | 自分のログインセッション一覧 |
 | `DELETE` | `/v1/me/sessions/{id}` | 指定セッションの失効 |
 | `GET` | `/v1/me` | 自分のアカウント・プロフィール取得 |
@@ -672,7 +671,7 @@ flowchart LR
 
 ### 11.2 WebSocket
 
-- 接続先（案）：`wss://api.example.com/v1/ws/chats/{chat_id}`
+- 接続先：`wss://samurai-meet.disnana.com/api/v1/ws/chats/{chat_id}`
 - 接続時に API セッションを検証する。
 - クライアントイベント例：`message.send`、`message.read`、`typing.start`、`typing.stop`
 - サーバーイベント例：`message.created`、`message.ack`、`message.read`、`error`
@@ -791,7 +790,7 @@ backend/
 │   │   ├── handler.go          # 画像アップロードAPI
 │   │   └── storage.go          # 自前サーバへの画像保存処理
 │   └── db/
-│       └── database.go         # PostgreSQL / SQLite 接続
+│       └── database.go         # PostgreSQL 接続・migration 適用
 ├── pkg/
 │   └── middleware/
 │       └── auth.go             # 認証ミドルウェア
