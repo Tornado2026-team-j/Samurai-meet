@@ -59,6 +59,10 @@ GitHub の **Settings → Branches → Branch protection rules → Add rule** �
 
 Dependency Review を必須にする前に、**Settings → Advanced Security → Dependency graph** を有効にする。無効な状態ではDependency Reviewは実行できず、PRを失敗として扱う。
 
+### ライセンス方針
+
+Dependency Review は許可リスト方式で、MIT・Apache-2.0・BSD系などを許可する。AGPL-3.0はアプリの依存としては許可しない。例外はTruffleHogの固定コミットのみで、未改変のCI秘密情報スキャンとして実行し、製品へ組み込み・配布しないことを条件とする。例外の追加は、用途・固定バージョン・ライセンス影響をPRに記録してレビューする。
+
 ## 今後の追加
 
 - Dependabot Alerts、Dependabot Security Updates、Secret Scanning、Push Protection を GitHub の Security 設定で有効にする。Dependabotは`.github/dependabot.yml`でGo module、GitHub Actions、Bunを週次更新する。

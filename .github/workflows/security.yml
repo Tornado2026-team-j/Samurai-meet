@@ -29,7 +29,10 @@ jobs:
         uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
         with:
           fail-on-severity: moderate
-          deny-licenses: GPL-2.0, GPL-3.0, AGPL-1.0, AGPL-3.0
+          allow-licenses: MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, MPL-2.0, CC0-1.0, 0BSD, Unlicense, Zlib
+          # TruffleHog is an unmodified CI-only scanner; it is neither linked
+          # into nor distributed with the Samurai-meet product.
+          allow-dependencies-licenses: pkg:githubactions/trufflesecurity/trufflehog@bcfcf73aaf4759d4dadc2783177c245a02792318
 
   osv-pr:
     name: OSV dependency vulnerability scan
