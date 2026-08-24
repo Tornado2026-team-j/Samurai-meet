@@ -30,6 +30,7 @@ type Config struct {
 type GoogleOIDCConfig struct{ ClientID, ClientSecret, RedirectURI string }
 type WebAuthnConfig struct{ RPID, RPOrigin, RPDisplayName string }
 type JWSConfig struct{ SigningKey, KeyID, VerifyKeys, Issuer, Audience string }
+
 // KeyBConfig contains only the server-side wrapping secret configuration. The
 // key material itself is generated per user and encrypted before it reaches
 // PostgreSQL. WrapKey is injected by the process environment or a secret
