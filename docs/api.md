@@ -141,7 +141,7 @@ Refresh request:
 | GET | `/api/v1/me/key-b` | Access Tokenと5分以内のPasskey再認証が必要なKey-B取得 |
 | DELETE | `/api/v1/me` | Access Tokenと5分以内のPasskey再認証、およびconfirm付きの退会・完全削除 |
 
-画像平文、画像鍵、Key-A、Key-B、Recovery KeyはAPIログへ出さない。Key-Bは`KEY_B_WRAP_KEY`でAES-256-GCM暗号化した値だけをDBへ保存し、平文は応答生成中にだけ存在する。wrap鍵IDが保存済み値と異なる場合はfail closedで取得を拒否する。KMS直結、鍵ローテーション、取得監査ログ、Key-AとのHKDFクライアント統合は未実装である。profile画像はサーバー公開鍵で画像鍵をwrapし、private画像は端末側鍵を使う。画像uploadの正確な`X-Photo-*`ヘッダーは [backend/API_SPEC.md](../backend/API_SPEC.md) を参照する。
+画像平文、画像鍵、Key-A、Key-B、Recovery KeyはAPIログへ出さない。Key-Bは`KEY_B_WRAP_KEY`でAES-256-GCM暗号化した値だけをDBへ保存し、平文は`Cache-Control: private, no-store`付きの応答生成中にだけ存在する。wrap鍵IDが保存済み値と異なる場合はfail closedで取得を拒否する。KMS直結、鍵ローテーション、取得監査ログ、Key-AとのHKDFクライアント統合は未実装である。profile画像はサーバー公開鍵で画像鍵をwrapし、private画像は端末側鍵を使う。画像uploadの正確な`X-Photo-*`ヘッダーは [backend/API_SPEC.md](../backend/API_SPEC.md) を参照する。
 
 ### チャット
 

@@ -252,7 +252,7 @@ PUT body:
 {"data":{"key_version":"v1","key_b":"Base64URL"}}
 ```
 
-直近Passkeyがない場合は`403 recent_passkey_authentication_required`、保存済みwrap鍵IDが異なる場合は`503 key_b_unavailable`を返します。
+成功応答には`Cache-Control: private, no-store`を付けます。直近Passkeyがない場合は`403 recent_passkey_authentication_required`、保存済みwrap鍵IDが異なる場合は`503 key_b_unavailable`を返します。
 
 クライアント側のKey-AとのHKDF結合、KMS直結、鍵ローテーションと取得監査ログは未実装です。退会ではKey-B暗号文も削除します。
 

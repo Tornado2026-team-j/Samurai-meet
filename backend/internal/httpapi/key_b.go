@@ -37,6 +37,11 @@ func keyB(service *keys.KeyBService, sessions *auth.SessionService) http.Handler
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "key_b_retrieval_failed"})
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"data": result})
+		writeKeyBMaterial(w, result)
 	}
+}
+
+func writeKeyBMaterial(w http.ResponseWriter, result keys.KeyBMaterial) {
+	w.Header().Set("Cache-Control", "private, no-store")
+	writeJSON(w, http.StatusOK, map[string]any{"data": result})
 }

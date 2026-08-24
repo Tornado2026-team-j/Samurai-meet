@@ -97,7 +97,7 @@ Refresh はローテーションするため、サーバーが更新に成功し
 
 対象は`7004815..e71d585`のKey-B、直近Passkey認可、migration、統合テストである。Go test/vet/build、隔離PostgreSQL統合テスト、PR #3のGo/PostgreSQL/Expo/CodeQL/Secret/OSV/依存監査は成功した。Codex Securityプラグインの差分ランチャーはWindowsのCP932文字コード例外でscan IDを生成できなかったため、ここに手動差分監査の範囲と結果を記録する。
 
-- **P2 — Key-B応答に`Cache-Control: private, no-store`がない。** `GET /api/v1/me/key-b`はKey-B平文をJSONで返すが、成功応答は共通`writeJSON`の既定ヘッダーだけで、ブラウザや中間のprivate cacheへの保存を明示的に禁止していない。成功応答に`Cache-Control: private, no-store`を設定し、HTTP handlerテストで固定すること。実装前のため、このP2は未解決とする。
+- [x] **P2 — Key-B応答のcache禁止。** `GET /api/v1/me/key-b`の成功応答は`Cache-Control: private, no-store`を設定する。実際の認可済みHTTP経路を通すPostgreSQL統合テストと、応答ヘルパーの単体テストで固定した。
 ## 4. QUIC / WebTransport 監査
 
 - QUIC の TLS 1.3 は通信路の機密性・完全性を提供するが、Samurai Meet のユーザー・マッチ・セッション認可はアプリケーション token で別途検証する。

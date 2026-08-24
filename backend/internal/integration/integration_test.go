@@ -12,6 +12,8 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -21,6 +23,7 @@ import (
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/auth"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/config"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/db"
+	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/httpapi"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/image"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/keys"
 )
@@ -186,6 +189,26 @@ func TestAuthKeyImageAndAccountLifecycle(t *testing.T) {
 	}
 	if firstConcurrent != secondConcurrent {
 		t.Fatalf("concurrent Key-B retrieval returned different values: first=%+v second=%+v", firstConcurrent, secondConcurrent)
+	}
+
+	liveNow := time.Now().UTC()
+	liveSession, err := sessions.CreateSession(context.Background(), userID, liveNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(`UPDATE sessions SET last_passkey_at=$1 WHERE id=$2`, liveNow.Format(time.RFC3339Nano), liveSession.SessionID); err != nil {
+		t.Fatal(err)
+	}
+	keyBHandler := httpapi.NewRouterWithOptions(httpapi.RouterOptions{Sessions: sessions, KeyB: keyBService})
+	keyBRequest := httptest.NewRequest(http.MethodGet, "/api/v1/me/key-b", nil)
+	keyBRequest.Header.Set("Authorization", "Bearer "+liveSession.AccessToken)
+	keyBResponse := httptest.NewRecorder()
+	keyBHandler.ServeHTTP(keyBResponse, keyBRequest)
+	if keyBResponse.Code != http.StatusOK {
+		t.Fatalf("Key-B HTTP status = %d, want %d: %s", keyBResponse.Code, http.StatusOK, keyBResponse.Body.String())
+	}
+	if got := keyBResponse.Header().Get("Cache-Control"); got != "private, no-store" {
+		t.Fatalf("Key-B Cache-Control = %q, want %q", got, "private, no-store")
 	}
 
 	profileKey, err := rsa.GenerateKey(rand.Reader, 3072)
