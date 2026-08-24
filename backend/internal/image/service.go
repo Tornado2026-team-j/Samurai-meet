@@ -204,6 +204,9 @@ func (s *Service) GetPublicProfileImage(ctx context.Context, photoID string) (Ph
 	if err != nil {
 		return Photo{}, nil, err
 	}
+	if !isSupportedContentType(photo.ContentType) {
+		return Photo{}, nil, ErrInvalidPhoto
+	}
 	photo.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt)
 	if err != nil {
 		return Photo{}, nil, err
@@ -310,7 +313,7 @@ func validateUpload(input UploadInput, profilePrivateKey *rsa.PrivateKey) error 
 	if len(input.ContentType) > 128 || strings.ContainsAny(input.ContentType, "\r\n") {
 		return ErrInvalidPhoto
 	}
-	if input.ContentType != "application/octet-stream" && !strings.HasPrefix(input.ContentType, "image/") {
+	if !isSupportedContentType(input.ContentType) {
 		return ErrInvalidPhoto
 	}
 	for _, r := range input.ContentType {
@@ -336,6 +339,16 @@ func validateUpload(input UploadInput, profilePrivateKey *rsa.PrivateKey) error 
 		return ErrInvalidPhoto
 	}
 	return nil
+}
+
+func isSupportedContentType(value string) bool {
+	switch value {
+	case "application/octet-stream", "image/jpeg", "image/png", "image/webp":
+		return true
+	default:
+		// SVG and other browser-interpreted formats are intentionally rejected.
+		return false
+	}
 }
 
 func validImageNonce(value string) bool {

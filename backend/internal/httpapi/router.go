@@ -42,9 +42,9 @@ func NewRouterWithOptions(options RouterOptions) http.Handler {
 	mux.HandleFunc(APIV1Prefix+"/healthz", healthz)
 	mux.HandleFunc(APIV1Prefix+"/readyz", readyz)
 	if options.OAuthLogin != nil {
-		mux.HandleFunc(APIV1Prefix+"/auth/google/start", googleStart(options.OAuthLogin, options.Environment, options.AllowExpoGoRedirect))
+		mux.HandleFunc(APIV1Prefix+"/auth/google/start", googleStart(options.OAuthLogin, options.Environment, options.AllowExpoGoRedirect, options.ClientOrigin, options.DevClientOrigin))
 		mux.HandleFunc(APIV1Prefix+"/auth/google/exchange", googleExchange(options.OAuthLogin))
-		mux.HandleFunc("/auth/callback", googleCallback(options.OAuthLogin, options.Environment, options.AllowExpoGoRedirect))
+		mux.HandleFunc("/auth/callback", googleCallback(options.OAuthLogin, options.Environment, options.AllowExpoGoRedirect, options.ClientOrigin, options.DevClientOrigin))
 	}
 	if options.Sessions != nil {
 		mux.HandleFunc(APIV1Prefix+"/auth/refresh", refreshSession(options.Sessions))

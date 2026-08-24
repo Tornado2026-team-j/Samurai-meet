@@ -218,7 +218,7 @@ func (s *SessionService) Refresh(ctx context.Context, token, requestID string, n
 		return SessionTokens{}, err
 	}
 	result := SessionTokens{userID, sessionID, access, newRefresh}
-	payload, err := json.Marshal(result)
+	payload, err := json.Marshal(result) // #nosec G117 -- immediately encrypted for bounded retry storage; never logged or returned as JSON
 	if err != nil {
 		return SessionTokens{}, err
 	}

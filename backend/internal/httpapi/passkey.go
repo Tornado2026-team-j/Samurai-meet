@@ -12,7 +12,7 @@ import (
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/auth"
 )
 
-const passkeyCeremonyHeader = "X-Passkey-Ceremony-Token"
+const passkeyCeremonyHTTPHeader = "X-Passkey-Ceremony-Token" // #nosec G101 -- protocol header name, not a credential
 
 func passkeyRegisterOptions(passkeys *auth.PasskeyService, sessions *auth.SessionService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -37,7 +37,7 @@ func passkeyRegisterVerify(passkeys *auth.PasskeyService, sessions *auth.Session
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing_or_invalid_access_token"})
 			return
 		}
-		token := strings.TrimSpace(r.Header.Get(passkeyCeremonyHeader))
+		token := strings.TrimSpace(r.Header.Get(passkeyCeremonyHTTPHeader))
 		if token == "" {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing_passkey_ceremony_token"})
 			return
@@ -72,7 +72,7 @@ func passkeyLoginOptions(passkeys *auth.PasskeyService) http.HandlerFunc {
 
 func passkeyLoginVerify(passkeys *auth.PasskeyService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		token := strings.TrimSpace(r.Header.Get(passkeyCeremonyHeader))
+		token := strings.TrimSpace(r.Header.Get(passkeyCeremonyHTTPHeader))
 		if token == "" {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing_passkey_ceremony_token"})
 			return

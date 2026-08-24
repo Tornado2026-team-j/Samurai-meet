@@ -140,8 +140,10 @@ func publicProfilePhoto(service *image.Service) http.HandlerFunc {
 		}
 		w.Header().Set("Content-Type", photo.ContentType)
 		w.Header().Set("Cache-Control", "private, no-store")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(plaintext)
+		_, _ = w.Write(plaintext) // #nosec G705 -- content type is a strict raster-image allow-list; nosniff and CSP are also set
 	}
 }
 
@@ -149,11 +151,12 @@ func writeCiphertext(w http.ResponseWriter, photo image.Photo, ciphertext []byte
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Length", strconv.Itoa(len(ciphertext)))
 	w.Header().Set("Cache-Control", "private, no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("X-Photo-Nonce", photo.Nonce)
 	w.Header().Set("X-Photo-Algorithm", photo.Algorithm)
 	w.Header().Set("X-Photo-Key-Version", photo.KeyVersion)
 	w.Header().Set("X-Photo-Wrapped-Key", photo.WrappedImageKey)
 	w.Header().Set("X-Photo-Wrapping-Algorithm", photo.WrappingAlgorithm)
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(ciphertext)
+	_, _ = w.Write(ciphertext) // #nosec G705 -- this is an application/octet-stream ciphertext response, never HTML
 }

@@ -29,10 +29,30 @@ func allowedAppRedirectURI(raw, environment string, allowExpoGo bool) bool {
 	return err == nil && uri.Scheme == "exp" && uri.Host != "" && uri.User == nil && strings.HasSuffix(uri.Path, "/--/auth") && uri.Fragment == ""
 }
 
-func googleStart(service *auth.OAuthLoginService, environment string, allowExpoGo bool) http.HandlerFunc {
+func allowedOAuthRedirectURI(raw, environment string, allowExpoGo bool, clientOrigin, devClientOrigin string) bool {
+	if allowedAppRedirectURI(raw, environment, allowExpoGo) {
+		return true
+	}
+	if raw == "" || strings.ContainsAny(raw, "\r\n") {
+		return false
+	}
+	origins := []string{clientOrigin}
+	if environment == "development" || environment == "test" {
+		origins = append(origins, devClientOrigin, "http://localhost:5173", "http://127.0.0.1:5173")
+	}
+	for _, origin := range origins {
+		origin = strings.TrimRight(strings.TrimSpace(origin), "/")
+		if origin != "" && raw == origin+"/auth/complete" {
+			return true
+		}
+	}
+	return false
+}
+
+func googleStart(service *auth.OAuthLoginService, environment string, allowExpoGo bool, clientOrigin, devClientOrigin string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		redirectURI, challenge := r.URL.Query().Get("app_redirect_uri"), r.URL.Query().Get("handoff_challenge")
-		if !allowedAppRedirectURI(redirectURI, environment, allowExpoGo) || challenge == "" {
+		if !allowedOAuthRedirectURI(redirectURI, environment, allowExpoGo, clientOrigin, devClientOrigin) || challenge == "" {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_app_redirect"})
 			return
 		}
@@ -41,11 +61,11 @@ func googleStart(service *auth.OAuthLoginService, environment string, allowExpoG
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "oauth_unavailable"})
 			return
 		}
-		http.Redirect(w, r, uri, http.StatusFound)
+		http.Redirect(w, r, uri, http.StatusFound) // #nosec G710 -- URI is constructed by the server's fixed Google OAuth configuration, not copied from the request
 	}
 }
 
-func googleCallback(service *auth.OAuthLoginService, environment string, allowExpoGo bool) http.HandlerFunc {
+func googleCallback(service *auth.OAuthLoginService, environment string, allowExpoGo bool, clientOrigin, devClientOrigin string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		result, err := service.Complete(r.Context(), r.URL.Query().Get("code"), r.URL.Query().Get("state"), time.Now())
 		if err != nil {
@@ -53,14 +73,14 @@ func googleCallback(service *auth.OAuthLoginService, environment string, allowEx
 			return
 		}
 		uri, err := url.Parse(result.AppRedirectURI)
-		if err != nil || !allowedAppRedirectURI(result.AppRedirectURI, environment, allowExpoGo) {
+		if err != nil || !allowedOAuthRedirectURI(result.AppRedirectURI, environment, allowExpoGo, clientOrigin, devClientOrigin) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_app_redirect"})
 			return
 		}
 		query := uri.Query()
 		query.Set("handoff_code", result.Code)
 		uri.RawQuery = query.Encode()
-		http.Redirect(w, r, uri.String(), http.StatusFound)
+		http.Redirect(w, r, uri.String(), http.StatusFound) // #nosec G710 -- target passed the fixed production/dev app redirect allow-list above
 	}
 }
 

@@ -108,7 +108,7 @@ func (s *OAuthLoginService) ExchangeHandoff(ctx context.Context, handoff, verifi
 	if err != nil {
 		return OAuthLoginResult{}, err
 	}
-	payload, err := json.Marshal(result)
+	payload, err := json.Marshal(result) // #nosec G117 -- immediately encrypted for one-time handoff retry storage; never logged or returned as JSON
 	if err != nil {
 		return OAuthLoginResult{}, err
 	}
