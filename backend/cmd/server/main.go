@@ -2,14 +2,18 @@ package main
 
 import (
 	"context"
+	"crypto/rsa"
 	"log"
 	"net/http"
 	"time"
 
+	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/account"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/auth"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/config"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/db"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/httpapi"
+	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/image"
+	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/keys"
 )
 
 func main() {
@@ -49,6 +53,21 @@ func main() {
 		}
 		passkeys = auth.NewPasskeyService(database, relyingParty, sessions)
 	}
+	imageStore, err := image.NewStore(cfg.ImageStorage.Directory)
+	if err != nil {
+		log.Fatalf("image storage initialization failed: %v", err)
+	}
+	var profileWrappingKeyPEM *rsa.PrivateKey
+	if cfg.ImageStorage.ProfileWrappingPrivateKeyPEM != "" {
+		profileWrappingKeyPEM, err = image.ParseWrappingPrivateKey(cfg.ImageStorage.ProfileWrappingPrivateKeyPEM)
+		if err != nil {
+			log.Fatalf("profile wrapping key initialization failed: %v", err)
+		}
+	}
+	imageCache := image.NewCiphertextCache(cfg.ImageStorage.CiphertextCacheMaxBytes, time.Duration(cfg.ImageStorage.CiphertextCacheTTLSeconds)*time.Second)
+	images := image.NewService(database, imageStore, imageCache, profileWrappingKeyPEM, cfg.ImageStorage.ProfileWrappingKeyVersion, int64(cfg.ImageStorage.MaxUploadBytes))
+	keyEnvelopes := keys.NewService(database)
+	accounts := account.NewService(database, images)
 
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
@@ -61,6 +80,9 @@ func main() {
 			OAuthLogin:          oauthLogin,
 			Sessions:            sessions,
 			Passkeys:            passkeys,
+			KeyEnvelopes:        keyEnvelopes,
+			Images:              images,
+			Accounts:            accounts,
 		}),
 	}
 

@@ -4,7 +4,10 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/account"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/auth"
+	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/image"
+	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/keys"
 )
 
 // APIV1Prefix is the public API namespace used by both the mobile app and web
@@ -21,6 +24,9 @@ type RouterOptions struct {
 	OAuthLogin          *auth.OAuthLoginService
 	Sessions            *auth.SessionService
 	Passkeys            *auth.PasskeyService
+	KeyEnvelopes        *keys.Service
+	Images              *image.Service
+	Accounts            *account.Service
 }
 
 func NewRouter() http.Handler {
@@ -55,6 +61,21 @@ func NewRouterWithOptions(options RouterOptions) http.Handler {
 		mux.HandleFunc(APIV1Prefix+"/auth/passkey", passkeyList(options.Passkeys, options.Sessions))
 		mux.HandleFunc(APIV1Prefix+"/auth/passkey/", passkeyRemove(options.Passkeys, options.Sessions))
 	}
+	if options.Sessions != nil && options.KeyEnvelopes != nil {
+		mux.HandleFunc(keyEnvelopePrefix, keyEnvelopeList(options.KeyEnvelopes, options.Sessions))
+		mux.HandleFunc(keyEnvelopePrefix+"/", keyEnvelopeItem(options.KeyEnvelopes, options.Sessions))
+	}
+	if options.Images != nil {
+		mux.HandleFunc(APIV1Prefix+"/keys/profile-image", profileWrappingKey(options.Images))
+		mux.HandleFunc(APIV1Prefix+"/profile-photos/", publicProfilePhoto(options.Images))
+	}
+	if options.Sessions != nil && options.Images != nil {
+		mux.HandleFunc(APIV1Prefix+"/me/photos", uploadPhoto(options.Images, options.Sessions))
+		mux.HandleFunc(APIV1Prefix+"/me/photos/", ownedPhoto(options.Images, options.Sessions))
+	}
+	if options.Sessions != nil && options.Accounts != nil {
+		mux.HandleFunc(APIV1Prefix+"/me", deleteAccount(options.Accounts, options.Sessions))
+	}
 
 	return withCORS(withJSONContentType(mux), options)
 }
@@ -68,8 +89,9 @@ func withCORS(next http.Handler, options RouterOptions) http.Handler {
 		if allowedOrigin != "" && r.Header.Get("Origin") == allowedOrigin {
 			w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
 			w.Header().Set("Vary", "Origin")
-			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Passkey-Ceremony-Token, X-Photo-Visibility, X-Photo-Content-Type, X-Photo-Nonce, X-Photo-Algorithm, X-Photo-Key-Version, X-Photo-Wrapped-Key, X-Photo-Server-Wrapped-Key, X-Photo-Wrapping-Algorithm")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Expose-Headers", "X-Photo-Nonce, X-Photo-Algorithm, X-Photo-Key-Version, X-Photo-Wrapped-Key, X-Photo-Wrapping-Algorithm")
 			if r.Method == http.MethodOptions {
 				w.WriteHeader(http.StatusNoContent)
 				return

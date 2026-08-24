@@ -62,6 +62,43 @@ func (s *Store) SaveCiphertext(userID, photoID string, ciphertext io.Reader) (pa
 	return path, hex.EncodeToString(hash.Sum(nil)), nil
 }
 
+// ReadCiphertext reads one encrypted object and rejects files larger than the
+// configured limit. The returned bytes are still ciphertext.
+func (s *Store) ReadCiphertext(userID, photoID string, maxBytes int64) ([]byte, error) {
+	if !safeComponent.MatchString(userID) || !safeComponent.MatchString(photoID) {
+		return nil, fmt.Errorf("user ID and photo ID are required")
+	}
+	if maxBytes <= 0 {
+		return nil, fmt.Errorf("maximum image size must be positive")
+	}
+	file, err := os.Open(s.ciphertextPath(userID, photoID))
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if info.Size() > maxBytes {
+		return nil, fmt.Errorf("ciphertext exceeds maximum image size")
+	}
+	return io.ReadAll(io.LimitReader(file, maxBytes+1))
+}
+
+// DeleteCiphertext removes one encrypted object. Missing files are treated as
+// already deleted so account cleanup remains idempotent.
+func (s *Store) DeleteCiphertext(userID, photoID string) error {
+	if !safeComponent.MatchString(userID) || !safeComponent.MatchString(photoID) {
+		return fmt.Errorf("user ID and photo ID are required")
+	}
+	err := os.Remove(s.ciphertextPath(userID, photoID))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	return err
+}
+
 // DeleteUserCiphertext irreversibly removes every encrypted image owned by a
 // deleted account. Callers must invalidate any ciphertext cache first.
 func (s *Store) DeleteUserCiphertext(userID string) error {
@@ -69,4 +106,8 @@ func (s *Store) DeleteUserCiphertext(userID string) error {
 		return fmt.Errorf("invalid user ID")
 	}
 	return os.RemoveAll(filepath.Join(s.root, userID))
+}
+
+func (s *Store) ciphertextPath(userID, photoID string) string {
+	return filepath.Join(s.root, userID, photoID+".bin")
 }

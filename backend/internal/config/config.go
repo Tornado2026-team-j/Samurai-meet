@@ -32,8 +32,10 @@ type JWSConfig struct{ SigningKey, Issuer, Audience string }
 type ImageStorageConfig struct {
 	Directory                    string
 	ProfileWrappingPrivateKeyPEM string
+	ProfileWrappingKeyVersion    string
 	CiphertextCacheMaxBytes      int
 	CiphertextCacheTTLSeconds    int
+	MaxUploadBytes               int
 }
 
 // DatabaseConfig holds separately managed database connection settings.
@@ -72,8 +74,10 @@ func Load() Config {
 		ImageStorage: ImageStorageConfig{
 			Directory:                    valueOrDefault("IMAGE_STORAGE_DIR", "storage/images"),
 			ProfileWrappingPrivateKeyPEM: os.Getenv("PROFILE_WRAPPING_PRIVATE_KEY_PEM"),
+			ProfileWrappingKeyVersion:    valueOrDefault("PROFILE_WRAPPING_KEY_VERSION", "v1"),
 			CiphertextCacheMaxBytes:      intValueOrDefault("IMAGE_CIPHERTEXT_CACHE_MAX_BYTES", 256*1024*1024),
 			CiphertextCacheTTLSeconds:    intValueOrDefault("IMAGE_CIPHERTEXT_CACHE_TTL_SECONDS", 300),
+			MaxUploadBytes:               intValueOrDefault("IMAGE_MAX_UPLOAD_BYTES", 20*1024*1024),
 		},
 		GoogleOIDC: GoogleOIDCConfig{os.Getenv("GOOGLE_CLIENT_ID"), os.Getenv("GOOGLE_CLIENT_SECRET"), os.Getenv("GOOGLE_REDIRECT_URI")},
 		WebAuthn:   WebAuthnConfig{valueOrDefault("WEBAUTHN_RP_ID", "localhost"), valueOrDefault("WEBAUTHN_RP_ORIGIN", "http://localhost:5173"), valueOrDefault("WEBAUTHN_RP_DISPLAY_NAME", "Samurai Meet")},
