@@ -202,19 +202,66 @@ Request（新クライアントは`request_id`を使用。互換のため`refres
 
 失効後のAccess Tokenは署名が正しくても、DBのsession確認で拒否されます。
 
-## 6. 画像・鍵・業務APIの状態
+## 6. Key-A envelope・画像・退会
 
-| 機能 | 状態 | 現行の根拠 |
-| --- | --- | --- |
-| 暗号文専用privateファイル保存 | 部品実装済み | `internal/image` |
-| 暗号文キャッシュ | 部品実装済み | `internal/image/cache.go` |
-| プロフィール画像鍵のRSA-OAEPラップ | 部品実装済み | `internal/image/wrapping.go` |
-| 端末Key-A / Recovery Key envelope HTTP | 準備中 | `key_envelopes` migrationのみ |
-| 写真upload/download/delete HTTP | 予定 | API route未接続 |
-| 退会オーケストレーション | 予定 | session失効・DB論理削除・ファイル削除を一体化する |
-| チャットQUIC用短命Chat Token | 予定 | Access/Refreshとは別audienceで実装する |
+### 6.1 Key-A envelope（実装済み）
 
-未接続の画像・Recovery APIをフロントエンドから呼び出してはいけません。画像平文、Key-A、Key-B、Recovery Key、Refresh TokenをAPIログへ出さない不変条件は実装済み部品にも適用します。
+Key-Aそのものではなく、Recovery Keyから端末上で導出した鍵で暗号化した値だけを保存します。
+
+| Method | Path | 認証 | 用途 |
+| --- | --- | --- | --- |
+| GET | `/api/v1/me/key-envelopes` | Access Token | 自分のenvelope一覧 |
+| PUT | `/api/v1/me/key-envelopes/{key_version}` | Access Token | envelopeを作成・同一versionを更新 |
+| GET | `/api/v1/me/key-envelopes/{key_version}` | Access Token | 指定version取得 |
+| DELETE | `/api/v1/me/key-envelopes/{key_version}` | Access Token | 指定version削除 |
+
+PUT body:
+
+```json
+{
+  "key_version": "v1",
+  "encrypted_key_a": "Base64URLの暗号化済みKey-A",
+  "nonce": "Base64URLのAES-GCM nonce",
+  "kdf_params": { "algorithm": "scrypt", "salt": "端末側のsalt" }
+}
+```
+
+サーバーはBase64URL形式・最小長・JSON形式だけを検証し、KDFを実行したりKey-Aを復号したりしません。
+
+### 6.2 画像（実装済み）
+
+画像本体はリクエスト前に端末でAES-256-GCM暗号化し、バイナリ暗号文を送ります。SQLite、DBのbytea、平文ファイルは使用しません。
+
+| Method | Path | 認証 | 用途 |
+| --- | --- | --- | --- |
+| GET | `/api/v1/keys/profile-image` | 不要 | profile画像用RSA-OAEP-256公開JWK取得 |
+| POST | `/api/v1/me/photos` | Access Token | 暗号文をprivate領域へ保存 |
+| GET | `/api/v1/me/photos/{id}` | 所有者Access Token | 暗号文を配信。レスポンスbodyはJSONではない |
+| DELETE | `/api/v1/me/photos/{id}` | 所有者Access Token | DB、ファイル、cacheを削除 |
+| GET | `/api/v1/profile-photos/{id}` | 不要 | `profile`だけをサーバー復号して表示 |
+
+POSTは次のヘッダーを使用します。
+
+| Header | 内容 |
+| --- | --- |
+| `X-Photo-Visibility` | `private` または `profile` |
+| `X-Photo-Content-Type` | 元画像のMIME。未指定はoctet-stream |
+| `X-Photo-Nonce` | 12byte AES-GCM nonceのBase64URL |
+| `X-Photo-Algorithm` | `AES-256-GCM` |
+| `X-Photo-Key-Version` | 端末鍵のversion |
+| `X-Photo-Wrapped-Key` | 端末側でラップした画像鍵 |
+| `X-Photo-Server-Wrapped-Key` | `profile`のみ。API公開RSA鍵でラップした画像鍵 |
+| `X-Photo-Wrapping-Algorithm` | 端末側ラップ方式 |
+
+本文は暗号文のみで、既定の最大サイズは20MiBです。Goサーバーのcacheも暗号文だけを保持し、profile配信時に一時生成する平文はcacheしません。
+
+### 6.3 退会（実装済み）
+
+`DELETE /api/v1/me` に `{"confirm":"DELETE"}` を送り、Access Tokenを認証します。処理中に全sessionを失効し、refresh/passkey/challenge/key envelope/handoff/photo metadataを削除し、暗号文画像フォルダとcacheを削除してからユーザー行を削除します。削除後は旧Access TokenもDBのsession行がないため拒否されます。
+
+### 6.4 未実装業務API
+
+プロフィール、本人確認、募集、検索、マッチ、評価、チャットQUIC用短命Chat Tokenは引き続き予定です。画像平文、Key-A、Key-B、Recovery Key、Refresh TokenをAPIログへ出さない不変条件は全機能に適用します。
 
 ## 7. クライアント更新手順
 

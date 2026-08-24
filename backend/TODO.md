@@ -11,32 +11,38 @@
 - [x] Passkeyの登録・認証・追加・一覧・解除API
 - [x] Expo Go用OAuth/sessionテストクライアントと「状態を更新」ボタン
 - [x] PostgreSQL migration、Go/Python/Bun CI、失敗時PRコメント集約
+- [x] Key-A envelopeの作成・一覧・version取得・削除API
+- [x] 端末暗号文画像のprivate保存、所有者download/delete、暗号文cache
+- [x] profile画像のRSA公開JWK配信とサーバー復号配信
+- [x] 退会時の認証行・画像metadata・暗号文フォルダ・cache削除
+- [x] PostgreSQL分離schemaによる認証・鍵・画像・退会ライフサイクル統合テスト
 
-## 1. 次の実装: 端末鍵とRecovery Key
+## 1. 次の実装: 端末鍵とRecovery Key（クライアント側）
 
 - [ ] Key-Aを端末Secure Storageで生成・保存するTypeScript crypto serviceを追加する。
 - [ ] Recovery Keyを表示前に一度だけ生成し、再表示不可のUIにする。
 - [ ] Recovery KeyからHKDF用の鍵を導出し、Key-AをAES-256-GCMで端末上暗号化する。
-- [ ] `key_envelopes`の作成・取得・ローテーションAPIを追加する。
+- [x] `key_envelopes`の作成・取得・ローテーションAPIを追加する。
 - [ ] Recovery Keyの試行回数、レート制限、監査イベント、失敗時のロックを追加する。
 - [ ] Recovery / Key-B / 新端末登録 / 退会を直近Passkey認証必須にする。
 - [ ] 復旧途中にアプリが落ちても、状態を再開できる有限状態機械をクライアントへ追加する。
 
-## 2. 次の実装: 暗号化画像
+## 2. 次の実装: 暗号化画像（クライアント接続・運用）
 
 - [ ] 端末で画像ごとの256bit画像鍵を作り、AES-256-GCMで暗号化する。
-- [ ] `GET /crypto/profile-wrapping-key`でRSA-OAEP-256公開鍵を配信する。
-- [ ] `POST /photos`、`GET /photos/{id}`、`DELETE /photos/{id}`を認証・所有権確認と接続する。
-- [ ] private画像は端末鍵ラップ、profile画像はサーバー公開鍵ラップという種別を明示する。
+- [x] `/api/v1/keys/profile-image`でRSA-OAEP-256公開JWKを配信する。
+- [x] `/api/v1/me/photos`のupload、owner download、deleteを認証・所有権確認と接続する。
+- [x] private画像は端末鍵ラップ、profile画像はサーバー公開鍵ラップという種別を明示する。
 - [ ] MIME、暗号文サイズ、nonce長、SHA-256、key versionをサーバーで検証する。
-- [ ] ダウンロードは認証済みストリームと暗号文cacheだけを使い、平文画像をcacheしない。
-- [ ] upload途中・DB失敗・再試行・孤児ファイルのcleanupをテストする。
+- [x] ダウンロードは認証済み暗号文と暗号文cacheだけを使い、平文画像をcacheしない。
+- [x] upload途中・DB失敗・再試行・退会時のファイルcleanupを統合テストする。
 
-## 3. 次の実装: 退会・削除の確実性
+## 3. 次の実装: 退会・削除の確実性（監査・運用）
 
-- [ ] `DELETE /me`を実装し、ユーザーをdeletedにして全sessionを即時失効する。
-- [ ] photos metadataの削除状態とprivate暗号文ファイル削除を同じ業務workflowで扱う。
-- [ ] cache keyを全削除し、削除漏れを定期reconcilerで検出する。
+- [x] `DELETE /api/v1/me`を実装し、全sessionを即時失効する。
+- [x] photos metadataとprivate暗号文ファイル削除を同じworkflowで扱う。
+- [x] cache keyをユーザー単位で全削除する。
+- [ ] 孤児ファイル・孤児metadataを定期reconcilerで検出する。
 - [ ] 削除証跡を監査ログへ記録する。ただし画像平文、鍵、tokenを記録しない。
 - [ ] バックアップ保持期間と物理削除の運用手順を確定する。
 

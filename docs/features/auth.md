@@ -21,9 +21,9 @@
 | JWS Access Token / Refresh rotation | 実装済み |
 | logout / session管理 | 実装済み |
 | Passkey HTTP儀式 | 実装済み。実端末はDevelopment Buildで検証する |
-| Key-A / Recovery Key envelope HTTP | 未実装 |
-| 端末側画像暗号化と写真HTTP API | 部品のみ |
-| 退会削除オーケストレーション | 未実装 |
+| Key-A envelope HTTP | 実装済み。Key-Aは端末側で暗号化した値だけ送る |
+| 端末側画像暗号文の写真HTTP API | 実装済み。AES-GCM暗号化そのものはクライアント責務 |
+| 退会削除オーケストレーション | 実装済み。DB行、暗号文ファイル、cacheを削除 |
 
 ## 3. クライアント構成
 
@@ -96,13 +96,19 @@ login optionsのbodyを空にするとdiscoverable loginです。assertionのcre
 1. 端末でKey-Aを生成しSecure Storageへ保存する。
 2. Recovery Keyを一度だけ表示し、ユーザーに保存させる。
 3. Recovery Keyから導出した鍵でKey-AをAES-256-GCM暗号化する。
-4. 暗号化済みKey-AとKDFパラメータだけを`key_envelopes`へ保存する。
+4. 暗号化済みKey-AとKDFパラメータだけを`PUT /api/v1/me/key-envelopes`で保存する。
 5. 新端末ではGoogle認証、Recovery Key入力、端末上の復号、Secure Storage保存を行う。
 6. 復旧途中でアプリが終了しても、状態と入力要求を再開できるようにする。
 
 Recovery Keyの平文をサーバー、ログ、DBへ送らない。Recovery Key紛失時に運営者が復号できるかは、復号不能設計のリスクを明示したうえでプロダクト決定する。
 
-## 8. 監査不変条件
+## 8. 画像鍵と退会
+
+画像本体は端末でAES-256-GCM暗号化し、`POST /api/v1/me/photos`へ暗号文だけを送る。private画像の画像鍵は端末側Key-Aでラップする。profile画像は同じ端末側ラップに加えて、`GET /api/v1/keys/profile-image`で取得したRSA-OAEP-256公開鍵でも画像鍵をラップする。後者だけをサーバーが復号し、`GET /api/v1/profile-photos/{id}`のレスポンス作成中に平文を使う。平文はDB、privateフォルダ、メモリcacheへ保存しない。
+
+`DELETE /api/v1/me` は`{"confirm":"DELETE"}`を要求する。DB user rowをロックしてsessionを失効し、暗号文フォルダとcacheを削除した後、refresh/passkey/challenge/key envelope/handoff/photo metadataとusers rowを削除する。旧Access Tokenはsession行がなくなるため利用できない。
+
+## 9. 監査不変条件
 
 - Googleのemailを主キーにせず、OIDC `sub`を利用する。
 - redirect URI、OAuth state、Google PKCE、アプリhandoff challengeを検証する。

@@ -96,18 +96,15 @@ Refresh request:
 
 互換のため`refresh_request_id`も受理する。Access TokenはHS256 JWS-JWTで1分、sessionは絶対90日・アイドル30日。Refresh Tokenは32byte乱数で、DBにはhashだけを保存する。更新ごとにrotationし、同じrequest IDだけ30秒再送可能。別request IDの使用済みtokenはreuseとしてsession family全体を失効し、409を返す。
 
-## 3. 未実装API（契約案）
+## 3. 未実装API
 
-次のAPIはルート未接続である。フロントエンドは実装済みになるまで呼び出してはいけない。
-
-### プロフィール・本人確認
+### プロフィール・本人確認（未実装）
 
 | Method | Path | 用途 |
 | --- | --- | --- |
 | GET | `/api/v1/me` | 自分のユーザー・プロフィール取得 |
 | PATCH | `/api/v1/me/profile` | 名前、国籍、自己紹介、アイコン参照の更新 |
 | POST | `/api/v1/me/verification` | 本人確認開始 |
-| DELETE | `/api/v1/me` | 退会と削除workflow開始 |
 
 ### 募集・検索・マッチ
 
@@ -122,18 +119,22 @@ Refresh request:
 
 正確な現在地は他ユーザーへ返さず、距離判定だけに利用する。PostGISを使う場合もDBはPostgreSQLのまま。
 
-### 画像・鍵
+### 画像・鍵（実装済み）
 
 | Method | Path | 用途 |
 | --- | --- | --- |
-| GET | `/api/v1/crypto/profile-wrapping-key` | RSA-OAEP-256公開鍵配信 |
-| POST | `/api/v1/photos` | 端末でAES-256-GCM暗号化した暗号文を保存 |
-| GET | `/api/v1/photos/{id}` | 認可済み暗号文をストリーム配信 |
-| DELETE | `/api/v1/photos/{id}` | DB、privateファイル、cacheを削除 |
-| POST | `/api/v1/recovery/envelopes` | 暗号化Key-A envelope保存 |
-| GET | `/api/v1/recovery/envelopes` | 認証・再認証後にenvelope取得 |
+| GET | `/api/v1/keys/profile-image` | RSA-OAEP-256公開JWK配信 |
+| POST | `/api/v1/me/photos` | 端末でAES-256-GCM暗号化した暗号文を保存 |
+| GET | `/api/v1/me/photos/{id}` | 所有者向け暗号文を配信 |
+| DELETE | `/api/v1/me/photos/{id}` | DB、privateファイル、cacheを削除 |
+| GET | `/api/v1/profile-photos/{id}` | profile画像だけをサーバー復号して配信 |
+| GET | `/api/v1/me/key-envelopes` | 暗号化Key-A envelope一覧 |
+| PUT | `/api/v1/me/key-envelopes` | 暗号化Key-A envelope保存・version更新 |
+| GET | `/api/v1/me/key-envelopes/{key_version}` | 指定version取得 |
+| DELETE | `/api/v1/me/key-envelopes/{key_version}` | 指定version削除 |
+| DELETE | `/api/v1/me` | confirm付きの退会・完全削除 |
 
-画像平文、画像鍵、Key-A、Key-B、Recovery KeyはAPIログ・DB・cacheへ保存しない。profile画像はサーバー公開鍵で画像鍵をwrapし、private画像は端末側鍵を使う。
+画像平文、画像鍵、Key-A、Key-B、Recovery KeyはAPIログ・DB・cacheへ保存しない。profile画像はサーバー公開鍵で画像鍵をwrapし、private画像は端末側鍵を使う。画像uploadの正確な`X-Photo-*`ヘッダーは [backend/API_SPEC.md](../backend/API_SPEC.md) を参照する。
 
 ### チャット
 

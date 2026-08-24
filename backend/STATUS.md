@@ -31,7 +31,11 @@ SQLiteは廃止し、DBはPostgreSQLだけです。画像本体はDBへ入れず
 - WebAuthnの登録options / verify、discoverable login options / verify、credential一覧 / 削除
 - credential JSON、公開鍵、sign counter、challengeのPostgreSQL保存
 - 暗号文専用画像保存、SHA-256、容量/TTL付き暗号文キャッシュ
-- RSA-OAEP-256によるプロフィール画像鍵ラップ部品
+- RSA-OAEP-256によるプロフィール画像鍵ラップ、公開JWK配信、profile画像の一時復号配信
+- Key-A envelopeの作成・取得・更新・削除API（暗号化済みKey-Aのみ保存）
+- 写真の暗号文upload/download/delete、所有者認可、private保存、cache無効化
+- 退会時の全session失効、認証関連行・画像metadata・暗号文フォルダ・cacheの削除
+- PostgreSQL分離schemaを使った認証・鍵・画像・退会ライフサイクル統合テスト
 - Expo Go開発クライアント、`状態を更新`、Secure Storageでのtoken保持
 - Go test / build、PostgreSQL integration、Python smoke、Expo typecheck / Bun auditのCI
 
@@ -47,13 +51,12 @@ SQLiteは廃止し、DBはPostgreSQLだけです。画像本体はDBへ入れず
 
 詳細は [TODO.md](TODO.md) と [API_SPEC.md](API_SPEC.md) を参照します。
 
-1. Key-A / Key-B / Recovery Keyの端末暗号化フローと`key_envelopes` HTTP API
-2. 端末側AES-256-GCM画像暗号化、upload/download/delete API
-3. プロフィール画像の公開鍵配信、サーバー復号が必要な範囲の認可
-4. 退会オーケストレーション（DB論理削除、全session失効、暗号文ファイル削除、cache無効化）
-5. 本番Development BuildのPasskey実端末テストとiOS/Android association設定
-6. チャット用QUIC/WebTransport短命token（Access/Refreshと別audience）
-7. レート制限、監査ログ、本人確認、プロフィール・募集・検索API
+1. TypeScript側のKey-A生成、Recovery Key表示、HKDF/AES-GCM、復旧途中の再開UI
+2. 画像client encryption、サイズ/MIME検査の実クライアント接続、孤児ファイルreconciler
+3. 退会の監査ログと、バックアップ保持期間・物理削除期限の運用確定
+4. 本番Development BuildのPasskey実端末テストとiOS/Android association設定
+5. チャット用QUIC/WebTransport短命token（Access/Refreshと別audience）
+6. レート制限、監査ログ、本人確認、プロフィール・募集・検索API
 
 ## セキュリティ不変条件
 
@@ -62,7 +65,7 @@ SQLiteは廃止し、DBはPostgreSQLだけです。画像本体はDBへ入れず
 - DB失効確認なしにJWSの署名だけで保護APIを通さない。
 - Refresh TokenをWebSocket/QUICのURLやメッセージへ送らない。
 - private画像領域とメモリcacheには暗号文だけを置く。
-- 退会時はDB状態と暗号文ファイル・cacheの削除結果を監査できるようにする。
+- 退会時はDB行・暗号文ファイル・cacheを削除し、削除失敗を黙って成功扱いにしない。
 - `ALLOW_EXPO_GO_REDIRECT=true`は開発確認専用で、本番公開設定へ持ち込まない。
 
 ## 引き継ぎ時の確認順

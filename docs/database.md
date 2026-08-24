@@ -22,6 +22,7 @@
 | `0005_oauth_handoff_retry.sql` | crash-safe handoff応答 |
 | `0006_refresh_attempt_nonce.sql` | Refresh応答nonce |
 | `0007_passkey_storage.sql` | discoverable challengeのnullable user、credential JSON |
+| `0008_photo_metadata.sql` | profile画像用wrapped key、MIME、暗号文サイズ |
 
 注意: 現行の簡易migration runnerはSQLファイルを順番に実行する。migration履歴テーブルによる本番適用管理を導入する場合は、既存環境の適用済み状態を確認してから切り替える。
 
@@ -134,13 +135,16 @@ Refreshは対象行を`FOR UPDATE`し、旧token使用済み化、新token追加
 | `key_version` | text | 鍵ローテーション |
 | `wrapped_image_key` | text | 端末鍵またはRSA-OAEPラップ済み画像鍵 |
 | `wrapping_algorithm` | text | ラップ方式 |
+| `content_type` | text | profile復号配信時のMIME |
+| `size_bytes` | bigint | 保存暗号文のサイズ |
+| `server_wrapped_image_key` | text nullable | profile画像だけのRSA-OAEP-256 wrapped key |
 | `created_at` / `deleted_at` | text | 作成・論理削除 |
 
-画像平文はDBにもprivateフォルダにも保存しない。メモリcacheも暗号文のみとし、削除時はDBの公開状態、ファイル、cacheを一体で無効化する。
+画像平文はDBにもprivateフォルダにも保存しない。メモリcacheも暗号文のみとし、profile配信の平文はレスポンス作成中だけに存在させる。削除時はDBの公開状態、ファイル、cacheを一体で無効化する。
 
 ### `key_envelopes`
 
-Key-AをRecovery Keyから導出した鍵で暗号化したenvelopeを保存する。`encrypted_key_a`、nonce、KDFパラメータ、key versionだけを保持し、Key-A、Key-B、Recovery Keyの平文を保持しない。HTTP APIは未実装。
+Key-AをRecovery Keyから導出した鍵で暗号化したenvelopeを保存する。`encrypted_key_a`、nonce、KDFパラメータ、key versionだけを保持し、Key-A、Key-B、Recovery Keyの平文を保持しない。HTTP APIは`GET/PUT/DELETE /api/v1/me/key-envelopes`で提供する。
 
 ## 6. これから追加するテーブル・制約
 
@@ -156,9 +160,9 @@ Key-AをRecovery Keyから導出した鍵で暗号化したenvelopeを保存す�
 退会では次の順序を固定する。
 
 1. 新規認証・新規API利用を拒否する。
-2. 全sessionとRefresh Tokenを失効する。
-3. users/photosを論理削除する。
-4. private暗号文ファイルとメモリcacheを削除する。
-5. 削除結果を監査ログへ記録する（秘密情報は記録しない）。
+2. DB user rowをロックし、全sessionを失効する。
+3. private暗号文ファイルとメモリcacheを削除する。
+4. refresh/passkey/challenge/key envelope/handoff/photo metadataを削除して、users rowを完全削除する。
+5. 削除結果を監査ログへ記録する（秘密情報は記録しない）。監査ログ実装まではアプリログへ秘密値を出さない。
 
 バックアップ上の物理削除期限、チャット保持期間、監査ログ保持期間は運用・法務決定後にmigrationと運用手順へ反映する。
