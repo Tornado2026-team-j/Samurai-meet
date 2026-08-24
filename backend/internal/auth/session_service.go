@@ -67,6 +67,23 @@ func (s *SessionService) CreateSession(ctx context.Context, userID string, now t
 		return SessionTokens{}, err
 	}
 	defer tx.Rollback()
+	result, err := s.createSessionTx(ctx, tx, userID, now, false)
+	if err != nil {
+		return SessionTokens{}, err
+	}
+	if err = tx.Commit(); err != nil {
+		return SessionTokens{}, err
+	}
+	return result, nil
+}
+
+// createSessionTx creates a regular session while the caller's transaction is
+// open. Passkey-authenticated sessions are marked so a browser-to-app handoff
+// cannot be created from an old, non-passkey session.
+func (s *SessionService) createSessionTx(ctx context.Context, tx *sql.Tx, userID string, now time.Time, passkeyAuthenticated bool) (SessionTokens, error) {
+	if s.signer == nil {
+		return SessionTokens{}, errors.New("session signer is not configured")
+	}
 	sessionID, familyID, refreshID := newID(), newID(), newID()
 	refresh, err := NewRefreshToken()
 	if err != nil {
@@ -78,7 +95,11 @@ func (s *SessionService) CreateSession(ctx context.Context, userID string, now t
 	}
 	created := now.UTC().Format(time.RFC3339Nano)
 	expires := now.Add(RefreshAbsoluteTTL).UTC().Format(time.RFC3339Nano)
-	if _, err = tx.ExecContext(ctx, `INSERT INTO sessions (id,user_id,family_id,status,created_at,last_seen_at,expires_at) VALUES ($1,$2,$3,'active',$4,$4,$5)`, sessionID, userID, familyID, created, expires); err != nil {
+	var lastPasskeyAt any
+	if passkeyAuthenticated {
+		lastPasskeyAt = created
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO sessions (id,user_id,family_id,status,created_at,last_seen_at,expires_at,last_passkey_at) VALUES ($1,$2,$3,'active',$4,$4,$5,$6)`, sessionID, userID, familyID, created, expires, lastPasskeyAt); err != nil {
 		return SessionTokens{}, err
 	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO refresh_tokens (id,session_id,token_hash,issued_at,expires_at) VALUES ($1,$2,$3,$4,$5)`, refreshID, sessionID, hash, created, expires); err != nil {
@@ -88,11 +109,21 @@ func (s *SessionService) CreateSession(ctx context.Context, userID string, now t
 	if err != nil {
 		return SessionTokens{}, err
 	}
-	result := SessionTokens{UserID: userID, SessionID: sessionID, AccessToken: access, RefreshToken: refresh}
-	if err = tx.Commit(); err != nil {
-		return SessionTokens{}, err
+	return SessionTokens{UserID: userID, SessionID: sessionID, AccessToken: access, RefreshToken: refresh}, nil
+}
+
+// HasRecentPasskey is used only for privileged handoffs that transfer a
+// freshly authenticated browser session to another client.
+func (s *SessionService) HasRecentPasskey(ctx context.Context, userID, sessionID string, now time.Time) (bool, error) {
+	var lastPasskey sql.NullString
+	if err := s.db.QueryRowContext(ctx, `SELECT last_passkey_at FROM sessions WHERE id=$1 AND user_id=$2 AND status='active'`, sessionID, userID).Scan(&lastPasskey); err != nil {
+		return false, err
 	}
-	return result, nil
+	if !lastPasskey.Valid || lastPasskey.String == "" {
+		return false, nil
+	}
+	last, err := time.Parse(time.RFC3339Nano, lastPasskey.String)
+	return err == nil && now.Before(last.Add(RecentPasskeyAuthTTL)), err
 }
 
 func (s *SessionService) ListForUser(ctx context.Context, userID, currentSessionID string) ([]SessionSummary, error) {

@@ -51,16 +51,18 @@ https://samurai-meet.disnana.com/auth/callback
 {
   "data": {
     "user_id": "opaque-user-id",
-    "session_id": "opaque-session-id",
-    "access_token": "JWS-JWT",
-    "refresh_token": "opaque-token"
+    "pre_auth_token": "short-lived-opaque-token",
+    "passkey_required": true,
+    "passkey_registered": false
   }
 }
 ```
 
-アプリURIの許可値は、本番`samuraimeet://auth`、開発用Expo Goの`samuraimeettest://auth`または`exp://<host>/--/auth`です。ブラウザ開発クライアントは、設定済みOriginの`/auth/complete`だけを完全一致で許可します。Expo Goの`exp://`は`ALLOW_EXPO_GO_REDIRECT=true`を設定した開発確認時だけ許可する。
+Google交換時点では通常sessionを発行しない。`pre_auth_token`はPasskey options/verifyだけに使え、Passkey成功時に通常のAccess/Refresh sessionを発行する。アプリURIの許可値は、本番`samuraimeet://auth`、開発用Expo Goの`samuraimeettest://auth`または`exp://<host>/--/auth`です。ブラウザ開発クライアントは、設定済みOriginの`/auth/complete`だけを完全一致で許可します。Expo Goの`exp://`は`ALLOW_EXPO_GO_REDIRECT=true`を設定した開発確認時だけ許可する。
 
 handoff codeは10分で失効し、一回使用後に消費する。同じverifierで期限内に再送した場合だけ、サーバーが保存した暗号化レスポンスを返す。アプリがOAuth途中で落ちても、Secure Storageのverifierを消さなければ再開できる。
+
+Web PasskeyからExpo Goへ戻す場合は、Web画面が`POST /auth/session-handoff/start`を呼び、Expo Goが`POST /auth/session-handoff/exchange`を呼ぶ。Google直後のpre-authだけではhandoffを開始できない。
 
 ### Passkey / WebAuthn
 
@@ -70,10 +72,14 @@ handoff codeは10分で失効し、一回使用後に消費する。同じverifi
 | POST | `/api/v1/auth/passkey/register/verify` | Access Token + ceremony header | 実装済み |
 | POST | `/api/v1/auth/passkey/login/options` | 不要 | 実装済み |
 | POST | `/api/v1/auth/passkey/login/verify` | ceremony header | 実装済み |
+| POST | `/api/v1/auth/passkey/reauth/options` | Access Token | 実装済み |
+| POST | `/api/v1/auth/passkey/reauth/verify` | Access Token + ceremony header | 実装済み |
 | GET | `/api/v1/auth/passkey` | Access Token | 実装済み |
 | DELETE | `/api/v1/auth/passkey/{credential_id}` | Access Token | 実装済み |
 
 optionsの成功レスポンスは`data.ceremony_token`と`data.options`。verifyでは`X-Passkey-Ceremony-Token`ヘッダーへtokenを入れ、bodyはOSのcredential/assertion JSONをそのまま送る。challengeは5分・一回限り。ブラウザ検証はHTTPSまたはlocalhost、native実機検証はExpo GoではなくDevelopment Buildを使う。
+
+reauthは既存sessionのユーザーに対するPasskey assertionを検証し、成功時に`sessions.last_passkey_at`だけを更新する。新しいsessionやtokenは発行しない。Key-B、退会、Recoveryなどの高権限APIはこの直近認証境界を要求する。
 
 ### セッション
 

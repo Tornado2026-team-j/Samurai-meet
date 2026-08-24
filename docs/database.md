@@ -23,6 +23,9 @@
 | `0006_refresh_attempt_nonce.sql` | Refresh応答nonce |
 | `0007_passkey_storage.sql` | discoverable challengeのnullable user、credential JSON |
 | `0008_photo_metadata.sql` | profile画像用wrapped key、MIME、暗号文サイズ |
+| `0009_pre_auth_sessions.sql` | Google直後のPasskey専用pre-auth、`sessions.last_passkey_at` |
+| `0010_session_handoffs.sql` | Web PasskeyからExpo Goへ返す暗号化済み短命session handoff |
+| `0011_passkey_reauth.sql` | 既存sessionの直近Passkey再認証用ceremony type |
 
 注意: 現行の簡易migration runnerはSQLファイルを順番に実行する。migration履歴テーブルによる本番適用管理を導入する場合は、既存環境の適用済み状態を確認してから切り替える。
 
@@ -59,7 +62,7 @@ credential JSONは検証に必要な情報を保持する。DBアクセス権限
 | --- | --- | --- |
 | `id` | text | challenge recordのPK |
 | `user_id` | text nullable | 登録・既知ユーザーloginは設定。discoverable loginはNULL |
-| `type` | text | `pre_auth / passkey_register / passkey_login` |
+| `type` | text | `passkey_register / passkey_login / passkey_reauth`。pre-auth token自体は別テーブルで管理 |
 | `token_hash` | text | ceremony tokenのSHA-256 hash、UNIQUE |
 | `scope` | text | WebAuthn `SessionData` JSON |
 | `expires_at` | text | 現在5分 |
@@ -76,6 +79,14 @@ credential JSONは検証に必要な情報を保持する。DBアクセス権限
 
 `code_hash`、`user_id`、アプリhandoff challenge、期限、使用日時、暗号化済み応答とnonceを持つ。handoff codeは一回限りだが、同じverifierによる期限内の再送だけは同じ応答を返す。
 
+### `pre_auth_tokens`
+
+Google交換直後に発行するPasskey専用の短命tokenを保存する。`token_hash`だけを保存し、scope（初回登録・既知ユーザーログイン・再認証）、ユーザー、5分の期限、`used_at`を管理する。通常API、鍵、プロフィール、写真、チャットには利用できない。
+
+### `session_handoffs`
+
+Web Passkey成功後にExpo Goへ通常のSessionTokensを返すための短命codeを保存する。code hash、redirect URI、PKCE challenge、暗号化済みレスポンス、nonce、10分の期限を持つ。code単体では交換できず、同じverifierによる期限内の再送だけ同じ応答を返す。
+
 ## 4. セッションテーブル
 
 ### `sessions`
@@ -89,6 +100,7 @@ credential JSONは検証に必要な情報を保持する。DBアクセス権限
 | `device_name` | text nullable | 端末表示名 |
 | `created_at` / `last_seen_at` | text | 作成・最終利用 |
 | `expires_at` | text | 絶対期限（現在90日） |
+| `last_passkey_at` | text nullable | 直近Passkey成功時刻。session handoffなどの再認証境界に使用 |
 | `revoked_at` / `revoked_reason` | text | 失効情報 |
 
 Access Token検証時も`sessions.status`、`expires_at`、アイドル期限、`users.status`を確認する。ログアウト後に署名が正しい旧Access Tokenを受け付けない。

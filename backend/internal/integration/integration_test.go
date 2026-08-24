@@ -7,6 +7,7 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
@@ -61,6 +62,55 @@ func TestAuthKeyImageAndAccountLifecycle(t *testing.T) {
 	}
 	if _, err := sessions.Authenticate(context.Background(), rotated.AccessToken, now.Add(13*time.Second)); err == nil {
 		t.Fatal("refresh-token reuse did not revoke the session")
+	}
+
+	preauth := auth.NewPreAuthService(database)
+	preAuthToken, err := preauth.Issue(context.Background(), userID, auth.PreAuthScopeLogin, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = preauth.Lookup(context.Background(), preAuthToken, auth.PreAuthScopeLogin, userID, now.Add(time.Second)); err != nil {
+		t.Fatalf("pre-auth lookup failed: %v", err)
+	}
+	preAuthTx, err := database.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = preauth.ConsumeTx(preAuthTx, preAuthToken, auth.PreAuthScopeLogin, userID, now.Add(2*time.Second)); err != nil {
+		_ = preAuthTx.Rollback()
+		t.Fatal(err)
+	}
+	if err = preAuthTx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = preauth.Lookup(context.Background(), preAuthToken, auth.PreAuthScopeLogin, userID, now.Add(3*time.Second)); err == nil {
+		t.Fatal("consumed pre-auth token was accepted")
+	}
+
+	passkeySession, err := sessions.CreateSession(context.Background(), userID, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = database.Exec(`UPDATE sessions SET last_passkey_at=$1 WHERE id=$2`, now.Format(time.RFC3339Nano), passkeySession.SessionID); err != nil {
+		t.Fatal(err)
+	}
+	handoffVerifier := "integration-session-handoff-verifier"
+	handoffChallengeBytes := sha256.Sum256([]byte(handoffVerifier))
+	handoffChallenge := base64.RawURLEncoding.EncodeToString(handoffChallengeBytes[:])
+	handoffs := auth.NewSessionHandoffService(database, sessions, signer)
+	handoff, err := handoffs.Create(context.Background(), userID, passkeySession.SessionID, "samuraimeet://auth", handoffChallenge, now.Add(4*time.Second))
+	if err != nil {
+		t.Fatalf("session handoff create failed: %v", err)
+	}
+	appTokens, err := handoffs.Exchange(context.Background(), handoff.Code, handoffVerifier, now.Add(5*time.Second))
+	if err != nil {
+		t.Fatalf("session handoff exchange failed: %v", err)
+	}
+	if appTokens.UserID != userID || appTokens.AccessToken == "" || appTokens.RefreshToken == "" {
+		t.Fatal("session handoff returned incomplete tokens")
+	}
+	if _, err = handoffs.Exchange(context.Background(), handoff.Code, "wrong-verifier", now.Add(6*time.Second)); err == nil {
+		t.Fatal("session handoff accepted an incorrect verifier")
 	}
 
 	envelopes := keys.NewService(database)

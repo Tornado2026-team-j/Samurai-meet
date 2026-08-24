@@ -37,8 +37,8 @@
 | SEC-006 | 自動更新のタイミング | PASS | 残り 30 秒、アプリ復帰、401、WebSocket 再接続で更新 |
 | SEC-007 | 同時 Refresh の抑制 | PASS | クライアントの single-flight を定義 |
 | SEC-008 | 通信失敗時の Refresh 再送 | PASS | 同じ`session_id`・`request_id`だけ30秒以内に暗号化済み結果を再返却 |
-| SEC-009 | Google 直後の権限分離 | PARTIAL | 現実装はGoogle handoff交換時に通常sessionを発行する。Passkey必須化は未実装 |
-| SEC-010 | `pre_auth_token` の一回性 | P1 | DB での使用済み管理・scope・失効処理を実装前に確定する |
+| SEC-009 | Google 直後の権限分離 | PASS | Google handoff交換は通常sessionを発行せず、Passkey専用pre-authだけを返す |
+| SEC-010 | `pre_auth_token` の一回性 | PASS | PostgreSQLでhash、scope、user、5分期限、used_atを管理し、Passkey成功と同一transactionで消費する |
 | SEC-011 | JWS 署名鍵のローテーション | P1 | `kid`、許可アルゴリズム、旧鍵の移行期間が未確定 |
 | SEC-012 | WebSocket の失効反映 | PARTIAL | heartbeat は定義済み。実装時の切断・再接続テストが必要 |
 | SEC-013 | Key-B の信頼境界 | P1 | 生成、配布、KMS、再発行、漏えい時の対応が未確定 |
@@ -61,7 +61,7 @@ Refresh はローテーションするため、サーバーが更新に成功し
 
 ここで重要なのは、旧 Access Token と旧 Refresh Token を分けることです。旧 Access Token は自身の `exp` まで自然に有効ですが、旧 Refresh Token は同じ冪等リクエスト以外では即時に reuse として扱います。
 
-### SEC-010 `pre_auth_token`（未実装）
+### SEC-010 `pre_auth_token`（実装済み）
 
 `pre_auth_token` は通常 API に使えないよう、次を必須にします。
 
@@ -71,7 +71,7 @@ Refresh はローテーションするため、サーバーが更新に成功し
 - `user_id` と OAuth 認証イベントに紐付ける。
 - Access Token、Refresh Token、プロフィール、チャット、Key-B を取得できない。
 
-現実装ではこのpre-auth層をまだ導入しておらず、Google OAuth交換後の通常sessionでPasskey登録を開始できます。プロダクト要件を「Google + Passkey必須」とする場合は、通常session発行をPasskey成功後へ移す必要があります。
+実装では`pre_auth_tokens`にtoken hashだけを保存し、5分期限、scope、user、`used_at`を検証します。Google交換時は通常sessionを発行せず、Passkey登録/ログインの成功transaction内でpre-authを消費して通常sessionを発行します。Expo GoはWeb Passkey後に、直近Passkey sessionから暗号化された短命session handoffを受け取ります。
 
 ### SEC-011 JWS 鍵管理
 
@@ -163,7 +163,7 @@ sequenceDiagram
 ### 本番リリース前に必須
 
 - [x] SEC-008 の通信失敗時ポリシーを決定・実装
-- [ ] SEC-010 の `pre_auth_token` 一回性を実装
+- [x] SEC-010 の `pre_auth_token` 一回性を実装
 - [ ] SEC-011 の JWS `kid` / 鍵ローテーションを実装
 - [ ] SEC-013 の Key-B 信頼境界を設計レビュー
 - [ ] SEC-020 の 0-RTT 禁止を実機・統合テスト
@@ -175,4 +175,4 @@ sequenceDiagram
 
 ### 監査結論
 
-自動更新の採用自体は妥当です。実装は通常時の自動更新・DB失効・token rotation・30秒の冪等再送・Passkey HTTP儀式・暗号文画像の基本防御を満たしています。一方、`pre_auth_token`によるGoogle後のPasskey必須化、JWS鍵ローテーション、Key-B、QUIC 0-RTT、native clientの詳細が未実装のため、現段階の結論は「条件付き承認」です。
+自動更新の採用自体は妥当です。実装は通常時の自動更新・DB失効・token rotation・30秒の冪等再送・Google後のpre-auth/Passkey強制・Expo Goのsession handoff・Passkey HTTP儀式・暗号文画像の基本防御を満たしています。一方、JWS鍵ローテーション、Key-B、QUIC 0-RTT、native clientの詳細が未実装のため、現段階の結論は「条件付き承認」です。

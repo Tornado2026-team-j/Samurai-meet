@@ -24,7 +24,9 @@ type RouterOptions struct {
 	DevClientDir        string
 	ClientOrigin        string
 	OAuthLogin          *auth.OAuthLoginService
+	PreAuth             *auth.PreAuthService
 	Sessions            *auth.SessionService
+	SessionHandoffs     *auth.SessionHandoffService
 	Passkeys            *auth.PasskeyService
 	KeyEnvelopes        *keys.Service
 	Images              *image.Service
@@ -55,11 +57,17 @@ func NewRouterWithOptions(options RouterOptions) http.Handler {
 		mux.HandleFunc(APIV1Prefix+"/me/sessions", listSessions(options.Sessions))
 		mux.HandleFunc(APIV1Prefix+"/me/sessions/", revokeSession(options.Sessions))
 	}
+	if options.SessionHandoffs != nil && options.Sessions != nil {
+		mux.HandleFunc(APIV1Prefix+"/auth/session-handoff/start", sessionHandoffStart(options.SessionHandoffs, options.Sessions, options.Environment, options.AllowExpoGoRedirect))
+		mux.HandleFunc(APIV1Prefix+"/auth/session-handoff/exchange", sessionHandoffExchange(options.SessionHandoffs))
+	}
 	if options.Passkeys != nil && options.Sessions != nil {
-		mux.HandleFunc(APIV1Prefix+"/auth/passkey/register/options", passkeyRegisterOptions(options.Passkeys, options.Sessions))
-		mux.HandleFunc(APIV1Prefix+"/auth/passkey/register/verify", passkeyRegisterVerify(options.Passkeys, options.Sessions))
-		mux.HandleFunc(APIV1Prefix+"/auth/passkey/login/options", passkeyLoginOptions(options.Passkeys))
-		mux.HandleFunc(APIV1Prefix+"/auth/passkey/login/verify", passkeyLoginVerify(options.Passkeys))
+		mux.HandleFunc(APIV1Prefix+"/auth/passkey/register/options", passkeyRegisterOptions(options.Passkeys, options.Sessions, options.PreAuth))
+		mux.HandleFunc(APIV1Prefix+"/auth/passkey/register/verify", passkeyRegisterVerify(options.Passkeys, options.Sessions, options.PreAuth))
+		mux.HandleFunc(APIV1Prefix+"/auth/passkey/login/options", passkeyLoginOptions(options.Passkeys, options.PreAuth))
+		mux.HandleFunc(APIV1Prefix+"/auth/passkey/login/verify", passkeyLoginVerify(options.Passkeys, options.PreAuth))
+		mux.HandleFunc(APIV1Prefix+"/auth/passkey/reauth/options", passkeyReauthOptions(options.Passkeys, options.Sessions))
+		mux.HandleFunc(APIV1Prefix+"/auth/passkey/reauth/verify", passkeyReauthVerify(options.Passkeys, options.Sessions))
 		mux.HandleFunc(APIV1Prefix+"/auth/passkey", passkeyList(options.Passkeys, options.Sessions))
 		mux.HandleFunc(APIV1Prefix+"/auth/passkey/", passkeyRemove(options.Passkeys, options.Sessions))
 	}

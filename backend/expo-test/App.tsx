@@ -18,6 +18,8 @@ WebBrowser.maybeCompleteAuthSession();
 const api = 'https://samurai-meet.disnana.com/api/v1';
 const webPasskeyTestURL = 'https://samurai-meet.disnana.com/';
 const verifierKey = 'oauth_handoff_verifier';
+const sessionHandoffVerifierKey = 'session_handoff_verifier';
+const preAuthKey = 'pre_auth';
 const sessionKey = 'session';
 const refreshRequestKey = 'refresh_request_id';
 const keyAStorageKey = 'key_a_v1';
@@ -29,7 +31,15 @@ type Session = {
   refresh_token: string;
 };
 
+type PreAuth = {
+  user_id: string;
+  pre_auth_token: string;
+  passkey_required: boolean;
+  passkey_registered: boolean;
+};
+
 type SessionResponse = { data?: Session };
+type OAuthResponse = { data?: Session | PreAuth };
 type ApiList<T> = { data: T };
 type StoredEnvelope = KeyEnvelope & { created_at?: string; updated_at?: string };
 
@@ -72,6 +82,7 @@ async function request<T>(path: string, init: RequestInit = {}, token?: string):
 export default function App() {
   const [status, setStatus] = useState('ログイン待機中');
   const [session, setSession] = useState<Session | null>(null);
+  const [preAuth, setPreAuth] = useState<PreAuth | null>(null);
   const [busy, setBusy] = useState(false);
   const [passkeys, setPasskeys] = useState<PasskeySummary[]>([]);
   const [credentialID, setCredentialID] = useState('');
@@ -84,8 +95,16 @@ export default function App() {
 
   const save = async (next: Session) => {
     await SecureStore.setItemAsync(sessionKey, JSON.stringify(next));
+    await SecureStore.deleteItemAsync(preAuthKey);
     setSession(next);
+    setPreAuth(null);
     setStatus(`セッション復元済み: ${next.user_id}`);
+  };
+
+  const savePreAuth = async (next: PreAuth) => {
+    await SecureStore.setItemAsync(preAuthKey, JSON.stringify(next));
+    setPreAuth(next);
+    setStatus(next.passkey_registered ? 'Google認証済み。WebでPasskeyログインを完了してください' : 'Google認証済み。WebでPasskey登録を完了してください');
   };
 
   const refresh = async (current: Session, updateStatus = true) => {
@@ -104,27 +123,43 @@ export default function App() {
 
   const complete = async (url: string) => {
     const parsed = Linking.parse(url);
-    const code = typeof parsed.queryParams?.handoff_code === 'string' ? parsed.queryParams.handoff_code : null;
-    const verifier = await SecureStore.getItemAsync(verifierKey);
-    if (!code || !verifier) return;
-    setStatus('セッションを復元しています…');
+    const oauthCode = typeof parsed.queryParams?.handoff_code === 'string' ? parsed.queryParams.handoff_code : null;
+    const sessionHandoffCode = typeof parsed.queryParams?.session_handoff_code === 'string' ? parsed.queryParams.session_handoff_code : null;
+    const oauthVerifier = await SecureStore.getItemAsync(verifierKey);
+    const sessionHandoffVerifier = await SecureStore.getItemAsync(sessionHandoffVerifierKey);
+    if (!oauthCode && !sessionHandoffCode) return;
+    setStatus(sessionHandoffCode ? 'Passkey後のセッションをアプリへ復元しています…' : 'Google認証結果を確認しています…');
     try {
-      const response = await request<SessionResponse>('/auth/google/exchange', {
+      if (sessionHandoffCode) {
+        if (!sessionHandoffVerifier) throw new Error('Passkey復帰用の検証情報がありません');
+        const response = await request<SessionResponse>('/auth/session-handoff/exchange', {
+          method: 'POST',
+          body: JSON.stringify({ handoff_code: sessionHandoffCode, handoff_verifier: sessionHandoffVerifier }),
+        });
+        if (!response.data) throw new Error('session handoff response is empty');
+        await SecureStore.deleteItemAsync(sessionHandoffVerifierKey);
+        await save(response.data);
+        return;
+      }
+      if (!oauthCode || !oauthVerifier) throw new Error('Google復帰用の検証情報がありません');
+      const response = await request<OAuthResponse>('/auth/google/exchange', {
         method: 'POST',
-        body: JSON.stringify({ handoff_code: code, handoff_verifier: verifier }),
+        body: JSON.stringify({ handoff_code: oauthCode, handoff_verifier: oauthVerifier }),
       });
       if (!response.data) throw new Error('exchange response is empty');
       await SecureStore.deleteItemAsync(verifierKey);
-      await save(response.data);
-    } catch {
-      setStatus('セッション交換に失敗しました');
+      if ('access_token' in response.data) await save(response.data as Session);
+      else await savePreAuth(response.data as PreAuth);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : 'セッション交換に失敗しました');
     }
   };
 
   useEffect(() => {
     void (async () => {
-      const [storedSession, storedKeyA] = await Promise.all([
+      const [storedSession, storedPreAuth, storedKeyA] = await Promise.all([
         SecureStore.getItemAsync(sessionKey),
+        SecureStore.getItemAsync(preAuthKey),
         SecureStore.getItemAsync(keyAStorageKey),
       ]);
       if (storedKeyA) {
@@ -132,6 +167,7 @@ export default function App() {
         setKeyStatus('Key-AはSecure Storageに保存済み');
       }
       if (storedSession) await save(JSON.parse(storedSession) as Session);
+      else if (storedPreAuth) await savePreAuth(JSON.parse(storedPreAuth) as PreAuth);
     })();
     void Linking.getInitialURL().then((url) => {
       if (url) void complete(url);
@@ -170,6 +206,7 @@ export default function App() {
     try {
       await request('/readyz');
       if (session) await refresh(session);
+      else if (preAuth) setStatus('API接続済み。Google認証済みです。WebでPasskeyを完了してください');
       else setStatus('API接続済み。ログイン待機中');
     } catch {
       setStatus('更新失敗。API URLとトンネルを確認してください');
@@ -185,7 +222,9 @@ export default function App() {
       await request('/auth/logout', { method: 'POST' }, session.access_token);
     } finally {
       await SecureStore.deleteItemAsync(sessionKey);
+      await SecureStore.deleteItemAsync(preAuthKey);
       setSession(null);
+      setPreAuth(null);
       setBusy(false);
       setStatus('ログアウトしました');
     }
@@ -221,8 +260,24 @@ export default function App() {
   };
 
   const openWebPasskeyTest = async () => {
+    const verifier = `${Crypto.randomUUID()}${Crypto.randomUUID()}`;
+    const challenge = base64URL(
+      await Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, verifier, {
+        encoding: Crypto.CryptoEncoding.BASE64,
+      }),
+    );
+    const redirect = Linking.createURL('auth');
+    await SecureStore.setItemAsync(sessionHandoffVerifierKey, verifier);
+    const query = new URLSearchParams({ app_return_uri: redirect, app_handoff_challenge: challenge });
+    const preAuthFragment = preAuth
+      ? `#pre_auth_token=${encodeURIComponent(preAuth.pre_auth_token)}&pre_auth_user_id=${encodeURIComponent(preAuth.user_id)}&pre_auth_registered=${preAuth.passkey_registered}`
+      : session
+        ? `#reauth=true&session_access_token=${encodeURIComponent(session.access_token)}&session_user_id=${encodeURIComponent(session.user_id)}&session_id=${encodeURIComponent(session.session_id)}`
+        : '';
     setStatus('WebのPasskeyテストを開いています…');
-    await WebBrowser.openBrowserAsync(webPasskeyTestURL);
+    const result = await WebBrowser.openAuthSessionAsync(`${webPasskeyTestURL}?${query.toString()}${preAuthFragment}`, redirect);
+    if (result.type === 'success') await complete(result.url);
+    else setStatus('WebのPasskeyテストを中断しました。もう一度お試しください');
   };
 
   const listSessions = async () => {
@@ -243,7 +298,9 @@ export default function App() {
     if (!session) throw new Error('先にログインしてください');
     await request('/auth/logout-all', { method: 'POST' }, session.access_token);
     await SecureStore.deleteItemAsync(sessionKey);
+    await SecureStore.deleteItemAsync(preAuthKey);
     setSession(null);
+    setPreAuth(null);
     setSessions([]);
     setStatus('全端末のセッションを失効しました');
   };
@@ -301,8 +358,10 @@ export default function App() {
     if (!session) throw new Error('先にログインしてください');
     await request('/me', { method: 'DELETE', body: JSON.stringify({ confirm: 'DELETE' }) }, session.access_token);
     await SecureStore.deleteItemAsync(sessionKey);
+    await SecureStore.deleteItemAsync(preAuthKey);
     await SecureStore.deleteItemAsync(keyAStorageKey);
     setSession(null);
+    setPreAuth(null);
     setSessions([]);
     setPasskeys([]);
     setEnvelopes([]);
@@ -340,6 +399,14 @@ export default function App() {
                 <Text style={s.outlineText}>ログアウト</Text>
               </Pressable>
             </>
+          ) : preAuth ? (
+            <>
+              <Text style={s.meta}>Google認証済み: {preAuth.user_id}</Text>
+              <Text style={s.help}>{preAuth.passkey_registered ? 'Passkeyログインを完了すると、ここへ通常セッションが返ります。' : '最初のPasskeyを登録すると、ここへ通常セッションが返ります。'}</Text>
+              <Pressable style={[s.outline, busy && s.disabled]} disabled={busy} onPress={() => void runPanelAction(openWebPasskeyTest)}>
+                <Text style={s.outlineText}>Passkeyを完了してアプリへ戻る</Text>
+              </Pressable>
+            </>
           ) : (
             <Pressable style={[s.outline, busy && s.disabled]} disabled={busy} onPress={() => void login()}>
               <Text style={s.outlineText}>Googleでログイン</Text>
@@ -349,9 +416,9 @@ export default function App() {
 
         <View style={s.section}>
           <Text style={s.sectionTitle}>Passkey / WebAuthn</Text>
-          <Text style={s.help}>Expo Goではnative Passkey APIを直接呼べないため、WebAuthnはドメインのWeb画面をアプリ内ブラウザで開いて確認します。登録済みcredentialの一覧・解除APIはこの画面から確認できます。</Text>
+          <Text style={s.help}>Expo Goではnative Passkey APIを直接呼べないため、WebAuthnはドメインのWeb画面をアプリ内ブラウザで開いて確認します。Google後は登録/ログイン、通常session後は再認証を行い、短命なPKCE handoffでこのアプリへ戻ります。</Text>
           <Pressable style={[s.button, busy && s.disabled]} disabled={busy} onPress={() => void runPanelAction(openWebPasskeyTest)}>
-            <Text style={s.buttonText}>WebでPasskeyをテスト</Text>
+            <Text style={s.buttonText}>{preAuth ? 'WebでPasskeyを完了してアプリへ戻る' : session ? 'WebでPasskey再認証して戻る' : 'WebでPasskeyをテスト'}</Text>
           </Pressable>
           <Pressable style={[s.outline, busy && s.disabled]} disabled={busy} onPress={() => void runPanelAction(listPasskeys)}>
             <Text style={s.outlineText}>登録済みPasskeyを更新</Text>

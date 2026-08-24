@@ -17,7 +17,7 @@
 | 項目 | 状態 |
 | --- | --- |
 | Google OIDC / PKCE / callback | 実装済み |
-| Expo Goへのhandoffと中断再開 | 実装済み |
+| Expo GoへのGoogle/Passkey handoffと中断再開 | 実装済み |
 | JWS Access Token / Refresh rotation | 実装済み |
 | logout / session管理 | 実装済み |
 | Passkey HTTP儀式 | 実装済み。開発ブラウザはWeb domain/localhost、実端末はDevelopment Buildで検証する |
@@ -45,10 +45,12 @@ Expo GoはOAuth・session・Secure Storageの確認に使用します。ブラ�
 3. APIがGoogle用stateとPKCE verifierをPostgreSQLへ10分保存し、Googleへリダイレクトする。
 4. Google callbackでOIDC `sub`を検証し、ユーザーをupsertする。
 5. APIがhandoff codeのhashとchallengeを10分保存し、アプリURIへリダイレクトする。
-6. アプリがhandoff codeとverifierを`/auth/google/exchange`へ送り、セッションを受け取る。
-7. サーバーは応答を暗号化保存するため、DB commit直後のアプリクラッシュでも同じverifierで再交換できる。
+6. アプリがhandoff codeとverifierを`/auth/google/exchange`へ送り、通常sessionではなく5分の`pre_auth_token`を受け取る。
+7. アプリがpre-authとセッション復帰verifierをSecure Storageへ保存し、Web検証画面を開く。
+8. WebでPasskey登録/認証を完了すると、Web側が直近Passkey sessionから`session-handoff/start`を実行する。
+9. アプリが`session-handoff/exchange`で通常Access/Refresh sessionを受け取る。各応答は暗号化保存されるため、DB commit直後のアプリクラッシュでも同じverifierで再交換できる。
 
-現実装ではGoogle exchange時点で通常のAccess/Refresh sessionを発行します。Google認証後にPasskeyを必須にするプロダクト要件へ移行する場合は、`pre_auth_token`を追加し、通常sessionの発行をPasskey成功後へ移す必要があります（監査P1）。
+Google交換結果の`pre_auth_token`はPasskey options/verify以外では受け付けません。通常sessionの発行はPasskey成功後だけです。
 
 Google Consoleに登録するredirect URIは次の一つだけです。
 
@@ -62,7 +64,7 @@ https://samurai-meet.disnana.com/auth/callback
 
 ### 登録
 
-Google exchangeまたは既存sessionで得たAccess Tokenで登録optionsを取得し、WebAuthn APIへ渡します。verifyでは`X-Passkey-Ceremony-Token`とcredential JSONを送ります。challengeはDBで一回だけ消費し、credential JSON、公開鍵、sign counterを保存します。
+Google直後は`pre_auth_token`、既存sessionからの追加登録はAccess Tokenで登録optionsを取得し、WebAuthn APIへ渡します。verifyでは`X-Passkey-Ceremony-Token`とcredential JSONを送ります。challengeとpre-authは同じ成功トランザクションで消費し、credential JSON、公開鍵、sign counter、通常sessionを保存します。
 
 ### ログイン
 
@@ -81,7 +83,7 @@ WEBAUTHN_RP_ID=samurai-meet.disnana.com
 WEBAUTHN_RP_ORIGIN=https://samurai-meet.disnana.com
 ```
 
-`WEBAUTHN_RP_ID`にはschemeやportを含めません。開発ブラウザでは`http://localhost:5173`と`WEBAUTHN_RP_ID=localhost`を使います。Google OAuth後はWebクライアントの`/auth/complete`へhandoffされ、開発パネルから登録、discoverable login、credential追加・解除、Refresh、ログアウトを確認できます。Expo Goはnative Passkeyのテスト対象外です。
+`WEBAUTHN_RP_ID`にはschemeやportを含めません。開発ブラウザでは`http://localhost:5173`と`WEBAUTHN_RP_ID=localhost`を使います。Google OAuth後はWebクライアントの`/auth/complete`へhandoffされ、開発パネルから登録、discoverable login、credential追加・解除、Refresh、ログアウトを確認できます。Expo GoではWeb Passkey成功後に短命なsession handoffでアプリへ戻します。native PasskeyはDevelopment Buildで検証します。
 
 ## 6. セッションと更新タイミング
 

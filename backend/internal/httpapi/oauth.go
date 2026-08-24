@@ -99,6 +99,6 @@ func googleExchange(service *auth.OAuthLoginService) http.HandlerFunc {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "handoff_exchange_failed"})
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"user_id": result.UserID, "session_id": result.SessionID, "access_token": result.AccessToken, "refresh_token": result.RefreshToken}})
+		writeJSON(w, http.StatusOK, map[string]any{"data": result})
 	}
 }

@@ -91,14 +91,26 @@ Response:
 {
   "data": {
     "user_id": "opaque-user-id",
-    "session_id": "opaque-session-id",
-    "access_token": "JWS形式のJWT",
-    "refresh_token": "256bit以上のopaque token"
+    "pre_auth_token": "Passkey専用の5分token",
+    "passkey_required": true,
+    "passkey_registered": false
   }
 }
 ```
 
-交換時にセッションとRefresh Tokenを作成します。DBコミット後にアプリが落ちても、handoff codeの期限内で同じverifierを使えば、暗号化して保存した同じ応答を再取得できます。
+Google交換時点では通常のAccess/Refresh sessionを作成しません。`pre_auth_token`はPasskey options/verifyだけに使え、プロフィール、鍵、写真、チャットなどの通常APIには使えません。Passkey成功後に通常のAccess/Refresh sessionを同じDBトランザクションで発行します。DBコミット後にアプリが落ちても、handoff codeの期限内で同じverifierを使えば、暗号化して保存した同じ応答を再取得できます。
+
+### 3.4 Web PasskeyからExpo Goへのセッション復帰（実装済み）
+
+Expo GoはGoogle交換後の`pre_auth_token`をSecure Storageへ保存し、Web検証画面を次の値付きで開きます。
+
+- `app_return_uri`: Expo Goの`exp://.../--/auth`などの許可済みURI
+- `app_handoff_challenge`: Expo Goが保持するセッション復帰verifierのSHA-256 Base64URL
+- `pre_auth_token`とユーザーIDはURL fragmentでWeb画面へ渡し、HTTPリクエストには送らない。
+
+Web画面でPasskey登録または既知ユーザーのPasskeyログインが成功すると、Passkey後のAccess Tokenで`POST /api/v1/auth/session-handoff/start`を呼びます。APIは直近Passkey認証済みのWeb sessionだけを受け付け、別のアプリsessionを作成したうえで、SessionTokensを暗号化した10分のhandoff codeを返します。
+
+続いてExpo Goが`POST /api/v1/auth/session-handoff/exchange`へ`handoff_code`とSecure Storageの`handoff_verifier`を送ります。code単体では交換できず、verifier不一致・期限切れ・許可外redirect URIは拒否します。成功時の`data`は通常のSessionTokensです。アプリが途中終了しても、verifierを保持していれば再交換できます。
 
 ## 4. Passkey / WebAuthn
 
@@ -108,7 +120,7 @@ DBのchallengeは5分で期限切れになり、登録・認証の完了を問�
 
 `POST /api/v1/auth/passkey/register/options`
 
-- Authorization必須（Google OAuth exchangeまたは既存Passkeyで得たAccess Token）。
+- Authorization必須。Google直後は`pre_auth_token`、既存sessionからのPasskey追加はAccess Tokenを送ります。
 - Response:
 
 ```json
@@ -127,7 +139,7 @@ DBのchallengeは5分で期限切れになり、登録・認証の完了を問�
 - Authorization必須。
 - Header: `X-Passkey-Ceremony-Token: <ceremony_token>`
 - Body: OS / WebAuthn APIが返したcredential JSONをそのまま送る。
-- 成功: `200 { "status": "registered" }`
+- Access Token経由の追加登録は`200 { "status": "registered" }`、Google直後の初回登録は通常SessionTokensを`data`で返します。
 
 ### 4.3 ログイン options（実装済み）
 
@@ -139,13 +151,14 @@ Bodyを空にするとdiscoverable loginです。既知ユーザーで行う場�
 { "user_id": "opaque-user-id" }
 ```
 
-Responseの`data.ceremony_token`と`data.options`は登録optionsと同じ形式です。ログインoptions自体にはAccess Tokenは不要です。
+Responseの`data.ceremony_token`と`data.options`は登録optionsと同じ形式です。Google直後の既知ユーザー認証では`Authorization: Bearer <pre_auth_token>`を送ります。それ以外のdiscoverable loginではAuthorization不要です。
 
 ### 4.4 ログイン verify（実装済み）
 
 `POST /api/v1/auth/passkey/login/verify`
 
 - Header: `X-Passkey-Ceremony-Token: <ceremony_token>`
+- Google直後の認証では`Authorization: Bearer <pre_auth_token>`も送ります。
 - Body: OS / WebAuthn APIが返したassertion JSONをそのまま送る。
 - 成功: Google exchangeと同じ`data`形式で新しいセッションを返す。
 - 成功時にcredentialのsign counterと`last_used_at`を更新する。
@@ -168,7 +181,7 @@ Responseの`data.ceremony_token`と`data.options`は登録optionsと同じ形式
 | Session | 絶対期限90日、アイドル期限30日 | PostgreSQL `sessions` |
 | 同一Refresh再送 | 30秒 | PostgreSQL `refresh_attempts`に暗号化レスポンスを保存 |
 
-署名鍵はAPIだけが保持します。JWS claimsの`sid`は`sessions.id`、`sub`は`users.id`です。APIは署名と期限だけでなく、`sid`のセッション状態、期限、アイドル期限、ユーザー状態をDBで確認します。
+署名鍵はAPIだけが保持します。headerには固定の`alg=HS256`、`typ=JWT`と鍵識別子`kid`を含めます。検証側は設定済み`kid` allow-listだけを受け付け、鍵ローテーション中は旧鍵で発行済みtokenと暗号化retry/handoffを猶予期間だけ検証・復号できます。JWS claimsの`sid`は`sessions.id`、`sub`は`users.id`です。APIは署名と期限だけでなく、`sid`のセッション状態、期限、アイドル期限、ユーザー状態をDBで確認します。
 
 ### 5.2 更新
 

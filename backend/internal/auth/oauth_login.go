@@ -12,19 +12,26 @@ import (
 const OAuthHandoffTTL = 10 * time.Minute
 
 type OAuthLoginResult struct {
-	UserID, AccessToken, RefreshToken, SessionID string
-	IsNewUser                                    bool
+	UserID            string `json:"user_id"`
+	PreAuthToken      string `json:"pre_auth_token"`
+	PasskeyRequired   bool   `json:"passkey_required"`
+	PasskeyRegistered bool   `json:"passkey_registered"`
 }
 type OAuthHandoff struct{ Code, AppRedirectURI string }
 type OAuthLoginService struct {
-	google *GoogleOIDC
-	states *OAuthStateStore
-	db     *sql.DB
-	signer *Signer
+	google  *GoogleOIDC
+	states  *OAuthStateStore
+	db      *sql.DB
+	signer  *Signer
+	preauth *PreAuthService
 }
 
-func NewOAuthLoginService(google *GoogleOIDC, states *OAuthStateStore, database *sql.DB, signer *Signer) *OAuthLoginService {
-	return &OAuthLoginService{google, states, database, signer}
+func NewOAuthLoginService(google *GoogleOIDC, states *OAuthStateStore, database *sql.DB, signer *Signer, preauth ...*PreAuthService) *OAuthLoginService {
+	var preAuthService *PreAuthService
+	if len(preauth) > 0 {
+		preAuthService = preauth[0]
+	}
+	return &OAuthLoginService{google: google, states: states, db: database, signer: signer, preauth: preAuthService}
 }
 
 func (s *OAuthLoginService) Start(ctx context.Context, now time.Time, appRedirectURI, handoffChallenge string) (string, error) {
@@ -104,9 +111,26 @@ func (s *OAuthLoginService) ExchangeHandoff(ctx context.Context, handoff, verifi
 		}
 		return cached, tx.Commit()
 	}
-	result, err := s.createSession(ctx, tx, userID, now)
+	if s.preauth == nil {
+		return OAuthLoginResult{}, errors.New("pre-auth service is not configured")
+	}
+	var credentialCount int
+	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM passkey_credentials WHERE user_id=$1`, userID).Scan(&credentialCount); err != nil {
+		return OAuthLoginResult{}, err
+	}
+	scope := PreAuthScopeRegister
+	if credentialCount > 0 {
+		scope = PreAuthScopeLogin
+	}
+	preAuthToken, err := s.preauth.IssueTx(ctx, tx, userID, scope, now)
 	if err != nil {
 		return OAuthLoginResult{}, err
+	}
+	result := OAuthLoginResult{
+		UserID:            userID,
+		PreAuthToken:      preAuthToken,
+		PasskeyRequired:   true,
+		PasskeyRegistered: credentialCount > 0,
 	}
 	payload, err := json.Marshal(result) // #nosec G117 -- immediately encrypted for one-time handoff retry storage; never logged or returned as JSON
 	if err != nil {
@@ -123,29 +147,4 @@ func (s *OAuthLoginService) ExchangeHandoff(ctx context.Context, handoff, verifi
 		return OAuthLoginResult{}, err
 	}
 	return result, nil
-}
-
-func (s *OAuthLoginService) createSession(ctx context.Context, tx *sql.Tx, userID string, now time.Time) (OAuthLoginResult, error) {
-	sessionID, familyID, refreshID := newID(), newID(), newID()
-	refresh, err := NewRefreshToken()
-	if err != nil {
-		return OAuthLoginResult{}, err
-	}
-	hash, err := HashRefreshToken(refresh)
-	if err != nil {
-		return OAuthLoginResult{}, err
-	}
-	created := now.UTC().Format(time.RFC3339Nano)
-	expires := now.Add(RefreshAbsoluteTTL).UTC().Format(time.RFC3339Nano)
-	if _, err = tx.ExecContext(ctx, `INSERT INTO sessions (id,user_id,family_id,status,created_at,last_seen_at,expires_at) VALUES ($1,$2,$3,'active',$4,$4,$5)`, sessionID, userID, familyID, created, expires); err != nil {
-		return OAuthLoginResult{}, err
-	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO refresh_tokens (id,session_id,token_hash,issued_at,expires_at) VALUES ($1,$2,$3,$4,$5)`, refreshID, sessionID, hash, created, expires); err != nil {
-		return OAuthLoginResult{}, err
-	}
-	access, _, err := s.signer.Issue(userID, sessionID, newID(), now)
-	if err != nil {
-		return OAuthLoginResult{}, err
-	}
-	return OAuthLoginResult{UserID: userID, SessionID: sessionID, AccessToken: access, RefreshToken: refresh}, nil
 }

@@ -123,6 +123,8 @@ python scripts/generate_dev_keys.py --server-only
 
 表示された `JWS_SIGNING_KEY=...` の値を `backend/.env` の同名項目に貼り付けます。サーバーを再起動すると反映されます。
 
+鍵をローテーションする場合は、新しい値を`JWS_SIGNING_KEY`、識別子を`JWS_KEY_ID`へ設定し、移行期間だけ旧鍵を`JWS_VERIFY_KEYS=old-key-id=旧鍵のBase64URL`へ追加します。新しいtokenと暗号化retry/handoffはactive鍵で作成され、旧鍵は検証・復号専用です。旧tokenの猶予期間が過ぎたら`JWS_VERIFY_KEYS`から旧鍵を削除して再起動します。
+
 引数なしの実行では、Key-A と Recovery Key のテスト値も生成します。これらは端末側の鍵フローを確認する用途だけに使い、`.env`、DB、ログには保存しないでください。
 
 ## 7. GitHub Actions で CI を手動実行する

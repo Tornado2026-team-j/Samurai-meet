@@ -5,6 +5,7 @@ import (
 	"crypto/rsa"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/account"
@@ -30,28 +31,48 @@ func main() {
 	}
 	var signer *auth.Signer
 	if cfg.JWS.SigningKey != "" {
-		signer, err = auth.NewSigner(cfg.JWS.SigningKey, cfg.JWS.Issuer, cfg.JWS.Audience)
+		encodedKeys := map[string]string{cfg.JWS.KeyID: cfg.JWS.SigningKey}
+		for _, entry := range strings.Split(cfg.JWS.VerifyKeys, ",") {
+			entry = strings.TrimSpace(entry)
+			if entry == "" {
+				continue
+			}
+			keyID, encodedKey, found := strings.Cut(entry, "=")
+			if !found || strings.TrimSpace(keyID) == "" || strings.TrimSpace(encodedKey) == "" {
+				log.Fatalf("JWS_VERIFY_KEYS must use key_id=base64url pairs separated by commas")
+			}
+			keyID = strings.TrimSpace(keyID)
+			encodedKey = strings.TrimSpace(encodedKey)
+			if keyID == cfg.JWS.KeyID && encodedKey != cfg.JWS.SigningKey {
+				log.Fatalf("JWS_VERIFY_KEYS cannot replace the active signing key")
+			}
+			encodedKeys[keyID] = encodedKey
+		}
+		signer, err = auth.NewRotatingSigner(cfg.JWS.KeyID, encodedKeys, cfg.JWS.Issuer, cfg.JWS.Audience)
 		if err != nil {
 			log.Fatalf("JWS initialization failed: %v", err)
 		}
 	}
 	var oauthLogin *auth.OAuthLoginService
+	preauth := auth.NewPreAuthService(database)
 	if cfg.GoogleOIDC.ClientID != "" && cfg.GoogleOIDC.ClientSecret != "" && cfg.GoogleOIDC.RedirectURI != "" && signer != nil {
 		google, err := auth.NewGoogleOIDC(startupContext, cfg.GoogleOIDC)
 		if err != nil {
 			log.Fatalf("Google OAuth initialization failed: %v", err)
 		}
-		oauthLogin = auth.NewOAuthLoginService(google, auth.NewOAuthStateStore(database), database, signer)
+		oauthLogin = auth.NewOAuthLoginService(google, auth.NewOAuthStateStore(database), database, signer, preauth)
 	}
 	var sessions *auth.SessionService
 	var passkeys *auth.PasskeyService
+	var sessionHandoffs *auth.SessionHandoffService
 	if signer != nil {
 		sessions = auth.NewSessionService(database, signer)
 		relyingParty, webauthnErr := auth.NewPasskeyRelyingParty(cfg.WebAuthn)
 		if webauthnErr != nil {
 			log.Fatalf("WebAuthn initialization failed: %v", webauthnErr)
 		}
-		passkeys = auth.NewPasskeyService(database, relyingParty, sessions)
+		passkeys = auth.NewPasskeyService(database, relyingParty, sessions, preauth)
+		sessionHandoffs = auth.NewSessionHandoffService(database, sessions, signer)
 	}
 	imageStore, err := image.NewStore(cfg.ImageStorage.Directory)
 	if err != nil {
@@ -79,7 +100,9 @@ func main() {
 			DevClientDir:        cfg.DevClientDir,
 			ClientOrigin:        cfg.ClientOrigin,
 			OAuthLogin:          oauthLogin,
+			PreAuth:             preauth,
 			Sessions:            sessions,
+			SessionHandoffs:     sessionHandoffs,
 			Passkeys:            passkeys,
 			KeyEnvelopes:        keyEnvelopes,
 			Images:              images,

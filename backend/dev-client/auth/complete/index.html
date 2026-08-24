@@ -26,7 +26,14 @@
         });
         const body = await response.json();
         if (!response.ok || !body.data) throw new Error(`交換失敗 (${response.status})`);
-        sessionStorage.setItem('samurai_dev_session', JSON.stringify(body.data));
+        if (body.data.access_token) {
+          sessionStorage.setItem('samurai_dev_session', JSON.stringify(body.data));
+          sessionStorage.removeItem('samurai_dev_pre_auth');
+        } else if (body.data.pre_auth_token) {
+          sessionStorage.setItem('samurai_dev_pre_auth', JSON.stringify(body.data));
+        } else {
+          throw new Error('Google交換結果に認証状態がありません');
+        }
         sessionStorage.removeItem('samurai_dev_oauth_handoff_verifier');
         window.location.replace('/');
       }
