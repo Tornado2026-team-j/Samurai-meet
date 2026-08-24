@@ -5,6 +5,8 @@ import * as WebBrowser from 'expo-web-browser';
 import {
   buildPasskeyURL,
   encodeBase64URL,
+  isPreAuth,
+  isStoredSession,
   parseAuthRedirect,
   storedSession,
   WEB_PASSKEY_URL,
@@ -14,7 +16,7 @@ import {
   type AuthRedirect,
 } from './auth-contract';
 
-export { buildPasskeyURL, encodeBase64URL, parseAuthRedirect, storedSession, WEB_PASSKEY_URL } from './auth-contract';
+export { buildPasskeyURL, encodeBase64URL, isPreAuth, isStoredSession, parseAuthRedirect, storedSession, WEB_PASSKEY_URL } from './auth-contract';
 export type { PreAuth, Session, StoredSession, AuthRedirect } from './auth-contract';
 
 WebBrowser.maybeCompleteAuthSession();
@@ -103,7 +105,9 @@ export async function restoreAuth(): Promise<AuthSnapshot> {
   ]);
   if (stored) {
     try {
-      const session = await refreshStoredSession(JSON.parse(stored) as StoredSession);
+      const parsed: unknown = JSON.parse(stored);
+      if (!isStoredSession(parsed)) throw new SyntaxError('stored session shape is invalid');
+      const session = await refreshStoredSession(parsed);
       return { session, preAuth: null };
     } catch (reason) {
       // HTTPの認証失敗や破損値だけを消去し、通信結果不明時はrequest_idを残して再試行できるようにする。
@@ -112,7 +116,9 @@ export async function restoreAuth(): Promise<AuthSnapshot> {
   }
   if (preAuthValue && !stored) {
     try {
-      return { session: null, preAuth: JSON.parse(preAuthValue) as PreAuth };
+      const parsed: unknown = JSON.parse(preAuthValue);
+      if (!isPreAuth(parsed)) throw new SyntaxError('pre-auth shape is invalid');
+      return { session: null, preAuth: parsed };
     } catch {
       await clearAuthStorage();
     }

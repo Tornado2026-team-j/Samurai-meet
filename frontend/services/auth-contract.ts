@@ -16,6 +16,28 @@ export type StoredSession = Pick<Session, 'user_id' | 'session_id' | 'refresh_to
 
 export type AuthRedirect = { handoffCode?: string; sessionHandoffCode?: string };
 
+export function isStoredSession(value: unknown): value is StoredSession {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Partial<StoredSession>;
+  return typeof candidate.user_id === 'string'
+    && candidate.user_id.length > 0
+    && typeof candidate.session_id === 'string'
+    && candidate.session_id.length > 0
+    && typeof candidate.refresh_token === 'string'
+    && candidate.refresh_token.length > 0;
+}
+
+export function isPreAuth(value: unknown): value is PreAuth {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Partial<PreAuth>;
+  return typeof candidate.user_id === 'string'
+    && candidate.user_id.length > 0
+    && typeof candidate.pre_auth_token === 'string'
+    && candidate.pre_auth_token.length > 0
+    && typeof candidate.passkey_required === 'boolean'
+    && typeof candidate.passkey_registered === 'boolean';
+}
+
 function isAllowedRedirect(value: URL): boolean {
   const scheme = value.protocol.slice(0, -1).toLowerCase();
   if (scheme === 'samuraimeet' || scheme === 'samuraimeettest') return value.hostname === 'auth';
