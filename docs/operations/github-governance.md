@@ -61,7 +61,7 @@ Dependency Review を必須にする前に、**Settings → Advanced Security �
 
 ### ライセンス方針
 
-Dependency Review は許可リスト方式で、MIT・Apache-2.0・BSD系などを許可する。AGPL-3.0はアプリの依存としては許可しない。例外はTruffleHogの固定コミットのみで、未改変のCI秘密情報スキャンとして実行し、製品へ組み込み・配布しないことを条件とする。例外の追加は、用途・固定バージョン・ライセンス影響をPRに記録してレビューする。
+Dependency Review は許可リスト方式で、MIT・Apache-2.0・BSD系などを許可する。Go公式依存に付随する`LicenseRef-scancode-google-patent-license-golang`はBSD-3-Clauseと組になるため明示許可する。AGPL-3.0はアプリの依存としては許可しない。例外はTruffleHogの固定コミットのみで、未改変のCI秘密情報スキャンとして実行し、製品へ組み込み・配布しないことを条件とする。例外の追加は、用途・固定バージョン・ライセンス影響をPRに記録してレビューする。
 
 ## 今後の追加
 
