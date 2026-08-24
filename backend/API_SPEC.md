@@ -54,6 +54,7 @@ Expoテストクライアントの「状態を更新」は`/api/v1/readyz`を呼
 
 - 本番アプリ: `samuraimeet://auth`
 - 開発用Expo Go: `samuraimeettest://auth` または `exp://<host>/--/auth`
+- Web開発クライアント: 設定済み`CLIENT_ORIGIN`または開発Originの`/auth/complete`（完全一致）
 - `exp://` は`APP_ENV=development`、`test`、またはローカル専用の`ALLOW_EXPO_GO_REDIRECT=true`のときだけ許可する。
 - Google Consoleに登録するURIはアプリURIではなく、常に `https://samurai-meet.disnana.com/auth/callback`。
 
@@ -245,7 +246,7 @@ POSTは次のヘッダーを使用します。
 | Header | 内容 |
 | --- | --- |
 | `X-Photo-Visibility` | `private` または `profile` |
-| `X-Photo-Content-Type` | 元画像のMIME。未指定はoctet-stream |
+| `X-Photo-Content-Type` | `application/octet-stream`、`image/jpeg`、`image/png`、`image/webp`のいずれか。未指定はoctet-stream |
 | `X-Photo-Nonce` | 12byte AES-GCM nonceのBase64URL |
 | `X-Photo-Algorithm` | `AES-256-GCM` |
 | `X-Photo-Key-Version` | 端末鍵のversion |
@@ -254,6 +255,7 @@ POSTは次のヘッダーを使用します。
 | `X-Photo-Wrapping-Algorithm` | 端末側ラップ方式 |
 
 本文は暗号文のみで、既定の最大サイズは20MiBです。Goサーバーのcacheも暗号文だけを保持し、profile配信時に一時生成する平文はcacheしません。
+SVG、GIF、HTMLなどブラウザで解釈され得る未許可MIMEは拒否します。profile配信には`X-Content-Type-Options: nosniff`とCSPも付与します。
 
 ### 6.3 退会（実装済み）
 

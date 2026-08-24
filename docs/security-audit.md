@@ -5,12 +5,14 @@
 | 項目 | 内容 |
 | --- | --- |
 | 対象 | `docs/` 配下の認証、セッション、API、DB、WebSocket、画像、位置情報仕様 |
-| 実施日 | 2026-08-23 |
-| 監査範囲 | 設計・要件レビュー |
-| ソースコード | 未実装のため対象外 |
+| 実施日 | 2026-08-24 |
+| 監査範囲 | 設計・実装差分・Go/Bun自動検査レビュー |
+| ソースコード | 認証、session、OAuth、Passkey API、画像、開発クライアントを対象 |
 | 判定 | 条件付き承認。P1 項目を解消するまで本番リリース不可 |
 
 > 本書の PASS は、仕様上の対策が記載されていることを示します。実装が安全であることを示すものではありません。
+
+今回の検査では、CIと同じ`gosec v2.28.0 -exclude-generated ./...`が`Issues: 0`、Goのtest/vet/build、PostgreSQL統合テスト、Expo/フロントのTypeScript検査、Bun監査が成功しました。Bun監査は既存の期限付き例外だけを許可しています。これは本番リリース承認ではなく、残りのP1項目は下記のとおりです。
 
 ## 1. 総合判定
 
@@ -34,8 +36,8 @@
 | SEC-005 | Refresh Token 再利用検知 | PASS | 再利用時に token family を失効する仕様がある |
 | SEC-006 | 自動更新のタイミング | PASS | 残り 30 秒、アプリ復帰、401、WebSocket 再接続で更新 |
 | SEC-007 | 同時 Refresh の抑制 | PASS | クライアントの single-flight を定義 |
-| SEC-008 | 通信失敗時の Refresh 再送 | P1 | 同じ token の盲目的な再送をどう扱うか未確定 |
-| SEC-009 | Google 直後の権限分離 | PASS | Passkey 前は短命の `pre_auth_token` に限定 |
+| SEC-008 | 通信失敗時の Refresh 再送 | PASS | 同じ`session_id`・`request_id`だけ30秒以内に暗号化済み結果を再返却 |
+| SEC-009 | Google 直後の権限分離 | PARTIAL | 現実装はGoogle handoff交換時に通常sessionを発行する。Passkey必須化は未実装 |
 | SEC-010 | `pre_auth_token` の一回性 | P1 | DB での使用済み管理・scope・失効処理を実装前に確定する |
 | SEC-011 | JWS 署名鍵のローテーション | P1 | `kid`、許可アルゴリズム、旧鍵の移行期間が未確定 |
 | SEC-012 | WebSocket の失効反映 | PARTIAL | heartbeat は定義済み。実装時の切断・再接続テストが必要 |
@@ -51,15 +53,15 @@
 
 ## 3. P1 必須対応
 
-### SEC-008 Refresh 通信失敗時の再送
+### SEC-008 Refresh 通信失敗時の再送（実装済み）
 
 Refresh はローテーションするため、サーバーが更新に成功した後、レスポンスだけが失われるケースを考慮する必要があります。古い Refresh Token をそのまま再送すると、正当な再試行でも token reuse と判定され、セッション全体が失効する可能性があります。
 
-採用案は `refresh_request_id` とサーバー側の冪等性記録です。同一 `session_id`・`request_id` の再送だけ 30 秒間同じ結果を返し、レスポンスは暗号化して保存します。Refresh Token の平文は DB に保存しません。実装が間に合わない場合の安全側フォールバックは、古い token を再送せず再ログインを要求することです。
+採用した方式は `request_id` とサーバー側の冪等性記録です。同一 `session_id`・`request_id` の再送だけ 30 秒間同じ結果を返し、レスポンスは暗号化して保存します。Refresh Token の平文は DB に保存しません。別のrequest IDで使用済みtokenが来た場合はreuseとしてsession familyを失効します。
 
 ここで重要なのは、旧 Access Token と旧 Refresh Token を分けることです。旧 Access Token は自身の `exp` まで自然に有効ですが、旧 Refresh Token は同じ冪等リクエスト以外では即時に reuse として扱います。
 
-### SEC-010 `pre_auth_token`
+### SEC-010 `pre_auth_token`（未実装）
 
 `pre_auth_token` は通常 API に使えないよう、次を必須にします。
 
@@ -68,6 +70,8 @@ Refresh はローテーションするため、サーバーが更新に成功し
 - 一回使用したら DB 上で失効。
 - `user_id` と OAuth 認証イベントに紐付ける。
 - Access Token、Refresh Token、プロフィール、チャット、Key-B を取得できない。
+
+現実装ではこのpre-auth層をまだ導入しておらず、Google OAuth交換後の通常sessionでPasskey登録を開始できます。プロダクト要件を「Google + Passkey必須」とする場合は、通常session発行をPasskey成功後へ移す必要があります。
 
 ### SEC-011 JWS 鍵管理
 
@@ -148,7 +152,7 @@ sequenceDiagram
 
 ### 認証・鍵
 
-- Google 認証だけでは通常 API を利用できない。
+- Google 認証だけでは通常 API を利用できない（pre-auth導入後の必須受入条件。現実装は未達）。
 - `pre_auth_token` の期限切れ・二回使用・scope 外利用を拒否する。
 - `alg` 改ざん、`kid` 不正、issuer / audience 不正を拒否する。
 - Key-B 取得に Passkey 再認証が必要になる。
@@ -158,7 +162,7 @@ sequenceDiagram
 
 ### 本番リリース前に必須
 
-- [ ] SEC-008 の通信失敗時ポリシーを決定・実装
+- [x] SEC-008 の通信失敗時ポリシーを決定・実装
 - [ ] SEC-010 の `pre_auth_token` 一回性を実装
 - [ ] SEC-011 の JWS `kid` / 鍵ローテーションを実装
 - [ ] SEC-013 の Key-B 信頼境界を設計レビュー
@@ -171,4 +175,4 @@ sequenceDiagram
 
 ### 監査結論
 
-自動更新の採用自体は妥当です。現時点の docs は、通常時の自動更新・DB 失効・token rotation・チャット専用 token の基本設計を満たしています。一方、通信結果が失われた Refresh の再試行、`pre_auth_token`、JWS 鍵ローテーション、Key-B、QUIC 0-RTT、native client の詳細が未確定のため、現段階の結論は「条件付き承認」です。
+自動更新の採用自体は妥当です。実装は通常時の自動更新・DB失効・token rotation・30秒の冪等再送・Passkey HTTP儀式・暗号文画像の基本防御を満たしています。一方、`pre_auth_token`によるGoogle後のPasskey必須化、JWS鍵ローテーション、Key-B、QUIC 0-RTT、native clientの詳細が未実装のため、現段階の結論は「条件付き承認」です。

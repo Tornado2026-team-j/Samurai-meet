@@ -19,12 +19,14 @@
 
 ## 1. 次の実装: 端末鍵とRecovery Key（クライアント側）
 
-- [ ] Key-Aを端末Secure Storageで生成・保存するTypeScript crypto serviceを追加する。
+- [x] Key-A/Recovery KeyのHKDF・AES-GCM primitiveをTypeScript crypto serviceへ追加する。
+- [ ] Key-Aを端末Secure Storageで生成・保存する処理と再開UIへ接続する。
 - [ ] Recovery Keyを表示前に一度だけ生成し、再表示不可のUIにする。
 - [ ] Recovery KeyからHKDF用の鍵を導出し、Key-AをAES-256-GCMで端末上暗号化する。
 - [x] `key_envelopes`の作成・取得・ローテーションAPIを追加する。
 - [ ] Recovery Keyの試行回数、レート制限、監査イベント、失敗時のロックを追加する。
 - [ ] Recovery / Key-B / 新端末登録 / 退会を直近Passkey認証必須にする。
+- [ ] Google OAuth交換後を`pre_auth_token`に限定し、Passkey成功後に通常sessionを発行する。
 - [ ] 復旧途中にアプリが落ちても、状態を再開できる有限状態機械をクライアントへ追加する。
 
 ## 2. 次の実装: 暗号化画像（クライアント接続・運用）
@@ -33,7 +35,7 @@
 - [x] `/api/v1/keys/profile-image`でRSA-OAEP-256公開JWKを配信する。
 - [x] `/api/v1/me/photos`のupload、owner download、deleteを認証・所有権確認と接続する。
 - [x] private画像は端末鍵ラップ、profile画像はサーバー公開鍵ラップという種別を明示する。
-- [ ] MIME、暗号文サイズ、nonce長、SHA-256、key versionをサーバーで検証する。
+- [x] MIME、暗号文サイズ、nonce長、SHA-256、key versionをサーバーで検証する。
 - [x] ダウンロードは認証済み暗号文と暗号文cacheだけを使い、平文画像をcacheしない。
 - [x] upload途中・DB失敗・再試行・退会時のファイルcleanupを統合テストする。
 
@@ -49,6 +51,8 @@
 ## 4. Passkey本番確認
 
 - [ ] Development BuildへPasskey native moduleを追加する（Expo Goでは検証しない）。
+- [x] 開発ブラウザクライアントへWebAuthn登録・discoverable login・一覧・解除を追加する。
+- [x] Web domain callback `/auth/complete` と configured Origin/RP ID allow-listを追加する。
 - [ ] iOS Associated Domains / Android assetlinksを本番ドメインで設定する。
 - [ ] 登録、同一端末ログイン、別端末discoverable login、credential追加・解除を実機で通す。
 - [ ] sign counter、clone warning、バックアップ可能credentialの方針を監査する。

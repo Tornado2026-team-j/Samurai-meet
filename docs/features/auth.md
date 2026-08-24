@@ -20,7 +20,7 @@
 | Expo Goへのhandoffと中断再開 | 実装済み |
 | JWS Access Token / Refresh rotation | 実装済み |
 | logout / session管理 | 実装済み |
-| Passkey HTTP儀式 | 実装済み。実端末はDevelopment Buildで検証する |
+| Passkey HTTP儀式 | 実装済み。開発ブラウザはWeb domain/localhost、実端末はDevelopment Buildで検証する |
 | Key-A envelope HTTP | 実装済み。Key-Aは端末側で暗号化した値だけ送る |
 | 端末側画像暗号文の写真HTTP API | 実装済み。AES-GCM暗号化そのものはクライアント責務 |
 | 退会削除オーケストレーション | 実装済み。DB行、暗号文ファイル、cacheを削除 |
@@ -36,7 +36,7 @@
 | Key-A / Recovery Key / AES-GCM | `frontend/services/crypto.ts` | TypeScript + Secure Storage |
 | 最小動作確認 | `backend/expo-test/App.tsx` | TypeScript / Expo |
 
-Expo GoはOAuth・session・Secure Storageの確認に使用します。Passkey native moduleはDevelopment Buildでのみ確認します。
+Expo GoはOAuth・session・Secure Storageの確認に使用します。ブラウザPasskeyは`backend/dev-client`でWebAuthn APIを確認し、Passkey native moduleはDevelopment Buildでのみ確認します。
 
 ## 4. Google OAuthとhandoff
 
@@ -47,6 +47,8 @@ Expo GoはOAuth・session・Secure Storageの確認に使用します。Passkey 
 5. APIがhandoff codeのhashとchallengeを10分保存し、アプリURIへリダイレクトする。
 6. アプリがhandoff codeとverifierを`/auth/google/exchange`へ送り、セッションを受け取る。
 7. サーバーは応答を暗号化保存するため、DB commit直後のアプリクラッシュでも同じverifierで再交換できる。
+
+現実装ではGoogle exchange時点で通常のAccess/Refresh sessionを発行します。Google認証後にPasskeyを必須にするプロダクト要件へ移行する場合は、`pre_auth_token`を追加し、通常sessionの発行をPasskey成功後へ移す必要があります（監査P1）。
 
 Google Consoleに登録するredirect URIは次の一つだけです。
 
@@ -69,6 +71,17 @@ login optionsのbodyを空にするとdiscoverable loginです。assertionのcre
 ### 追加・解除
 
 既存Access Tokenで登録を何本でも追加できます。credential一覧を表示し、所有者一致を確認してから個別解除します。最後のcredentialを解除してもGoogle OAuthログインは残りますが、Passkeyだけでのログインはできなくなります。
+
+### Webドメインでの検証
+
+WebAuthnの検証では、サーバー設定を画面のOriginに一致させます。HTTPSの本番ドメインでは次の値です。
+
+```text
+WEBAUTHN_RP_ID=samurai-meet.disnana.com
+WEBAUTHN_RP_ORIGIN=https://samurai-meet.disnana.com
+```
+
+`WEBAUTHN_RP_ID`にはschemeやportを含めません。開発ブラウザでは`http://localhost:5173`と`WEBAUTHN_RP_ID=localhost`を使います。Google OAuth後はWebクライアントの`/auth/complete`へhandoffされ、開発パネルから登録、discoverable login、credential追加・解除、Refresh、ログアウトを確認できます。Expo Goはnative Passkeyのテスト対象外です。
 
 ## 6. セッションと更新タイミング
 
