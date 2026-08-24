@@ -246,6 +246,14 @@ PUT body:
 
 `GET /api/v1/me/key-b`はAccess Tokenと5分以内のPasskey再認証を要求します。レスポンスは`key_version`とBase64URLの`key_b`です。Key-Bはユーザーごとに初回生成し、`KEY_B_WRAP_KEY`（32 byte Base64URL）によるAES-256-GCM暗号文だけを`key_b_materials`へ保存します。平文はレスポンス生成時だけに保持し、ログやDBへ保存しません。wrap鍵IDが保存済み値と異なる場合はfail closedで`503 key_b_unavailable`を返します。
 
+成功時の応答は次のとおりです。
+
+```json
+{"data":{"key_version":"v1","key_b":"Base64URL"}}
+```
+
+直近Passkeyがない場合は`403 recent_passkey_authentication_required`、保存済みwrap鍵IDが異なる場合は`503 key_b_unavailable`を返します。
+
 クライアント側のKey-AとのHKDF結合、KMS直結、鍵ローテーションと取得監査ログは未実装です。退会ではKey-B暗号文も削除します。
 
 ### 6.3 画像（実装済み）

@@ -4,7 +4,7 @@
 
 ## 1. まず読むもの
 
-1. [TODO.md](TODO.md)：今回停止した位置、残タスク、未push変更。
+1. [TODO.md](TODO.md)：実装済み範囲、残タスク、監査上の未完了事項。
 2. [API_SPEC.md](API_SPEC.md)：Go実装を正としたAPI契約。
 3. [TESTING.md](TESTING.md)：ローカルDB、Cloudflare Tunnel、ブラウザPasskey、Expo Goの試験手順。
 4. [../docs/security-audit.md](../docs/security-audit.md)：現時点の監査判定。未実装のP1を確認してから本番作業を行う。
@@ -13,20 +13,20 @@
 ## 2. 作業を止めた時点
 
 - ブランチ: `codex/backend-auth-session`
-- 最後にpush済み: `36b0bb7 認証鍵仕様とセキュリティ監査を実装へ同期`
-- 作業ツリー: 認証、Expo検証画面、JWS、仕様書に未commit変更あり。
+- 最後にpush済み: `e71d585 Key-B初回取得の競合を解消`
+- 作業ツリー: この引き継ぎ時点ではクリーン。実装はPR #3へpush済み。
 - SQLite: 廃止。DBはPostgreSQLのみ。画像本体はDBではなく、`IMAGE_STORAGE_DIR`配下へ暗号文として保存する。
 - 公開構成: Cloudflare Tunnel → `127.0.0.1:8080`。公開URLは `https://samurai-meet.disnana.com`、APIは同一ドメインの`/api/v1`。
 - Google callback: `https://samurai-meet.disnana.com/auth/callback`。Google ConsoleにはこのURIだけを登録する。
 
-### 今回の未push実装
+### 現在の認証・鍵実装
 
 - Google交換後は通常sessionではなく、DBにhashだけを保存する`pre_auth_token`を返す。scopeはPasskey登録/ログインに限定し、5分で失効する。
 - Web Passkey成功後、直近Passkey済みWeb sessionから暗号化されたsession handoffを作り、Expo GoがPKCE verifierで交換する。handoffは10分、アプリ途中終了後の再送を考慮している。
 - Expo Go (`backend/expo-test`) はGoogle後のpre-authをSecure Storageへ保存し、Web Passkey登録/ログイン後に通常sessionを受け取る。通常session後はWeb Passkey再認証を開ける。
 - JWSは`HS256`固定、`typ=JWT`固定、`kid` allow-list方式。新規発行はactive key、旧keyは移行期間中のverify/decryptにだけ使う。
-- `POST /api/v1/auth/passkey/reauth/options` と`/reauth/verify`を追加し、成功時に現在sessionの`last_passkey_at`を更新する。まだKey-B・退会・envelope認可へ完全接続していない。
-- migration `0009_pre_auth_sessions.sql`、`0010_session_handoffs.sql`、`0011_passkey_reauth.sql`を追加した。
+- `POST /api/v1/auth/passkey/reauth/options` と`/reauth/verify`は成功時に現在sessionの`last_passkey_at`を更新する。共通`requireRecentPasskey`をKey-B、Key-A envelope、退会へ適用済み。
+- migration `0009_pre_auth_sessions.sql`、`0010_session_handoffs.sql`、`0011_passkey_reauth.sql`、`0012_key_b_materials.sql`を追加した。Key-BはAES-256-GCM暗号文だけをDB保存し、同時初回取得も一意制約競合後に再読込する。
 
 ## 3. いま確認できるテストフロー
 

@@ -156,7 +156,11 @@ Refreshは対象行を`FOR UPDATE`し、旧token使用済み化、新token追加
 
 ### `key_envelopes`
 
-Key-AをRecovery Keyから導出した鍵で暗号化したenvelopeを保存する。`encrypted_key_a`、nonce、KDFパラメータ、key versionだけを保持し、Key-A、Key-B、Recovery Keyの平文を保持しない。HTTP APIは`GET/PUT/DELETE /api/v1/me/key-envelopes`で提供する。
+Key-AをRecovery Keyから導出した鍵で暗号化したenvelopeを保存する。`encrypted_key_a`、nonce、KDFパラメータ、key versionだけを保持し、Key-A、Key-B、Recovery Keyの平文を保持しない。HTTP APIは`GET/PUT/DELETE /api/v1/me/key-envelopes`で提供し、全操作に直近Passkey再認証を要求する。
+
+### `key_b_materials`
+
+ユーザーごとに一つのKey-Bを保存する。`ciphertext`と`nonce`は`KEY_B_WRAP_KEY`（32 byte Base64URL）を使うAES-256-GCM値であり、Key-B平文を保存しない。AADはユーザーID、key version、wrap鍵IDへ結び付ける。wrap鍵IDが異なる場合は復号せずfail closedとする。`users`の削除時はこの行も同一トランザクションで削除する。
 
 ## 6. これから追加するテーブル・制約
 
@@ -174,7 +178,7 @@ Key-AをRecovery Keyから導出した鍵で暗号化したenvelopeを保存す�
 1. 新規認証・新規API利用を拒否する。
 2. DB user rowをロックし、全sessionを失効する。
 3. private暗号文ファイルとメモリcacheを削除する。
-4. refresh/passkey/challenge/key envelope/handoff/photo metadataを削除して、users rowを完全削除する。
+4. refresh/passkey/challenge/key envelope/Key-B暗号文/handoff/photo metadataを削除して、users rowを完全削除する。
 5. 削除結果を監査ログへ記録する（秘密情報は記録しない）。監査ログ実装まではアプリログへ秘密値を出さない。
 
 バックアップ上の物理削除期限、チャット保持期間、監査ログ保持期間は運用・法務決定後にmigrationと運用手順へ反映する。

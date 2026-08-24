@@ -4,9 +4,9 @@
 
 ## 0. 作業停止時点（2026-08-24）
 
-このファイルは、今回の作業をここで止めて次の担当へ渡すための状態表です。現在のブランチは`codex/backend-auth-session`、最後にpush済みのcommitは`36b0bb7 認証鍵仕様とセキュリティ監査を実装へ同期`です。今回追加したpre-auth、session handoff、JWS `kid`、Passkey再認証の変更はまだcommit・pushしていません。詳細な再開手順は [HANDOFF.md](HANDOFF.md) を参照してください。
+現在のブランチは`codex/backend-auth-session`、最後にpush済みのcommitは`e71d585 Key-B初回取得の競合を解消`です。pre-auth、session handoff、JWS `kid`、Passkey再認証、Key-B、直近Passkey認可はPR #3へpush済みで、CIも成功しています。詳細な再開手順は [HANDOFF.md](HANDOFF.md) を参照してください。
 
-### 今回の作業で実装済みだが、まだremoteへ反映していないもの
+### 実装済み・remote反映済みのもの
 
 - [x] Google交換後に通常sessionを発行せず、5分期限・scope付き`pre_auth_token`だけを返す。
 - [x] Google直後のPasskey登録/ログイン成功transactionでpre-authを消費し、通常sessionを発行する。
@@ -15,7 +15,7 @@
 - [x] Web検証画面のアプリ復帰処理、URL許可リスト、CodeQL High指摘の対象だった未検証URLの直接遷移を検証済みURL経由へ変更。
 - [x] JWS headerの`alg=HS256`/`typ=JWT`/`kid`検証、active keyと旧検証鍵allow-listによるローテーション対応とテスト。
 - [x] 既存sessionのPasskey再認証options/verifyと`sessions.last_passkey_at`更新。
-- [x] migration `0009`〜`0011`、API/DB/認証仕様書の同期。
+- [x] migration `0009`〜`0012`、API/DB/認証仕様書の同期。`0012`はKey-B AES-GCM暗号文materialを追加。
 
 ### 最後に通過したローカル検査
 
@@ -27,7 +27,7 @@
 - [x] `node --check backend/dev-client/app.js`
 - [x] `git diff --check`（CRLF変換警告のみ）
 
-Passkey再認証の直近変更後にも`go test`、Expo typecheck/test、Node構文検査は再実行済みです。PostgreSQL統合テストは、それ以前のpre-auth/session handoff追加時点で成功していますが、`0011`を含む実DBでの再実行とGitHub Actionsの再実行は残っています。
+Passkey再認証の直近変更後にも`go test`、Expo typecheck/test、Node構文検査は再実行済みです。PostgreSQL統合テストは`0012`とKey-B同時初回取得を含めて実DBで再実行済みです。GitHub ActionsのGo、PostgreSQL、Expo、CodeQL、Secret/OSV/依存監査も成功しています。
 
 ## 完了済み（再確認用）
 
@@ -54,7 +54,7 @@ Passkey再認証の直近変更後にも`go test`、Expo typecheck/test、Node�
 - [x] `key_envelopes`の作成・取得・ローテーションAPIを追加する。
 - [ ] Recovery Keyの試行回数、レート制限、監査イベント、失敗時のロックを追加する。
 - [x] 既存sessionのPasskey再認証APIと`last_passkey_at`更新を追加する。
-- [ ] Key-B / key envelope / Recovery / 新端末登録 / 退会の高権限APIへ直近Passkey必須を接続する。
+- [x] Key-B / key envelope / 退会の高権限APIへ直近Passkey必須を接続する。`Recovery`、新端末登録、本人確認変更はAPI未実装のため、実装時に同じ境界を適用する。
 - [x] Google OAuth交換後を`pre_auth_token`に限定し、Passkey成功後に通常sessionを発行する。
 - [x] Google/Passkey/session handoff途中のverifierとpre-authをSecure Storageへ保持し、アプリ再起動後に再開する。
 

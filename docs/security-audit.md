@@ -39,9 +39,9 @@
 | SEC-008 | 通信失敗時の Refresh 再送 | PASS | 同じ`session_id`・`request_id`だけ30秒以内に暗号化済み結果を再返却 |
 | SEC-009 | Google 直後の権限分離 | PASS | Google handoff交換は通常sessionを発行せず、Passkey専用pre-authだけを返す |
 | SEC-010 | `pre_auth_token` の一回性 | PASS | PostgreSQLでhash、scope、user、5分期限、used_atを管理し、Passkey成功と同一transactionで消費する |
-| SEC-011 | JWS 署名鍵のローテーション | P1 | `kid`、許可アルゴリズム、旧鍵の移行期間が未確定 |
+| SEC-011 | JWS 署名鍵のローテーション | PARTIAL | `kid`、HS256 allow-list、複数検証鍵と旧鍵検証の単体テストは実装済み。KMS運用・移行期間・漏えい時手順は未確定 |
 | SEC-012 | WebSocket の失効反映 | PARTIAL | heartbeat は定義済み。実装時の切断・再接続テストが必要 |
-| SEC-013 | Key-B の信頼境界 | P1 | 生成、配布、KMS、再発行、漏えい時の対応が未確定 |
+| SEC-013 | Key-B の信頼境界 | PARTIAL | AES-256-GCM暗号文DB保存、active session＋5分以内のPasskey再認証、退会時削除、競合テストを実装。KMS直結・鍵ローテーション・取得監査・Recovery/クライアントHKDFは未完了 |
 | SEC-014 | Refresh API のレート制限 | PARTIAL | 認証系制限はあるが、token hash・IP・端末単位の値が未確定 |
 | SEC-015 | 端末保存領域 | PASS | Refresh Token は Secure Storage、Access Token は短期利用 |
 | SEC-016 | ログへの秘密情報混入 | PASS | token、Key-A、Key-B、Recovery Key をログ出力しない仕様 |
@@ -73,7 +73,7 @@ Refresh はローテーションするため、サーバーが更新に成功し
 
 実装では`pre_auth_tokens`にtoken hashだけを保存し、5分期限、scope、user、`used_at`を検証します。Google交換時は通常sessionを発行せず、Passkey登録/ログインの成功transaction内でpre-authを消費して通常sessionを発行します。Expo GoはWeb Passkey後に、直近Passkey sessionから暗号化された短命session handoffを受け取ります。
 
-### SEC-011 JWS 鍵管理
+### SEC-011 JWS 鍵管理（基盤実装済み）
 
 - JWS header の `alg` を許可リストで検証し、`none` や想定外アルゴリズムを拒否する。
 - header に `kid` を付け、検証鍵をバージョン管理する。
@@ -81,14 +81,23 @@ Refresh はローテーションするため、サーバーが更新に成功し
 - 鍵ローテーション時は現行鍵と直前鍵だけを短期間検証可能にする。
 - 鍵漏えい時は該当 `kid` を無効化し、全セッション失効または再認証を行う。
 
-### SEC-013 Key-B
+実装は`JWS_KEY_ID`と`JWS_VERIFY_KEYS`で現行鍵と検証鍵を分離し、未知の`kid`、`none`、想定外algを拒否する。KMS/Secret Managerへの直接統合、鍵の有効期間、漏えい時のrunbookは本番前の未完了事項である。
 
-- Key-B の平文をログ、DB、クライアント永続領域へ保存しない。
-- 発行条件を「Google 認証 + Passkey + DB セッション有効」に限定する。
-- Key-B の取得を監査ログに残す。
-- 端末失効、Recovery、アカウント削除時の再発行・失効を定義する。
-- Key-B だけで暗号化データを復号できないことをテストする。
+### SEC-013 Key-B（基盤実装済み）
 
+- [x] Key-B の平文をログ、DB、クライアント永続領域へ保存しない。DBには`KEY_B_WRAP_KEY`を使うAES-256-GCM暗号文だけを保存する。
+- [x] 発行条件を、署名検証済みAccess Token、active DB session、5分以内のPasskey再認証に限定する。
+- [x] user ID、key version、wrap鍵IDをAES-GCMのAADに含め、別ユーザー・別version・異なるwrap鍵IDでの復号を拒否する。
+- [x] 退会でKey-B暗号文を削除し、同時初回取得は一意制約競合後に既存暗号文を再読込する。
+- [ ] Key-B の取得を秘密値なしで監査ログに残す。
+- [ ] KMS/Secret Managerへの直接統合、wrap鍵ローテーション、漏えい時の失効・再発行runbookを定義する。
+- [ ] Recovery・新端末復旧と、クライアントでのKey-A + Key-B HKDF統合を実装・テストする。
+
+### 2026-08-24 Key-B差分監査
+
+対象は`7004815..e71d585`のKey-B、直近Passkey認可、migration、統合テストである。Go test/vet/build、隔離PostgreSQL統合テスト、PR #3のGo/PostgreSQL/Expo/CodeQL/Secret/OSV/依存監査は成功した。Codex Securityプラグインの差分ランチャーはWindowsのCP932文字コード例外でscan IDを生成できなかったため、ここに手動差分監査の範囲と結果を記録する。
+
+- **P2 — Key-B応答に`Cache-Control: private, no-store`がない。** `GET /api/v1/me/key-b`はKey-B平文をJSONで返すが、成功応答は共通`writeJSON`の既定ヘッダーだけで、ブラウザや中間のprivate cacheへの保存を明示的に禁止していない。成功応答に`Cache-Control: private, no-store`を設定し、HTTP handlerテストで固定すること。実装前のため、このP2は未解決とする。
 ## 4. QUIC / WebTransport 監査
 
 - QUIC の TLS 1.3 は通信路の機密性・完全性を提供するが、Samurai Meet のユーザー・マッチ・セッション認可はアプリケーション token で別途検証する。
@@ -152,10 +161,10 @@ sequenceDiagram
 
 ### 認証・鍵
 
-- Google 認証だけでは通常 API を利用できない（pre-auth導入後の必須受入条件。現実装は未達）。
+- [x] Google 認証だけでは通常 API を利用できない。Google交換はpre-authだけを返し、Passkey成功後にだけ通常sessionを発行する。
 - `pre_auth_token` の期限切れ・二回使用・scope 外利用を拒否する。
 - `alg` 改ざん、`kid` 不正、issuer / audience 不正を拒否する。
-- Key-B 取得に Passkey 再認証が必要になる。
+- Key-B取得、Key-A envelope、退会には5分以内のPasskey再認証が必要である。
 - Recovery Key、Key-A、Key-B、Refresh Token がログ・クラッシュレポートに出ない。
 
 ## 7. リリース判定
@@ -164,8 +173,10 @@ sequenceDiagram
 
 - [x] SEC-008 の通信失敗時ポリシーを決定・実装
 - [x] SEC-010 の `pre_auth_token` 一回性を実装
-- [ ] SEC-011 の JWS `kid` / 鍵ローテーションを実装
-- [ ] SEC-013 の Key-B 信頼境界を設計レビュー
+- [x] SEC-011 の JWS `kid` / 複数検証鍵を実装
+- [ ] SEC-011 のKMS運用・鍵移行期間・漏えい時runbookを確定
+- [x] SEC-013 のKey-B暗号文DB保存・直近Passkey認可・退会削除・競合テストを実装
+- [ ] SEC-013 のKMS、監査ログ、鍵ローテーション、Recovery/HKDF統合を設計レビュー
 - [ ] SEC-020 の 0-RTT 禁止を実機・統合テスト
 - [ ] SEC-021 の QUIC / WebTransport native PoC
 - [ ] 上記テスト項目を自動テスト化
@@ -175,4 +186,4 @@ sequenceDiagram
 
 ### 監査結論
 
-自動更新の採用自体は妥当です。実装は通常時の自動更新・DB失効・token rotation・30秒の冪等再送・Google後のpre-auth/Passkey強制・Expo Goのsession handoff・Passkey HTTP儀式・暗号文画像の基本防御を満たしています。一方、JWS鍵ローテーション、Key-B、QUIC 0-RTT、native clientの詳細が未実装のため、現段階の結論は「条件付き承認」です。
+自動更新の採用自体は妥当です。実装は通常時の自動更新・DB失効・token rotation・30秒の冪等再送・Google後のpre-auth/Passkey強制・Expo Goのsession handoff・Passkey HTTP儀式・暗号文画像の基本防御を満たしています。一方、JWS鍵のKMS運用、Key-BのKMS・監査・ローテーション・Recovery/HKDF統合、QUIC 0-RTT、native clientの詳細が未実装のため、現段階の結論は「条件付き承認」です。

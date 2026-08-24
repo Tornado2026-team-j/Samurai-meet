@@ -134,13 +134,14 @@ Refresh request:
 | GET | `/api/v1/me/photos/{id}` | 所有者向け暗号文を配信 |
 | DELETE | `/api/v1/me/photos/{id}` | DB、privateファイル、cacheを削除 |
 | GET | `/api/v1/profile-photos/{id}` | profile画像だけをサーバー復号して配信 |
-| GET | `/api/v1/me/key-envelopes` | 暗号化Key-A envelope一覧 |
-| PUT | `/api/v1/me/key-envelopes` | 暗号化Key-A envelope保存・version更新 |
-| GET | `/api/v1/me/key-envelopes/{key_version}` | 指定version取得 |
-| DELETE | `/api/v1/me/key-envelopes/{key_version}` | 指定version削除 |
-| DELETE | `/api/v1/me` | confirm付きの退会・完全削除 |
+| GET | `/api/v1/me/key-envelopes` | Access Tokenと5分以内のPasskey再認証が必要な暗号化Key-A envelope一覧 |
+| PUT | `/api/v1/me/key-envelopes/{key_version}` | Access Tokenと5分以内のPasskey再認証が必要な暗号化Key-A envelope保存・version更新 |
+| GET | `/api/v1/me/key-envelopes/{key_version}` | Access Tokenと5分以内のPasskey再認証が必要な指定version取得 |
+| DELETE | `/api/v1/me/key-envelopes/{key_version}` | Access Tokenと5分以内のPasskey再認証が必要な指定version削除 |
+| GET | `/api/v1/me/key-b` | Access Tokenと5分以内のPasskey再認証が必要なKey-B取得 |
+| DELETE | `/api/v1/me` | Access Tokenと5分以内のPasskey再認証、およびconfirm付きの退会・完全削除 |
 
-画像平文、画像鍵、Key-A、Key-B、Recovery KeyはAPIログ・DB・cacheへ保存しない。profile画像はサーバー公開鍵で画像鍵をwrapし、private画像は端末側鍵を使う。画像uploadの正確な`X-Photo-*`ヘッダーは [backend/API_SPEC.md](../backend/API_SPEC.md) を参照する。
+画像平文、画像鍵、Key-A、Key-B、Recovery KeyはAPIログへ出さない。Key-Bは`KEY_B_WRAP_KEY`でAES-256-GCM暗号化した値だけをDBへ保存し、平文は応答生成中にだけ存在する。wrap鍵IDが保存済み値と異なる場合はfail closedで取得を拒否する。KMS直結、鍵ローテーション、取得監査ログ、Key-AとのHKDFクライアント統合は未実装である。profile画像はサーバー公開鍵で画像鍵をwrapし、private画像は端末側鍵を使う。画像uploadの正確な`X-Photo-*`ヘッダーは [backend/API_SPEC.md](../backend/API_SPEC.md) を参照する。
 
 ### チャット
 
@@ -161,7 +162,7 @@ QUIC / WebTransport / WebSocketのChat TokenはAccess TokenやRefresh Tokenと�
 5. Refresh失敗、409 reuse、session失効時はAccess/Refreshを削除し、GoogleまたはPasskeyへ戻る。
 6. バックグラウンド中に定期Refreshしない。
 
-Key-B取得、Recovery、新端末登録、本人確認変更、退会はRefreshだけでは許可せず、直近Passkey再認証を要求する予定である。
+Key-B取得、Key-A envelope、退会はRefreshだけでは許可せず、直近Passkey再認証を要求する。Recovery、新端末登録、本人確認変更はAPI未実装であり、実装時に同じ認可境界を適用する。
 
 ## 5. 実装変更時の同期対象
 

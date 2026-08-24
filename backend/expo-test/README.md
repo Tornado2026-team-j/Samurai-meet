@@ -26,7 +26,7 @@ Google Console の許可済みリダイレクトURIは `https://samurai-meet.dis
 ログインが完了すると、次の操作を同じ画面から確認できる。
 
 - **WebでPasskeyをテスト**: `https://samurai-meet.disnana.com/`をアプリ内ブラウザで開く。Google直後の`pre_auth_token`はURL fragmentでWeb画面へ渡し、HTTP queryやサーバーログへ送らない。Web画面側でPasskeyの登録・ログインを行った後、短命なsession handoffでExpo Goへ戻る。Expo Goからnative Passkey APIを直接呼び出すのではなく、ドメインのWebAuthn実装を使う方式。
-- **通常session後のPasskey再認証**: Expo GoはAccess Token、user ID、session IDをURL fragmentでWeb検証画面へ渡す（Refresh Tokenは渡さない）。Web側の再認証API成功後にのみsession handoffを開始し、Key-Bや高権限処理の直近Passkey境界を確認できる。
+- **通常session後のPasskey再認証**: Expo GoはAccess Token、user ID、session IDをURL fragmentでWeb検証画面へ渡す（Refresh Tokenは渡さない）。Web側の再認証API成功後にのみsession handoffを開始し、Key-Bや高権限処理と同じ直近Passkey境界を確認できる。Expo Go画面からのKey-B取得とKey-A+Key-BのHKDF結合は未接続である。
 - **登録済みPasskeyを更新 / 解除**: 現在のセッションでPasskey一覧を取得し、credential単位で解除する。
 - **Key-A生成・envelope保存**: 端末内でKey-AとRecovery Keyを生成し、Key-AそのものではなくRecovery Keyで暗号化したenvelopeだけをAPIへ保存する。Recovery Keyは表示中だけ保持する。
 - **端末Key-Aを削除**: 新端末・端末紛失の復旧を再現する。
