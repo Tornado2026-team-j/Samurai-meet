@@ -12,7 +12,7 @@ const temporaryExceptions = new Map([
     {
       expiresOn: "2026-09-07",
       reason:
-        "Expo / Metro の開発時依存 image-size@2.0.2。公開済みの修正版が存在しないため。",
+        "Expo / Metro の開発時依存 image-size@1.2.1。公開済みの修正版が存在しないため。",
     },
   ],
   [
@@ -20,15 +20,7 @@ const temporaryExceptions = new Map([
     {
       expiresOn: "2026-09-07",
       reason:
-        "Expo / Metro の開発時依存 image-size@2.0.2。公開済みの修正版が存在しないため。",
-    },
-  ],
-  [
-    "GHSA-w5hq-g745-h8pq",
-    {
-      expiresOn: "2026-09-07",
-      reason:
-        "Expo の開発用 xcode が uuid.v4() のみを使用し、指摘対象の v3/v5/v6 と外部バッファ経路を使用しないため。",
+        "Expo / Metro の開発時依存 image-size@1.2.1。公開済みの修正版が存在しないため。",
     },
   ],
 ]);
