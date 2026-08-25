@@ -50,7 +50,7 @@ func (s *SessionHandoffService) Create(ctx context.Context, userID, sessionID, a
 	if err != nil {
 		return SessionHandoff{}, err
 	}
-	payload, err := json.Marshal(tokens)
+	payload, err := json.Marshal(tokens) // #nosec G117 -- serialized only as input to AES-GCM sealing below
 	if err != nil {
 		return SessionHandoff{}, err
 	}

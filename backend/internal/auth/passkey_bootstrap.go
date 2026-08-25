@@ -17,7 +17,7 @@ type PasskeyBootstrapScope string
 const (
 	PasskeyBootstrapRegister PasskeyBootstrapScope = "passkey_register"
 	PasskeyBootstrapLogin    PasskeyBootstrapScope = "passkey_login"
-	PasskeyBootstrapReauth   PasskeyBootstrapScope = "passkey_reauth"
+	PasskeyBootstrapReauth   PasskeyBootstrapScope = "passkey_reauth" // #nosec G101 -- fixed protocol scope, not a credential
 )
 
 type PasskeyBootstrap struct {
