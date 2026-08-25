@@ -5,7 +5,7 @@ export default function RootLayout() {
   return (
     <AuthProvider>
       <Stack
-        initialRouteName="foreigner"
+        initialRouteName="index"
         screenOptions={{
           animation: "none",
           headerShown: false,

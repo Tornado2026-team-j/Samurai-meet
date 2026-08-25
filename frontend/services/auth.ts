@@ -2,28 +2,27 @@ import * as Crypto from 'expo-crypto';
 import * as Linking from 'expo-linking';
 import * as SecureStore from 'expo-secure-store';
 import * as WebBrowser from 'expo-web-browser';
+import { Platform } from 'react-native';
 import {
   buildPasskeyURL,
   encodeBase64URL,
   isPreAuth,
   isStoredSession,
-  parseAuthRedirect,
+  parseAuthRedirect as parseAuthRedirectContract,
   storedSession,
-  WEB_PASSKEY_URL,
   type PreAuth,
   type Session,
   type StoredSession,
   type AuthRedirect,
 } from './auth-contract';
+import { API_BASE_URL, WEB_APP_ORIGIN, WEB_PASSKEY_URL } from './api-config';
+import { completeWebPasskey, reauthWebPasskey } from './passkey-web';
 
-export { buildPasskeyURL, encodeBase64URL, isPreAuth, isStoredSession, parseAuthRedirect, storedSession, WEB_PASSKEY_URL } from './auth-contract';
+export { buildPasskeyURL, encodeBase64URL, isPreAuth, isStoredSession, storedSession } from './auth-contract';
+export { API_BASE_URL, WEB_APP_ORIGIN, WEB_PASSKEY_URL } from './api-config';
 export type { PreAuth, Session, StoredSession, AuthRedirect } from './auth-contract';
 
 WebBrowser.maybeCompleteAuthSession();
-
-const DEFAULT_API_BASE_URL = 'https://samurai-meet.disnana.com/api/v1';
-const configuredApiBaseURL = process.env.EXPO_PUBLIC_API_BASE_URL?.trim();
-export const API_BASE_URL = (configuredApiBaseURL || DEFAULT_API_BASE_URL).replace(/\/+$/, '');
 
 const SESSION_KEY = 'samurai_meet_session_v1';
 const PRE_AUTH_KEY = 'samurai_meet_pre_auth_v1';
@@ -38,6 +37,29 @@ export type AuthSnapshot = {
   session: Session | null;
   preAuth: PreAuth | null;
 };
+
+async function getStoredItem(key: string): Promise<string | null> {
+  if (Platform.OS === 'web') {
+    return globalThis.sessionStorage?.getItem(key) ?? null;
+  }
+  return SecureStore.getItemAsync(key);
+}
+
+async function setStoredItem(key: string, value: string): Promise<void> {
+  if (Platform.OS === 'web') {
+    globalThis.sessionStorage?.setItem(key, value);
+    return;
+  }
+  await SecureStore.setItemAsync(key, value);
+}
+
+async function deleteStoredItem(key: string): Promise<void> {
+  if (Platform.OS === 'web') {
+    globalThis.sessionStorage?.removeItem(key);
+    return;
+  }
+  await SecureStore.deleteItemAsync(key);
+}
 
 async function request<T>(path: string, init: RequestInit = {}, token?: string): Promise<T> {
   const headers = new Headers(init.headers ?? {});
@@ -59,28 +81,28 @@ async function request<T>(path: string, init: RequestInit = {}, token?: string):
 }
 
 async function persistSession(value: Session): Promise<void> {
-  await SecureStore.setItemAsync(SESSION_KEY, JSON.stringify(storedSession(value)));
-  await SecureStore.deleteItemAsync(PRE_AUTH_KEY);
+  await setStoredItem(SESSION_KEY, JSON.stringify(storedSession(value)));
+  await deleteStoredItem(PRE_AUTH_KEY);
 }
 
 async function persistPreAuth(value: PreAuth): Promise<void> {
-  await SecureStore.setItemAsync(PRE_AUTH_KEY, JSON.stringify(value));
-  await SecureStore.deleteItemAsync(SESSION_KEY);
+  await setStoredItem(PRE_AUTH_KEY, JSON.stringify(value));
+  await deleteStoredItem(SESSION_KEY);
 }
 
 export async function clearAuthStorage(): Promise<void> {
   await Promise.all([
-    SecureStore.deleteItemAsync(SESSION_KEY),
-    SecureStore.deleteItemAsync(PRE_AUTH_KEY),
-    SecureStore.deleteItemAsync(OAUTH_VERIFIER_KEY),
-    SecureStore.deleteItemAsync(SESSION_HANDOFF_VERIFIER_KEY),
-    SecureStore.deleteItemAsync(REFRESH_REQUEST_KEY),
+    deleteStoredItem(SESSION_KEY),
+    deleteStoredItem(PRE_AUTH_KEY),
+    deleteStoredItem(OAUTH_VERIFIER_KEY),
+    deleteStoredItem(SESSION_HANDOFF_VERIFIER_KEY),
+    deleteStoredItem(REFRESH_REQUEST_KEY),
   ]);
 }
 
 async function refreshStoredSession(value: StoredSession): Promise<Session> {
-  const requestID = (await SecureStore.getItemAsync(REFRESH_REQUEST_KEY)) ?? Crypto.randomUUID();
-  await SecureStore.setItemAsync(REFRESH_REQUEST_KEY, requestID);
+  const requestID = (await getStoredItem(REFRESH_REQUEST_KEY)) ?? Crypto.randomUUID();
+  await setStoredItem(REFRESH_REQUEST_KEY, requestID);
   const response = await request<SessionResponse>('/auth/refresh', {
     method: 'POST',
     body: JSON.stringify({ refresh_token: value.refresh_token, request_id: requestID }),
@@ -88,7 +110,7 @@ async function refreshStoredSession(value: StoredSession): Promise<Session> {
   if (!response.data) throw new Error('refresh response is empty');
   // 新Refresh Tokenを先に保存し、保存失敗時は同じrequest_idで再送できるようにする。
   await persistSession(response.data);
-  await SecureStore.deleteItemAsync(REFRESH_REQUEST_KEY);
+  await deleteStoredItem(REFRESH_REQUEST_KEY);
   return response.data;
 }
 
@@ -100,8 +122,8 @@ function shouldClearStoredSession(error: unknown): boolean {
 
 export async function restoreAuth(): Promise<AuthSnapshot> {
   const [stored, preAuthValue] = await Promise.all([
-    SecureStore.getItemAsync(SESSION_KEY),
-    SecureStore.getItemAsync(PRE_AUTH_KEY),
+    getStoredItem(SESSION_KEY),
+    getStoredItem(PRE_AUTH_KEY),
   ]);
   if (stored) {
     try {
@@ -134,23 +156,42 @@ export function createVerifier(): string {
   return `${Crypto.randomUUID()}${Crypto.randomUUID()}`;
 }
 
+function authRedirectURI(): string {
+  if (Platform.OS === 'web') {
+    const origin = typeof globalThis.location === 'undefined' ? WEB_APP_ORIGIN : globalThis.location.origin;
+    return `${origin}/auth/complete`;
+  }
+  return Linking.createURL('auth');
+}
+
+export function parseAuthRedirect(value: string): AuthRedirect {
+  const webOrigin = Platform.OS === 'web' && typeof globalThis.location !== 'undefined'
+    ? globalThis.location.origin
+    : undefined;
+  return parseAuthRedirectContract(value, webOrigin);
+}
+
 export async function beginGoogleLogin(): Promise<AuthSnapshot | null> {
   const verifier = createVerifier();
   const digest = await Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, verifier, {
     encoding: Crypto.CryptoEncoding.BASE64,
   });
   const challenge = encodeBase64URL(digest);
-  const redirectURI = Linking.createURL('auth');
-  await SecureStore.setItemAsync(OAUTH_VERIFIER_KEY, verifier);
+  const redirectURI = authRedirectURI();
+  await setStoredItem(OAUTH_VERIFIER_KEY, verifier);
   const startURL = `${API_BASE_URL}/auth/google/start?app_redirect_uri=${encodeURIComponent(redirectURI)}&handoff_challenge=${encodeURIComponent(challenge)}`;
+  if (Platform.OS === 'web' && typeof globalThis.location !== 'undefined') {
+    globalThis.location.assign(startURL);
+    return null;
+  }
   const result = await WebBrowser.openAuthSessionAsync(startURL, redirectURI);
   if (result.type !== 'success') return null;
   return completeAuthRedirect(result.url);
 }
 
 async function completeAuthRedirectInternal(redirect: AuthRedirect): Promise<AuthSnapshot> {
-  const oauthVerifier = await SecureStore.getItemAsync(OAUTH_VERIFIER_KEY);
-  const sessionHandoffVerifier = await SecureStore.getItemAsync(SESSION_HANDOFF_VERIFIER_KEY);
+  const oauthVerifier = await getStoredItem(OAUTH_VERIFIER_KEY);
+  const sessionHandoffVerifier = await getStoredItem(SESSION_HANDOFF_VERIFIER_KEY);
 
   if (redirect.sessionHandoffCode) {
     if (!sessionHandoffVerifier) throw new Error('session handoff verifier is missing');
@@ -159,8 +200,8 @@ async function completeAuthRedirectInternal(redirect: AuthRedirect): Promise<Aut
       body: JSON.stringify({ handoff_code: redirect.sessionHandoffCode, handoff_verifier: sessionHandoffVerifier }),
     });
     if (!response.data) throw new Error('session handoff response is empty');
-    await SecureStore.deleteItemAsync(SESSION_HANDOFF_VERIFIER_KEY);
-    await SecureStore.deleteItemAsync(OAUTH_VERIFIER_KEY);
+    await deleteStoredItem(SESSION_HANDOFF_VERIFIER_KEY);
+    await deleteStoredItem(OAUTH_VERIFIER_KEY);
     await persistSession(response.data);
     return { session: response.data, preAuth: null };
   }
@@ -171,8 +212,8 @@ async function completeAuthRedirectInternal(redirect: AuthRedirect): Promise<Aut
     body: JSON.stringify({ handoff_code: redirect.handoffCode, handoff_verifier: oauthVerifier }),
   });
   if (!response.data) throw new Error('OAuth response is empty');
-  await SecureStore.deleteItemAsync(OAUTH_VERIFIER_KEY);
-  await SecureStore.deleteItemAsync(SESSION_HANDOFF_VERIFIER_KEY);
+  await deleteStoredItem(OAUTH_VERIFIER_KEY);
+  await deleteStoredItem(SESSION_HANDOFF_VERIFIER_KEY);
   if ('access_token' in response.data) {
     await persistSession(response.data);
     return { session: response.data, preAuth: null };
@@ -203,14 +244,28 @@ export function completeAuthRedirect(value: string): Promise<AuthSnapshot> {
 
 export async function beginPasskey(preAuth: PreAuth | null, session: Session | null): Promise<AuthSnapshot | null> {
   if (!preAuth && !session) throw new Error('authentication is required');
+  if (Platform.OS === 'web') {
+    if (preAuth) {
+      const nextSession = await completeWebPasskey(preAuth);
+      await persistSession(nextSession);
+      return { session: nextSession, preAuth: null };
+    }
+    if (session) {
+      await reauthWebPasskey(session);
+      return { session, preAuth: null };
+    }
+  }
   const verifier = createVerifier();
   const digest = await Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, verifier, {
     encoding: Crypto.CryptoEncoding.BASE64,
   });
   const challenge = encodeBase64URL(digest);
-  const redirectURI = Linking.createURL('auth');
-  await SecureStore.setItemAsync(SESSION_HANDOFF_VERIFIER_KEY, verifier);
-  const result = await WebBrowser.openAuthSessionAsync(buildPasskeyURL(redirectURI, challenge, preAuth, session), redirectURI);
+  const redirectURI = authRedirectURI();
+  await setStoredItem(SESSION_HANDOFF_VERIFIER_KEY, verifier);
+  const result = await WebBrowser.openAuthSessionAsync(
+    buildPasskeyURL(redirectURI, challenge, preAuth, session, WEB_PASSKEY_URL),
+    redirectURI,
+  );
   if (result.type !== 'success') return null;
   return completeAuthRedirect(result.url);
 }
