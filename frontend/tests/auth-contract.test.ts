@@ -2,9 +2,9 @@ import { describe, expect, it } from 'bun:test';
 import {
   buildPasskeyURL,
   encodeBase64URL,
+  isPasskeyBootstrap,
   parseAuthRedirect,
   storedSession,
-  type PreAuth,
   type Session,
 } from '../services/auth-contract';
 
@@ -13,13 +13,6 @@ const session: Session = {
   session_id: 'session-1',
   access_token: 'access-token',
   refresh_token: 'refresh-token',
-};
-
-const preAuth: PreAuth = {
-  user_id: 'user-1',
-  pre_auth_token: 'pre-auth-token',
-  passkey_required: true,
-  passkey_registered: false,
 };
 
 describe('認証handoff契約', () => {
@@ -44,20 +37,30 @@ describe('認証handoff契約', () => {
     });
   });
 
-  it('Passkey登録用fragmentにpre-auth tokenだけを渡す', () => {
-    const parsed = new URL(buildPasskeyURL('samuraimeet://auth', 'challenge', preAuth, null));
+  it('Passkey URLのfragmentにはbootstrap tokenだけを渡す', () => {
+    const parsed = new URL(buildPasskeyURL('samuraimeet://auth', 'challenge', 'bootstrap-token'));
     expect(parsed.searchParams.get('app_return_uri')).toBe('samuraimeet://auth');
     expect(parsed.searchParams.get('app_handoff_challenge')).toBe('challenge');
-    expect(new URLSearchParams(parsed.hash.slice(1)).get('pre_auth_token')).toBe('pre-auth-token');
-    expect(new URLSearchParams(parsed.hash.slice(1)).get('pre_auth_registered')).toBe('false');
+    const fragment = new URLSearchParams(parsed.hash.slice(1));
+    expect([...fragment.keys()]).toEqual(['bootstrap_token']);
+    expect(fragment.get('bootstrap_token')).toBe('bootstrap-token');
+    expect(fragment.get('access_token')).toBeNull();
+    expect(fragment.get('pre_auth_token')).toBeNull();
+    expect(fragment.get('session_id')).toBeNull();
+    expect(fragment.get('user_id')).toBeNull();
   });
 
-  it('再認証用fragmentにaccess tokenを渡す', () => {
-    const parsed = new URL(buildPasskeyURL('samuraimeet://auth', 'challenge', null, session));
-    const fragment = new URLSearchParams(parsed.hash.slice(1));
-    expect(fragment.get('reauth')).toBe('true');
-    expect(fragment.get('session_access_token')).toBe('access-token');
-    expect(fragment.get('session_id')).toBe('session-1');
+  it('bootstrap responseのscopeとtoken形状を検証する', () => {
+    expect(isPasskeyBootstrap({
+      bootstrap_token: 'bootstrap-token',
+      scope: 'passkey_reauth',
+      expires_at: '2026-08-24T12:00:00Z',
+    })).toBe(true);
+    expect(isPasskeyBootstrap({
+      bootstrap_token: 'bootstrap-token',
+      scope: 'invalid',
+      expires_at: '2026-08-24T12:00:00Z',
+    })).toBe(false);
   });
 
   it('Base64をURL-safe形式に変換する', () => {

@@ -12,6 +12,12 @@ export type PreAuth = {
   passkey_registered: boolean;
 };
 
+export type PasskeyBootstrap = {
+  bootstrap_token: string;
+  scope: 'passkey_register' | 'passkey_login' | 'passkey_reauth';
+  expires_at: string;
+};
+
 export type StoredSession = Pick<Session, 'user_id' | 'session_id' | 'refresh_token'>;
 
 export type AuthRedirect = { handoffCode?: string; sessionHandoffCode?: string };
@@ -36,6 +42,18 @@ export function isPreAuth(value: unknown): value is PreAuth {
     && candidate.pre_auth_token.length > 0
     && typeof candidate.passkey_required === 'boolean'
     && typeof candidate.passkey_registered === 'boolean';
+}
+
+export function isPasskeyBootstrap(value: unknown): value is PasskeyBootstrap {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Partial<PasskeyBootstrap>;
+  return typeof candidate.bootstrap_token === 'string'
+    && candidate.bootstrap_token.length > 0
+    && (candidate.scope === 'passkey_register'
+      || candidate.scope === 'passkey_login'
+      || candidate.scope === 'passkey_reauth')
+    && typeof candidate.expires_at === 'string'
+    && candidate.expires_at.length > 0;
 }
 
 function isAllowedRedirect(value: URL): boolean {
@@ -75,20 +93,9 @@ export const WEB_PASSKEY_URL = 'https://samurai-meet.disnana.com/';
 export function buildPasskeyURL(
   redirectURI: string,
   challenge: string,
-  preAuth: PreAuth | null,
-  session: Session | null,
+  bootstrapToken: string,
 ): string {
   const query = new URLSearchParams({ app_return_uri: redirectURI, app_handoff_challenge: challenge });
-  const fragment = new URLSearchParams();
-  if (preAuth) {
-    fragment.set('pre_auth_token', preAuth.pre_auth_token);
-    fragment.set('pre_auth_user_id', preAuth.user_id);
-    fragment.set('pre_auth_registered', String(preAuth.passkey_registered));
-  } else if (session) {
-    fragment.set('reauth', 'true');
-    fragment.set('session_access_token', session.access_token);
-    fragment.set('session_user_id', session.user_id);
-    fragment.set('session_id', session.session_id);
-  }
+  const fragment = new URLSearchParams({ bootstrap_token: bootstrapToken });
   return `${WEB_PASSKEY_URL}?${query.toString()}#${fragment.toString()}`;
 }
