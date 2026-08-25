@@ -1,0 +1,45 @@
+export type AppLanguage = "ja" | "en";
+export type IdentityVerificationChoice = "proceed" | "later" | null;
+
+export type LocalProfile = {
+  name: string;
+  nationalityCode: string;
+  bio: string;
+  completed: boolean;
+  identityVerificationChoice: IdentityVerificationChoice;
+};
+
+export function parseLanguage(value: string | null): AppLanguage | null {
+  return value === "ja" || value === "en" ? value : null;
+}
+
+export function parseLocalProfile(value: string | null): LocalProfile | null {
+  if (!value) return null;
+
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (!parsed || typeof parsed !== "object") return null;
+
+    const candidate = parsed as Partial<LocalProfile>;
+    const identityVerificationChoice = candidate.identityVerificationChoice ?? null;
+    if (
+      typeof candidate.name !== "string" ||
+      typeof candidate.nationalityCode !== "string" ||
+      typeof candidate.bio !== "string" ||
+      typeof candidate.completed !== "boolean" ||
+      ![null, "proceed", "later"].includes(identityVerificationChoice)
+    ) {
+      return null;
+    }
+
+    return {
+      name: candidate.name,
+      nationalityCode: candidate.nationalityCode,
+      bio: candidate.bio,
+      completed: candidate.completed,
+      identityVerificationChoice,
+    };
+  } catch {
+    return null;
+  }
+}

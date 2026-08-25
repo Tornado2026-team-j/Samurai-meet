@@ -2,7 +2,9 @@ import { describe, expect, it } from 'bun:test';
 import {
   buildPasskeyURL,
   encodeBase64URL,
+  isAllowedAppReturnURI,
   parseAuthRedirect,
+  parsePasskeyBridgeRequest,
   storedSession,
   type PreAuth,
   type Session,
@@ -36,6 +38,21 @@ describe('認証handoff契約', () => {
     expect(parseAuthRedirect('not a url')).toEqual({});
   });
 
+  it('Web OAuth callbackは許可した同一originの固定pathだけを扱う', () => {
+    expect(parseAuthRedirect(
+      'https://app.example/auth/complete?handoff_code=web-code',
+      'https://app.example',
+    )).toEqual({ handoffCode: 'web-code' });
+    expect(parseAuthRedirect(
+      'https://evil.example/auth/complete?handoff_code=stolen',
+      'https://app.example',
+    )).toEqual({});
+    expect(parseAuthRedirect(
+      'https://app.example/auth?handoff_code=wrong-path',
+      'https://app.example',
+    )).toEqual({});
+  });
+
   it('Secure Storageに保存するsessionからaccess tokenを除く', () => {
     expect(storedSession(session)).toEqual({
       user_id: 'user-1',
@@ -58,6 +75,28 @@ describe('認証handoff契約', () => {
     expect(fragment.get('reauth')).toBe('true');
     expect(fragment.get('session_access_token')).toBe('access-token');
     expect(fragment.get('session_id')).toBe('session-1');
+  });
+
+  it('アプリ復帰URIをバックエンドの許可条件で検証する', () => {
+    expect(isAllowedAppReturnURI('samuraimeet://auth')).toBe(true);
+    expect(isAllowedAppReturnURI('exp://127.0.0.1:8081/--/auth')).toBe(true);
+    expect(isAllowedAppReturnURI('https://evil.example/auth')).toBe(false);
+    expect(isAllowedAppReturnURI('samuraimeet://auth#token')).toBe(false);
+  });
+
+  it('Passkey bridgeのqueryとfragmentを構造化して検証する', () => {
+    const parsed = parsePasskeyBridgeRequest(buildPasskeyURL(
+      'samuraimeet://auth',
+      'handoff-challenge',
+      preAuth,
+      null,
+    ));
+    expect(parsed).toEqual({
+      appReturnURI: 'samuraimeet://auth',
+      handoffChallenge: 'handoff-challenge',
+      preAuth,
+      session: null,
+    });
   });
 
   it('Base64をURL-safe形式に変換する', () => {

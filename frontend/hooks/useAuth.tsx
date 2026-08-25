@@ -8,6 +8,7 @@ import {
   completeAuthRedirect,
   logout as logoutSession,
   logoutAll as logoutEverywhere,
+  parseAuthRedirect,
   refreshSession,
   restoreAuth,
   type AuthSnapshot,
@@ -58,6 +59,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const handleRedirect = useCallback((url: string) => {
+    const redirect = parseAuthRedirect(url);
+    if (!redirect.handoffCode && !redirect.sessionHandoffCode) return;
     if (handledRedirects.current.has(url)) return;
     handledRedirects.current.add(url);
     void completeAuthRedirect(url).then((next) => {
