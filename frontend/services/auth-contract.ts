@@ -12,15 +12,24 @@ export type PreAuth = {
   passkey_registered: boolean;
 };
 
+export type PasskeyBootstrap = {
+  bootstrap_token: string;
+  scope: 'passkey_register' | 'passkey_login' | 'passkey_reauth';
+  expires_at: string;
+};
+
 export type StoredSession = Pick<Session, 'user_id' | 'session_id' | 'refresh_token'>;
 
 export type AuthRedirect = { handoffCode?: string; sessionHandoffCode?: string };
 
+/**
+ * The WebAuthn page receives only an opaque, one-time bootstrap token.
+ * User/session access tokens never cross the browser URL boundary.
+ */
 export type PasskeyBridgeRequest = {
   appReturnURI: string;
   handoffChallenge: string;
-  preAuth: PreAuth | null;
-  session: Pick<Session, 'user_id' | 'session_id' | 'access_token'> | null;
+  bootstrapToken: string;
 };
 
 export function isStoredSession(value: unknown): value is StoredSession {
@@ -56,6 +65,18 @@ export function isSession(value: unknown): value is Session {
     && candidate.access_token.length > 0
     && typeof candidate.refresh_token === 'string'
     && candidate.refresh_token.length > 0;
+}
+
+export function isPasskeyBootstrap(value: unknown): value is PasskeyBootstrap {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Partial<PasskeyBootstrap>;
+  return typeof candidate.bootstrap_token === 'string'
+    && candidate.bootstrap_token.length > 0
+    && (candidate.scope === 'passkey_register'
+      || candidate.scope === 'passkey_login'
+      || candidate.scope === 'passkey_reauth')
+    && typeof candidate.expires_at === 'string'
+    && candidate.expires_at.length > 0;
 }
 
 function isAllowedRedirect(value: URL, allowedWebOrigin?: string): boolean {
@@ -132,25 +153,13 @@ export function encodeBase64URL(value: string): string {
 export function buildPasskeyURL(
   redirectURI: string,
   challenge: string,
-  preAuth: PreAuth | null,
-  session: Session | null,
+  bootstrapToken: string,
   baseURL = 'https://samurai-meet.disnana.com/passkey',
 ): string {
   const target = new URL(baseURL);
   target.searchParams.set('app_return_uri', redirectURI);
   target.searchParams.set('app_handoff_challenge', challenge);
-  const fragment = new URLSearchParams();
-  if (preAuth) {
-    fragment.set('pre_auth_token', preAuth.pre_auth_token);
-    fragment.set('pre_auth_user_id', preAuth.user_id);
-    fragment.set('pre_auth_registered', String(preAuth.passkey_registered));
-  } else if (session) {
-    fragment.set('reauth', 'true');
-    fragment.set('session_access_token', session.access_token);
-    fragment.set('session_user_id', session.user_id);
-    fragment.set('session_id', session.session_id);
-  }
-  target.hash = fragment.toString();
+  target.hash = new URLSearchParams({ bootstrap_token: bootstrapToken }).toString();
   return target.toString();
 }
 
@@ -166,37 +175,8 @@ export function parsePasskeyBridgeRequest(value: string): PasskeyBridgeRequest |
   if (!isAllowedAppReturnURI(appReturnURI) || handoffChallenge.trim() === '') return null;
 
   const fragment = new URLSearchParams(parsed.hash.slice(1));
-  const preAuthToken = fragment.get('pre_auth_token');
-  const preAuthUserID = fragment.get('pre_auth_user_id');
-  const preAuthRegistered = fragment.get('pre_auth_registered');
-  if (preAuthToken && preAuthUserID && (preAuthRegistered === 'true' || preAuthRegistered === 'false')) {
-    return {
-      appReturnURI,
-      handoffChallenge,
-      preAuth: {
-        user_id: preAuthUserID,
-        pre_auth_token: preAuthToken,
-        passkey_required: true,
-        passkey_registered: preAuthRegistered === 'true',
-      },
-      session: null,
-    };
-  }
-
-  const sessionAccessToken = fragment.get('session_access_token');
-  const sessionUserID = fragment.get('session_user_id');
-  const sessionID = fragment.get('session_id');
-  if (fragment.get('reauth') === 'true' && sessionAccessToken && sessionUserID && sessionID) {
-    return {
-      appReturnURI,
-      handoffChallenge,
-      preAuth: null,
-      session: {
-        user_id: sessionUserID,
-        session_id: sessionID,
-        access_token: sessionAccessToken,
-      },
-    };
-  }
-  return null;
+  const bootstrapToken = fragment.get('bootstrap_token');
+  const keys = [...fragment.keys()];
+  if (!bootstrapToken || keys.length !== 1 || keys[0] !== 'bootstrap_token') return null;
+  return { appReturnURI, handoffChallenge, bootstrapToken };
 }

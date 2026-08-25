@@ -145,6 +145,17 @@ func (s *PasskeyService) saveCeremony(ctx context.Context, userID, kind string, 
 }
 
 func (s *PasskeyService) FinishRegistration(ctx context.Context, userID, token string, request *http.Request, now time.Time, preAuthToken string) (SessionTokens, error) {
+	return s.finishRegistration(ctx, userID, token, request, now, preAuthToken, "")
+}
+
+// FinishRegistrationWithPreAuthHash is the Web Passkey variant. It keeps the
+// source pre-auth consumption in the same transaction as credential/session
+// creation without retaining the raw pre-auth token in the browser flow.
+func (s *PasskeyService) FinishRegistrationWithPreAuthHash(ctx context.Context, userID, token string, request *http.Request, now time.Time, preAuthHash string) (SessionTokens, error) {
+	return s.finishRegistration(ctx, userID, token, request, now, "", preAuthHash)
+}
+
+func (s *PasskeyService) finishRegistration(ctx context.Context, userID, token string, request *http.Request, now time.Time, preAuthToken, preAuthHash string) (SessionTokens, error) {
 	if userID == "" || token == "" {
 		return SessionTokens{}, ErrPasskeyChallenge
 	}
@@ -170,13 +181,18 @@ func (s *PasskeyService) FinishRegistration(ctx context.Context, userID, token s
 	if _, err = tx.ExecContext(ctx, `INSERT INTO passkey_credentials (id,user_id,credential_id,public_key,credential_json,sign_count,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7)`, newID(), userID, encodedID, base64.RawURLEncoding.EncodeToString(credential.PublicKey), string(credentialJSON), credential.Authenticator.SignCount, created); err != nil {
 		return SessionTokens{}, err
 	}
-	if preAuthToken == "" {
+	if preAuthToken == "" && preAuthHash == "" {
 		return SessionTokens{}, tx.Commit()
 	}
 	if s.preauth == nil {
 		return SessionTokens{}, ErrPreAuth
 	}
-	if err = s.preauth.ConsumeTx(tx, preAuthToken, PreAuthScopeRegister, userID, now); err != nil {
+	if preAuthToken != "" {
+		err = s.preauth.ConsumeTx(tx, preAuthToken, PreAuthScopeRegister, userID, now)
+	} else {
+		err = s.preauth.consumeHashTx(tx, preAuthHash, PreAuthScopeRegister, userID, now)
+	}
+	if err != nil {
 		return SessionTokens{}, err
 	}
 	tokens, err := s.sessions.createSessionTx(ctx, tx, userID, now, true)
@@ -190,6 +206,16 @@ func (s *PasskeyService) FinishRegistration(ctx context.Context, userID, token s
 }
 
 func (s *PasskeyService) FinishLogin(ctx context.Context, token string, request *http.Request, now time.Time, preAuthToken, expectedUserID string) (SessionTokens, error) {
+	return s.finishLogin(ctx, token, request, now, preAuthToken, "", expectedUserID)
+}
+
+// FinishLoginWithPreAuthHash is the Web Passkey variant that consumes the
+// source pre-auth hash in the same transaction as credential/session changes.
+func (s *PasskeyService) FinishLoginWithPreAuthHash(ctx context.Context, token string, request *http.Request, now time.Time, preAuthHash, expectedUserID string) (SessionTokens, error) {
+	return s.finishLogin(ctx, token, request, now, "", preAuthHash, expectedUserID)
+}
+
+func (s *PasskeyService) finishLogin(ctx context.Context, token string, request *http.Request, now time.Time, preAuthToken, preAuthHash, expectedUserID string) (SessionTokens, error) {
 	ceremony, tx, err := s.consumeCeremony(ctx, token, "passkey_login", expectedUserID, now)
 	if err != nil {
 		return SessionTokens{}, err
@@ -211,11 +237,16 @@ func (s *PasskeyService) FinishLogin(ctx context.Context, token string, request 
 	if _, err = tx.ExecContext(ctx, `UPDATE passkey_credentials SET credential_json=$1,sign_count=$2,last_used_at=$3 WHERE user_id=$4 AND credential_id=$5`, string(credentialJSON), credential.Authenticator.SignCount, now.UTC().Format(time.RFC3339Nano), user.id, encodedID); err != nil {
 		return SessionTokens{}, err
 	}
-	if preAuthToken != "" {
+	if preAuthToken != "" || preAuthHash != "" {
 		if s.preauth == nil {
 			return SessionTokens{}, ErrPreAuth
 		}
-		if err = s.preauth.ConsumeTx(tx, preAuthToken, PreAuthScopeLogin, user.id, now); err != nil {
+		if preAuthToken != "" {
+			err = s.preauth.ConsumeTx(tx, preAuthToken, PreAuthScopeLogin, user.id, now)
+		} else {
+			err = s.preauth.consumeHashTx(tx, preAuthHash, PreAuthScopeLogin, user.id, now)
+		}
+		if err != nil {
 			return SessionTokens{}, err
 		}
 	}

@@ -3,10 +3,11 @@ import {
   buildPasskeyURL,
   encodeBase64URL,
   isAllowedAppReturnURI,
+  isPasskeyBootstrap,
+  isSession,
   parseAuthRedirect,
   parsePasskeyBridgeRequest,
   storedSession,
-  type PreAuth,
   type Session,
 } from '../services/auth-contract';
 
@@ -15,13 +16,6 @@ const session: Session = {
   session_id: 'session-1',
   access_token: 'access-token',
   refresh_token: 'refresh-token',
-};
-
-const preAuth: PreAuth = {
-  user_id: 'user-1',
-  pre_auth_token: 'pre-auth-token',
-  passkey_required: true,
-  passkey_registered: false,
 };
 
 describe('認証handoff契約', () => {
@@ -61,20 +55,35 @@ describe('認証handoff契約', () => {
     });
   });
 
-  it('Passkey登録用fragmentにpre-auth tokenだけを渡す', () => {
-    const parsed = new URL(buildPasskeyURL('samuraimeet://auth', 'challenge', preAuth, null));
-    expect(parsed.searchParams.get('app_return_uri')).toBe('samuraimeet://auth');
-    expect(parsed.searchParams.get('app_handoff_challenge')).toBe('challenge');
-    expect(new URLSearchParams(parsed.hash.slice(1)).get('pre_auth_token')).toBe('pre-auth-token');
-    expect(new URLSearchParams(parsed.hash.slice(1)).get('pre_auth_registered')).toBe('false');
+  it('sessionのruntime形状を検証する', () => {
+    expect(isSession(session)).toBe(true);
+    expect(isSession({ ...session, access_token: '' })).toBe(false);
   });
 
-  it('再認証用fragmentにaccess tokenを渡す', () => {
-    const parsed = new URL(buildPasskeyURL('samuraimeet://auth', 'challenge', null, session));
+  it('Passkey bootstrap responseのscopeとtoken形状を検証する', () => {
+    expect(isPasskeyBootstrap({
+      bootstrap_token: 'bootstrap-token',
+      scope: 'passkey_reauth',
+      expires_at: '2026-08-24T12:00:00Z',
+    })).toBe(true);
+    expect(isPasskeyBootstrap({
+      bootstrap_token: 'bootstrap-token',
+      scope: 'invalid',
+      expires_at: '2026-08-24T12:00:00Z',
+    })).toBe(false);
+  });
+
+  it('Passkey URLのfragmentにはbootstrap tokenだけを渡す', () => {
+    const parsed = new URL(buildPasskeyURL('samuraimeet://auth', 'challenge', 'bootstrap-token'));
+    expect(parsed.searchParams.get('app_return_uri')).toBe('samuraimeet://auth');
+    expect(parsed.searchParams.get('app_handoff_challenge')).toBe('challenge');
     const fragment = new URLSearchParams(parsed.hash.slice(1));
-    expect(fragment.get('reauth')).toBe('true');
-    expect(fragment.get('session_access_token')).toBe('access-token');
-    expect(fragment.get('session_id')).toBe('session-1');
+    expect([...fragment.keys()]).toEqual(['bootstrap_token']);
+    expect(fragment.get('bootstrap_token')).toBe('bootstrap-token');
+    expect(fragment.get('access_token')).toBeNull();
+    expect(fragment.get('pre_auth_token')).toBeNull();
+    expect(fragment.get('session_id')).toBeNull();
+    expect(fragment.get('user_id')).toBeNull();
   });
 
   it('アプリ復帰URIをバックエンドの許可条件で検証する', () => {
@@ -84,19 +93,20 @@ describe('認証handoff契約', () => {
     expect(isAllowedAppReturnURI('samuraimeet://auth#token')).toBe(false);
   });
 
-  it('Passkey bridgeのqueryとfragmentを構造化して検証する', () => {
+  it('Passkey bridgeはbootstrap tokenだけを構造化する', () => {
     const parsed = parsePasskeyBridgeRequest(buildPasskeyURL(
       'samuraimeet://auth',
       'handoff-challenge',
-      preAuth,
-      null,
+      'bootstrap-token',
     ));
     expect(parsed).toEqual({
       appReturnURI: 'samuraimeet://auth',
       handoffChallenge: 'handoff-challenge',
-      preAuth,
-      session: null,
+      bootstrapToken: 'bootstrap-token',
     });
+    expect(parsePasskeyBridgeRequest(
+      'https://samurai-meet.disnana.com/passkey?app_return_uri=samuraimeet%3A%2F%2Fauth&app_handoff_challenge=challenge#pre_auth_token=secret',
+    )).toBeNull();
   });
 
   it('Base64をURL-safe形式に変換する', () => {

@@ -1,6 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import FontAwesome from "@expo/vector-icons/FontAwesome";
-import MaterialIcons from "@expo/vector-icons/MaterialIcons";
+import { FontAwesome, MaterialIcons } from "@expo/vector-icons";
 import { Redirect } from "expo-router";
 import {
   ActivityIndicator,

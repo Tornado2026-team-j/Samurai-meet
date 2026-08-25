@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import MaterialIcons from "@expo/vector-icons/MaterialIcons";
+import { MaterialIcons } from "@expo/vector-icons";
 import { useLocalSearchParams } from "expo-router";
 import {
   ActivityIndicator,

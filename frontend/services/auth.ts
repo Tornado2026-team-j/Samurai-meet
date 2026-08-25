@@ -6,21 +6,23 @@ import { Platform } from 'react-native';
 import {
   buildPasskeyURL,
   encodeBase64URL,
+  isPasskeyBootstrap,
   isPreAuth,
   isStoredSession,
   parseAuthRedirect as parseAuthRedirectContract,
   storedSession,
+  type AuthRedirect,
+  type PasskeyBootstrap,
   type PreAuth,
   type Session,
   type StoredSession,
-  type AuthRedirect,
 } from './auth-contract';
 import { API_BASE_URL, WEB_APP_ORIGIN, WEB_PASSKEY_URL } from './api-config';
 import { completeWebPasskey, reauthWebPasskey } from './passkey-web';
 
-export { buildPasskeyURL, encodeBase64URL, isPreAuth, isStoredSession, storedSession } from './auth-contract';
+export { buildPasskeyURL, encodeBase64URL, isPasskeyBootstrap, isPreAuth, isStoredSession, storedSession } from './auth-contract';
 export { API_BASE_URL, WEB_APP_ORIGIN, WEB_PASSKEY_URL } from './api-config';
-export type { PreAuth, Session, StoredSession, AuthRedirect } from './auth-contract';
+export type { AuthRedirect, PasskeyBootstrap, PreAuth, Session, StoredSession } from './auth-contract';
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -28,6 +30,7 @@ const SESSION_KEY = 'samurai_meet_session_v1';
 const PRE_AUTH_KEY = 'samurai_meet_pre_auth_v1';
 const OAUTH_VERIFIER_KEY = 'samurai_meet_oauth_verifier_v1';
 const SESSION_HANDOFF_VERIFIER_KEY = 'samurai_meet_session_handoff_verifier_v1';
+const SESSION_HANDOFF_REQUEST_KEY = 'samurai_meet_session_handoff_request_v1';
 const REFRESH_REQUEST_KEY = 'samurai_meet_refresh_request_v1';
 
 type SessionResponse = { data?: Session };
@@ -96,6 +99,7 @@ export async function clearAuthStorage(): Promise<void> {
     deleteStoredItem(PRE_AUTH_KEY),
     deleteStoredItem(OAUTH_VERIFIER_KEY),
     deleteStoredItem(SESSION_HANDOFF_VERIFIER_KEY),
+    deleteStoredItem(SESSION_HANDOFF_REQUEST_KEY),
     deleteStoredItem(REFRESH_REQUEST_KEY),
   ]);
 }
@@ -195,12 +199,19 @@ async function completeAuthRedirectInternal(redirect: AuthRedirect): Promise<Aut
 
   if (redirect.sessionHandoffCode) {
     if (!sessionHandoffVerifier) throw new Error('session handoff verifier is missing');
+    const sessionHandoffRequestID = (await getStoredItem(SESSION_HANDOFF_REQUEST_KEY)) ?? Crypto.randomUUID();
+    await setStoredItem(SESSION_HANDOFF_REQUEST_KEY, sessionHandoffRequestID);
     const response = await request<SessionResponse>('/auth/session-handoff/exchange', {
       method: 'POST',
-      body: JSON.stringify({ handoff_code: redirect.sessionHandoffCode, handoff_verifier: sessionHandoffVerifier }),
+      body: JSON.stringify({
+        handoff_code: redirect.sessionHandoffCode,
+        handoff_verifier: sessionHandoffVerifier,
+        request_id: sessionHandoffRequestID,
+      }),
     });
     if (!response.data) throw new Error('session handoff response is empty');
     await deleteStoredItem(SESSION_HANDOFF_VERIFIER_KEY);
+    await deleteStoredItem(SESSION_HANDOFF_REQUEST_KEY);
     await deleteStoredItem(OAUTH_VERIFIER_KEY);
     await persistSession(response.data);
     return { session: response.data, preAuth: null };
@@ -255,15 +266,33 @@ export async function beginPasskey(preAuth: PreAuth | null, session: Session | n
       return { session, preAuth: null };
     }
   }
+
   const verifier = createVerifier();
   const digest = await Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, verifier, {
     encoding: Crypto.CryptoEncoding.BASE64,
   });
   const challenge = encodeBase64URL(digest);
   const redirectURI = authRedirectURI();
+  const scope = preAuth
+    ? (preAuth.passkey_registered ? 'passkey_login' : 'passkey_register')
+    : 'passkey_reauth';
+  const sourceToken = preAuth?.pre_auth_token ?? session?.access_token;
+  if (!sourceToken) throw new Error('authentication token is missing');
+  const bootstrapResponse = await request<{ data?: PasskeyBootstrap }>('/auth/passkey/bootstrap', {
+    method: 'POST',
+    body: JSON.stringify({
+      scope,
+      app_redirect_uri: redirectURI,
+      app_handoff_challenge: challenge,
+    }),
+  }, sourceToken);
+  if (!bootstrapResponse.data || !isPasskeyBootstrap(bootstrapResponse.data)) {
+    throw new Error('passkey bootstrap response is invalid');
+  }
   await setStoredItem(SESSION_HANDOFF_VERIFIER_KEY, verifier);
+  await deleteStoredItem(SESSION_HANDOFF_REQUEST_KEY);
   const result = await WebBrowser.openAuthSessionAsync(
-    buildPasskeyURL(redirectURI, challenge, preAuth, session, WEB_PASSKEY_URL),
+    buildPasskeyURL(redirectURI, challenge, bootstrapResponse.data.bootstrap_token, WEB_PASSKEY_URL),
     redirectURI,
   );
   if (result.type !== 'success') return null;

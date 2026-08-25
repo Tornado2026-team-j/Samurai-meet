@@ -1,5 +1,5 @@
 import { API_BASE_URL } from './api-config';
-import { isSession, type PreAuth, type Session } from './auth-contract';
+import { isSession, type PasskeyBridgeRequest, type PreAuth, type Session } from './auth-contract';
 
 type PasskeySession = Pick<Session, 'user_id' | 'session_id' | 'access_token'>;
 type PasskeyOptionsResponse = {
@@ -107,6 +107,13 @@ function passkeyOptions(response: PasskeyOptionsResponse): {
   return { ceremonyToken, publicKey };
 }
 
+function webPasskeyHeaders(bootstrapToken: string, ceremonyToken?: string): Record<string, string> {
+  return {
+    'X-Web-Passkey-Token': bootstrapToken,
+    ...(ceremonyToken ? { 'X-Passkey-Ceremony-Token': ceremonyToken } : {}),
+  };
+}
+
 function sessionFrom(response: SessionResponse): Session {
   if (!isSession(response.data)) throw new Error('Passkey session response is invalid');
   return response.data;
@@ -162,6 +169,33 @@ export async function reauthWebPasskey(session: PasskeySession): Promise<void> {
     headers: { 'X-Passkey-Ceremony-Token': options.ceremonyToken },
     body: JSON.stringify(credentialJSON(credential)),
   }, session.access_token);
+}
+
+/**
+ * Complete the native-app bridge without putting a pre-auth or access token in
+ * the browser URL. The server resolves the opaque bootstrap token and returns
+ * only a one-time session handoff code.
+ */
+export async function completeWebPasskeyBridge(bridge: PasskeyBridgeRequest): Promise<string> {
+  assertWebAuthn();
+  const options = passkeyOptions(await request<PasskeyOptionsResponse>('/auth/passkey/web/options', {
+    method: 'POST',
+    headers: webPasskeyHeaders(bridge.bootstrapToken),
+  }));
+  const credential = 'user' in options.publicKey
+    ? await navigator.credentials.create({ publicKey: normalizeCreationOptions(options.publicKey) })
+    : await navigator.credentials.get({ publicKey: normalizeRequestOptions(options.publicKey) });
+  if (!(credential instanceof PublicKeyCredential)) throw new Error('Passkey認証がキャンセルされました');
+  const response = await request<HandoffResponse>('/auth/passkey/web/verify', {
+    method: 'POST',
+    headers: webPasskeyHeaders(bridge.bootstrapToken, options.ceremonyToken),
+    body: JSON.stringify(credentialJSON(credential)),
+  });
+  const code = response.data?.handoff_code;
+  if (!code || response.data?.app_redirect_uri !== bridge.appReturnURI) {
+    throw new Error('Passkey handoff response is invalid');
+  }
+  return code;
 }
 
 export async function startNativeSessionHandoff(

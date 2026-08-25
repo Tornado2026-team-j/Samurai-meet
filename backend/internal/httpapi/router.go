@@ -11,22 +11,18 @@ import (
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/keys"
 )
 
-// APIV1Prefix is the public API namespace used by both the mobile app and web
-// client. A single public domain routes this path to the Go backend.
 const APIV1Prefix = "/api/v1"
 
-// NewRouter returns the HTTP routes. Optional services are omitted when the
-// corresponding production secret/configuration is not available.
 type RouterOptions struct {
 	Environment         string
 	AllowExpoGoRedirect bool
 	DevClientOrigin     string
-	DevClientDir        string
 	ClientOrigin        string
 	OAuthLogin          *auth.OAuthLoginService
 	PreAuth             *auth.PreAuthService
 	Sessions            *auth.SessionService
 	SessionHandoffs     *auth.SessionHandoffService
+	PasskeyBootstraps   *auth.PasskeyBootstrapService
 	Passkeys            *auth.PasskeyService
 	KeyEnvelopes        *keys.Service
 	KeyB                *keys.KeyBService
@@ -34,81 +30,78 @@ type RouterOptions struct {
 	Accounts            *account.Service
 }
 
-func NewRouter() http.Handler {
-	return NewRouterWithOptions(RouterOptions{})
+func NewRouter() http.Handler { return NewRouterWithOptions(RouterOptions{}) }
+
+func NewRouterWithOptions(o RouterOptions) http.Handler {
+	m := http.NewServeMux()
+	m.HandleFunc("/healthz", healthz)
+	m.HandleFunc("/readyz", readyz)
+	m.HandleFunc(APIV1Prefix+"/healthz", healthz)
+	m.HandleFunc(APIV1Prefix+"/readyz", readyz)
+	if o.OAuthLogin != nil {
+		m.HandleFunc(APIV1Prefix+"/auth/google/start", googleStart(o.OAuthLogin, o.Environment, o.AllowExpoGoRedirect, o.ClientOrigin, o.DevClientOrigin))
+		m.HandleFunc(APIV1Prefix+"/auth/google/exchange", googleExchange(o.OAuthLogin))
+		m.HandleFunc("/auth/callback", googleCallback(o.OAuthLogin, o.Environment, o.AllowExpoGoRedirect, o.ClientOrigin, o.DevClientOrigin))
+	}
+	if o.Sessions != nil {
+		m.HandleFunc(APIV1Prefix+"/auth/refresh", refreshSession(o.Sessions))
+		m.HandleFunc(APIV1Prefix+"/auth/logout", logoutSession(o.Sessions))
+		m.HandleFunc(APIV1Prefix+"/auth/logout-all", logoutAllSessions(o.Sessions))
+		m.HandleFunc(APIV1Prefix+"/me/sessions", listSessions(o.Sessions))
+		m.HandleFunc(APIV1Prefix+"/me/sessions/", revokeSession(o.Sessions))
+	}
+	if o.SessionHandoffs != nil && o.Sessions != nil {
+		m.HandleFunc(APIV1Prefix+"/auth/session-handoff/start", sessionHandoffStart(o.SessionHandoffs, o.Sessions, o.Environment, o.AllowExpoGoRedirect))
+		m.HandleFunc(APIV1Prefix+"/auth/session-handoff/exchange", sessionHandoffExchange(o.SessionHandoffs))
+	}
+	if o.PasskeyBootstraps != nil && o.Sessions != nil {
+		m.HandleFunc(APIV1Prefix+"/auth/passkey/bootstrap", passkeyBootstrap(o.PasskeyBootstraps, o.Sessions, o.PreAuth, o.Environment, o.AllowExpoGoRedirect))
+	}
+	if o.Passkeys != nil && o.PasskeyBootstraps != nil && o.Sessions != nil && o.SessionHandoffs != nil {
+		m.HandleFunc(APIV1Prefix+"/auth/passkey/web/options", passkeyWebOptions(o.Passkeys, o.PasskeyBootstraps))
+		m.HandleFunc(APIV1Prefix+"/auth/passkey/web/verify", passkeyWebVerify(o.Passkeys, o.PasskeyBootstraps, o.PreAuth, o.Sessions, o.SessionHandoffs))
+	}
+	if o.Passkeys != nil && o.Sessions != nil {
+		m.HandleFunc(APIV1Prefix+"/auth/passkey/register/options", passkeyRegisterOptions(o.Passkeys, o.Sessions, o.PreAuth))
+		m.HandleFunc(APIV1Prefix+"/auth/passkey/register/verify", passkeyRegisterVerify(o.Passkeys, o.Sessions, o.PreAuth))
+		m.HandleFunc(APIV1Prefix+"/auth/passkey/login/options", passkeyLoginOptions(o.Passkeys, o.PreAuth))
+		m.HandleFunc(APIV1Prefix+"/auth/passkey/login/verify", passkeyLoginVerify(o.Passkeys, o.PreAuth))
+		m.HandleFunc(APIV1Prefix+"/auth/passkey/reauth/options", passkeyReauthOptions(o.Passkeys, o.Sessions))
+		m.HandleFunc(APIV1Prefix+"/auth/passkey/reauth/verify", passkeyReauthVerify(o.Passkeys, o.Sessions))
+		m.HandleFunc(APIV1Prefix+"/auth/passkey", passkeyList(o.Passkeys, o.Sessions))
+		m.HandleFunc(APIV1Prefix+"/auth/passkey/", passkeyRemove(o.Passkeys, o.Sessions))
+	}
+	if o.Sessions != nil && o.KeyEnvelopes != nil {
+		m.HandleFunc(keyEnvelopePrefix, keyEnvelopeList(o.KeyEnvelopes, o.Sessions))
+		m.HandleFunc(keyEnvelopePrefix+"/", keyEnvelopeItem(o.KeyEnvelopes, o.Sessions))
+	}
+	if o.Sessions != nil && o.KeyB != nil {
+		m.HandleFunc(keyBPath, keyB(o.KeyB, o.Sessions))
+	}
+	if o.Images != nil {
+		m.HandleFunc(APIV1Prefix+"/keys/profile-image", profileWrappingKey(o.Images))
+		m.HandleFunc(APIV1Prefix+"/profile-photos/", publicProfilePhoto(o.Images))
+	}
+	if o.Sessions != nil && o.Images != nil {
+		m.HandleFunc(APIV1Prefix+"/me/photos", uploadPhoto(o.Images, o.Sessions))
+		m.HandleFunc(APIV1Prefix+"/me/photos/", ownedPhoto(o.Images, o.Sessions))
+	}
+	if o.Sessions != nil && o.Accounts != nil {
+		m.HandleFunc(APIV1Prefix+"/me", deleteAccount(o.Accounts, o.Sessions))
+	}
+	return withCORS(withJSONContentType(m), o)
 }
 
-func NewRouterWithOptions(options RouterOptions) http.Handler {
-	mux := http.NewServeMux()
-	// Keep direct probes for local process and infrastructure checks. Product
-	// clients must use the versioned public namespace below.
-	mux.HandleFunc("/healthz", healthz)
-	mux.HandleFunc("/readyz", readyz)
-	mux.HandleFunc(APIV1Prefix+"/healthz", healthz)
-	mux.HandleFunc(APIV1Prefix+"/readyz", readyz)
-	if options.OAuthLogin != nil {
-		mux.HandleFunc(APIV1Prefix+"/auth/google/start", googleStart(options.OAuthLogin, options.Environment, options.AllowExpoGoRedirect, options.ClientOrigin, options.DevClientOrigin))
-		mux.HandleFunc(APIV1Prefix+"/auth/google/exchange", googleExchange(options.OAuthLogin))
-		mux.HandleFunc("/auth/callback", googleCallback(options.OAuthLogin, options.Environment, options.AllowExpoGoRedirect, options.ClientOrigin, options.DevClientOrigin))
-	}
-	if options.Sessions != nil {
-		mux.HandleFunc(APIV1Prefix+"/auth/refresh", refreshSession(options.Sessions))
-		mux.HandleFunc(APIV1Prefix+"/auth/logout", logoutSession(options.Sessions))
-		mux.HandleFunc(APIV1Prefix+"/auth/logout-all", logoutAllSessions(options.Sessions))
-		mux.HandleFunc(APIV1Prefix+"/me/sessions", listSessions(options.Sessions))
-		mux.HandleFunc(APIV1Prefix+"/me/sessions/", revokeSession(options.Sessions))
-	}
-	if options.SessionHandoffs != nil && options.Sessions != nil {
-		mux.HandleFunc(APIV1Prefix+"/auth/session-handoff/start", sessionHandoffStart(options.SessionHandoffs, options.Sessions, options.Environment, options.AllowExpoGoRedirect))
-		mux.HandleFunc(APIV1Prefix+"/auth/session-handoff/exchange", sessionHandoffExchange(options.SessionHandoffs))
-	}
-	if options.Passkeys != nil && options.Sessions != nil {
-		mux.HandleFunc(APIV1Prefix+"/auth/passkey/register/options", passkeyRegisterOptions(options.Passkeys, options.Sessions, options.PreAuth))
-		mux.HandleFunc(APIV1Prefix+"/auth/passkey/register/verify", passkeyRegisterVerify(options.Passkeys, options.Sessions, options.PreAuth))
-		mux.HandleFunc(APIV1Prefix+"/auth/passkey/login/options", passkeyLoginOptions(options.Passkeys, options.PreAuth))
-		mux.HandleFunc(APIV1Prefix+"/auth/passkey/login/verify", passkeyLoginVerify(options.Passkeys, options.PreAuth))
-		mux.HandleFunc(APIV1Prefix+"/auth/passkey/reauth/options", passkeyReauthOptions(options.Passkeys, options.Sessions))
-		mux.HandleFunc(APIV1Prefix+"/auth/passkey/reauth/verify", passkeyReauthVerify(options.Passkeys, options.Sessions))
-		mux.HandleFunc(APIV1Prefix+"/auth/passkey", passkeyList(options.Passkeys, options.Sessions))
-		mux.HandleFunc(APIV1Prefix+"/auth/passkey/", passkeyRemove(options.Passkeys, options.Sessions))
-	}
-	if options.Sessions != nil && options.KeyEnvelopes != nil {
-		mux.HandleFunc(keyEnvelopePrefix, keyEnvelopeList(options.KeyEnvelopes, options.Sessions))
-		mux.HandleFunc(keyEnvelopePrefix+"/", keyEnvelopeItem(options.KeyEnvelopes, options.Sessions))
-	}
-	if options.Sessions != nil && options.KeyB != nil {
-		mux.HandleFunc(keyBPath, keyB(options.KeyB, options.Sessions))
-	}
-	if options.Images != nil {
-		mux.HandleFunc(APIV1Prefix+"/keys/profile-image", profileWrappingKey(options.Images))
-		mux.HandleFunc(APIV1Prefix+"/profile-photos/", publicProfilePhoto(options.Images))
-	}
-	if options.Sessions != nil && options.Images != nil {
-		mux.HandleFunc(APIV1Prefix+"/me/photos", uploadPhoto(options.Images, options.Sessions))
-		mux.HandleFunc(APIV1Prefix+"/me/photos/", ownedPhoto(options.Images, options.Sessions))
-	}
-	if options.Sessions != nil && options.Accounts != nil {
-		mux.HandleFunc(APIV1Prefix+"/me", deleteAccount(options.Accounts, options.Sessions))
-	}
-	if (options.Environment == "development" || options.Environment == "test") && strings.TrimSpace(options.DevClientDir) != "" {
-		// The browser test panel is deliberately available only outside production.
-		// API and OAuth callback routes above are more specific and take precedence.
-		mux.Handle("/", http.FileServer(http.Dir(options.DevClientDir)))
-	}
-
-	return withCORS(withJSONContentType(mux), options)
-}
-
-func withCORS(next http.Handler, options RouterOptions) http.Handler {
-	allowedOrigin := options.ClientOrigin
-	if allowedOrigin == "" && options.Environment == "development" {
-		allowedOrigin = options.DevClientOrigin
+func withCORS(next http.Handler, o RouterOptions) http.Handler {
+	allowed := o.ClientOrigin
+	if allowed == "" && o.Environment == "development" {
+		allowed = o.DevClientOrigin
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if allowedOrigin != "" && r.Header.Get("Origin") == allowedOrigin {
-			w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
+		if allowed != "" && r.Header.Get("Origin") == allowed {
+			w.Header().Set("Access-Control-Allow-Origin", allowed)
 			w.Header().Set("Vary", "Origin")
-			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Passkey-Ceremony-Token, X-Photo-Visibility, X-Photo-Content-Type, X-Photo-Nonce, X-Photo-Algorithm, X-Photo-Key-Version, X-Photo-Wrapped-Key, X-Photo-Server-Wrapped-Key, X-Photo-Wrapping-Algorithm")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Passkey-Ceremony-Token, X-Web-Passkey-Token, X-Photo-Visibility, X-Photo-Content-Type, X-Photo-Nonce, X-Photo-Algorithm, X-Photo-Key-Version, X-Photo-Wrapped-Key, X-Photo-Server-Wrapped-Key, X-Photo-Wrapping-Algorithm")
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 			w.Header().Set("Access-Control-Expose-Headers", "X-Photo-Nonce, X-Photo-Algorithm, X-Photo-Key-Version, X-Photo-Wrapped-Key, X-Photo-Wrapping-Algorithm")
 			if r.Method == http.MethodOptions {
