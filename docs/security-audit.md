@@ -38,7 +38,7 @@
 | SEC-007 | 同時 Refresh の抑制 | PASS | クライアントの single-flight を定義 |
 | SEC-008 | 通信失敗時の Refresh 再送 | PASS | 同じ`session_id`・`request_id`だけ30秒以内に暗号化済み結果を再返却 |
 | SEC-009 | Google 直後の権限分離 | PASS | Google handoff交換は通常sessionを発行せず、Passkey専用pre-authだけを返す |
-| SEC-010 | `pre_auth_token` の一回性 | PASS | PostgreSQLでhash、scope、user、5分期限、used_atを管理し、Passkey成功と同一transactionで消費する |
+| SEC-010 | `pre_auth_token` の一回性 | PASS* | PostgreSQLでhash、scope、user、5分期限、used_atを管理する。Web Passkeyのcredential/session作成とpre-auth hash消費は同一transaction。bootstrap消費とhandoff作成は後段の別transactionで、失敗時の再試行性は追加課題 |
 | SEC-011 | JWS 署名鍵のローテーション | PARTIAL | `kid`、HS256 allow-list、複数検証鍵と旧鍵検証の単体テストは実装済み。KMS運用・移行期間・漏えい時手順は未確定 |
 | SEC-012 | WebSocket の失効反映 | PARTIAL | heartbeat は定義済み。実装時の切断・再接続テストが必要 |
 | SEC-013 | Key-B の信頼境界 | PARTIAL | AES-256-GCM暗号文DB保存、active session＋5分以内のPasskey再認証、退会時削除、競合テストを実装。KMS直結・鍵ローテーション・取得監査・Recovery/クライアントHKDFは未完了 |
@@ -50,6 +50,7 @@
 | SEC-019 | チャット専用 token | PASS | `aud`、`chat_id`、`sid`、scope を限定した短命 token を定義 |
 | SEC-020 | QUIC 0-RTT の再送 | P1 | 1-RTT 前の状態変更禁止と実装テストが必要 |
 | SEC-021 | QUIC / Expo 実装可否 | P1 | native module / WebTransport の PoC が未実施 |
+| SEC-022 | Web Passkey URL秘密値境界 | PASS | URL fragmentは短命bootstrap tokenだけ。Access/Refresh/pre-authはURLへ渡さず、verifyはhandoff codeだけを返す |
 
 ## 3. P1 必須対応
 
@@ -71,7 +72,15 @@ Refresh はローテーションするため、サーバーが更新に成功し
 - `user_id` と OAuth 認証イベントに紐付ける。
 - Access Token、Refresh Token、プロフィール、チャット、Key-B を取得できない。
 
-実装では`pre_auth_tokens`にtoken hashだけを保存し、5分期限、scope、user、`used_at`を検証します。Google交換時は通常sessionを発行せず、Passkey登録/ログインの成功transaction内でpre-authを消費して通常sessionを発行します。Expo GoはWeb Passkey後に、直近Passkey sessionから暗号化された短命session handoffを受け取ります。
+実装では`pre_auth_tokens`にtoken hashだけを保存し、5分期限、scope、user、`used_at`を検証します。Google交換時は通常sessionを発行せず、Passkey成功後に通常sessionを発行します。Web terminal flowではcredential/session作成とpre-auth hash消費を同一transactionにまとめ、pre-authが無効化された場合にPasskey stateだけが残らないようにしています。bootstrap消費とhandoff作成は後段の別transactionであり、handoff失敗時の再試行性・孤児sessionのreconcilerは追加課題として追跡します。Expo GoはWeb Passkey後に、直近Passkey sessionから暗号化された短命session handoffを受け取ります。
+
+### SEC-022 Web Passkey URL秘密値境界（実装済み）
+
+- Expo GoはAccess Tokenまたはpre-auth tokenをBearerでbootstrap発行APIへ送る。
+- bootstrapはhash、scope、元session/pre-auth、ceremony binding、期限、`used_at`で管理する。
+- Web URL fragmentには`bootstrap_token`だけを入れる。
+- Web options/verifyは`no-store`と`no-referrer`を返す。
+- verify成功時は`handoff_code`とredirect URIだけを返し、Access/Refresh/pre-auth tokenをブラウザへ返さない。
 
 ### SEC-011 JWS 鍵管理（基盤実装済み）
 
@@ -173,6 +182,7 @@ sequenceDiagram
 
 - [x] SEC-008 の通信失敗時ポリシーを決定・実装
 - [x] SEC-010 の `pre_auth_token` 一回性を実装
+- [x] SEC-022 の Web Passkey URLからAccess/pre-auth tokenを除去
 - [x] SEC-011 の JWS `kid` / 複数検証鍵を実装
 - [ ] SEC-011 のKMS運用・鍵移行期間・漏えい時runbookを確定
 - [x] SEC-013 のKey-B暗号文DB保存・直近Passkey認可・退会削除・競合テストを実装

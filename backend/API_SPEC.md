@@ -102,15 +102,52 @@ Google交換時点では通常のAccess/Refresh sessionを作成しません。`
 
 ### 3.4 Web PasskeyからExpo Goへのセッション復帰（実装済み）
 
-Expo GoはGoogle交換後の`pre_auth_token`をSecure Storageへ保存し、Web検証画面を次の値付きで開きます。
+Google交換後の`pre_auth_token`や既存sessionのAccess TokenをWeb URLへ渡してはいけません。Expo Goはまず、Bearer認証付きでbootstrapを発行します。
 
-- `app_return_uri`: Expo Goの`exp://.../--/auth`などの許可済みURI
-- `app_handoff_challenge`: Expo Goが保持するセッション復帰verifierのSHA-256 Base64URL
-- `pre_auth_token`とユーザーIDはURL fragmentでWeb画面へ渡し、HTTPリクエストには送らない。
+`POST /api/v1/auth/passkey/bootstrap`
 
-Web画面でPasskey登録または既知ユーザーのPasskeyログインが成功すると、Passkey後のAccess Tokenで`POST /api/v1/auth/session-handoff/start`を呼びます。APIは直近Passkey認証済みのWeb sessionだけを受け付け、別のアプリsessionを作成したうえで、SessionTokensを暗号化した10分のhandoff codeを返します。
+Request:
 
-続いてExpo Goが`POST /api/v1/auth/session-handoff/exchange`へ`handoff_code`とSecure Storageの`handoff_verifier`を送ります。code単体では交換できず、verifier不一致・期限切れ・許可外redirect URIは拒否します。成功時の`data`は通常のSessionTokensです。アプリが途中終了しても、verifierを保持していれば再交換できます。
+```json
+{
+  "scope": "passkey_register",
+  "app_redirect_uri": "samuraimeet://auth",
+  "app_handoff_challenge": "verifierのSHA-256 Base64URL"
+}
+```
+
+`scope`は`passkey_register`、`passkey_login`、`passkey_reauth`のいずれかです。初回登録・既知ユーザーログインでは`Authorization: Bearer <pre_auth_token>`、再認証では`Authorization: Bearer <access_token>`を送ります。サーバーはbootstrapのhash、ユーザー、元sessionまたはpre-auth hash、scope、redirect、challenge、期限（現在1分）、使用日時だけを保存し、平文bootstrapは保存しません。
+
+成功レスポンス:
+
+```json
+{
+  "data": {
+    "bootstrap_token": "短命・一回限りのopaque token",
+    "scope": "passkey_register",
+    "expires_at": "UTC RFC3339"
+  }
+}
+```
+
+Web URLのfragmentに入れてよい認証値は`bootstrap_token`だけです。Access Token、Refresh Token、`pre_auth_token`、ユーザーIDはURLへ入れません。Web画面はbootstrapを`X-Web-Passkey-Token`ヘッダーで送ります。
+
+`POST /api/v1/auth/passkey/web/options`
+
+- Header: `X-Web-Passkey-Token: <bootstrap_token>`
+- 成功時はWebAuthn optionsと短命ceremony tokenを返す。
+- `Cache-Control: no-store`、`Referrer-Policy: no-referrer`を付ける。
+- bootstrapへのceremony binding後の再options、期限切れ、scope不一致は拒否する。
+
+`POST /api/v1/auth/passkey/web/verify`
+
+- Header: `X-Web-Passkey-Token`と`X-Passkey-Ceremony-Token`
+- Body: WebAuthn credential/assertion JSON
+- ceremony、bootstrap、元session/pre-authの有効性を確認し、bootstrapを一回消費する。
+- 成功時のレスポンスは`handoff_code`と`app_redirect_uri`だけで、Access/Refresh/Pre-auth tokenを返さない。
+- レスポンスには`Cache-Control: no-store`、`Referrer-Policy: no-referrer`を付ける。続くsession-handoffのstart/exchangeも同じ機密応答ヘッダーを付ける。
+
+続いてExpo Goが`POST /api/v1/auth/session-handoff/exchange`へ`handoff_code`、Secure Storageの`handoff_verifier`、必須の`request_id`を送ります。使用済みhandoffの再送は、同じrequest IDかつ30秒以内だけ同じ暗号化応答を返します。異なるrequest ID、期限切れ、verifier不一致は拒否します。
 
 ## 4. Passkey / WebAuthn
 

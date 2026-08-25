@@ -58,11 +58,32 @@ https://samurai-meet.disnana.com/auth/callback
 }
 ```
 
-Google交換時点では通常sessionを発行しない。`pre_auth_token`はPasskey options/verifyだけに使え、Passkey成功時に通常のAccess/Refresh sessionを発行する。アプリURIの許可値は、本番`samuraimeet://auth`、開発用Expo Goの`samuraimeettest://auth`または`exp://<host>/--/auth`です。ブラウザ開発クライアントは、設定済みOriginの`/auth/complete`だけを完全一致で許可します。Expo Goの`exp://`は`ALLOW_EXPO_GO_REDIRECT=true`を設定した開発確認時だけ許可する。
+Google交換時点では通常sessionを発行しない。`pre_auth_token`はExpo Goがbootstrap発行にBearerで使う短命の内部資格情報で、Web URLへ渡してはいけません。アプリURIの許可値は、本番`samuraimeet://auth`、開発用Expo Goの`samuraimeettest://auth`または`exp://<host>/--/auth`です。ブラウザ開発クライアントは、設定済みOriginの`/auth/complete`だけを完全一致で許可します。Expo Goの`exp://`は`ALLOW_EXPO_GO_REDIRECT=true`を設定した開発確認時だけ許可する。
 
-handoff codeは10分で失効し、一回使用後に消費する。同じverifierで期限内に再送した場合だけ、サーバーが保存した暗号化レスポンスを返す。アプリがOAuth途中で落ちても、Secure Storageのverifierを消さなければ再開できる。
+OAuth handoff codeは10分で失効し、一回使用後に消費する。同じverifierで期限内に再送した場合だけ、サーバーが保存した暗号化レスポンスを返す。アプリがOAuth途中で落ちても、Secure Storageのverifierを保持すれば再開できる。Web Passkey後のsession handoffは別APIで、同じverifierに加えて同じ`request_id`を30秒以内に送る場合だけ再送できます。
 
-Web PasskeyからExpo Goへ戻す場合は、Web画面が`POST /auth/session-handoff/start`を呼び、Expo Goが`POST /auth/session-handoff/exchange`を呼ぶ。Google直後のpre-authだけではhandoffを開始できない。
+Web PasskeyからExpo Goへ戻す場合は、Expo Goが`POST /auth/passkey/bootstrap`を呼び、返された短命bootstrap tokenだけをWeb URL fragmentへ渡します。Web画面は`X-Web-Passkey-Token`と`X-Passkey-Ceremony-Token`でoptions/verifyを呼び、成功時はhandoff codeだけを返します。Webレスポンスは`no-store`です。Google直後の`pre_auth_token`やAccess TokenをURLに含めません。
+
+Bootstrap request:
+
+```json
+{
+  "scope": "passkey_register",
+  "app_redirect_uri": "samuraimeet://auth",
+  "app_handoff_challenge": "SHA-256 Base64URL"
+}
+```
+
+`/auth/passkey/web/options`と`/auth/passkey/web/verify`はWebAuthn専用のブラウザAPIです。bootstrapは現在1分、ceremonyは5分、一回限りで、サーバーにはtoken hashだけを保存します。verify成功時のJSONは`handoff_code`と`app_redirect_uri`だけです。
+
+Web Passkey後のsession handoff:
+
+| Method | Path | 認証 |
+| --- | --- | --- |
+| POST | `/api/v1/auth/session-handoff/start` | Access Token + 直近Passkey |
+| POST | `/api/v1/auth/session-handoff/exchange` | `handoff_code` + verifier + `request_id` |
+
+`exchange`の`request_id`は空白不可・128文字以内です。使用済みcodeの再送は、正しいverifierと同じ`request_id`を30秒以内に送った場合だけ許可されます。session handoffのstart/exchange応答は`Cache-Control: no-store`と`Referrer-Policy: no-referrer`を付けます。
 
 ### Passkey / WebAuthn
 
@@ -76,6 +97,9 @@ Web PasskeyからExpo Goへ戻す場合は、Web画面が`POST /auth/session-han
 | POST | `/api/v1/auth/passkey/reauth/verify` | Access Token + ceremony header | 実装済み |
 | GET | `/api/v1/auth/passkey` | Access Token | 実装済み |
 | DELETE | `/api/v1/auth/passkey/{credential_id}` | Access Token | 実装済み |
+| POST | `/api/v1/auth/passkey/bootstrap` | Access Tokenまたはpre-auth | 実装済み |
+| POST | `/api/v1/auth/passkey/web/options` | `X-Web-Passkey-Token` | 実装済み |
+| POST | `/api/v1/auth/passkey/web/verify` | bootstrap + ceremony header | 実装済み |
 
 optionsの成功レスポンスは`data.ceremony_token`と`data.options`。verifyでは`X-Passkey-Ceremony-Token`ヘッダーへtokenを入れ、bodyはOSのcredential/assertion JSONをそのまま送る。challengeは5分・一回限り。ブラウザ検証はHTTPSまたはlocalhost、native実機検証はExpo GoではなくDevelopment Buildを使う。
 

@@ -26,6 +26,9 @@
 | `0009_pre_auth_sessions.sql` | Google直後のPasskey専用pre-auth、`sessions.last_passkey_at` |
 | `0010_session_handoffs.sql` | Web PasskeyからExpo Goへ返す暗号化済み短命session handoff |
 | `0011_passkey_reauth.sql` | 既存sessionの直近Passkey再認証用ceremony type |
+| `0013_session_handoff_retry.sql` | session handoff再送を同一`request_id`に限定する列 |
+| `0014_passkey_bootstraps.sql` | Web Passkey用の短命bootstrap token hash、scope、source、期限、使用日時 |
+| `0015_passkey_bootstrap_binding.sql` | bootstrapとWebAuthn ceremony tokenのbinding hash |
 
 注意: 現行の簡易migration runnerはSQLファイルを順番に実行する。migration履歴テーブルによる本番適用管理を導入する場合は、既存環境の適用済み状態を確認してから切り替える。
 
@@ -83,9 +86,13 @@ credential JSONは検証に必要な情報を保持する。DBアクセス権限
 
 Google交換直後に発行するPasskey専用の短命tokenを保存する。`token_hash`だけを保存し、scope（初回登録・既知ユーザーログイン・再認証）、ユーザー、5分の期限、`used_at`を管理する。通常API、鍵、プロフィール、写真、チャットには利用できない。
 
+### `passkey_bootstraps`
+
+Web URLへ渡すbootstrap tokenのサーバー側記録。平文tokenではなく`token_hash`だけを保存し、ユーザー、元sessionまたは`source_pre_auth_hash`、scope、許可済みredirect URI、handoff challenge、1分の期限、`used_at`、ceremony binding hashを管理する。Web URLにはAccess Token、Refresh Token、pre-auth tokenを入れず、bootstrapは一回だけ消費する。
+
 ### `session_handoffs`
 
-Web Passkey成功後にExpo Goへ通常のSessionTokensを返すための短命codeを保存する。code hash、redirect URI、PKCE challenge、暗号化済みレスポンス、nonce、10分の期限を持つ。code単体では交換できず、同じverifierによる期限内の再送だけ同じ応答を返す。
+Web Passkey成功後にExpo Goへ通常のSessionTokensを返すための短命codeを保存する。code hash、redirect URI、PKCE challenge、暗号化済みレスポンス、nonce、10分の期限、`exchange_request_id`を持つ。code単体では交換できず、同じverifier・同じrequest IDによる30秒以内の再送だけ同じ応答を返す。別request IDは拒否する。
 
 ## 4. セッションテーブル
 

@@ -8,8 +8,8 @@
 ## 未実装・本番承認不可
 
 - `frontend/` にWeb Passkey画面、画像暗号化/upload、プロフィール等の業務API clientはない。`services/api.ts` も未実装。
-- Web Passkey UIは別の正式Web配信物として、options/verify→session-handoff start→アプリdeep linkを実装・配信・E2E確認する必要がある。
-- 現行URL fragmentにはpre-auth等の機微値、再認証時にはAccess Tokenを載せる暫定実装がある。用途限定one-time ceremony tokenへ移行するまで本番再認証を承認しない。
+- Web Passkey UIは別の正式Web配信物として、bootstrap→options/verify→アプリdeep linkを実装・配信・E2E確認する必要がある。バックエンドのbootstrap、request_id付きhandoff、URL秘密値境界は実装済み。
+- `frontend/services/auth-contract.ts` のURL fragmentは`bootstrap_token`だけ。Access Token、Refresh Token、pre-auth tokenはWeb URLへ渡さない。
 - KMS、Key-B取得監査、共通監査基盤、画像quarantine、削除reconcilerは未実装。
 
 ## CORSと開発Web
