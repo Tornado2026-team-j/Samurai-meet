@@ -1,0 +1,67 @@
+import * as SecureStore from "expo-secure-store";
+import { Platform } from "react-native";
+import {
+  parseLanguage,
+  parseLocalProfile,
+  type AppLanguage,
+  type LocalProfile,
+} from "./onboarding-contract";
+
+export { parseLanguage, parseLocalProfile } from "./onboarding-contract";
+export type { AppLanguage, LocalProfile } from "./onboarding-contract";
+
+const LANGUAGE_KEY = "samurai_meet_language_v1";
+const PROFILE_KEY_PREFIX = "samurai_meet_profile_v1_";
+
+function profileKey(userID: string): string {
+  return `${PROFILE_KEY_PREFIX}${userID.replace(/[^A-Za-z0-9._-]/g, "_")}`;
+}
+
+async function getItem(key: string): Promise<string | null> {
+  if (Platform.OS === "web") {
+    return globalThis.localStorage?.getItem(key) ?? null;
+  }
+
+  return SecureStore.getItemAsync(key);
+}
+
+async function setItem(key: string, value: string): Promise<void> {
+  if (Platform.OS === "web") {
+    globalThis.localStorage?.setItem(key, value);
+    return;
+  }
+
+  await SecureStore.setItemAsync(key, value);
+}
+
+async function deleteItem(key: string): Promise<void> {
+  if (Platform.OS === "web") {
+    globalThis.localStorage?.removeItem(key);
+    return;
+  }
+
+  await SecureStore.deleteItemAsync(key);
+}
+
+export async function loadLanguage(): Promise<AppLanguage | null> {
+  return parseLanguage(await getItem(LANGUAGE_KEY));
+}
+
+export async function saveLanguage(language: AppLanguage): Promise<void> {
+  await setItem(LANGUAGE_KEY, language);
+}
+
+export async function clearLanguage(): Promise<void> {
+  await deleteItem(LANGUAGE_KEY);
+}
+
+export async function loadLocalProfile(userID: string): Promise<LocalProfile | null> {
+  return parseLocalProfile(await getItem(profileKey(userID)));
+}
+
+export async function saveLocalProfile(
+  userID: string,
+  profile: LocalProfile,
+): Promise<void> {
+  await setItem(profileKey(userID), JSON.stringify(profile));
+}

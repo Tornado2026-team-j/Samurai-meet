@@ -15,20 +15,23 @@
     "security:audit": "bun scripts/verify-audit.ts"
   },
   "dependencies": {
+    "@expo/vector-icons": "^15.0.2",
     "@noble/ciphers": "^2.3.0",
     "@noble/hashes": "^2.3.0",
-    "expo": "~57.0.9",
-    "expo-constants": "~57.0.8",
-    "expo-crypto": "^57.0.1",
+    "expo": "~57.0.16",
+    "expo-constants": "~57.0.14",
+    "expo-crypto": "~57.0.2",
     "expo-linking": "~57.0.4",
-    "expo-router": "~57.0.9",
+    "expo-router": "~57.0.16",
     "expo-secure-store": "~57.0.1",
     "expo-status-bar": "~57.0.1",
     "expo-web-browser": "~57.0.2",
     "react": "19.2.3",
+    "react-dom": "19.2.3",
     "react-native": "0.86.2",
     "react-native-safe-area-context": "~5.7.0",
-    "react-native-screens": "4.26.0"
+    "react-native-screens": "~4.26.0",
+    "react-native-web": "^0.21.2"
   },
   "devDependencies": {
     "@types/bun": "^1.4.0",

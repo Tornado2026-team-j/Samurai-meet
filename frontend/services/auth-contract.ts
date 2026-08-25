@@ -22,6 +22,16 @@ export type StoredSession = Pick<Session, 'user_id' | 'session_id' | 'refresh_to
 
 export type AuthRedirect = { handoffCode?: string; sessionHandoffCode?: string };
 
+/**
+ * The WebAuthn page receives only an opaque, one-time bootstrap token.
+ * User/session access tokens never cross the browser URL boundary.
+ */
+export type PasskeyBridgeRequest = {
+  appReturnURI: string;
+  handoffChallenge: string;
+  bootstrapToken: string;
+};
+
 export function isStoredSession(value: unknown): value is StoredSession {
   if (!value || typeof value !== 'object') return false;
   const candidate = value as Partial<StoredSession>;
@@ -44,6 +54,19 @@ export function isPreAuth(value: unknown): value is PreAuth {
     && typeof candidate.passkey_registered === 'boolean';
 }
 
+export function isSession(value: unknown): value is Session {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Partial<Session>;
+  return typeof candidate.user_id === 'string'
+    && candidate.user_id.length > 0
+    && typeof candidate.session_id === 'string'
+    && candidate.session_id.length > 0
+    && typeof candidate.access_token === 'string'
+    && candidate.access_token.length > 0
+    && typeof candidate.refresh_token === 'string'
+    && candidate.refresh_token.length > 0;
+}
+
 export function isPasskeyBootstrap(value: unknown): value is PasskeyBootstrap {
   if (!value || typeof value !== 'object') return false;
   const candidate = value as Partial<PasskeyBootstrap>;
@@ -56,24 +79,63 @@ export function isPasskeyBootstrap(value: unknown): value is PasskeyBootstrap {
     && candidate.expires_at.length > 0;
 }
 
-function isAllowedRedirect(value: URL): boolean {
+function isAllowedRedirect(value: URL, allowedWebOrigin?: string): boolean {
   const scheme = value.protocol.slice(0, -1).toLowerCase();
-  if (scheme === 'samuraimeet' || scheme === 'samuraimeettest') return value.hostname === 'auth';
-  if (scheme === 'exp' || scheme === 'exps') return value.pathname.endsWith('/--/auth');
+  if (scheme === 'samuraimeet' || scheme === 'samuraimeettest') {
+    return value.hostname === 'auth'
+      && value.pathname === ''
+      && value.username === ''
+      && value.password === ''
+      && value.hash === '';
+  }
+  if (scheme === 'exp') {
+    return value.hostname.length > 0
+      && value.pathname.endsWith('/--/auth')
+      && value.username === ''
+      && value.password === ''
+      && value.hash === '';
+  }
+  if ((scheme === 'http' || scheme === 'https') && allowedWebOrigin) {
+    let origin: URL;
+    try {
+      origin = new URL(allowedWebOrigin);
+    } catch {
+      return false;
+    }
+    return value.origin === origin.origin
+      && value.pathname === '/auth/complete'
+      && value.username === ''
+      && value.password === ''
+      && value.hash === '';
+  }
   return false;
 }
 
-export function parseAuthRedirect(value: string): AuthRedirect {
+export function parseAuthRedirect(value: string, allowedWebOrigin?: string): AuthRedirect {
   let parsed: URL;
   try {
     parsed = new URL(value);
   } catch {
     return {};
   }
-  if (!isAllowedRedirect(parsed)) return {};
+  if (!isAllowedRedirect(parsed, allowedWebOrigin)) return {};
   const handoffCode = parsed.searchParams.get('handoff_code') ?? undefined;
   const sessionHandoffCode = parsed.searchParams.get('session_handoff_code') ?? undefined;
   return { handoffCode, sessionHandoffCode };
+}
+
+export function isAllowedAppReturnURI(value: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return false;
+  }
+  if (parsed.username || parsed.password || parsed.hash) return false;
+  if (value === 'samuraimeet://auth' || value === 'samuraimeettest://auth') return true;
+  return parsed.protocol === 'exp:'
+    && parsed.hostname.length > 0
+    && parsed.pathname.endsWith('/--/auth');
 }
 
 export function storedSession(value: Session): StoredSession {
@@ -88,14 +150,33 @@ export function encodeBase64URL(value: string): string {
   return value.replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');
 }
 
-export const WEB_PASSKEY_URL = 'https://samurai-meet.disnana.com/';
-
 export function buildPasskeyURL(
   redirectURI: string,
   challenge: string,
   bootstrapToken: string,
+  baseURL = 'https://samurai-meet.disnana.com/passkey',
 ): string {
-  const query = new URLSearchParams({ app_return_uri: redirectURI, app_handoff_challenge: challenge });
-  const fragment = new URLSearchParams({ bootstrap_token: bootstrapToken });
-  return `${WEB_PASSKEY_URL}?${query.toString()}#${fragment.toString()}`;
+  const target = new URL(baseURL);
+  target.searchParams.set('app_return_uri', redirectURI);
+  target.searchParams.set('app_handoff_challenge', challenge);
+  target.hash = new URLSearchParams({ bootstrap_token: bootstrapToken }).toString();
+  return target.toString();
+}
+
+export function parsePasskeyBridgeRequest(value: string): PasskeyBridgeRequest | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return null;
+  }
+  const appReturnURI = parsed.searchParams.get('app_return_uri') ?? '';
+  const handoffChallenge = parsed.searchParams.get('app_handoff_challenge') ?? '';
+  if (!isAllowedAppReturnURI(appReturnURI) || handoffChallenge.trim() === '') return null;
+
+  const fragment = new URLSearchParams(parsed.hash.slice(1));
+  const bootstrapToken = fragment.get('bootstrap_token');
+  const keys = [...fragment.keys()];
+  if (!bootstrapToken || keys.length !== 1 || keys[0] !== 'bootstrap_token') return null;
+  return { appReturnURI, handoffChallenge, bootstrapToken };
 }
