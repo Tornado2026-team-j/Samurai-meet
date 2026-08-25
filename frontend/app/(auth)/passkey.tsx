@@ -4,8 +4,8 @@ import { useAuth } from '../../hooks/useAuth';
 
 export default function PasskeyScreen() {
   const { status, preAuth, continuePasskey, error } = useAuth();
-  if (status === 'signed_in') return <Redirect href="/(tabs)" />;
-  if (status === 'signed_out' && !preAuth) return <Redirect href="/(auth)/login" />;
+  if (status === 'signed_in') return <Redirect href="/tabs" />;
+  if (status === 'signed_out' && !preAuth) return <Redirect href="/foreigner" />;
   return (
     <View style={styles.container}>
       <Text style={styles.eyebrow}>SECURE SIGN-IN</Text>

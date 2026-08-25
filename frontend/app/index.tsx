@@ -1,15 +1,5 @@
-import { Redirect } from 'expo-router';
-import { ActivityIndicator, StyleSheet, View } from 'react-native';
-import { useAuth } from '../hooks/useAuth';
+import { Redirect } from "expo-router";
 
 export default function Index() {
-  const { status } = useAuth();
-  if (status === 'loading') {
-    return <View style={styles.loading}><ActivityIndicator size="large" /></View>;
-  }
-  if (status === 'signed_in') return <Redirect href="/(tabs)" />;
-  if (status === 'pre_auth') return <Redirect href="/(auth)/passkey" />;
-  return <Redirect href="/(auth)/login" />;
+  return <Redirect href="/foreigner" />;
 }
-
-const styles = StyleSheet.create({ loading: { flex: 1, alignItems: 'center', justifyContent: 'center' } });
