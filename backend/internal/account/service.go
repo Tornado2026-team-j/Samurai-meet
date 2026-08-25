@@ -51,6 +51,7 @@ func (s *Service) Delete(ctx context.Context, userID string, now time.Time) erro
 		`DELETE FROM refresh_tokens WHERE session_id IN (SELECT id FROM sessions WHERE user_id=$1)`,
 		`DELETE FROM auth_challenges WHERE user_id=$1`,
 		`DELETE FROM pre_auth_tokens WHERE user_id=$1`,
+		`DELETE FROM passkey_bootstraps WHERE user_id=$1`,
 		`DELETE FROM passkey_credentials WHERE user_id=$1`,
 		`DELETE FROM key_envelopes WHERE user_id=$1`,
 		`DELETE FROM key_b_materials WHERE user_id=$1`,

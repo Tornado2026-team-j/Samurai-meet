@@ -6,10 +6,15 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 )
 
-const SessionHandoffTTL = 10 * time.Minute
+const (
+	SessionHandoffTTL         = 10 * time.Minute
+	SessionHandoffRetryWindow = 30 * time.Second
+	maxHandoffRequestIDLength = 128
+)
 
 var ErrSessionHandoff = errors.New("session handoff is invalid, expired, or verifier-mismatched")
 
@@ -28,9 +33,6 @@ func NewSessionHandoffService(database *sql.DB, sessions *SessionService, signer
 	return &SessionHandoffService{db: database, sessions: sessions, signer: signer}
 }
 
-// Create creates a new app session in the same transaction as the encrypted,
-// one-time handoff record. The browser session must have a recent Passkey
-// assertion; Google alone is deliberately insufficient for this transfer.
 func (s *SessionHandoffService) Create(ctx context.Context, userID, sessionID, appRedirectURI, challenge string, now time.Time) (SessionHandoff, error) {
 	if s.db == nil || s.sessions == nil || s.signer == nil || userID == "" || sessionID == "" || appRedirectURI == "" || challenge == "" {
 		return SessionHandoff{}, ErrSessionHandoff
@@ -48,7 +50,7 @@ func (s *SessionHandoffService) Create(ctx context.Context, userID, sessionID, a
 	if err != nil {
 		return SessionHandoff{}, err
 	}
-	payload, err := json.Marshal(tokens) // #nosec G117 -- encrypted for a short-lived one-time handoff; never logged
+	payload, err := json.Marshal(tokens)
 	if err != nil {
 		return SessionHandoff{}, err
 	}
@@ -71,8 +73,12 @@ func (s *SessionHandoffService) Create(ctx context.Context, userID, sessionID, a
 	return SessionHandoff{Code: code, AppRedirectURI: appRedirectURI}, nil
 }
 
-func (s *SessionHandoffService) Exchange(ctx context.Context, code, verifier string, now time.Time) (SessionTokens, error) {
-	if s.db == nil || s.signer == nil || code == "" || verifier == "" {
+// Exchange accepts a handoff response exactly once, except that an
+// indistinguishable transport retry with the same request ID is allowed for a
+// short bounded window. Callers must generate and persist requestID before
+// sending their first exchange request.
+func (s *SessionHandoffService) Exchange(ctx context.Context, code, verifier, requestID string, now time.Time) (SessionTokens, error) {
+	if s.db == nil || s.signer == nil || code == "" || verifier == "" || strings.TrimSpace(requestID) == "" || len(requestID) > maxHandoffRequestIDLength {
 		return SessionTokens{}, ErrSessionHandoff
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -81,13 +87,18 @@ func (s *SessionHandoffService) Exchange(ctx context.Context, code, verifier str
 	}
 	defer tx.Rollback()
 	var challenge, ciphertext, nonce string
-	var usedAt sql.NullString
-	err = tx.QueryRowContext(ctx, `SELECT code_challenge,response_ciphertext,response_nonce,used_at FROM session_handoffs WHERE code_hash=$1 AND expires_at>$2 FOR UPDATE`, hashOAuthState(code), now.UTC().Format(time.RFC3339Nano)).Scan(&challenge, &ciphertext, &nonce, &usedAt)
-	if errors.Is(err, sql.ErrNoRows) {
+	var usedAt, storedRequestID sql.NullString
+	err = tx.QueryRowContext(ctx, `SELECT code_challenge,response_ciphertext,response_nonce,used_at,exchange_request_id FROM session_handoffs WHERE code_hash=$1 AND expires_at>$2 FOR UPDATE`, hashOAuthState(code), now.UTC().Format(time.RFC3339Nano)).Scan(&challenge, &ciphertext, &nonce, &usedAt, &storedRequestID)
+	if errors.Is(err, sql.ErrNoRows) || err != nil || subtle.ConstantTimeCompare([]byte(challenge), []byte(pkceChallenge(verifier))) != 1 {
 		return SessionTokens{}, ErrSessionHandoff
 	}
-	if err != nil || subtle.ConstantTimeCompare([]byte(challenge), []byte(pkceChallenge(verifier))) != 1 {
-		return SessionTokens{}, ErrSessionHandoff
+	if usedAt.Valid {
+		used, parseErr := time.Parse(time.RFC3339Nano, usedAt.String)
+		if parseErr != nil || !storedRequestID.Valid || subtle.ConstantTimeCompare([]byte(storedRequestID.String), []byte(requestID)) != 1 || now.After(used.Add(SessionHandoffRetryWindow)) {
+			return SessionTokens{}, ErrSessionHandoff
+		}
+	} else if _, err = tx.ExecContext(ctx, `UPDATE session_handoffs SET used_at=$1,exchange_request_id=$2 WHERE code_hash=$3`, now.UTC().Format(time.RFC3339Nano), requestID, hashOAuthState(code)); err != nil {
+		return SessionTokens{}, err
 	}
 	plaintext, err := s.signer.Open(ciphertext, nonce)
 	if err != nil {
@@ -96,11 +107,6 @@ func (s *SessionHandoffService) Exchange(ctx context.Context, code, verifier str
 	var tokens SessionTokens
 	if err = json.Unmarshal(plaintext, &tokens); err != nil || tokens.AccessToken == "" || tokens.RefreshToken == "" {
 		return SessionTokens{}, ErrSessionHandoff
-	}
-	if !usedAt.Valid {
-		if _, err = tx.ExecContext(ctx, `UPDATE session_handoffs SET used_at=$1 WHERE code_hash=$2`, now.UTC().Format(time.RFC3339Nano), hashOAuthState(code)); err != nil {
-			return SessionTokens{}, err
-		}
 	}
 	if err = tx.Commit(); err != nil {
 		return SessionTokens{}, err

@@ -105,14 +105,22 @@ func TestAuthKeyImageAndAccountLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("session handoff create failed: %v", err)
 	}
-	appTokens, err := handoffs.Exchange(context.Background(), handoff.Code, handoffVerifier, now.Add(5*time.Second))
+	const handoffRequestID = "integration-session-handoff-exchange"
+	appTokens, err := handoffs.Exchange(context.Background(), handoff.Code, handoffVerifier, handoffRequestID, now.Add(5*time.Second))
 	if err != nil {
 		t.Fatalf("session handoff exchange failed: %v", err)
 	}
 	if appTokens.UserID != userID || appTokens.AccessToken == "" || appTokens.RefreshToken == "" {
 		t.Fatal("session handoff returned incomplete tokens")
 	}
-	if _, err = handoffs.Exchange(context.Background(), handoff.Code, "wrong-verifier", now.Add(6*time.Second)); err == nil {
+	retryTokens, err := handoffs.Exchange(context.Background(), handoff.Code, handoffVerifier, handoffRequestID, now.Add(6*time.Second))
+	if err != nil || retryTokens != appTokens {
+		t.Fatalf("same handoff request retry = %+v, err=%v", retryTokens, err)
+	}
+	if _, err = handoffs.Exchange(context.Background(), handoff.Code, handoffVerifier, "different-session-handoff-request", now.Add(7*time.Second)); err == nil {
+		t.Fatal("session handoff accepted a different request ID")
+	}
+	if _, err = handoffs.Exchange(context.Background(), handoff.Code, "wrong-verifier", handoffRequestID, now.Add(8*time.Second)); err == nil {
 		t.Fatal("session handoff accepted an incorrect verifier")
 	}
 
