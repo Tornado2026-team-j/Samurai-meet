@@ -375,11 +375,7 @@ export default function OnboardingScreen() {
   }, []);
 
   useEffect(() => {
-    if (!session?.user_id) {
-      setProfile(null);
-      setProfileLoadedFor(null);
-      return;
-    }
+    if (!session?.user_id) return;
 
     let active = true;
     const userID = session.user_id;
