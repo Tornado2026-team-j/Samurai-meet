@@ -1,14 +1,9 @@
 [[IgnoredVulns]]
 id = "GHSA-w3rx-r6r6-pgpr"
 ignoreUntil = 2026-09-07
-reason = "Expo / Metro の開発時依存 image-size@2.0.2。公開済みの修正版が存在しないため。"
+reason = "Expo / Metro の開発時依存 image-size@1.2.1。公開済みの修正版が存在しないため。"
 
 [[IgnoredVulns]]
 id = "GHSA-5p2g-fcmc-qvqq"
 ignoreUntil = 2026-09-07
-reason = "Expo / Metro の開発時依存 image-size@2.0.2。公開済みの修正版が存在しないため。"
-
-[[IgnoredVulns]]
-id = "GHSA-w5hq-g745-h8pq"
-ignoreUntil = 2026-09-07
-reason = "Expo の開発用 xcode が uuid.v4() のみを使用し、指摘対象の v3/v5/v6 と外部バッファ経路を使用しないため。"
+reason = "Expo / Metro の開発時依存 image-size@1.2.1。公開済みの修正版が存在しないため。"
