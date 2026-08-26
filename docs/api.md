@@ -53,10 +53,13 @@ https://samurai-meet.disnana.com/auth/callback
     "user_id": "opaque-user-id",
     "pre_auth_token": "short-lived-opaque-token",
     "passkey_required": true,
-    "passkey_registered": false
+    "passkey_registered": false,
+    "recovery_available": false
   }
 }
 ```
+
+`recovery_available`は既存のKey-A envelopeにRecovery公開鍵がある場合だけ`true`です。`false`の場合はRecovery Key復旧ではなく、Passkey成功後に新しいRecovery Keyを登録します。未設定アカウントへのRecovery challengeは`409 recovery_not_configured`を返します。
 
 Google交換時点では通常sessionを発行しない。`pre_auth_token`はExpo Goがbootstrap発行にBearerで使う短命の内部資格情報で、Web URLへ渡してはいけません。アプリURIの許可値は、本番`samuraimeet://auth`、開発用Expo Goの`samuraimeettest://auth`または`exp://<host>/--/auth`です。ブラウザ開発クライアントは、設定済みOriginの`/auth/complete`だけを完全一致で許可します。Expo Goの`exp://`は`ALLOW_EXPO_GO_REDIRECT=true`を設定した開発確認時だけ許可する。
 
@@ -74,7 +77,7 @@ Bootstrap request:
 }
 ```
 
-`/auth/passkey/web/options`と`/auth/passkey/web/verify`はWebAuthn専用のブラウザAPIです。bootstrapは現在1分、ceremonyは5分、一回限りで、サーバーにはtoken hashだけを保存します。verify成功時のJSONは`handoff_code`と`app_redirect_uri`だけです。
+`/auth/passkey/web/options`、`/auth/passkey/web/reset`、`/auth/passkey/web/verify`はWebAuthn専用のブラウザAPIです。bootstrapは現在1分、ceremonyは5分、一回限りで、サーバーにはtoken hashだけを保存します。ブラウザ側のWebAuthn失敗時はresetで旧ceremonyを無効化してから、新しいoptionsを取得できます。Recovery由来のpre-auth登録では、同じ端末に残る既存Passkeyを除外せず新しいcredentialを追加します。verify成功時のJSONは`handoff_code`と`app_redirect_uri`だけです。
 
 Web Passkey後のsession handoff:
 
@@ -99,6 +102,7 @@ Web Passkey後のsession handoff:
 | DELETE | `/api/v1/auth/passkey/{credential_id}` | Access Token | 実装済み |
 | POST | `/api/v1/auth/passkey/bootstrap` | Access Tokenまたはpre-auth | 実装済み |
 | POST | `/api/v1/auth/passkey/web/options` | `X-Web-Passkey-Token` | 実装済み |
+| POST | `/api/v1/auth/passkey/web/reset` | bootstrap + ceremony header | 実装済み |
 | POST | `/api/v1/auth/passkey/web/verify` | bootstrap + ceremony header | 実装済み |
 
 optionsの成功レスポンスは`data.ceremony_token`と`data.options`。verifyでは`X-Passkey-Ceremony-Token`ヘッダーへtokenを入れ、bodyはOSのcredential/assertion JSONをそのまま送る。challengeは5分・一回限り。ブラウザ検証はHTTPSまたはlocalhost、native実機検証はExpo GoではなくDevelopment Buildを使う。
@@ -162,10 +166,13 @@ Refresh request:
 | PUT | `/api/v1/me/key-envelopes/{key_version}` | Access Tokenと5分以内のPasskey再認証が必要な暗号化Key-A envelope保存・version更新 |
 | GET | `/api/v1/me/key-envelopes/{key_version}` | Access Tokenと5分以内のPasskey再認証が必要な指定version取得 |
 | DELETE | `/api/v1/me/key-envelopes/{key_version}` | Access Tokenと5分以内のPasskey再認証が必要な指定version削除 |
-| GET | `/api/v1/me/key-b` | Access Tokenと5分以内のPasskey再認証が必要なKey-B取得 |
+| POST | `/api/v1/me/devices` | Access Tokenと5分以内のPasskey再認証が必要な端末公開鍵登録 |
+| GET | `/api/v1/me/devices` | Access Tokenと5分以内のPasskey再認証が必要な端末メタデータ一覧 |
+| POST | `/api/v1/auth/recovery/challenge` | pre-authまたはAccess Token + 5分以内のPasskey再認証でRecovery challenge取得 |
+| POST | `/api/v1/auth/recovery/verify` | 同じ認証主体のchallengeにKey-A由来の署名を提示 |
 | DELETE | `/api/v1/me` | Access Tokenと5分以内のPasskey再認証、およびconfirm付きの退会・完全削除 |
 
-画像平文、画像鍵、Key-A、Key-B、Recovery KeyはAPIログへ出さない。Key-Bは`KEY_B_WRAP_KEY`でAES-256-GCM暗号化した値だけをDBへ保存し、平文は`Cache-Control: private, no-store`付きの応答生成中にだけ存在する。wrap鍵IDが保存済み値と異なる場合はfail closedで取得を拒否する。KMS直結、鍵ローテーション、取得監査ログ、Key-AとのHKDFクライアント統合は未実装である。profile画像はサーバー公開鍵で画像鍵をwrapし、private画像は端末側鍵を使う。画像uploadの正確な`X-Photo-*`ヘッダーは [backend/API_SPEC.md](../backend/API_SPEC.md) を参照する。
+画像平文、画像鍵、Key-A、Key-B、Recovery KeyはAPIログへ出さない。Key-Bは端末ごとにSecure Storageへ生成・保存し、サーバーへは公開鍵と`device_id`だけを登録する。private画像の各リクエストは端末Key-B由来の署名、時刻、ワンタイムnonce、body hashを要求し、サーバー単独で画像を復号できない。`KEY_B_WRAP_KEY`やサーバーからのKey-B取得APIは使用しない。Key-A/Key-BのHKDF結合、Recovery proof、Secure Storage保存、既存Key-A/data saltを維持したRecovery Key再生成は実装済み。Recovery challengeはhashのみをDBに保存し、TTL・最大5回の検証試行・1時間あたり10回の発行制限を設ける。profile画像はサーバー公開鍵で画像鍵をwrapして互換配信し、private画像は端末側鍵を使う。画像uploadの正確な`X-Photo-*`ヘッダーは [backend/API_SPEC.md](../backend/API_SPEC.md) を参照する。
 
 ### チャット
 
@@ -186,7 +193,7 @@ QUIC / WebTransport / WebSocketのChat TokenはAccess TokenやRefresh Tokenと�
 5. Refresh失敗、409 reuse、session失効時はAccess/Refreshを削除し、GoogleまたはPasskeyへ戻る。
 6. バックグラウンド中に定期Refreshしない。
 
-Key-B取得、Key-A envelope、退会はRefreshだけでは許可せず、直近Passkey再認証を要求する。Recovery、新端末登録、本人確認変更はAPI未実装であり、実装時に同じ認可境界を適用する。
+端末登録、Key-A envelope、Recoveryのsession経路、退会はRefreshだけでは許可せず、直近Passkey再認証を要求する。Recoveryの新端末経路はGoogle後の短命pre-authに限定し、challenge開始とverifyで同じpre-auth hash・scope・userを再検証する。端末画像APIはAccess Tokenだけで完結させず、端末Key-Bのproofも要求する。
 
 ## 5. 実装変更時の同期対象
 

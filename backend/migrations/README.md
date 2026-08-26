@@ -12,6 +12,9 @@
 - `0013_session_handoff_retry.sql` は使用済みsession handoffの再送を同じ`request_id`に限定する列を追加する。
 - `0014_passkey_bootstraps.sql` はWeb URLへ渡す短命bootstrap tokenのhash、scope、元session/pre-auth、redirect、handoff challenge、期限、消費日時を追加する。
 - `0015_passkey_bootstrap_binding.sql` はbootstrapとWebAuthn ceremony tokenを結び付けるhash列を追加する。
+- `0016_recovery_proof.sql` はRecovery Keyで復号したKey-Aの公開証明鍵と、期限・試行回数付きの一回限りRecovery challengeを追加する。
+- `0017_user_display_name.sql` はPasskeyの表示名に使うユーザー表示名をusersへ追加する。
+- `0018_device_image_keys.sql` は端末公開鍵、端末proof nonce、画像の端末別Key-B envelope、Key-A由来の画像鍵wrapperを追加する。Key-B平文は保存しない。
 - 現在の簡易runnerはファイル名順にSQLを再実行する。`IF NOT EXISTS` / `IF NOT EXISTS`相当で再実行可能にしているが、適用履歴テーブルはまだ導入していない。
 - 本番でmigration履歴テーブルを導入する場合は、既存DBの適用状態を確認してからrunnerを変更する。
 

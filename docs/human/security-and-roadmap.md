@@ -13,4 +13,4 @@ flowchart LR
   A --> L[秘密を含めない監査証跡]
 ```
 
-優先順位は、(1) Key-BのKMS化・取得監査、(2) 端末での画像暗号化と鍵導出、(3) 退会reconcilerと削除監査、(4) native Passkey実機確認、(5) 業務APIです。完了条件と依存関係は [AI向けバックログ](../ai/plans/backlog.md) にあります。
+優先順位は、(1) 端末Key-Bの実機・監査確認、(2) 端末画像暗号化の画面統合、(3) 退会reconcilerと削除監査、(4) native Passkey実機確認、(5) 業務APIです。完了条件と依存関係は [AI向けバックログ](../ai/plans/backlog.md) にあります。
