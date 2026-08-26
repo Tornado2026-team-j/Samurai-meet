@@ -4,9 +4,7 @@ import * as Clipboard from "expo-clipboard";
 import { useRouter } from "expo-router";
 import {
   ActivityIndicator,
-  KeyboardAvoidingView,
   Modal,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -555,9 +553,11 @@ export default function ProfileScreen() {
           transparent
           visible={showDeleteConfirmation}
         >
-          <KeyboardAvoidingView
-            behavior={Platform.OS === "ios" ? "padding" : undefined}
-            style={styles.modalBackdrop}
+          <ScrollView
+            automaticallyAdjustKeyboardInsets
+            contentContainerStyle={styles.modalBackdrop}
+            keyboardShouldPersistTaps="handled"
+            style={styles.modalScrollView}
           >
             <View style={styles.deletePanel}>
               <Text style={styles.deleteTitle}>{copy.deleteTitle}</Text>
@@ -610,7 +610,7 @@ export default function ProfileScreen() {
                 </Pressable>
               </View>
             </View>
-          </KeyboardAvoidingView>
+          </ScrollView>
         </Modal>
       </ScrollView>
     </View>
@@ -946,11 +946,16 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff5f4",
   },
   modalBackdrop: {
-    flex: 1,
+    flexGrow: 1,
     alignItems: "center",
     justifyContent: "center",
     padding: 24,
+    width: "100%",
     backgroundColor: "rgba(0, 0, 0, 0.45)",
+  },
+  modalScrollView: {
+    flex: 1,
+    width: "100%",
   },
   deleteTitle: {
     color: "#7a271a",
