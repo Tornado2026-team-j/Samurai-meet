@@ -91,6 +91,8 @@ describe('フロント端末Key-A envelope', () => {
     expect(Array.from(recoverKeyA(rotated.recoveryKey, rotated.envelope))).toEqual(Array.from(material.keyA));
     expect(rotated.envelope.kdf_params.data_salt).toBe(material.envelope.kdf_params.data_salt);
     expect(rotated.recoveryKey).not.toBe(material.recoveryKey);
+    expect(rotated.envelope.kdf_params.salt).not.toBe(material.envelope.kdf_params.salt);
+    expect(rotated.envelope.encrypted_key_a).not.toBe(material.envelope.encrypted_key_a);
     expect(() => recoverKeyA(material.recoveryKey, rotated.envelope)).toThrow();
   });
 

@@ -20,6 +20,8 @@ import { isPreAuth, type PreAuth, type Session } from './auth-contract';
 
 const KEY_A_STORAGE_PREFIX = 'samurai_meet_key_a_v1_';
 const RECOVERY_KEY_STORAGE_PREFIX = 'samurai_meet_recovery_key_v1_';
+const RECOVERY_KEY_ROTATION_PENDING_PREFIX = 'samurai_meet_recovery_key_rotation_pending_v1_';
+const RECOVERY_KEY_ROTATION_MATERIAL_PREFIX = 'samurai_meet_recovery_key_rotation_material_v1_';
 const DEVICE_ID_STORAGE_PREFIX = 'samurai_meet_device_id_v1_';
 const DEVICE_KEY_B_STORAGE_PREFIX = 'samurai_meet_device_key_b_v1_';
 const RECOVERY_CLIENT_MAX_ATTEMPTS = 5;
@@ -73,6 +75,14 @@ function keyAStorageKey(userID: string): string {
 
 function recoveryKeyStorageKey(userID: string): string {
   return `${RECOVERY_KEY_STORAGE_PREFIX}${storageSuffix(userID)}`;
+}
+
+function recoveryKeyRotationPendingStorageKey(userID: string): string {
+  return `${RECOVERY_KEY_ROTATION_PENDING_PREFIX}${storageSuffix(userID)}`;
+}
+
+function recoveryKeyRotationMaterialStorageKey(userID: string): string {
+  return `${RECOVERY_KEY_ROTATION_MATERIAL_PREFIX}${storageSuffix(userID)}`;
 }
 
 function deviceIDStorageKey(userID: string): string {
@@ -206,6 +216,69 @@ export async function loadStoredRecoveryKey(userID: string): Promise<string | nu
   return getStoredItem(recoveryKeyStorageKey(userID));
 }
 
+/**
+ * Recovery verification succeeds before the new Passkey session exists. Keep
+ * this local marker so the post-Passkey key setup cannot silently treat the
+ * old Recovery Key as complete. It is a workflow marker, not an auth
+ * decision; the server remains the authority when the new envelope is saved.
+ */
+export async function markRecoveryKeyRotationPending(userID: string): Promise<void> {
+  await setStoredItem(recoveryKeyRotationPendingStorageKey(userID), '1');
+}
+
+export async function isRecoveryKeyRotationPending(userID: string): Promise<boolean> {
+  return (await getStoredItem(recoveryKeyRotationPendingStorageKey(userID))) === '1';
+}
+
+export async function savePendingRecoveryKeyRotation(
+  userID: string,
+  material: GeneratedKeyMaterial,
+): Promise<void> {
+  if (material.keyA.length !== 32 || recoveryPublicKey(material.keyA) !== material.envelope.recovery_public_key) {
+    throw new Error('Invalid Recovery Key rotation material');
+  }
+  const normalizedRecoveryKey = normalizeRecoveryKey(material.recoveryKey);
+  recoverKeyA(normalizedRecoveryKey, material.envelope);
+  await setStoredItem(recoveryKeyRotationMaterialStorageKey(userID), JSON.stringify({
+    key_a: toBase64URL(material.keyA),
+    recovery_key: normalizedRecoveryKey,
+    envelope: material.envelope,
+  }));
+  await markRecoveryKeyRotationPending(userID);
+}
+
+export async function loadPendingRecoveryKeyRotation(userID: string): Promise<GeneratedKeyMaterial | null> {
+  const stored = await getStoredItem(recoveryKeyRotationMaterialStorageKey(userID));
+  if (!stored) return null;
+  try {
+    const parsed: unknown = JSON.parse(stored);
+    if (!parsed || typeof parsed !== 'object') return null;
+    const candidate = parsed as {
+      key_a?: unknown;
+      recovery_key?: unknown;
+      envelope?: unknown;
+    };
+    if (typeof candidate.key_a !== 'string' || typeof candidate.recovery_key !== 'string' || !isKeyEnvelope(candidate.envelope)) {
+      return null;
+    }
+    const keyA = fromBase64URL(candidate.key_a);
+    const recoveryKey = normalizeRecoveryKey(candidate.recovery_key);
+    const envelope = normalizeKeyEnvelope(candidate.envelope);
+    if (keyA.length !== 32 || recoveryPublicKey(keyA) !== envelope.recovery_public_key) return null;
+    recoverKeyA(recoveryKey, envelope);
+    return { keyA, recoveryKey, envelope };
+  } catch {
+    return null;
+  }
+}
+
+async function clearRecoveryKeyRotationPending(userID: string): Promise<void> {
+  await Promise.all([
+    deleteStoredItem(recoveryKeyRotationPendingStorageKey(userID)),
+    deleteStoredItem(recoveryKeyRotationMaterialStorageKey(userID)),
+  ]);
+}
+
 export async function saveKeyMaterial(userID: string, keyA: Uint8Array, recoveryKey: string): Promise<void> {
   if (keyA.length !== 32) throw new Error('Invalid Key-A');
   const normalizedRecoveryKey = normalizeRecoveryKey(recoveryKey);
@@ -220,6 +293,7 @@ export async function clearKeyMaterial(userID: string): Promise<void> {
 	await Promise.all([
 		deleteStoredItem(keyAStorageKey(userID)),
 		deleteStoredItem(recoveryKeyStorageKey(userID)),
+		clearRecoveryKeyRotationPending(userID),
 		deleteDeviceStoredItem(deviceIDStorageKey(userID)),
 		deleteDeviceStoredItem(deviceKeyBStorageKey(userID)),
 	]);
@@ -367,7 +441,9 @@ export async function prepareRecoveryKeyRotation(
   if (!envelope) throw new Error('このアカウントにはRecovery Keyが登録されていません。');
 
   onStage?.('generating');
-  return createRecoveryKeyMaterial(keyA, envelope);
+  const material = await createRecoveryKeyMaterial(keyA, envelope);
+  await savePendingRecoveryKeyRotation(session.user_id, material);
+  return material;
 }
 
 export async function completeRecoveryKeyRotation(
@@ -378,6 +454,7 @@ export async function completeRecoveryKeyRotation(
   onStage?.('saving');
   await saveKeyEnvelope(session, material.envelope);
   await saveKeyMaterial(session.user_id, material.keyA, material.recoveryKey);
+  await clearRecoveryKeyRotationPending(session.user_id);
 }
 
 export async function beginRecovery(token: string): Promise<RecoveryChallenge> {
@@ -430,6 +507,7 @@ export async function recoverWithPreAuth(preAuth: PreAuth, recoveryKey: string):
   }
   if (!isPreAuth(response.data)) throw new Error('Recovery pre-auth response is invalid');
   await saveKeyMaterial(preAuth.user_id, keyA, normalizedRecoveryKey);
+  await markRecoveryKeyRotationPending(preAuth.user_id);
   recoveryClientAttempts.delete(preAuth.user_id);
   return response.data;
 }
@@ -462,6 +540,7 @@ export async function recoverWithSession(session: Session, recoveryKey: string):
     throw mapRecoveryVerificationError(reason);
   }
   await saveKeyMaterial(session.user_id, keyA, normalizedRecoveryKey);
+  await markRecoveryKeyRotationPending(session.user_id);
   recoveryClientAttempts.delete(session.user_id);
 }
 

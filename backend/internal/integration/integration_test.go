@@ -243,6 +243,75 @@ func TestAuthKeyImageAndAccountLifecycle(t *testing.T) {
 	}
 }
 
+func TestRecoveryReRegistrationRevokesPreviousPasskeys(t *testing.T) {
+	database := openIsolatedDatabase(t)
+	now := time.Date(2026, time.August, 26, 12, 0, 0, 0, time.UTC)
+	userID := randomID(t)
+	if _, err := database.Exec(`INSERT INTO users (id,google_subject_id,status,created_at,updated_at) VALUES ($1,$2,'active',$3,$3)`, userID, "recovery-google-"+userID, now.Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+
+	keyA := randomBytes(t, ed25519.SeedSize)
+	privateKey := ed25519.NewKeyFromSeed(keyA)
+	dataSalt := randomBytes(t, 16)
+	kdfParams, err := json.Marshal(map[string]string{
+		"algorithm": "HKDF-SHA256",
+		"salt":      encode(randomBytes(t, 16)),
+		"info":      encode([]byte("samurai-meet/recovery-key/v1")),
+		"data_salt": encode(dataSalt),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelopes := keys.NewService(database)
+	if _, err = envelopes.Upsert(context.Background(), userID, keys.Envelope{
+		KeyVersion:        "v1",
+		EncryptedKeyA:     encode(randomBytes(t, 32)),
+		Nonce:             encode(randomBytes(t, 12)),
+		KDFParams:         kdfParams,
+		RecoveryPublicKey: encode(privateKey.Public().(ed25519.PublicKey)),
+	}, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = database.Exec(`INSERT INTO passkey_credentials (id,user_id,credential_id,public_key,credential_json,sign_count,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7)`, "old-passkey", userID, "old-credential", "old-public-key", "{}", 0, now.Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+
+	preauth := auth.NewPreAuthService(database)
+	preAuthToken, err := preauth.Issue(context.Background(), userID, auth.PreAuthScopeLogin, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recovery := keys.NewRecoveryService(database, preauth)
+	challenge, err := recovery.BeginForPreAuth(context.Background(), preAuthToken, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := recovery.VerifyForPreAuth(context.Background(), preAuthToken, keys.RecoveryProof{
+		ChallengeID: challenge.ChallengeID,
+		Challenge:   challenge.Challenge,
+		KeyVersion:  challenge.Envelope.KeyVersion,
+		Signature:   encode(ed25519.Sign(privateKey, keys.RecoveryProofMessage(userID, challenge.Envelope.KeyVersion, challenge.Challenge))),
+	}, now.Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.PasskeyRequired || result.PreAuthToken == "" {
+		t.Fatalf("recovery result = %+v", result)
+	}
+
+	var remaining int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM passkey_credentials WHERE user_id=$1`, userID).Scan(&remaining); err != nil {
+		t.Fatal(err)
+	}
+	if remaining != 0 {
+		t.Fatalf("old passkey rows after recovery = %d", remaining)
+	}
+	if _, err := preauth.Lookup(context.Background(), result.PreAuthToken, auth.PreAuthScopeRegister, userID, now.Add(time.Second)); err != nil {
+		t.Fatalf("recovery registration pre-auth was not issued: %v", err)
+	}
+}
+
 func openIsolatedDatabase(t *testing.T) *sql.DB {
 	t.Helper()
 	if os.Getenv("TEST_POSTGRES") != "1" {

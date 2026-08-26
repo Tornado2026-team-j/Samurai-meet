@@ -77,7 +77,7 @@ Bootstrap request:
 }
 ```
 
-`/auth/passkey/web/options`、`/auth/passkey/web/reset`、`/auth/passkey/web/verify`はWebAuthn専用のブラウザAPIです。bootstrapは現在1分、ceremonyは5分、一回限りで、サーバーにはtoken hashだけを保存します。ブラウザ側のWebAuthn失敗時はresetで旧ceremonyを無効化してから、新しいoptionsを取得できます。Recovery由来のpre-auth登録では、同じ端末に残る既存Passkeyを除外せず新しいcredentialを追加します。verify成功時のJSONは`handoff_code`と`app_redirect_uri`だけです。
+`/auth/passkey/web/options`、`/auth/passkey/web/reset`、`/auth/passkey/web/verify`はWebAuthn専用のブラウザAPIです。bootstrapは現在1分、ceremonyは5分、一回限りで、サーバーにはtoken hashだけを保存します。ブラウザ側のWebAuthn失敗時はresetで旧ceremonyを無効化してから、新しいoptionsを取得できます。Recovery検証が成功したpre-auth登録では、旧Passkeyを同一トランザクションで失効させてから、新しいcredentialを登録します。端末側に残る古いcredentialを再登録画面の除外対象にしないため、同じ端末でも再登録できます。verify成功時のJSONは`handoff_code`と`app_redirect_uri`だけです。
 
 Web Passkey後のsession handoff:
 

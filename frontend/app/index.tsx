@@ -24,9 +24,12 @@ import {
   completeRecoveryKeyRotation,
   createInitialKeyMaterial,
   ensureDeviceKeyB,
+  isRecoveryKeyRotationPending,
   listKeyEnvelopes,
   loadStoredKeyA,
+  loadPendingRecoveryKeyRotation,
   recoverWithSession,
+  savePendingRecoveryKeyRotation,
   type GeneratedKeyMaterial,
 } from "../services/key-management";
 import { createRecoveryKeyMaterial, deriveDataKey, type KeyEnvelope } from "../services/crypto";
@@ -709,17 +712,39 @@ export default function OnboardingScreen() {
     setKeySetupState({ status: "loading" });
     void (async () => {
       try {
-        const localKeyA = await loadStoredKeyA(userID);
+        const pendingRotation = await loadPendingRecoveryKeyRotation(userID);
+        const localKeyA = await loadStoredKeyA(userID) ?? pendingRotation?.keyA ?? null;
         if (!active) return;
         if (localKeyA) {
           const envelopes = await listKeyEnvelopes(activeSession);
-          const envelope = envelopes.find((item) => item.kdf_params.data_salt.length > 0);
+          const envelope = envelopes.find((item) => item.recovery_public_key.length > 0)
+            ?? envelopes.find((item) => item.kdf_params.data_salt.length > 0);
           if (!envelope) {
             throw new Error("このアカウントの暗号鍵情報を確認できません。Recovery Keyで復旧してください。");
           }
           const keyB = await ensureDeviceKeyB(activeSession);
           deriveDataKey(localKeyA, keyB.keyB, envelope.kdf_params.data_salt);
           if (!active) return;
+          if (pendingRotation || await isRecoveryKeyRotationPending(userID)) {
+            if (!active) return;
+            const usePendingRotation = pendingRotation !== null
+              && pendingRotation.envelope.key_version === envelope.key_version
+              && pendingRotation.envelope.encrypted_key_a === envelope.encrypted_key_a
+              && pendingRotation.envelope.nonce === envelope.nonce
+              && pendingRotation.envelope.kdf_params.algorithm === envelope.kdf_params.algorithm
+              && pendingRotation.envelope.kdf_params.salt === envelope.kdf_params.salt
+              && pendingRotation.envelope.kdf_params.info === envelope.kdf_params.info
+              && pendingRotation.envelope.kdf_params.data_salt === envelope.kdf_params.data_salt
+              && pendingRotation.envelope.recovery_public_key === envelope.recovery_public_key;
+            const material = usePendingRotation && pendingRotation
+              ? pendingRotation
+              : await createRecoveryKeyMaterial(localKeyA, envelope);
+            if (!usePendingRotation) await savePendingRecoveryKeyRotation(userID, material);
+            if (!active) return;
+            setKeySetupState({ status: "rotate", material });
+            setKeySetupFor(userID);
+            return;
+          }
           setKeySetupState({ status: "ready" });
           setKeySetupFor(userID);
           return;
@@ -868,6 +893,7 @@ export default function OnboardingScreen() {
             const keyB = await ensureDeviceKeyB(session);
             deriveDataKey(keyA, keyB.keyB, keySetupState.envelope.kdf_params.data_salt);
             const material = await createRecoveryKeyMaterial(keyA, keySetupState.envelope);
+            await savePendingRecoveryKeyRotation(session.user_id, material);
             setKeySetupState({ status: "rotate", material });
           } catch (reason) {
             setKeySetupState((current) => current.status === "recover"

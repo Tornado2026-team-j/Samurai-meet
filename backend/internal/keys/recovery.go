@@ -220,6 +220,12 @@ func (s *RecoveryService) verify(ctx context.Context, userID, sessionID, preAuth
 	}
 	var result RecoveryResult
 	if sessionID == "" {
+		// Recovery-based re-registration replaces the old Passkey set. Keep this
+		// in the same transaction as proof verification and pre-auth issuance so
+		// an old device cannot continue authenticating after recovery succeeds.
+		if _, err = tx.ExecContext(ctx, `DELETE FROM passkey_credentials WHERE user_id=$1`, userID); err != nil {
+			return RecoveryResult{}, err
+		}
 		result.PreAuthToken, err = s.preauth.IssueTx(ctx, tx, userID, auth.PreAuthScopeRegister, now)
 		if err != nil {
 			return RecoveryResult{}, err

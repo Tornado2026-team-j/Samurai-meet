@@ -473,17 +473,17 @@ export function RecoveryCompletion({
   const insets = useSafeAreaInsets();
   const copy = language === "ja"
     ? {
-        title: mode === "initial" ? "暗号鍵の登録が完了しました" : "Recovery Keyを確認しました",
+        title: mode === "initial" ? "暗号鍵の登録が完了しました" : "Recovery Keyを再生成しました",
         description: mode === "initial"
           ? "Recovery Keyを保存し、端末の暗号鍵を登録しました。"
-          : "Recovery Keyを確認し、この端末の暗号鍵を登録しました。",
+          : "新しいRecovery Keyを登録し、この端末の暗号鍵を引き継ぎました。",
         continue: "続ける",
       }
     : {
-        title: mode === "initial" ? "Encryption keys are ready" : "Recovery Key verified",
+        title: mode === "initial" ? "Encryption keys are ready" : "Recovery Key regenerated",
         description: mode === "initial"
           ? "Your Recovery Key and device encryption key have been registered."
-          : "Your Recovery Key was verified and this device's encryption key was registered.",
+          : "A new Recovery Key was registered, and this device's encryption key was restored.",
         continue: "Continue",
       };
 
