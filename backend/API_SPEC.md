@@ -1,6 +1,6 @@
 # バックエンド API 仕様（実装基準）
 
-最終更新: 2026-08-24
+最終更新: 2026-08-26
 
 この文書は、現在のGo実装とExpoテストクライアントの契約です。状態は次の記号で表します。
 
@@ -261,11 +261,11 @@ Request（新クライアントは`request_id`を使用。互換のため`refres
 
 失効後のAccess Tokenは署名が正しくても、DBのsession確認で拒否されます。
 
-## 6. Key-A envelope・画像・退会
+## 6. Client root-key envelope・画像・退会
 
-### 6.1 Key-A envelope（実装済み）
+### 6.1 Client root-key envelope v2（実装済み）
 
-Key-Aそのものではなく、Recovery Keyから端末上で導出した鍵で暗号化した値だけを保存します。
+Master Keyそのものではなく、24語Recovery Phraseから端末上で導出した鍵で暗号化したv2 envelopeだけを保存します。`/api/v1`はHTTP URLの互換入口であり、暗号方式のv1を受け付ける意味ではありません。
 
 | Method | Path | 認証 | 用途 |
 | --- | --- | --- | --- |
@@ -278,35 +278,40 @@ PUT body:
 
 ```json
 {
-  "key_version": "v1",
-  "encrypted_key_a": "Base64URLの暗号化済みKey-A",
+  "key_version": "v2",
+  "encrypted_key_a": "Base64URLの暗号化済みMaster Key",
   "nonce": "Base64URLのAES-GCM nonce",
   "kdf_params": {
-    "algorithm": "HKDF-SHA256",
+    "algorithm": "Argon2id+HKDF-SHA256",
     "salt": "16 byteのBase64URL salt",
-    "info": "Base64URL(samurai-meet/recovery-key/v1)",
-    "data_salt": "16 byteのBase64URL salt"
+    "info": "Base64URL(samurai-meet/recovery-phrase/v2)",
+    "data_salt": "16 byteのBase64URL salt",
+    "argon2id": {
+      "memory_kib": 32768,
+      "iterations": 3,
+      "parallelism": 1
+    }
   },
   "recovery_public_key": "32 byte Ed25519公開鍵のBase64URL"
 }
 ```
 
-`recovery_available`は既存のKey-A envelopeにRecovery公開鍵がある場合だけ`true`です。`false`の場合はRecovery Key復旧ではなく、Passkey成功後に新しいRecovery Keyを登録します。未設定アカウントへのRecovery challengeは`409 recovery_not_configured`を返します。
+`recovery_available`はv2 envelopeにRecovery公開鍵がある場合だけ`true`です。`false`の場合はRecovery Phrase復旧ではなく、Passkey成功後に新しいv2 Recovery Phraseを登録します。未設定アカウントへのRecovery challengeは`409 recovery_not_configured`を返します。旧v1 root envelopeは`410 legacy_key_version_disabled`として扱います。
 
-新しいenvelopeでは上記のKDF値、salt長、data salt長、Ed25519公開鍵長をサーバーも厳密に検証します。ただしサーバーはKDFを実行したりKey-Aを復号したりせず、Key-A、Recovery Keyの平文も受け取りません。公開証明鍵を持たない既存envelopeはデータ保全のため保存できますが、新Recoveryフローの対象にはしません。
+新しいenvelopeでは上記のKDF値、salt長、data salt長、AES-GCM暗号文長、Ed25519公開鍵長をサーバーも厳密に検証します。ただしサーバーはKDFを実行したりMaster Keyを復号したりせず、Master Key、Recovery Phraseの平文も受け取りません。v1 envelopeは保存・復旧・更新の対象外です。
 
-### 6.1.1 Recovery Key proof（実装済み）
+### 6.1.1 Recovery Phrase proof（実装済み）
 
 | Method | Path | 認証 | 用途 |
 | --- | --- | --- | --- |
 | POST | `/api/v1/auth/recovery/challenge` | `passkey_login` / `passkey_register` pre-auth、またはAccess Token + 5分以内のPasskey再認証 | Recovery challengeとenvelopeを取得 |
-| POST | `/api/v1/auth/recovery/verify` | challengeを開始した同じpre-authまたはsession | Key-A由来のEd25519署名を検証 |
+| POST | `/api/v1/auth/recovery/verify` | challengeを開始した同じpre-authまたはsession | Recovery Phraseで復号したroot由来のEd25519署名を検証 |
 
-challengeは32 byte乱数、TTL 10分、1回限りです。challenge自体はDBへ保存せずSHA-256 hashだけを保存し、署名失敗は最大5回で消費します。最大回数到達後の検証は`429 recovery_rate_limited`（`Retry-After: 3600`）です。pre-auth単位では1時間に10回まで発行します。クライアントはRecovery Keyを端末内で復号にだけ使い、ローカル復号に失敗した場合もサーバーへ正しい形の無効proofを送って試行回数を同期します。UIでは暗号ライブラリの詳細エラーを表示しません。
+challengeは32 byte乱数、TTL 10分、1回限りです。challenge自体はDBへ保存せずSHA-256 hashだけを保存し、署名失敗は最大5回で消費します。最大回数到達後の検証は`429 recovery_rate_limited`（`Retry-After: 3600`）です。pre-auth単位では1時間に10回まで発行します。クライアントはRecovery Phraseを端末内で復号にだけ使い、ローカル復号に失敗した場合もサーバーへ正しい形の無効proofを送って試行回数を同期します。UIでは暗号ライブラリの詳細エラーを表示しません。
 
-`samurai-meet/recovery-proof/v1\n<user_id>\n<key_version>\n<challenge>`
+`samurai-meet/recovery-proof/v2\n<user_id>\n<key_version>\n<challenge>`（署名鍵は端末内でRecovery Phraseから復号したroot由来）
 
-レスポンスは`Cache-Control: no-store`で、Recovery Key・Key-A・Key-Bの平文をレスポンスへ含めません。
+レスポンスは`Cache-Control: no-store`で、Recovery Phrase・Master Key・Key-Bの平文をレスポンスへ含めません。
 
 ### 6.2 端末固有Key-B（実装済み）
 
@@ -369,9 +374,158 @@ SVG、GIF、HTMLなどブラウザで解釈され得る未許可MIMEは拒否し
 
 `DELETE /api/v1/me` に `{"confirm":"DELETE"}` を送り、Access Tokenと5分以内のPasskey再認証を要求します。処理中に全sessionを失効し、refresh/pre-auth/passkey/recovery challenge/auth challenge/key envelope/端末公開鍵/画像envelope/handoff/photo metadataを削除し、暗号文画像フォルダとcacheを削除してからユーザー行を削除します。削除後は旧Access TokenもDBのsession行がないため拒否されます。フロントの削除ボタンはインライン確認後にPasskey再認証を開始しますが、認可の最終判断は常にこのAPIで行います。
 
-### 6.5 未実装業務API
+### 6.5 プロフィール（実装済み。フロント接続は未実施）
 
-プロフィール、本人確認、募集、検索、マッチ、評価、チャットQUIC用短命Chat Tokenは引き続き予定です。画像平文、Key-A、Key-B、Recovery Key、Refresh TokenをAPIログへ出さない不変条件は全機能に適用します。
+#### 自分のプロフィール取得
+
+`GET /api/v1/me`
+
+Access Tokenを要求し、次の形式を返します。
+
+```json
+{
+  "data": {
+    "user_id": "opaque-user-id",
+    "name": "表示名",
+    "nationality_code": "JP",
+    "bio": "自己紹介",
+    "identity_status": "unverified",
+    "likes_count": 0,
+    "completed": true
+  }
+}
+```
+
+`identity_status`、`likes_count`はサーバー管理値です。プロフィール未作成時の名前は`users.display_name`（Google表示名等の安全なfallback）を返し、国コード・bioは空、`completed`はfalseになります。停止・削除済みユーザーは404 `account_not_found`です。
+
+#### 自分のプロフィール更新
+
+`PATCH /api/v1/me/profile`
+
+Request body:
+
+```json
+{
+  "name": "表示名",
+  "nationality_code": "JP",
+  "bio": "あとから変更できる自己紹介"
+}
+```
+
+指定した項目だけを更新し、指定しない項目は既存値を維持します。`name`は空白を除去した最大64 Unicode code points、`bio`は最大1000 Unicode code points、`nationality_code`は大文字2文字のISO alpha-2コードです。bioの改行・タブ以外の制御文字、不正な国コード、上限超過は400 `invalid_profile`です。成功時は`GET`と同じプロフィールを`data`に入れて返します。プロフィール名は`users.display_name`にも同期し、次回以降のPasskey登録の`user.name` / `user.displayName`に利用します。本人確認状態、いいね数、アイコン参照の更新はこのAPIの対象外です。既存PasskeyのOS側表示名は登録後に変更されません。
+
+`PATCH /api/v1/me` も互換入口として受け付けますが、新しいクライアントは`/me/profile`を使用します。
+
+### 6.6 募集・検索・マッチ（実装済み。フロント接続済み）
+
+#### 募集カード
+
+`POST /api/v1/recruitments`
+
+Request body:
+
+```json
+{
+  "category": "Food",
+  "available_date": "2026-08-27",
+  "start_time": "18:00",
+  "end_time": "20:00",
+  "timezone": "Asia/Tokyo",
+  "keywords": ["食事", "日本語"],
+  "description": "駅の近くで交流しましょう",
+  "visibility_radius_km": 3,
+  "latitude": 35.681236,
+  "longitude": 139.767125,
+  "location_accuracy_m": 30,
+  "status": "open"
+}
+```
+
+`category`は`Food` / `Places` / `Activity` / `Other`、`status`は`draft` / `open` / `closed`、公開半径は1 / 3 / 5だけを受け付けます。日時はカードのtimezoneで解釈し、期限は`end_time`です。公開するカードには完成プロフィールが必要です。成功時は201で`{ "data": { ...card } }`を返します。
+
+`GET /api/v1/recruitments/{id}`は所有者には自身のカードを返し、他ユーザーには期限内の`open` / `matched`だけを返します。`PATCH`は所有者だけが実行でき、`matched`後の内容変更は拒否します。`DELETE`は物理削除ではなく`closed`へ遷移させ、204を返します。
+
+#### 検索と現在地
+
+`GET /api/v1/recruitments?keyword=食事&available_date=2026-08-27&start_time=18:00&end_time=20:00&radius_km=3&verified_only=true&latitude=35.681236&longitude=139.767125&limit=20`
+
+`keyword`は複数指定できます。緯度経度を指定しなければ、`POST /api/v1/me/location`で保存した有効な最新位置（保持1時間）を使います。位置がない検索はキーワード・日時検索として扱います。結果は期限内の公開カードだけで、所有者自身とブロック関係にある相手は除外します。正確な座標は返さず、距離は`distance_band`（`within_1_km` / `within_3_km` / `within_5_km`）だけで示します。Authorization付きのプロフィール・マッチング応答には`Cache-Control: no-store`を付けます。
+
+`POST /api/v1/me/location`のbodyは`latitude`、`longitude`、`accuracy_m`、任意の`captured_at`です。緯度経度、精度、取得時刻を検証し、成功時は204です。現行のCI/PostgreSQLイメージにPostGISを追加していないため、距離計算はGoのHaversineです。将来の件数増加時にPostGISへ置き換える際も、レスポンスから正確な座標を出さない契約は維持します。
+
+#### 関心・承認・完了
+
+- `POST /api/v1/recruitments/{id}/interest`: 他ユーザーが関心を1回送る。成功201、重複は409 `interest_already_sent`。
+- `GET /api/v1/matches?role=owner&status=pending&limit=50`: 自分の募集カードへ届いた応募一覧を返す。`role`は`all` / `owner` / `requester`、`status`は`pending` / `accepted` / `rejected` / `blocked` / `expired` / `completed`です。
+- `GET /api/v1/matches/{id}`: マッチ参加者だけが、相手の公開プロフィールと募集カードを取得できます。
+- `POST /api/v1/matches/{id}/accept`: カード所有者だけが`pending`を`accepted`へ遷移させる。期限切れ・ブロック・不正状態は拒否する。
+- `POST /api/v1/matches/{id}/reject`: カード所有者だけが`pending`を`rejected`へ遷移させる。
+- `POST /api/v1/matches/{id}/complete`: マッチ参加者が`accepted`を`completed`へ遷移させる。
+
+応募一覧・マッチ詳細の成功レスポンスは`{ "data": [ ... ] }` / `{ "data": { ... } }`です。各マッチには`other_user`（認証ユーザーから見た相手の公開プロフィール）と`recruitment`（募集カード）が含まれます。正確な位置情報はどの応答にも含めません。
+
+`accepted`前のチャットAPIはありません。カードは承認後も`matched`として残り、所有者が閉じるか期限切れになるまで追加の関心を受け付けます。
+
+### 6.7 チャット（REST MVP実装済み。フロント接続・リアルタイム配送は未実施）
+
+チャットは`accepted`になったマッチに対して遅延作成されます。`completed`後は履歴の取得と既読更新だけを許可し、新規送信・transport token発行は停止します。ブロック関係がある場合はチャットの存在を推測できないよう404相当で拒否します。
+
+| Method | Path | 認証 | 用途 |
+| --- | --- | --- | --- |
+| GET | `/api/v1/chats` | Access Token | 自分のaccepted/completedチャット一覧 |
+| GET | `/api/v1/chats/{id}/messages?after=0&limit=50` | Access Token | 暗号化メッセージ履歴。最大100件 |
+| POST | `/api/v1/chats/{id}/messages` | Access Token | 暗号化メッセージ送信 |
+| POST | `/api/v1/chats/{id}/read` | Access Token | `last_message_sequence`まで既読 |
+| POST | `/api/v1/chats/{id}/transport-token` | Access Token | WebSocket/WebTransport用短命Chat Token発行 |
+
+送信bodyは次の形式です。
+
+```json
+{
+  "client_message_id": "端末内で一意な再送用ID",
+  "ciphertext": "Base64URL(no padding)",
+  "nonce": "12byte AES-GCM nonceのBase64URL",
+  "algorithm": "AES-256-GCM",
+  "key_version": "v1"
+}
+```
+
+サーバーは`ciphertext`を復号せず、平文本文・検索用プレビュー・暗号鍵を受け付けません。`client_message_id`は送信者とチャット単位で一意で、同じIDの再送は元のメッセージを返します。暗号文は復号前128KiBまでです。履歴は`sequence`をcursorにして再接続時に補完します。
+
+transport tokenはAccess Token・Refresh Tokenと別audience（`samurai-meet-chat`）で、対象chat・session・transportだけに束縛した2分のJWSです。Refresh TokenをWebSocket、WebTransport、URL queryへ送ってはいけません。現時点ではRESTポーリングを実装し、WebSocket配送は次の作業で追加します。
+
+### 6.8 会合セッション・Bluetooth／位置推測の補助（バックエンド実装済み。実測はクライアント）
+
+承認済みマッチの参加者は、会合セッションを1件作成できます。
+
+| Method | Path | 認証 | 用途 |
+| --- | --- | --- | --- |
+| POST | `/api/v1/matches/{id}/meeting` | Access Token | 会合セッション作成（任意の予定時刻） |
+| GET | `/api/v1/meetings/{id}` | Access Token | 自分の会合セッション取得 |
+| POST | `/api/v1/meetings/{id}/start` | Access Token | `planned`から`active`へ開始 |
+| POST | `/api/v1/meetings/{id}/end` | Access Token | `active`から`completed`へ終了 |
+| GET | `/api/v1/meetings/{id}/proximity` | Access Token | 直近5分の距離補助値取得 |
+| POST | `/api/v1/meetings/{id}/proximity` | Access Token | 端末が推定した距離補助値を送信 |
+
+proximityのbodyは次の形式です。
+
+```json
+{
+  "method": "bluetooth_rssi",
+  "distance_m": 2.5,
+  "confidence": 0.8,
+  "sample_id": "端末内のサンプルID",
+  "captured_at": "2026-08-26T12:00:00Z"
+}
+```
+
+`method`は`bluetooth_rssi`、`bluetooth_uwb`、`location_inference`のいずれかです。サーバーはBluetoothを測定・検証しないため、応答の`verified`は常にfalse、`source`は`client_estimate`です。距離・信頼度は範囲検証するだけで、本人確認、入場許可、マッチ成立、課金、安全判定の根拠には使いません。端末のBLE MAC、RSSI生値、ビーコン識別子、緯度経度はAPIへ送らず保存もしません。
+
+DBには会合中の参加者ごと・方式ごとに最新1件だけを保持し、取得時刻から5分を超えた値は返しません。会合終了時に補助値を削除します。実際のBLE/UWB測定、OS権限、近接UIはネイティブクライアントの責務です。
+
+### 6.9 未実装業務API
+
+本人確認（Stripe Identity等）、評価、通知一覧、ブロック・通報登録、WebSocketリアルタイム配送、チャット内写真送信は引き続き予定です。Stripe Identityを採用する場合も、Stripe Webhookの署名検証・イベント冪等性・対象ユーザー紐付けが成功するまで`identity_status=verified`へ遷移させません。画像平文、Key-A、Key-B、Recovery Key、Refresh TokenをAPIログへ出さない不変条件は全機能に適用します。
 
 ## 7. クライアント更新手順
 

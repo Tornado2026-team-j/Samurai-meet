@@ -3,9 +3,7 @@ import { FontAwesome, MaterialIcons } from "@expo/vector-icons";
 import { Redirect } from "expo-router";
 import {
   ActivityIndicator,
-  KeyboardAvoidingView,
   Modal,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -534,9 +532,11 @@ function KeySetupError({
         transparent
         visible={confirmDelete}
       >
-        <KeyboardAvoidingView
-          behavior={Platform.OS === "ios" ? "padding" : undefined}
-          style={styles.keySetupModalBackdrop}
+        <ScrollView
+          automaticallyAdjustKeyboardInsets
+          contentContainerStyle={styles.keySetupModalBackdrop}
+          keyboardShouldPersistTaps="handled"
+          style={styles.keySetupModalScrollView}
         >
           <View style={styles.keySetupDeletePanel}>
             <Text style={styles.keySetupDeleteTitle}>{copy.deleteTitle}</Text>
@@ -572,7 +572,7 @@ function KeySetupError({
               {actionBusy ? <ActivityIndicator color="#ffffff" /> : <Text style={styles.primaryButtonText}>{copy.deleteConfirm}</Text>}
             </Pressable>
           </View>
-        </KeyboardAvoidingView>
+        </ScrollView>
       </Modal>
       <Pressable disabled={actionBusy} onPress={onLogout} style={[styles.secondaryButton, actionBusy && styles.disabled]}>
         <Text style={styles.secondaryButtonText}>{copy.logout}</Text>
@@ -593,12 +593,10 @@ function ProfileStep({ initialProfile, language, onBack, onSubmit }: ProfileStep
       };
 
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-      style={styles.screen}
-    >
+    <View style={styles.screen}>
       <StatusBar style="light" />
       <ScrollView
+        automaticallyAdjustKeyboardInsets
         contentContainerStyle={styles.profileScrollContent}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
@@ -620,7 +618,7 @@ function ProfileStep({ initialProfile, language, onBack, onSubmit }: ProfileStep
           <Progress activeStep={3} language={language} />
         </View>
       </ScrollView>
-    </KeyboardAvoidingView>
+    </View>
   );
 }
 
@@ -1357,11 +1355,16 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff5f4",
   },
   keySetupModalBackdrop: {
-    flex: 1,
+    flexGrow: 1,
     alignItems: "center",
     justifyContent: "center",
     padding: 24,
+    width: "100%",
     backgroundColor: "rgba(0, 0, 0, 0.45)",
+  },
+  keySetupModalScrollView: {
+    flex: 1,
+    width: "100%",
   },
   keySetupDeleteTitle: {
     color: "#7a271a",

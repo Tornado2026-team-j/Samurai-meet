@@ -1,0 +1,16 @@
+{
+  "id": "proton-style-key-management",
+  "title": "User-held master key and device migration",
+  "status": "accepted-for-implementation",
+  "date": "2026-08-26",
+  "scope": [
+    "account root key envelopes",
+    "recovery phrase",
+    "device-specific Key-B",
+    "old-device to new-device migration",
+    "encrypted photo key envelopes"
+  ],
+  "selected_option": "stable client master key with recovery and device envelopes",
+  "compatibility": "pre-release v2-only root-key cutover; existing ciphertext bytes are preserved where the v2 account wrapper is valid",
+  "security_boundary": "the API stores and relays ciphertext and public metadata; it never receives a plaintext master key or recovery phrase"
+}

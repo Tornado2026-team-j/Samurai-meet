@@ -1,9 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
-  KeyboardAvoidingView,
   Modal,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -163,10 +161,7 @@ export function RecoveryKeyInput({ accountID, language, busy, error, onBack, onS
   };
 
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-      style={styles.screen}
-    >
+    <View style={styles.screen}>
       <StatusBar style="light" />
       <View style={[styles.header, { paddingTop: Math.max(insets.top, 20) }]}>
         <Pressable
@@ -181,7 +176,11 @@ export function RecoveryKeyInput({ accountID, language, busy, error, onBack, onS
         <Text style={styles.headerTitle}>{copy.title}</Text>
       </View>
 
-      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+      <ScrollView
+        automaticallyAdjustKeyboardInsets
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
+      >
         <MaterialIcons color={BLUE} name="vpn-key" size={58} />
         <Text style={styles.title}>{copy.inputTitle}</Text>
         <Text style={styles.description}>{copy.inputDescription}</Text>
@@ -215,7 +214,7 @@ export function RecoveryKeyInput({ accountID, language, busy, error, onBack, onS
         </Pressable>
         {onDeleteAccount ? <AccountDeleteAction busy={busy} copy={copy} onDelete={onDeleteAccount} /> : null}
       </ScrollView>
-    </KeyboardAvoidingView>
+    </View>
   );
 }
 
@@ -376,9 +375,11 @@ function AccountDeleteAction({
         transparent
         visible={confirming}
       >
-        <KeyboardAvoidingView
-          behavior={Platform.OS === "ios" ? "padding" : undefined}
-          style={styles.modalBackdrop}
+        <ScrollView
+          automaticallyAdjustKeyboardInsets
+          contentContainerStyle={styles.modalBackdrop}
+          keyboardShouldPersistTaps="handled"
+          style={styles.modalScrollView}
         >
           <View style={styles.deletePanel}>
             <Text style={styles.deleteTitle}>{copy.deleteTitle}</Text>
@@ -422,7 +423,7 @@ function AccountDeleteAction({
         </Pressable>
             </View>
           </View>
-        </KeyboardAvoidingView>
+        </ScrollView>
       </Modal>
     </>
   );
@@ -648,11 +649,16 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff5f4",
   },
   modalBackdrop: {
-    flex: 1,
+    flexGrow: 1,
     alignItems: "center",
     justifyContent: "center",
     padding: 24,
+    width: "100%",
     backgroundColor: "rgba(0, 0, 0, 0.45)",
+  },
+  modalScrollView: {
+    flex: 1,
+    width: "100%",
   },
   deleteTitle: { color: "#7a271a", fontSize: 17, fontWeight: "700" },
   deleteWarning: { color: "#7a271a", fontSize: 14, lineHeight: 21 },

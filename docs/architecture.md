@@ -53,11 +53,11 @@ flowchart LR
 
 ### 3.2 チャット
 
-1. マッチ成立後、アプリが認証済み WebSocket を開く。
-2. Go WebSocket がユーザーと `match_id` の権限を確認する。
-3. 受信したメッセージを検証し、重複を排除して保存する。
-4. サーバー時刻・メッセージ ID を付与して相手へ配信する。
-5. 切断時は REST で未同期メッセージを取得し、再接続後に状態を補正する。
+1. マッチ成立後、アプリがRESTでチャットを遅延作成し、対象chat専用の短命Chat Tokenを取得する。
+2. 現行MVPでは暗号化メッセージをRESTで送受信し、`sequence` cursorで未同期分を補完する。
+3. Go APIがユーザー、match、block、sessionの権限を確認し、平文を復号せず暗号文を保存する。
+4. WebSocketを追加する場合は、同じChat Tokenで接続し、サーバー時刻・sequenceを付与して相手へ配信する。
+5. 会合中のBluetooth／位置推測値は別の短期補助APIで受け、認証や安全判定には利用しない。
 
 QUIC / WebTransport を採用する場合は、通常の Access Token とは別に Chat Token を発行します。Chat Token の期限・切り替えは Access Token の Refresh 処理とは独立させ、対象 `chat_id` と `sid` に限定します。Refresh Token は QUIC 上へ送信しません。
 
@@ -121,7 +121,7 @@ stateDiagram-v2
 | WebSocket 切断 | 再接続し、REST で未同期メッセージを補完 |
 | 写真アップロード失敗 | 再試行可能な状態を表示し、未完了ファイルを公開しない |
 | DB 一時障害 | リクエスト ID を返し、リトライ可能な処理だけ再試行 |
-| Recovery Key 紛失 | 原則として復号不可。登録時に明示し、サポート復旧可否を別途決定 |
+| Recovery Phrase 紛失 | 原則として復号不可。登録時に明示し、サポートは復号できない |
 
 ## 7. セッション失効の構成
 
@@ -132,3 +132,19 @@ stateDiagram-v2
 - Redis 等の別セッション DB は導入しない。
 - WebSocket は接続時と heartbeat 時にセッションを再検証し、失効を検知したら接続を閉じる。
 - PostgreSQL の複数 API インスタンスで即時通知が必要になった場合は、PostgreSQL の `LISTEN / NOTIFY` を利用する。
+
+## 8. クライアント所有暗号鍵（v2）
+
+最終設計は [Proton-style key management](ai/security/proton-style-key-management/proposal.md)
+を正本とする。アカウントのMaster Key（実装上はKey-Aと同じ32byteのroot）は端末だけが保持し、
+サーバーにはRecovery Phraseで包んだenvelope、画像ごとの暗号文、公開鍵だけを保存する。
+HTTPの`/api/v1`は既存のURL互換のために残すが、root-key protocolはv2だけを受け付ける。
+
+- Ed25519の端末Key-Bはリクエストproof専用で、鍵移行には使わない。
+- 機種変更では新端末がX25519公開鍵を登録し、旧端末がPasskey再認証・端末proof・ユーザー確認を経てMaster Keyを新端末向けに包む。
+- 旧端末がない場合は、24語Recovery Phraseを端末内でArgon2id + HKDF-SHA256へ通し、Master Keyを復号する。
+- 画像本体は再暗号化せず、アカウント包みの画像DEKを新端末用に再包みする。失敗時に旧envelopeを消さない。
+- Expo Goはハードウェア保護の証明にならない。Secure Enclave / Android Keystoreは対応するネイティブ本番ビルドでのみ実機確認する。
+- 旧v1のKey-A envelope、Recovery Key、サーバー側Key-B materialはpre-release cutoverで無効化・削除する。古い開発アカウントはv2の鍵登録をやり直す。
+
+公開プロフィール画像の`/api/v1/profile-photos`は現在も互換性のためサーバー復号する例外であり、ゼロアクセス対象ではない。

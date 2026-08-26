@@ -19,7 +19,14 @@ flowchart TD
 | P1 | native Passkey実機 | app links | Associated Domains/assetlinks、登録・別端末・解除を確認 |
 | P2 | 認証統合テスト拡張 | PostgreSQL | handoff/reuse/challenge/rotationの実DB並行ケース |
 | P2 | Web Passkey transaction reconciler | PostgreSQL/worker | bootstrap消費・handoff作成失敗時の孤児sessionを検出し、再試行または安全に失効させる |
-| P2 | 業務API | profile schema | プロフィール→募集→マッチ→block/report の順で所有権・監査・rate limitを実装 |
-| P3 | Chat transport | 業務API | Access/Refreshと別audience、0-RTT変更禁止、heartbeat失効 |
+| P2 | 業務APIの残り | profile schema | プロフィール、募集、検索、関心、承認、完了、チャット、会合セッション／距離補助のGo APIまで。block/report登録、監査、rate limit、通知・評価、WebSocket配送を追加 |
+| P2 | Stripe Identity本人確認 | Stripe Identity / Webhook / identity_verifications | Verification Session発行、Webhook署名検証・イベント冪等性・ユーザー紐付け・再確認期限を実装し、正規の検証結果だけ`verified`バッジへ反映。戻りURLやクライアント自己申告では更新しない |
+| P2 | プロフィール編集・通知のフロント接続 | Go API契約 | 募集公開・検索・応募・承認／辞退は接続済み。自己紹介編集、通知の実機E2Eを確認 |
+| P2 | ログアウト後の言語選択履歴 | Expo Router | ログアウト後に旧保護画面へ戻れず、言語選択へ戻るジェスチャー仕様を実機で確定 |
+| P0 | Proton式client-owned root key v2 | `docs/ai/security/proton-style-key-management` | v1互換のまま24語Recovery Phrase、旧端末承認、新端末X25519 envelope、server zero-knowledge境界を実機E2Eで確認 |
+| P0 | 端末移行のbulk画像DEK再包み | client-owned root key v2 / image API | 進捗・再試行・中断再開・旧端末失効を持ち、全画像の新端末envelope確認後だけ完了扱い |
+| P0 | Native hardware posture | iOS Secure Enclave / Android Keystore | Expo Goと本番nativeを区別し、hardware-backed/attestation可否を画面と監査へ反映 |
+| P1 | Recovery Codes | client-owned root key v2 | 8個程度のone-time auth recovery codeをhashのみ保存し、phrase復号能力と分離 |
+| P1 | Chat transport | 業務API | Access/Refreshと別audience、0-RTT変更禁止、heartbeat失効 |
 
 各項目は実装前に脅威、API契約、migration、observability、rollback、E2E受入条件をPR本文へ記載する。
