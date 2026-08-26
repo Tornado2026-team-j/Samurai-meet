@@ -98,6 +98,7 @@ export default function JapaneseHomeScreen() {
             accessibilityLabel="通知"
             accessibilityRole="button"
             hitSlop={8}
+            onPress={() => router.push("/japanese/notifications")}
             style={({ pressed }) => [
               styles.headerIconButton,
               styles.notificationButton,
@@ -105,6 +106,7 @@ export default function JapaneseHomeScreen() {
             ]}
           >
             <MaterialIcons color="#ffffff" name="notifications-none" size={30} />
+            <View style={styles.notificationBadge} />
           </Pressable>
 
           <Pressable
@@ -229,6 +231,17 @@ const styles = StyleSheet.create({
   },
   notificationButton: {
     width: 21,
+  },
+  notificationBadge: {
+    position: "absolute",
+    top: 1,
+    right: 0,
+    width: 8,
+    height: 8,
+    borderWidth: 1,
+    borderColor: BLUE,
+    borderRadius: 4,
+    backgroundColor: YELLOW,
   },
   profileButton: {
     width: 24.56,
