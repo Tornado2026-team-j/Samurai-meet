@@ -23,9 +23,10 @@ type RouterOptions struct {
 	Sessions            *auth.SessionService
 	SessionHandoffs     *auth.SessionHandoffService
 	PasskeyBootstraps   *auth.PasskeyBootstrapService
+	Recovery            *keys.RecoveryService
 	Passkeys            *auth.PasskeyService
 	KeyEnvelopes        *keys.Service
-	KeyB                *keys.KeyBService
+	Devices             *keys.DeviceService
 	Images              *image.Service
 	Accounts            *account.Service
 }
@@ -36,6 +37,8 @@ func NewRouterWithOptions(o RouterOptions) http.Handler {
 	m := http.NewServeMux()
 	m.HandleFunc("/healthz", healthz)
 	m.HandleFunc("/readyz", readyz)
+	m.HandleFunc("/passkey", passkeyPage)
+	m.HandleFunc("/passkey/", passkeyPage)
 	m.HandleFunc(APIV1Prefix+"/healthz", healthz)
 	m.HandleFunc(APIV1Prefix+"/readyz", readyz)
 	if o.OAuthLogin != nil {
@@ -57,6 +60,13 @@ func NewRouterWithOptions(o RouterOptions) http.Handler {
 	if o.PasskeyBootstraps != nil && o.Sessions != nil {
 		m.HandleFunc(APIV1Prefix+"/auth/passkey/bootstrap", passkeyBootstrap(o.PasskeyBootstraps, o.Sessions, o.PreAuth, o.Environment, o.AllowExpoGoRedirect))
 	}
+	if o.Recovery != nil {
+		m.HandleFunc(recoveryPath+"/challenge", recoveryChallenge(o.Recovery, o.Sessions, o.PreAuth))
+		m.HandleFunc(recoveryPath+"/verify", recoveryVerify(o.Recovery, o.Sessions, o.PreAuth))
+	}
+	if o.PasskeyBootstraps != nil {
+		m.HandleFunc(APIV1Prefix+"/auth/passkey/web/reset", passkeyWebReset(o.PasskeyBootstraps))
+	}
 	if o.Passkeys != nil && o.PasskeyBootstraps != nil && o.Sessions != nil && o.SessionHandoffs != nil {
 		m.HandleFunc(APIV1Prefix+"/auth/passkey/web/options", passkeyWebOptions(o.Passkeys, o.PasskeyBootstraps))
 		m.HandleFunc(APIV1Prefix+"/auth/passkey/web/verify", passkeyWebVerify(o.Passkeys, o.PasskeyBootstraps, o.PreAuth, o.Sessions, o.SessionHandoffs))
@@ -75,16 +85,16 @@ func NewRouterWithOptions(o RouterOptions) http.Handler {
 		m.HandleFunc(keyEnvelopePrefix, keyEnvelopeList(o.KeyEnvelopes, o.Sessions))
 		m.HandleFunc(keyEnvelopePrefix+"/", keyEnvelopeItem(o.KeyEnvelopes, o.Sessions))
 	}
-	if o.Sessions != nil && o.KeyB != nil {
-		m.HandleFunc(keyBPath, keyB(o.KeyB, o.Sessions))
+	if o.Sessions != nil {
+		m.HandleFunc(devicePath, deviceRegistrations(o.Devices, o.Sessions))
 	}
 	if o.Images != nil {
 		m.HandleFunc(APIV1Prefix+"/keys/profile-image", profileWrappingKey(o.Images))
 		m.HandleFunc(APIV1Prefix+"/profile-photos/", publicProfilePhoto(o.Images))
 	}
 	if o.Sessions != nil && o.Images != nil {
-		m.HandleFunc(APIV1Prefix+"/me/photos", uploadPhoto(o.Images, o.Sessions))
-		m.HandleFunc(APIV1Prefix+"/me/photos/", ownedPhoto(o.Images, o.Sessions))
+		m.HandleFunc(APIV1Prefix+"/me/photos", uploadPhoto(o.Images, o.Sessions, o.Devices))
+		m.HandleFunc(APIV1Prefix+"/me/photos/", ownedPhoto(o.Images, o.Sessions, o.Devices))
 	}
 	if o.Sessions != nil && o.Accounts != nil {
 		m.HandleFunc(APIV1Prefix+"/me", deleteAccount(o.Accounts, o.Sessions))
@@ -101,9 +111,9 @@ func withCORS(next http.Handler, o RouterOptions) http.Handler {
 		if allowed != "" && r.Header.Get("Origin") == allowed {
 			w.Header().Set("Access-Control-Allow-Origin", allowed)
 			w.Header().Set("Vary", "Origin")
-			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Passkey-Ceremony-Token, X-Web-Passkey-Token, X-Photo-Visibility, X-Photo-Content-Type, X-Photo-Nonce, X-Photo-Algorithm, X-Photo-Key-Version, X-Photo-Wrapped-Key, X-Photo-Server-Wrapped-Key, X-Photo-Wrapping-Algorithm")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Passkey-Ceremony-Token, X-Web-Passkey-Token, X-Photo-Visibility, X-Photo-Content-Type, X-Photo-Nonce, X-Photo-Algorithm, X-Photo-Key-Version, X-Photo-Device-ID, X-Photo-Wrapped-Key, X-Photo-Account-Wrapped-Key, X-Photo-Server-Wrapped-Key, X-Photo-Wrapping-Algorithm")
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-			w.Header().Set("Access-Control-Expose-Headers", "X-Photo-Nonce, X-Photo-Algorithm, X-Photo-Key-Version, X-Photo-Wrapped-Key, X-Photo-Wrapping-Algorithm")
+			w.Header().Set("Access-Control-Expose-Headers", "X-Photo-Nonce, X-Photo-Algorithm, X-Photo-Key-Version, X-Photo-Device-ID, X-Photo-Wrapped-Key, X-Photo-Account-Wrapped-Key, X-Photo-Wrapping-Algorithm")
 			if r.Method == http.MethodOptions {
 				w.WriteHeader(http.StatusNoContent)
 				return

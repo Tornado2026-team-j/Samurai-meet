@@ -1,21 +1,35 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { FontAwesome, MaterialIcons } from "@expo/vector-icons";
 import { Redirect } from "expo-router";
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import IdentityVerificationPrompt from "../components/IdentityVerificationPrompt";
 import ProfileForm from "../components/ProfileForm";
+import { RecoveryCompletion, RecoveryKeyDisplay, RecoveryKeyInput, SupportAccountID } from "../components/RecoveryFlow";
 import { useAuth } from "../hooks/useAuth";
+import {
+  completeInitialKeySetup,
+  completeRecoveryKeyRotation,
+  createInitialKeyMaterial,
+  ensureDeviceKeyB,
+  listKeyEnvelopes,
+  loadStoredKeyA,
+  recoverWithSession,
+  type GeneratedKeyMaterial,
+} from "../services/key-management";
+import { createRecoveryKeyMaterial, deriveDataKey, type KeyEnvelope } from "../services/crypto";
 import {
   clearLanguage,
   loadLanguage,
@@ -200,9 +214,21 @@ type AuthStepProps = {
 };
 
 function AuthStep({ language, onBack }: AuthStepProps) {
-  const { continuePasskey, error, login, preAuth, status } = useAuth();
+  const { busy, continuePasskey, error, login, preAuth, recoverWithRecoveryKey, status } = useAuth();
+  const [showRecovery, setShowRecovery] = useState(false);
   const passkeyReady = status === "pre_auth" && preAuth !== null;
-  const busy = status === "loading";
+  const startAuthentication = async () => {
+    try {
+      if (passkeyReady) {
+        await continuePasskey(language);
+      } else {
+        await login();
+      }
+    } catch {
+      // useAuth exposes the handled error through its error state.
+      return;
+    }
+  };
   const copy = language === "ja"
     ? {
         title: passkeyReady ? "Passkeyを設定" : "アカウントを作成",
@@ -211,6 +237,7 @@ function AuthStep({ language, onBack }: AuthStepProps) {
           : "Googleアカウントで安全に登録・ログインできます。",
         google: "Googleで続ける",
         passkey: preAuth?.passkey_registered ? "Passkeyで本人確認" : "Passkeyを登録",
+        recovery: "Recovery Keyで復旧",
         googleDone: "Google認証済み",
         privacy: "メールアドレスは本人確認のためにのみ使用します",
         passkeyNote: "Passkeyはパスワードを保存せず、この端末の画面ロックで本人確認します",
@@ -222,10 +249,26 @@ function AuthStep({ language, onBack }: AuthStepProps) {
           : "Sign up or sign in securely with your Google account.",
         google: "Continue with Google",
         passkey: preAuth?.passkey_registered ? "Verify with passkey" : "Create a passkey",
+        recovery: "Recover with Recovery Key",
         googleDone: "Google verified",
         privacy: "Your email is used only to verify your account",
         passkeyNote: "Passkeys use your device screen lock, so there is no password to store",
       };
+
+  if (showRecovery && passkeyReady && preAuth?.passkey_registered && preAuth.recovery_available === true) {
+    return (
+      <RecoveryKeyInput
+        accountID={preAuth.user_id}
+        busy={busy}
+        error={error}
+        language={language}
+        onBack={() => setShowRecovery(false)}
+        onSubmit={async (recoveryKey) => {
+          await recoverWithRecoveryKey(recoveryKey);
+        }}
+      />
+    );
+  }
 
   return (
     <View style={styles.screen}>
@@ -257,7 +300,7 @@ function AuthStep({ language, onBack }: AuthStepProps) {
             <Pressable
               accessibilityRole="button"
               disabled={busy}
-              onPress={() => void (passkeyReady ? continuePasskey() : login())}
+              onPress={() => void startAuthentication()}
               style={({ pressed }) => [
                 styles.authButton,
                 busy && styles.disabled,
@@ -277,6 +320,22 @@ function AuthStep({ language, onBack }: AuthStepProps) {
                 </Text>
               ) : null}
             </Pressable>
+
+            {passkeyReady && preAuth?.passkey_registered && preAuth.recovery_available === true ? (
+              <Pressable
+                accessibilityRole="button"
+                disabled={busy}
+                onPress={() => setShowRecovery(true)}
+                style={({ pressed }) => [
+                  styles.secondaryButton,
+                  busy && styles.disabled,
+                  pressed && styles.pressed,
+                ]}
+              >
+                <MaterialIcons color={YELLOW} name="vpn-key" size={22} />
+                <Text style={styles.secondaryButtonText}>{copy.recovery}</Text>
+              </Pressable>
+            ) : null}
 
             <View style={styles.securityNote}>
               <MaterialIcons color={MUTED_GRAY} name="lock-outline" size={16} />
@@ -307,6 +366,150 @@ type ProfileStepProps = {
   onBack: () => Promise<void>;
   onSubmit: (profile: LocalProfile) => Promise<void>;
 };
+
+type KeySetupState =
+  | { status: "loading" }
+  | { status: "create"; material: GeneratedKeyMaterial }
+  | { status: "recover"; envelope: KeyEnvelope; error?: string }
+  | { status: "rotate"; material: GeneratedKeyMaterial; error?: string }
+  | { status: "complete"; mode: "initial" | "recovery" }
+  | { status: "ready" }
+  | { status: "error"; message: string };
+
+function KeySetupError({
+  accountID,
+  actionError,
+  actionBusy,
+  language,
+  message,
+  onDeleteAccount,
+  onReauthenticate,
+  onLogout,
+  onRetry,
+}: {
+  accountID: string;
+  actionError: string | null;
+  actionBusy: boolean;
+  language: AppLanguage;
+  message: string;
+  onDeleteAccount: () => Promise<void>;
+  onReauthenticate: () => Promise<void>;
+  onLogout: () => void;
+  onRetry: () => void;
+}) {
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleteConfirmation, setDeleteConfirmation] = useState("");
+  const copy = language === "ja"
+    ? {
+        title: "暗号鍵を準備できません",
+        description: "通信またはサーバー設定を確認してから、もう一度お試しください。暗号鍵を登録するまでアプリは先へ進みません。",
+        reauthenticate: "Passkeyで再認証して続ける",
+        retry: "もう一度試す",
+        logout: "ログアウト",
+        deleteAccount: "アカウント削除",
+        deleteTitle: "このアカウントを削除しますか？",
+        deleteWarning: "この操作は取り消せません。アカウント、端末鍵、保存データを削除します。",
+        deleteScope: "削除対象: アカウント、全セッション、端末鍵、暗号化データ",
+        confirmDeleteInstruction: "確認のため DELETE と入力してください。",
+        confirmDeletePlaceholder: "DELETE と入力",
+        deleteConfirm: "Passkeyで再認証して削除",
+        cancel: "キャンセル",
+      }
+    : {
+        title: "Encryption keys are not ready",
+        description: "Check the connection or server configuration and try again. The app will not continue until the encryption key is ready.",
+        reauthenticate: "Re-authenticate with Passkey and continue",
+        retry: "Try again",
+        logout: "Log out",
+        deleteAccount: "Delete account",
+        deleteTitle: "Delete this account?",
+        deleteWarning: "This cannot be undone. Your account, device keys, and stored data will be deleted.",
+        deleteScope: "This deletes your account, all sessions, device keys, and encrypted data.",
+        confirmDeleteInstruction: "Type DELETE to confirm.",
+        confirmDeletePlaceholder: "Type DELETE",
+        deleteConfirm: "Re-authenticate with Passkey and delete",
+        cancel: "Cancel",
+      };
+
+  return (
+    <View style={styles.keySetupErrorScreen}>
+      <StatusBar style="dark" />
+      <MaterialIcons color="#b42318" name="error-outline" size={58} />
+      <Text style={styles.keySetupErrorTitle}>{copy.title}</Text>
+      <Text style={styles.keySetupErrorDescription}>{copy.description}</Text>
+      <Text style={styles.keySetupErrorMessage}>{message}</Text>
+      {actionError ? <Text style={styles.keySetupErrorMessage}>{actionError}</Text> : null}
+      <SupportAccountID accountID={accountID} language={language} />
+      <Pressable disabled={actionBusy} onPress={() => void onReauthenticate()} style={[styles.primaryButton, actionBusy && styles.disabled]}>
+        {actionBusy ? <ActivityIndicator color="#ffffff" /> : <Text style={styles.primaryButtonText}>{copy.reauthenticate}</Text>}
+      </Pressable>
+      <Pressable disabled={actionBusy} onPress={onRetry} style={[styles.secondaryButton, actionBusy && styles.disabled]}>
+        <Text style={styles.secondaryButtonText}>{copy.retry}</Text>
+      </Pressable>
+      <Pressable
+        disabled={actionBusy}
+        onPress={() => {
+          setDeleteConfirmation("");
+          setConfirmDelete(true);
+        }}
+        style={[styles.deleteAccountButton, actionBusy && styles.disabled]}
+      >
+        <Text style={styles.deleteAccountButtonText}>{copy.deleteAccount}</Text>
+      </Pressable>
+      <Modal
+        animationType="fade"
+        onRequestClose={() => {
+          if (!actionBusy) setConfirmDelete(false);
+        }}
+        transparent
+        visible={confirmDelete}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          style={styles.keySetupModalBackdrop}
+        >
+          <View style={styles.keySetupDeletePanel}>
+            <Text style={styles.keySetupDeleteTitle}>{copy.deleteTitle}</Text>
+            <Text style={styles.keySetupDeleteDescription}>{copy.deleteWarning}</Text>
+            <Text style={styles.keySetupDeleteDescription}>{copy.deleteScope}</Text>
+            <Text style={styles.keySetupDeleteDescription}>{copy.confirmDeleteInstruction}</Text>
+            {actionError ? <Text style={styles.keySetupErrorMessage}>{actionError}</Text> : null}
+            <TextInput
+              autoCapitalize="characters"
+              autoCorrect={false}
+              editable={!actionBusy}
+              onChangeText={setDeleteConfirmation}
+              placeholder={copy.confirmDeletePlaceholder}
+              placeholderTextColor="#a56d68"
+              style={styles.keySetupDeleteInput}
+              value={deleteConfirmation}
+            />
+            <Pressable
+              disabled={actionBusy}
+              onPress={() => {
+                setDeleteConfirmation("");
+                setConfirmDelete(false);
+              }}
+              style={[styles.secondaryButton, actionBusy && styles.disabled]}
+            >
+              <Text style={styles.secondaryButtonText}>{copy.cancel}</Text>
+            </Pressable>
+            <Pressable
+              disabled={actionBusy || deleteConfirmation.trim().toUpperCase() !== "DELETE"}
+              onPress={() => void onDeleteAccount().catch(() => undefined)}
+              style={[styles.keySetupDeleteConfirm, (actionBusy || deleteConfirmation.trim().toUpperCase() !== "DELETE") && styles.disabled]}
+            >
+              {actionBusy ? <ActivityIndicator color="#ffffff" /> : <Text style={styles.primaryButtonText}>{copy.deleteConfirm}</Text>}
+            </Pressable>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+      <Pressable disabled={actionBusy} onPress={onLogout} style={[styles.secondaryButton, actionBusy && styles.disabled]}>
+        <Text style={styles.secondaryButtonText}>{copy.logout}</Text>
+      </Pressable>
+    </View>
+  );
+}
 
 function ProfileStep({ initialProfile, language, onBack, onSubmit }: ProfileStepProps) {
   const copy = language === "ja"
@@ -352,11 +555,77 @@ function ProfileStep({ initialProfile, language, onBack, onSubmit }: ProfileStep
 }
 
 export default function OnboardingScreen() {
-  const { session, status } = useAuth();
+  const {
+    continuePasskey,
+    deleteAccount,
+    logout,
+    refresh,
+    session,
+    status,
+  } = useAuth();
   const [language, setLanguage] = useState<AppLanguage | null>(null);
   const [profile, setProfile] = useState<LocalProfile | null>(null);
   const [languageLoaded, setLanguageLoaded] = useState(false);
   const [profileLoadedFor, setProfileLoadedFor] = useState<string | null>(null);
+  const [keySetupFor, setKeySetupFor] = useState<string | null>(null);
+  const [keySetupAttempt, setKeySetupAttempt] = useState(0);
+  const [keySetupBusy, setKeySetupBusy] = useState(false);
+  const [keySetupActionBusy, setKeySetupActionBusy] = useState(false);
+  const [keySetupActionError, setKeySetupActionError] = useState<string | null>(null);
+  const [keySetupState, setKeySetupState] = useState<KeySetupState>({ status: "loading" });
+  const sessionRef = useRef(session);
+  sessionRef.current = session;
+
+  const reauthenticateKeySetup = async () => {
+    if (keySetupActionBusy) return;
+    setKeySetupActionBusy(true);
+    setKeySetupActionError(null);
+    try {
+      await refresh();
+      const reauthenticated = await continuePasskey(language ?? "ja");
+      if (!reauthenticated) {
+        throw new Error(language === "ja"
+          ? "Passkey再認証後にアプリへ戻れませんでした。もう一度お試しください。"
+          : "The app did not receive the Passkey result. Please try again.");
+      }
+      setKeySetupAttempt((attempt) => attempt + 1);
+    } catch (reason) {
+      setKeySetupActionError(reason instanceof Error ? reason.message : language === "ja"
+        ? "Passkey再認証に失敗しました。"
+        : "Passkey re-authentication failed.");
+    } finally {
+      setKeySetupActionBusy(false);
+    }
+  };
+
+  const deleteBlockedAccount = async () => {
+    if (keySetupActionBusy) return;
+    setKeySetupActionBusy(true);
+    setKeySetupActionError(null);
+    try {
+      await refresh();
+      const reauthenticated = await continuePasskey(language ?? "ja");
+      if (!reauthenticated) {
+        throw new Error(language === "ja"
+          ? "Passkey再認証後にアプリへ戻れませんでした。"
+          : "The app did not receive the Passkey result.");
+      }
+      const deleted = await deleteAccount();
+      if (!deleted) {
+        throw new Error(language === "ja"
+          ? "アカウント削除に失敗しました。再認証後にもう一度お試しください。"
+          : "Account deletion failed. Please re-authenticate and try again.");
+      }
+    } catch (reason) {
+      const error = reason instanceof Error ? reason : new Error(language === "ja"
+        ? "アカウント削除に失敗しました。"
+        : "Account deletion failed.");
+      setKeySetupActionError(error.message);
+      throw error;
+    } finally {
+      setKeySetupActionBusy(false);
+    }
+  };
 
   useEffect(() => {
     let active = true;
@@ -391,6 +660,55 @@ export default function OnboardingScreen() {
     };
   }, [session?.user_id]);
 
+  useEffect(() => {
+    const activeSession = sessionRef.current;
+    if (!activeSession?.user_id) {
+      setKeySetupFor(null);
+      setKeySetupState({ status: "loading" });
+      return;
+    }
+
+    let active = true;
+    const userID = activeSession.user_id;
+    setKeySetupFor(null);
+    setKeySetupBusy(false);
+    setKeySetupState({ status: "loading" });
+    void (async () => {
+      try {
+        const localKeyA = await loadStoredKeyA(userID);
+        if (!active) return;
+        if (localKeyA) {
+          await ensureDeviceKeyB(activeSession);
+          if (!active) return;
+          setKeySetupState({ status: "ready" });
+          setKeySetupFor(userID);
+          return;
+        }
+
+        const envelopes = await listKeyEnvelopes(activeSession);
+        if (!active) return;
+        const recoverableEnvelope = envelopes.find((envelope) => envelope.recovery_public_key.length > 0);
+        if (recoverableEnvelope) {
+          setKeySetupState({ status: "recover", envelope: recoverableEnvelope });
+        } else {
+          setKeySetupState({ status: "create", material: await createInitialKeyMaterial() });
+        }
+        setKeySetupFor(userID);
+      } catch (reason) {
+        if (!active) return;
+        setKeySetupState({
+          status: "error",
+          message: reason instanceof Error ? reason.message : "key setup failed",
+        });
+        setKeySetupFor(userID);
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [keySetupAttempt, session?.session_id, session?.user_id]);
+
   if (!languageLoaded || status === "loading") {
     return (
       <View style={styles.loadingScreen}>
@@ -419,6 +737,133 @@ export default function OnboardingScreen() {
           await clearLanguage();
           setLanguage(null);
         }}
+      />
+    );
+  }
+
+  if (keySetupFor !== session.user_id || keySetupState.status === "loading") {
+    return (
+      <View style={styles.loadingScreen}>
+        <StatusBar style="dark" />
+        <ActivityIndicator color={BLUE} size="large" />
+      </View>
+    );
+  }
+
+  if (keySetupState.status === "error") {
+    return (
+      <KeySetupError
+        accountID={session.user_id}
+        actionBusy={keySetupActionBusy}
+        actionError={keySetupActionError}
+        language={language}
+        message={keySetupState.message}
+        onDeleteAccount={deleteBlockedAccount}
+        onReauthenticate={reauthenticateKeySetup}
+        onLogout={() => void logout()}
+        onRetry={() => setKeySetupAttempt((attempt) => attempt + 1)}
+      />
+    );
+  }
+
+  if (keySetupState.status === "complete") {
+    return (
+      <RecoveryCompletion
+        accountID={session.user_id}
+        language={language}
+        mode={keySetupState.mode}
+        onContinue={() => setKeySetupState({ status: "ready" })}
+      />
+    );
+  }
+
+  if (keySetupState.status === "create") {
+    return (
+      <RecoveryKeyDisplay
+        accountID={session.user_id}
+        busy={keySetupBusy || keySetupActionBusy}
+        error={null}
+        language={language}
+        onBack={() => void logout()}
+        onConfirm={async () => {
+          setKeySetupBusy(true);
+          try {
+            const keyB = await ensureDeviceKeyB(session);
+            deriveDataKey(keySetupState.material.keyA, keyB.keyB, keySetupState.material.envelope.kdf_params.data_salt);
+            await completeInitialKeySetup(session, keySetupState.material);
+            setKeySetupState({ status: "complete", mode: "initial" });
+          } catch (reason) {
+            setKeySetupState({
+              status: "error",
+              message: reason instanceof Error ? reason.message : "key setup failed",
+            });
+          } finally {
+            setKeySetupBusy(false);
+          }
+        }}
+        onDeleteAccount={deleteBlockedAccount}
+        recoveryKey={keySetupState.material.recoveryKey}
+      />
+    );
+  }
+
+  if (keySetupState.status === "recover") {
+    return (
+      <RecoveryKeyInput
+        accountID={session.user_id}
+        busy={keySetupBusy || keySetupActionBusy}
+        error={keySetupState.error ?? null}
+        language={language}
+        onBack={() => void logout()}
+        onSubmit={async (recoveryKey) => {
+          setKeySetupBusy(true);
+          setKeySetupState((current) => current.status === "recover" ? { ...current, error: undefined } : current);
+          try {
+            await recoverWithSession(session, recoveryKey);
+            const keyA = await loadStoredKeyA(session.user_id);
+            if (!keyA) throw new Error("Recovered Key-A was not saved");
+            const keyB = await ensureDeviceKeyB(session);
+            deriveDataKey(keyA, keyB.keyB, keySetupState.envelope.kdf_params.data_salt);
+            const material = await createRecoveryKeyMaterial(keyA, keySetupState.envelope);
+            setKeySetupState({ status: "rotate", material });
+          } catch (reason) {
+            setKeySetupState((current) => current.status === "recover"
+              ? { ...current, error: reason instanceof Error ? reason.message : "Recovery Keyの確認に失敗しました。" }
+              : current);
+          } finally {
+            setKeySetupBusy(false);
+          }
+        }}
+        onDeleteAccount={deleteBlockedAccount}
+      />
+    );
+  }
+
+  if (keySetupState.status === "rotate") {
+    return (
+      <RecoveryKeyDisplay
+        accountID={session.user_id}
+        busy={keySetupBusy || keySetupActionBusy}
+        error={keySetupState.error ?? null}
+        language={language}
+        mode="rotate"
+        onBack={() => void logout()}
+        onConfirm={async () => {
+          setKeySetupBusy(true);
+          setKeySetupState((current) => current.status === "rotate" ? { ...current, error: undefined } : current);
+          try {
+            await completeRecoveryKeyRotation(session, keySetupState.material);
+            setKeySetupState({ status: "complete", mode: "recovery" });
+          } catch (reason) {
+            setKeySetupState((current) => current.status === "rotate"
+              ? { ...current, error: reason instanceof Error ? reason.message : "Recovery Keyの更新に失敗しました。" }
+              : current);
+          } finally {
+            setKeySetupBusy(false);
+          }
+        }}
+        onDeleteAccount={deleteBlockedAccount}
+        recoveryKey={keySetupState.material.recoveryKey}
       />
     );
   }
@@ -480,6 +925,32 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "#ffffff",
+  },
+  keySetupErrorScreen: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 28,
+    gap: 16,
+    backgroundColor: "#ffffff",
+  },
+  keySetupErrorTitle: {
+    color: TEXT_GRAY,
+    fontSize: 22,
+    fontWeight: "700",
+    textAlign: "center",
+  },
+  keySetupErrorDescription: {
+    color: MUTED_GRAY,
+    fontSize: 15,
+    lineHeight: 23,
+    textAlign: "center",
+  },
+  keySetupErrorMessage: {
+    color: "#b42318",
+    fontSize: 12,
+    lineHeight: 18,
+    textAlign: "center",
   },
   hero: {
     width: "100%",
@@ -661,6 +1132,83 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     letterSpacing: 0,
     textAlign: "center",
+  },
+  secondaryButton: {
+    minHeight: 48,
+    paddingHorizontal: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 9,
+    borderWidth: 1,
+    borderColor: YELLOW,
+    borderRadius: 24,
+    backgroundColor: "#fffaf0",
+  },
+  secondaryButtonText: {
+    color: TEXT_GRAY,
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  deleteAccountButton: {
+    width: "100%",
+    minHeight: 48,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "#d92d20",
+    borderRadius: 24,
+    backgroundColor: "#fff5f4",
+  },
+  deleteAccountButtonText: {
+    color: "#b42318",
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  keySetupDeletePanel: {
+    width: "100%",
+    gap: 12,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: "#f3b5af",
+    borderRadius: 16,
+    backgroundColor: "#fff5f4",
+  },
+  keySetupModalBackdrop: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 24,
+    backgroundColor: "rgba(0, 0, 0, 0.45)",
+  },
+  keySetupDeleteTitle: {
+    color: "#7a271a",
+    fontSize: 17,
+    fontWeight: "700",
+  },
+  keySetupDeleteDescription: {
+    color: "#7a271a",
+    fontSize: 14,
+    lineHeight: 21,
+  },
+  keySetupDeleteInput: {
+    minHeight: 48,
+    paddingHorizontal: 14,
+    borderWidth: 1,
+    borderColor: "#d69289",
+    borderRadius: 10,
+    color: "#7a271a",
+    backgroundColor: "#ffffff",
+    fontSize: 16,
+    fontWeight: "700",
+    letterSpacing: 1,
+  },
+  keySetupDeleteConfirm: {
+    minHeight: 48,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 24,
+    backgroundColor: "#d92d20",
   },
   completedRow: {
     minHeight: 48,
