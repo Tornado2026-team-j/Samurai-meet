@@ -24,10 +24,17 @@ type CountryOption = {
 };
 
 function createCountryOptions(language: AppLanguage): CountryOption[] {
-  const displayNames = new Intl.DisplayNames([language], { type: "region" });
+  let displayNames: Intl.DisplayNames | null = null;
+  try {
+    if (typeof Intl.DisplayNames === "function") {
+      displayNames = new Intl.DisplayNames([language], { type: "region" });
+    }
+  } catch {
+    displayNames = null;
+  }
   const options = COUNTRY_CODES.map((code) => ({
     code,
-    name: displayNames.of(code) ?? code,
+    name: displayNames?.of(code) ?? code,
   })).sort((first, second) => first.name.localeCompare(second.name, language));
   const japan = options.find((country) => country.code === "JP");
 

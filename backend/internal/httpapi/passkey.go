@@ -27,6 +27,7 @@ func passkeyRegisterOptions(passkeys *auth.PasskeyService, sessions *auth.Sessio
 		claims, ok := accessClaims(r, sessions)
 		userID := ""
 		preAuthToken := ""
+		preAuthRegistration := false
 		if ok {
 			userID = claims.Subject
 		} else if preauth != nil {
@@ -34,6 +35,7 @@ func passkeyRegisterOptions(passkeys *auth.PasskeyService, sessions *auth.Sessio
 			preClaims, preAuthOK := preauth.Lookup(r.Context(), preAuthToken, auth.PreAuthScopeRegister, "", now())
 			if preAuthOK == nil {
 				userID = preClaims.UserID
+				preAuthRegistration = true
 			} else {
 				preAuthToken = ""
 			}
@@ -42,7 +44,13 @@ func passkeyRegisterOptions(passkeys *auth.PasskeyService, sessions *auth.Sessio
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing_or_invalid_access_token"})
 			return
 		}
-		result, err := passkeys.BeginRegistration(r.Context(), userID, now())
+		var result auth.PasskeyOptions
+		var err error
+		if preAuthRegistration {
+			result, err = passkeys.BeginRegistrationForPreAuth(r.Context(), userID, now())
+		} else {
+			result, err = passkeys.BeginRegistration(r.Context(), userID, now())
+		}
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "passkey_registration_options_failed"})
 			return

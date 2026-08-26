@@ -1,3 +1,5 @@
+import type { AppLanguage } from './onboarding-contract';
+
 export type Session = {
   user_id: string;
   session_id: string;
@@ -10,6 +12,8 @@ export type PreAuth = {
   pre_auth_token: string;
   passkey_required: boolean;
   passkey_registered: boolean;
+  /** Older backend responses may omit this field. */
+  recovery_available?: boolean;
 };
 
 export type PasskeyBootstrap = {
@@ -51,7 +55,8 @@ export function isPreAuth(value: unknown): value is PreAuth {
     && typeof candidate.pre_auth_token === 'string'
     && candidate.pre_auth_token.length > 0
     && typeof candidate.passkey_required === 'boolean'
-    && typeof candidate.passkey_registered === 'boolean';
+    && typeof candidate.passkey_registered === 'boolean'
+    && (!('recovery_available' in candidate) || typeof candidate.recovery_available === 'boolean');
 }
 
 export function isSession(value: unknown): value is Session {
@@ -155,10 +160,12 @@ export function buildPasskeyURL(
   challenge: string,
   bootstrapToken: string,
   baseURL = 'https://samurai-meet.disnana.com/passkey',
+  language: AppLanguage = 'ja',
 ): string {
   const target = new URL(baseURL);
   target.searchParams.set('app_return_uri', redirectURI);
   target.searchParams.set('app_handoff_challenge', challenge);
+  target.searchParams.set('lang', language);
   target.hash = new URLSearchParams({ bootstrap_token: bootstrapToken }).toString();
   return target.toString();
 }
@@ -172,7 +179,9 @@ export function parsePasskeyBridgeRequest(value: string): PasskeyBridgeRequest |
   }
   const appReturnURI = parsed.searchParams.get('app_return_uri') ?? '';
   const handoffChallenge = parsed.searchParams.get('app_handoff_challenge') ?? '';
+  const language = parsed.searchParams.get('lang');
   if (!isAllowedAppReturnURI(appReturnURI) || handoffChallenge.trim() === '') return null;
+  if (language !== null && language !== 'ja' && language !== 'en') return null;
 
   const fragment = new URLSearchParams(parsed.hash.slice(1));
   const bootstrapToken = fragment.get('bootstrap_token');

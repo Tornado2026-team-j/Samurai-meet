@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/config"
 	"github.com/coreos/go-oidc/v3/oidc"
@@ -12,6 +13,7 @@ import (
 type GoogleIdentity struct {
 	Subject       string
 	Email         string
+	DisplayName   string
 	EmailVerified bool
 }
 type GoogleOIDC struct {
@@ -48,6 +50,7 @@ func (g *GoogleOIDC) Exchange(ctx context.Context, code, codeVerifier string) (G
 	var claims struct {
 		Subject       string `json:"sub"`
 		Email         string `json:"email"`
+		Name          string `json:"name"`
 		EmailVerified bool   `json:"email_verified"`
 	}
 	if err := id.Claims(&claims); err != nil {
@@ -56,5 +59,9 @@ func (g *GoogleOIDC) Exchange(ctx context.Context, code, codeVerifier string) (G
 	if claims.Subject == "" {
 		return GoogleIdentity{}, errors.New("Google ID token has no subject")
 	}
-	return GoogleIdentity{claims.Subject, claims.Email, claims.EmailVerified}, nil
+	displayName := strings.TrimSpace(claims.Name)
+	if displayName == "" {
+		displayName = strings.TrimSpace(claims.Email)
+	}
+	return GoogleIdentity{Subject: claims.Subject, Email: claims.Email, DisplayName: displayName, EmailVerified: claims.EmailVerified}, nil
 }
