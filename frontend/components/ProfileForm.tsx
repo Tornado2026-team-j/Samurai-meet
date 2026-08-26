@@ -23,12 +23,94 @@ type CountryOption = {
   name: string;
 };
 
+type RegionDisplayNames = {
+  of: (code: string) => string | undefined;
+};
+
+type RegionDisplayNamesConstructor = new (
+  locales: string[],
+  options: { type: "region" },
+) => RegionDisplayNames;
+
+const FALLBACK_COUNTRY_NAMES: Record<AppLanguage, Record<string, string>> = {
+  ja: {
+    AU: "オーストラリア",
+    BR: "ブラジル",
+    CA: "カナダ",
+    CN: "中国",
+    DE: "ドイツ",
+    ES: "スペイン",
+    FR: "フランス",
+    GB: "イギリス",
+    HK: "香港",
+    ID: "インドネシア",
+    IN: "インド",
+    IT: "イタリア",
+    JP: "日本",
+    KR: "韓国",
+    MX: "メキシコ",
+    MY: "マレーシア",
+    PH: "フィリピン",
+    SG: "シンガポール",
+    TH: "タイ",
+    TW: "台湾",
+    US: "アメリカ",
+    VN: "ベトナム",
+  },
+  en: {
+    AU: "Australia",
+    BR: "Brazil",
+    CA: "Canada",
+    CN: "China",
+    DE: "Germany",
+    ES: "Spain",
+    FR: "France",
+    GB: "United Kingdom",
+    HK: "Hong Kong",
+    ID: "Indonesia",
+    IN: "India",
+    IT: "Italy",
+    JP: "Japan",
+    KR: "South Korea",
+    MX: "Mexico",
+    MY: "Malaysia",
+    PH: "Philippines",
+    SG: "Singapore",
+    TH: "Thailand",
+    TW: "Taiwan",
+    US: "United States",
+    VN: "Vietnam",
+  },
+};
+
+function getRegionDisplayNames(language: AppLanguage): RegionDisplayNames | null {
+  const intl = globalThis.Intl as
+    | (typeof Intl & { DisplayNames?: RegionDisplayNamesConstructor })
+    | undefined;
+  const DisplayNames = intl?.DisplayNames;
+
+  if (typeof DisplayNames !== "function") {
+    return null;
+  }
+
+  try {
+    return new DisplayNames([language], { type: "region" });
+  } catch {
+    return null;
+  }
+}
+
+function compareCountryNames(first: CountryOption, second: CountryOption): number {
+  if (first.name === second.name) return 0;
+  return first.name > second.name ? 1 : -1;
+}
+
 function createCountryOptions(language: AppLanguage): CountryOption[] {
-  const displayNames = new Intl.DisplayNames([language], { type: "region" });
+  const displayNames = getRegionDisplayNames(language);
   const options = COUNTRY_CODES.map((code) => ({
     code,
-    name: displayNames.of(code) ?? code,
-  })).sort((first, second) => first.name.localeCompare(second.name, language));
+    name: displayNames?.of(code) ?? FALLBACK_COUNTRY_NAMES[language][code] ?? code,
+  })).sort(compareCountryNames);
   const japan = options.find((country) => country.code === "JP");
 
   return japan ? [japan, ...options.filter((country) => country.code !== "JP")] : options;
