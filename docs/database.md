@@ -1,6 +1,6 @@
 # DB仕様書（PostgreSQL）
 
-最終更新: 2026-08-24
+最終更新: 2026-08-26
 
 ## 1. 採用方針
 
@@ -32,6 +32,8 @@
 | `0016_recovery_proof.sql` | Recovery proof用の公開証明鍵、challenge、TTL・試行回数制限 |
 | `0017_user_display_name.sql` | Passkey表示名に使うユーザー表示名 |
 | `0018_device_image_keys.sql` | 端末公開鍵、画像鍵の端末別envelope、端末proof nonce、画像のKey-A由来wrapper |
+| `0019_profiles_matching.sql` | プロフィール、最新位置、募集カード、ブロック、マッチ状態 |
+| `0020_chat_meetings.sql` | チャット、暗号化メッセージ、既読状態、会合セッション、短期距離補助値 |
 
 注意: 現行の簡易migration runnerはSQLファイルを順番に実行する。migration履歴テーブルによる本番適用管理を導入する場合は、既存環境の適用済み状態を確認してから切り替える。
 
@@ -168,28 +170,38 @@ Refreshは対象行を`FOR UPDATE`し、旧token使用済み化、新token追加
 
 ### `key_envelopes`
 
-Key-AをRecovery Keyから導出した鍵で暗号化したenvelopeを保存する。`encrypted_key_a`、nonce、HKDFパラメータ、data salt、Ed25519 `recovery_public_key`、key versionだけを保持し、Key-A、Key-B、Recovery Keyの平文を保持しない。HTTP APIは`GET/PUT/DELETE /api/v1/me/key-envelopes`で提供し、全操作に直近Passkey再認証を要求する。公開証明鍵を持たない既存行はデータ保全のため残せるが、新Recovery proofには使わない。
+Master Key（実装上はKey-Aと同じ32byte）を24語Recovery Phraseから導出した鍵で暗号化したv2 envelopeを保存する。`encrypted_key_a`、nonce、Argon2id + HKDFパラメータ、data salt、Ed25519 `recovery_public_key`、key versionだけを保持し、Master Key、Key-B、Recovery Phraseの平文を保持しない。HTTP APIは`GET/PUT/DELETE /api/v1/me/key-envelopes`で提供し、全操作に直近Passkey再認証を要求する。pre-release migration `0022_disable_legacy_root_keys.sql`でv1行を削除し、`key_envelopes_v2_only`制約でv2以外の新規行も拒否する。
 
 ### `devices` / `photo_device_key_envelopes` / `device_request_nonces`
 
 Key-Bは端末ごとに生成し、Secure Storage／Keychain／Keystoreから外へ出さない。`devices`には`device_id`、version、Ed25519公開鍵、最終利用時刻だけを保存し、同じ端末IDの公開鍵差し替えは拒否する。`photo_device_key_envelopes`は画像鍵を端末Key-Bで包んだ値を端末単位で保存する。`account_wrapped_image_key`はRecovery後の新端末が画像鍵を自端末Key-Bで再包みするための暗号文であり、Key-AやKey-Bそのものではない。`device_request_nonces`は端末proofのnonce再利用を拒否する。`users`削除時は端末、envelope、nonceをcascadeまたは退会transactionで削除する。
 
-### `key_b_materials`（legacy）
+### `key_b_materials`（retired）
 
-旧実装のアカウント共通Key-B用テーブル。現行APIでは参照・新規保存せず、既存データ保全のためmigrationからは削除しない。旧データを現行画像へ自動変換したことは意味しないため、legacy画像が残る本番環境では別途移行計画を確定する。
+旧実装のアカウント共通Key-B用テーブル。現行APIでは参照・新規保存せず、`0022_disable_legacy_root_keys.sql`で既存行を削除する。端末固有Key-Bの秘密値はこのテーブルへ戻さず、端末のSecure Storage／Keychain／Keystoreだけに保存する。
 
 ### `recovery_challenges`
 
-Recovery Keyで復号したKey-Aの所有証明を一時的に受け付けるためのchallengeを保存する。challenge本文、pre-auth token、署名は保存せず、challenge hashとpre-auth token hashだけを保持する。`source_session_id`または`pre_auth_token_hash`のどちらか一方に束縛し、10分の期限、最大5回の署名試行、pre-auth単位の発行レート制限、使用済みフラグを持つ。`users`、`sessions`の削除時はchallengeもcascadeまたは退会トランザクションで削除する。
+Recovery Phraseで復号したMaster Keyの所有証明を一時的に受け付けるためのchallengeを保存する。challenge本文、pre-auth token、署名は保存せず、challenge hashとpre-auth token hashだけを保持する。`source_session_id`または`pre_auth_token_hash`のどちらか一方に束縛し、10分の期限、最大5回の署名試行、pre-auth単位の発行レート制限、使用済みフラグを持つ。`users`、`sessions`の削除時はchallengeもcascadeまたは退会トランザクションで削除する。
 
-## 6. これから追加するテーブル・制約
+## 6. 業務テーブルの実装状態
 
-- `profiles`: 名前、国籍、icon photo、本人確認状態、likes、monster
-- `recruitment_cards`: 日時、時間帯、keywords、表示半径1/3/5km
-- `matches`、`messages`、`reviews`、`user_locations`
-- `identity_verifications`、`reports`、`blocks`、`audit_logs`
+`0019_profiles_matching.sql`で次のテーブルを追加した。
 
-これらはAPI実装時にmigrationを追加し、PostgreSQL integration test、API仕様書、機能仕様書を同じ変更で更新する。
+- `profiles`: 名前、国コード、自己紹介、本人確認状態、いいね数。`user_id`を主キーとする。
+- `user_locations`: 最新の緯度・経度、精度、取得時刻、有効期限。履歴は保存しない。
+- `recruitment_cards`: 日時、時間帯、timezone、keywords、説明、公開半径、位置、状態。
+- `blocks`: ブロックする側・される側の複合主キー。
+- `matches`: 関心、承認、完了の状態。`card_id`と`requester_user_id`を一意にする。
+- `chat_threads`: accepted/completedマッチに遅延作成する1対1チャット。`match_id`を一意にする。
+- `messages`: Base64URLの暗号文、nonce、アルゴリズム、鍵versionだけを保存する。平文本文は列にもログにも存在しない。送信者・チャット・`client_message_id`の組み合わせを一意にして再送を冪等化する。
+- `chat_read_states`: ユーザーごとの最後の既読`sequence`。
+- `meeting_sessions`: acceptedマッチのplanned/active/completed/cancelled会合状態。
+- `meeting_proximity_latest`: 会合中の参加者ごと・方式ごとの最新1件。Bluetooth MAC、RSSI生値、ビーコンID、緯度経度は保存せず、会合終了時に削除する。
+
+現行のDBイメージはPostGISなしのため、距離判定はGoのHaversineで行う。正確な位置は検索レスポンスに含めない。
+
+未実装の業務テーブルは`reviews`、`identity_verifications`、`reports`、`audit_logs`であり、API実装時にmigration、PostgreSQL integration test、API仕様書、機能仕様書を同じ変更で更新する。
 
 ## 7. 削除・保持
 
@@ -202,3 +214,17 @@ Recovery Keyで復号したKey-Aの所有証明を一時的に受け付けるた
 5. 削除結果を監査ログへ記録する（秘密情報は記録しない）。監査ログ実装まではアプリログへ秘密値を出さない。
 
 バックアップ上の物理削除期限、チャット保持期間、監査ログ保持期間は運用・法務決定後にmigrationと運用手順へ反映する。
+
+## 8. v2クライアント所有鍵の追加テーブル
+
+`0021_client_root_key_transfer.sql`で`devices`へX25519合意公開鍵のversionと公開値を追加し、
+`device_key_transfers`を作成する。移行行にはユーザー、対象・承認元device ID、対象公開鍵、公開鍵fingerprint、
+verification codeのhash、状態、期限、opaqueなwrapped Master Key、アルゴリズム、時刻だけを保持する。
+
+`device_key_transfers.wrapped_master_key`はJSONをBase64URL化した暗号文envelopeであり、サーバーは復号しない。
+`verification_code`、X25519秘密鍵、Master Key、Recovery Phraseは列にもログにも存在しない。`pending`中はwrapped値を空にし、
+`approved`後も対象device proofが一致したGETだけに返す。期限、最大試行回数、同時要求数をAPIとDB transactionの両方で確認する。
+
+既存の`account_wrapped_image_key`はアカウントrootで包んだ画像DEKであり、機種変更時の画像再包みに使う。
+画像ciphertextの再暗号化や旧画像DEK envelopeの即時削除は行わない。`key_b_materials`はv2 cutoverで空にする。
+server-wrapped profile画像は公開プロフィール用の明示的な互換例外であり、zero-access対象のprivate画像とは分けて扱う。

@@ -4,51 +4,69 @@
 
 検証専用の `expo-test` と `dev-client` は廃止しました。新しいクライアント検証は `frontend/` のテストと実機E2Eで行います。
 
-## Recovery Key / 端末Key-B 引き継ぎメモ（2026-08-26）
+## 今回のバックエンド実装範囲（2026-08-26）
 
-### 現在の前提
+- `GET /api/v1/me` と `PATCH /api/v1/me/profile` を追加した。名前・国コード・自己紹介をDBへ保存し、APIから後日変更できる。プロフィール編集画面はまだこのAPIへ接続しない。
+- マッチングAPIと`0019_profiles_matching.sql`を追加した。募集カード、検索、現在地、関心、応募一覧、詳細、承認、辞退、完了をGo側で認証・認可・期限・重複・ブロック検証する。
+- acceptedマッチ向けのRESTチャット、暗号文メッセージ、既読、短命Chat Token、会合セッション、Bluetooth／位置推測の距離補助APIと`0020_chat_meetings.sql`を追加した。WebSocket配送とネイティブBluetooth測定は未実装。
+- フロントの既存モック、言語選択画面、ログアウト後のナビゲーションは変更していない。
 
-- 作業ブランチは `codex/fix-passkey-web-routing`。Recovery Key再生成の変更はこのブランチにあり、PR・デプロイ前。
-- PR #17 は `main` ← `frontend_matching` で、`frontend/app/index.tsx` を変更している。こちらの認証・暗号鍵変更も同ファイルを変更するため、PR化前に `origin/frontend_matching` を取り込み、競合解消後の統合結果を検証する。
-- 既存のRecovery Keyは一回限りの秘密値としてサーバーへ送らない。端末内でKey-Aを復元する非常用鍵であり、Key-Aを変更せず新しいRecovery Key用envelopeへローテーションする。
-- `kdf_params.data_salt` はRecovery Keyローテーションでは維持する。新しいRecovery Keyではsalt・nonce・暗号文を更新するため、既存画像の暗号文は再暗号化しない。
-- Key-Bは端末内Secure Storageの32byte秘密鍵。サーバーには公開鍵と`device_id`だけを登録する。`backend/migrations/0012_key_b_materials.sql` のテーブルは現行の登録・復旧処理では使用していない。
+## フロント追従時に引き継ぐ課題（今回の変更対象外）
+
+1. **プロフィール編集UI**
+   - `ProfileForm`から`PATCH /api/v1/me/profile`を呼び、保存成功後に`GET /api/v1/me`の値を表示する。
+   - 自己紹介の入力エラー（400 `invalid_profile`）を画面内に表示し、保存中の二重送信を抑止する。
+   - アイコン、本人確認、交流キーワードは別APIが確定するまで既存UIを勝手に接続しない。
+
+2. **ログアウト後の言語選択・戻るジェスチャー**
+   - 現状はログアウト処理がSecure Storageとセッション状態を消去した後、`router.replace("/")`で言語選択コンポーネントへ戻る。ルートStack側で履歴・戻るジェスチャーが残ると、左スワイプで直前画面へ戻れる可能性がある。
+   - 左スワイプは言語選択画面へ戻る導線として扱うのか、認証完了後の画面履歴を破棄するのかをフロント側で決める。今回のバックエンドPRでは`frontend/`を変更しない。
+   - 受け入れ条件: ログアウト後に保護画面へ戻れない、端末の戻る／左スワイプで旧セッション状態を表示しない、再ログイン時に言語選択から始められる。
+
+3. **残りの業務API・フロント接続**
+   - 募集公開、募集検索・詳細、関心送信、応募一覧、承認・辞退は`frontend/`から接続済み。プロフィール編集画面は引き続きローカル表示のため、`PATCH /api/v1/me/profile`との完全同期を行う。
+   - チャット、会合、距離補助のネイティブ測定を画面へ接続し、送信中・再送・既読・期限切れ状態を扱う。
+   - 通知一覧、評価、チャットのWebSocketリアルタイム配送、チャット内写真送信は未実装。
+
+4. **バックエンドの残課題**
+   - API／アプリ双方のレート制限、PostGIS化、ブロック登録API、通知一覧、評価を追加する。
+   - チャットのWebSocket配送、チャット内写真送信、通知連携を追加する。
+   - Stripe Identity等の本人確認を追加する。サーバーでVerification Sessionを発行し、Stripe Webhookの署名・イベント重複・対象ユーザーの紐付けを検証した後だけ`profiles.identity_status=verified`へ遷移させる。クライアントからの自己申告や戻りURLだけでは認証済みマークを付けない。
+   - 本人確認の再確認期限、否認・再申請、参照IDの保持期限、Webhook監査ログ、Stripe障害時の保留状態を決める。本人確認済みでも安全を保証しない表示を行う。
+   - PostgreSQL統合テストでプロフィール・募集・関心・承認・期限・ブロック・位置期限を通しで検証する。
+
+## クライアント所有鍵v2 引き継ぎメモ（2026-08-26）
+
+正本は [docs/ai/security/proton-style-key-management/proposal.md](../docs/ai/security/proton-style-key-management/proposal.md) です。
+`/api/v1`はHTTP URLの互換入口であり、root-key protocolはv2だけを受け付けます。
+
+### 今回反映済み
+
+- 24語・256bit entropyのRecovery PhraseをArgon2id + HKDF-SHA256で処理し、v2 envelopeだけを保存する。
+- Master Key（実装上は既存Key-Aと同じ32byte）をAPIへ送らず、Ed25519 Key-BとX25519端末合意鍵を分離する。
+- 旧端末承認のdevice transfer APIを追加し、対象公開鍵に束縛したopaque envelopeだけをサーバーに保存する。
+- Recovery後・プロフィールからのRecovery Phrase再生成、pending materialの再開、端末側暗号データ初期化を実装する。
+- `0022_disable_legacy_root_keys.sql`で旧root envelope、Recovery challenge、旧Key-B materialを削除し、`key_envelopes`へv2-only制約を追加する。
 
 ### 未完了タスク
 
-1. **Recovery Key復旧後のローテーションを完成させる**
-   - 旧Recovery KeyでKey-Aを復元する。
-   - 新しいRecovery Keyとenvelopeを端末内で生成する。
-   - ユーザーが新しい鍵を保存したことを確認してから`PUT /api/v1/me/key-envelopes/{key_version}`で保存する。
-   - 画面離脱・通信失敗時はpending materialを保持し、次回起動時に同じ新鍵を再表示する。保存成功後だけpending情報を削除する。
-   - 受け入れ条件: 旧Recovery Keyで復旧でき、新Recovery KeyでKey-Aを復元でき、`data_salt`が変わらず、旧Recovery Keyでは新envelopeを復元できない。
+1. QR/OOBまたはfingerprint照合を含む旧端末・新端末の画面統合。APIは自動承認しない。
+2. 画像DEKのresumable bulk再包み、旧端末一覧・個別失効、失効後の端末proof拒否。
+3. Recovery Codes、Passkey再登録のUI・実機E2E。Recovery CodeはMaster Key復号には使わない。
+4. native Secure Enclave / Android Keystore / attestationと、Expo Goのdegraded表示。
+5. object ID/version/algorithmを含むAEAD AAD、暗号化backup、envelope rollback検知、削除reconciler・監査イベント。
+6. PostgreSQL統合テストとiOS/Android実機での旧端末あり・なし復旧検証。
 
-2. **Key-Bを失った端末の再登録UIを追加する**
-   - Passkey再認証（直近5分）を完了した後に、プロフィール画面から「この端末のKey-Bを再登録」を実行できるようにする。
-   - 端末内で新しいKey-Bと新しい`device_id`を生成し、`POST /api/v1/me/devices`へ公開鍵だけを送る。Key-B平文はAPI・DB・ログへ送らない。
-   - 再登録後は新端末用の画像鍵envelopeを作成できることを表示する。Key-Bがない状態を「再認証してください」だけで終わらせない。
-   - 受け入れ条件: 旧Key-BがなくてもPasskey再認証後に再登録でき、旧`device_id`と公開鍵を上書きせず、新`device_id`で画像を取得できる。
+### v1開発アカウントについて
 
-3. **機種変更フローを明示して検証する**
-   - 新端末では「同期済みPasskey」または「Recovery Keyで復旧」から新Passkeyを登録し、新Key-Bを生成する。旧Key-Bを引き継がない。
-   - 画像取得時、端末用envelopeがない場合はKey-Aで`account_wrapped_image_key`を開き、新Key-B用に再ラップして保存する。現在は遅延再ラップ方式なので、全画像を一括移行する必要があるか判断する。
-   - 旧端末の一覧・個別失効API/UIを追加する。機種変更完了時に旧端末を残すか、ユーザーが明示的に失効できるようにする。
-   - 受け入れ条件: 新端末で既存画像を復号でき、旧端末のKey-Bでは新端末用envelopeを取得できず、端末失効後は画像APIの端末署名が拒否される。
-
-4. **Passkey表示名を仕様化する**
-   - 現在のWebAuthn `user.name` / `user.displayName` はGoogle表示名、メールアドレス、`Samurai Meet`の順で決まり、プロフィール入力名や端末名ではない。
-   - Passkeyごとの表示名・端末名を保存する項目はない。OSがcredential IDを表示する場合があるため、アカウント表示名と端末名をどう見せるか決める。
-   - 受け入れ条件: 登録画面・OS側に期待する表示名を実機（iOS/Android/Web）で確認し、既存credentialの表示が変わらないことも説明する。
-
-5. **API/UI・実機E2Eを追加する**
-   - Recovery Key: 正しい鍵、誤った鍵、5回超過、通信失敗、画面離脱後の再開、再生成後の旧鍵拒否。
-   - Key-B: 初回登録、Secure Storage消失、機種変更、再登録、端末失効、画像の遅延再ラップ。
-   - 認証境界: Access Tokenだけ、期限切れPasskey再認証、別ユーザーの`device_id`、API直叩きでの回避を拒否する。
+- 旧Base64URL Recovery Keyやv1 root envelopeは互換復旧しない。APIでは`410 legacy_key_version_disabled`、migrationでは旧行削除となる。
+- 旧開発アカウントの暗号化データを継続利用するには、旧端末または旧Recovery Keyに依存せず、v2でアカウントと暗号化データを作り直す。
+- すべての復旧要素を失った場合はサポートでも復号しない。これはzero-accessの必須条件。
 
 ### 再開時の順序
 
 1. `git status --short --branch` と `git diff --name-only` で未コミット差分を確認する。
-2. PR #17の `origin/frontend_matching` を取得し、現在ブランチへ統合して `frontend/app/index.tsx` の競合を解消する。強制push・無断でのPR #17ブランチ上書きはしない。
-3. `bun run typecheck`、`bun run lint`、`bun test`、`go test -count=1 ./...`、`git diff --check` を実行する。PostgreSQL統合テストは開発DBの`DB_SCHEMA`等を設定して実行する。
-4. `backend/TODO.md`を含め、意図したファイルだけをステージして差分を確認してから日本語コミットを作る。
-5. 通常push後、SourceTreeの`tp-li-dev`アカウントでPR #17との関係（既存PR更新か、別PR作成か）を確認し、重複差分を含めない。
+2. `bun run typecheck`、`bun run lint`、`bun test`、`go test -count=1 ./...`、`go vet ./...`、`go build ./...`、`git diff --check`を実行する。
+3. PostgreSQLへmigrationを適用し、`0022`の再実行性とv2-only制約を確認する。
+4. wrong phrase、5回超過、wrong target key、wrong code、replay、expiry、別ユーザーID、Access Token単独をAPI/UIで検証する。
+5. 意図したファイルだけをstageしてcached path listを確認し、日本語コミット後に`tp-li-dev`の認証でpushする。
