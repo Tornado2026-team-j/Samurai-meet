@@ -13,6 +13,12 @@ export function parseLanguage(value: string | null): AppLanguage | null {
   return value === "ja" || value === "en" ? value : null;
 }
 
+export function parseIdentityVerificationChoice(
+  value: string | null,
+): IdentityVerificationChoice {
+  return value === "proceed" || value === "later" ? value : null;
+}
+
 export function parseLocalProfile(value: string | null): LocalProfile | null {
   if (!value) return null;
 
@@ -21,7 +27,9 @@ export function parseLocalProfile(value: string | null): LocalProfile | null {
     if (!parsed || typeof parsed !== "object") return null;
 
     const candidate = parsed as Partial<LocalProfile>;
-    const identityVerificationChoice = candidate.identityVerificationChoice ?? null;
+    const identityVerificationChoice = parseIdentityVerificationChoice(
+      candidate.identityVerificationChoice ?? null,
+    );
     if (
       typeof candidate.name !== "string" ||
       typeof candidate.nationalityCode !== "string" ||
