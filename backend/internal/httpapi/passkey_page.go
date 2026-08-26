@@ -11,8 +11,8 @@ import (
 //go:embed passkey_page.html
 var passkeyPageHTML string
 
-const passkeyPageNonceMarker = "__CSP_NONCE__"
-const passkeyPageLanguageMarker = "__PASSKEY_LANGUAGE__"
+const passkeyPageNonceMarker = "__CSP_NONCE__" // #nosec G101 -- fixed HTML replacement marker, not a credential
+const passkeyPageLanguageMarker = "__PASSKEY_LANGUAGE__" // #nosec G101 -- fixed HTML replacement marker, not a credential
 
 func passkeyPage(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/passkey" && r.URL.Path != "/passkey/" {

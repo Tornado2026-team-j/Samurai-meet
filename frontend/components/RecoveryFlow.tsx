@@ -50,6 +50,7 @@ type RecoveryCopy = {
   deleteTitle: string;
   deleteWarning: string;
   deleteScope: string;
+  deleteConfirmation: string;
   confirmDeleteInstruction: string;
   confirmDeletePlaceholder: string;
   deleteConfirm: string;
@@ -87,8 +88,9 @@ const COPY: Record<AppLanguage, RecoveryCopy> = {
     deleteTitle: "アカウントを削除しますか？",
     deleteWarning: "Recovery Keyを登録せずに削除すると、アカウントと保存データは復元できません。",
     deleteScope: "削除対象: アカウント、全セッション、端末鍵、暗号化データ",
-    confirmDeleteInstruction: "確認のため DELETE と入力してください。",
-    confirmDeletePlaceholder: "DELETE と入力",
+    deleteConfirmation: "削除",
+    confirmDeleteInstruction: "確認のため「削除」と入力してください。",
+    confirmDeletePlaceholder: "削除 と入力",
     deleteConfirm: "Passkeyで再認証して削除",
     deleting: "削除中…",
     deleteError: "削除に失敗しました。入力内容と通信状態を確認して、もう一度お試しください。",
@@ -122,6 +124,7 @@ const COPY: Record<AppLanguage, RecoveryCopy> = {
     deleteTitle: "Delete this account?",
     deleteWarning: "If you delete without registering a Recovery Key, your account and stored data cannot be recovered.",
     deleteScope: "This deletes your account, all sessions, device keys, and encrypted data.",
+    deleteConfirmation: "DELETE",
     confirmDeleteInstruction: "Type DELETE to confirm.",
     confirmDeletePlaceholder: "Type DELETE",
     deleteConfirm: "Re-authenticate with Passkey and delete",
@@ -334,6 +337,7 @@ function AccountDeleteAction({
   const [confirming, setConfirming] = useState(false);
   const [confirmation, setConfirmation] = useState("");
   const [deleteError, setDeleteError] = useState(false);
+  const expectedConfirmation = copy.deleteConfirmation;
 
   const closeConfirmation = () => {
     if (busy) return;
@@ -343,7 +347,7 @@ function AccountDeleteAction({
   };
 
   const confirmDeletion = async () => {
-    if (busy || confirmation.trim().toUpperCase() !== "DELETE") return;
+    if (busy || confirmation.trim().toUpperCase() !== expectedConfirmation) return;
     setDeleteError(false);
     try {
       await onDelete();
@@ -406,11 +410,11 @@ function AccountDeleteAction({
         </Pressable>
         <Pressable
           accessibilityRole="button"
-          disabled={busy || confirmation.trim().toUpperCase() !== "DELETE"}
+          disabled={busy || confirmation.trim().toUpperCase() !== expectedConfirmation}
           onPress={() => void confirmDeletion()}
           style={({ pressed }) => [
             styles.confirmDeleteButton,
-            (busy || confirmation.trim().toUpperCase() !== "DELETE") && styles.disabled,
+            (busy || confirmation.trim().toUpperCase() !== expectedConfirmation) && styles.disabled,
             pressed && styles.pressed,
           ]}
         >

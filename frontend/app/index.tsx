@@ -472,8 +472,9 @@ function KeySetupError({
         deleteTitle: "このアカウントを削除しますか？",
         deleteWarning: "この操作は取り消せません。アカウント、端末鍵、保存データを削除します。",
         deleteScope: "削除対象: アカウント、全セッション、端末鍵、暗号化データ",
-        confirmDeleteInstruction: "確認のため DELETE と入力してください。",
-        confirmDeletePlaceholder: "DELETE と入力",
+        deleteConfirmation: "削除",
+        confirmDeleteInstruction: "確認のため「削除」と入力してください。",
+        confirmDeletePlaceholder: "削除 と入力",
         deleteConfirm: "Passkeyで再認証して削除",
         cancel: "キャンセル",
       }
@@ -487,11 +488,13 @@ function KeySetupError({
         deleteTitle: "Delete this account?",
         deleteWarning: "This cannot be undone. Your account, device keys, and stored data will be deleted.",
         deleteScope: "This deletes your account, all sessions, device keys, and encrypted data.",
+        deleteConfirmation: "DELETE",
         confirmDeleteInstruction: "Type DELETE to confirm.",
         confirmDeletePlaceholder: "Type DELETE",
         deleteConfirm: "Re-authenticate with Passkey and delete",
         cancel: "Cancel",
       };
+  const expectedDeleteConfirmation = copy.deleteConfirmation;
 
   return (
     <View style={styles.keySetupErrorScreen}>
@@ -557,9 +560,9 @@ function KeySetupError({
               <Text style={styles.secondaryButtonText}>{copy.cancel}</Text>
             </Pressable>
             <Pressable
-              disabled={actionBusy || deleteConfirmation.trim().toUpperCase() !== "DELETE"}
+              disabled={actionBusy || deleteConfirmation.trim().toUpperCase() !== expectedDeleteConfirmation}
               onPress={() => void onDeleteAccount().catch(() => undefined)}
-              style={[styles.keySetupDeleteConfirm, (actionBusy || deleteConfirmation.trim().toUpperCase() !== "DELETE") && styles.disabled]}
+              style={[styles.keySetupDeleteConfirm, (actionBusy || deleteConfirmation.trim().toUpperCase() !== expectedDeleteConfirmation) && styles.disabled]}
             >
               {actionBusy ? <ActivityIndicator color="#ffffff" /> : <Text style={styles.primaryButtonText}>{copy.deleteConfirm}</Text>}
             </Pressable>

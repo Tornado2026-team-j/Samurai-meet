@@ -56,8 +56,9 @@ const COPY = {
     deleteTitle: "アカウントを削除しますか？",
     deleteWarning: "この操作は取り消せません。削除後はログイン・復旧・保存データの返却ができません。",
     deleteScope: "削除対象: アカウント、全セッション、端末鍵、暗号化データ",
-    confirmDeleteInstruction: "誤操作防止のため DELETE と入力してください。",
-    confirmDeletePlaceholder: "DELETE と入力",
+    deleteConfirmation: "削除",
+    confirmDeleteInstruction: "誤操作防止のため「削除」と入力してください。",
+    confirmDeletePlaceholder: "削除 と入力",
     deleteContinue: "Passkeyで再認証して削除",
     deleting: "アカウントを削除中…",
     cancel: "キャンセル",
@@ -100,6 +101,7 @@ const COPY = {
     deleteTitle: "Delete this account?",
     deleteWarning: "This cannot be undone. You will lose access to the account, recovery, and stored data.",
     deleteScope: "This deletes your account, all sessions, device keys, and encrypted data.",
+    deleteConfirmation: "DELETE",
     confirmDeleteInstruction: "Type DELETE to prevent accidental deletion.",
     confirmDeletePlaceholder: "Type DELETE",
     deleteContinue: "Re-authenticate with Passkey and delete",
@@ -159,6 +161,7 @@ export default function ProfileScreen() {
   const recoverySessionRef = useRef<Session | null>(null);
   const recoveryOperationRef = useRef(0);
   const copy = COPY[language];
+  const expectedDeleteConfirmation = copy.deleteConfirmation;
 
   useEffect(() => {
     const activeSession = sessionRef.current;
@@ -589,11 +592,11 @@ export default function ProfileScreen() {
                 <Pressable
                   accessibilityLabel={copy.deleteContinue}
                   accessibilityRole="button"
-                  disabled={deleting || deleteConfirmation.trim().toUpperCase() !== "DELETE"}
+                  disabled={deleting || deleteConfirmation.trim().toUpperCase() !== expectedDeleteConfirmation}
                   onPress={() => void handleDeleteAccount()}
                   style={({ pressed }) => [
                     styles.confirmDeleteButton,
-                    (deleting || deleteConfirmation.trim().toUpperCase() !== "DELETE") && styles.disabledButton,
+                    (deleting || deleteConfirmation.trim().toUpperCase() !== expectedDeleteConfirmation) && styles.disabledButton,
                     pressed && !deleting && styles.pressed,
                   ]}
                 >
