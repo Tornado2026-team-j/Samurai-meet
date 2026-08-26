@@ -31,9 +31,11 @@ import type { Session } from "../services/auth-contract";
 import {
   loadLanguage,
   loadLocalProfile,
-  type AppLanguage,
-  type LocalProfile,
 } from "../services/onboarding";
+import type {
+  AppLanguage,
+  LocalProfile,
+} from "../services/onboarding-contract";
 
 const BLUE = "#5ec5f5";
 const YELLOW = "#e7b454";
