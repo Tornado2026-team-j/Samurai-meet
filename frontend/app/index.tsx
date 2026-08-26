@@ -35,11 +35,14 @@ import {
 import { createRecoveryKeyMaterial, deriveDataKey, type KeyEnvelope } from "../services/crypto";
 import {
   clearLanguage,
+  loadIdentityVerificationChoice,
   loadLanguage,
   loadLocalProfile,
+  saveIdentityVerificationChoice,
   saveLanguage,
   saveLocalProfile,
   type AppLanguage,
+  type IdentityVerificationChoice,
   type LocalProfile,
 } from "../services/onboarding";
 
@@ -213,13 +216,15 @@ function LanguageStep({ onContinue }: LanguageStepProps) {
 
 type AuthStepProps = {
   language: AppLanguage;
+  onAuthenticated: () => void;
   onBack: () => Promise<void>;
 };
 
-function AuthStep({ language, onBack }: AuthStepProps) {
+function AuthStep({ language, onAuthenticated, onBack }: AuthStepProps) {
   const { busy, continuePasskey, error, login, logout, preAuth, recoverWithRecoveryKey, recoveryVerified, status } = useAuth();
   const [showRecovery, setShowRecovery] = useState(false);
   const passkeyReady = status === "pre_auth" && preAuth !== null;
+  const signedIn = status === "signed_in";
   const leaveAuthentication = async () => {
     if (busy) return;
     await logout();
@@ -227,26 +232,34 @@ function AuthStep({ language, onBack }: AuthStepProps) {
   };
   const startAuthentication = async () => {
     try {
-      if (passkeyReady) {
-        await continuePasskey(language);
+      if (signedIn) {
+        onAuthenticated();
+      } else if (passkeyReady) {
+        if (await continuePasskey(language)) onAuthenticated();
       } else {
         await login();
       }
     } catch {
       // useAuth exposes the handled error through its error state.
-      return;
     }
   };
   const copy = language === "ja"
     ? {
-        title: passkeyReady ? "Passkeyを設定" : "アカウントを作成",
-        subtitle: passkeyReady
-          ? recoveryVerified
-            ? (preAuth?.passkey_registered
-              ? "Recovery Keyを確認しました。続けてPasskeyで本人確認します。"
-              : "Recovery Keyを確認しました。続けてこの端末のPasskeyを登録します。")
-            : "Google認証が完了しました。続けてこの端末を保護します。"
+        title: signedIn
+          ? "アカウント登録完了"
+          : passkeyReady
+            ? "Passkeyを設定"
+            : "アカウントを作成",
+        subtitle: signedIn
+          ? "Googleアカウントの確認が完了しました。次に本人確認へ進みます。"
+          : passkeyReady
+            ? recoveryVerified
+              ? (preAuth?.passkey_registered
+                ? "Recovery Keyを確認しました。続けてPasskeyで本人確認します。"
+                : "Recovery Keyを確認しました。続けてこの端末のPasskeyを登録します。")
+              : "Google認証が完了しました。続けてこの端末を保護します。"
           : "Googleアカウントで安全に登録・ログインできます。",
+        continue: "次へ",
         google: "Googleで続ける",
         passkey: preAuth?.passkey_registered ? "Passkeyで本人確認" : "Passkeyを登録",
         recovery: "Recovery Keyで復旧",
@@ -256,14 +269,21 @@ function AuthStep({ language, onBack }: AuthStepProps) {
         passkeyNote: "Passkeyはパスワードを保存せず、この端末の画面ロックで本人確認します",
       }
     : {
-        title: passkeyReady ? "Set up a passkey" : "Create your account",
-        subtitle: passkeyReady
-          ? recoveryVerified
-            ? (preAuth?.passkey_registered
-              ? "Your Recovery Key was verified. Continue with Passkey verification."
-              : "Your Recovery Key was verified. Continue by creating a Passkey for this device.")
-            : "Google verification is complete. Now protect this device."
+        title: signedIn
+          ? "Account ready"
+          : passkeyReady
+            ? "Set up a passkey"
+            : "Create your account",
+        subtitle: signedIn
+          ? "Your Google account is verified. Next, review identity verification."
+          : passkeyReady
+            ? recoveryVerified
+              ? (preAuth?.passkey_registered
+                ? "Your Recovery Key was verified. Continue with Passkey verification."
+                : "Your Recovery Key was verified. Continue by creating a Passkey for this device.")
+              : "Google verification is complete. Now protect this device."
           : "Sign up or sign in securely with your Google account.",
+        continue: "Continue",
         google: "Continue with Google",
         passkey: preAuth?.passkey_registered ? "Verify with passkey" : "Create a passkey",
         recovery: "Recover with Recovery Key",
@@ -272,7 +292,6 @@ function AuthStep({ language, onBack }: AuthStepProps) {
         privacy: "Your email is used only to verify your account",
         passkeyNote: "Passkeys use your device screen lock, so there is no password to store",
       };
-
   if (showRecovery && passkeyReady && preAuth?.passkey_registered && preAuth.recovery_available === true) {
     return (
       <RecoveryKeyInput
@@ -297,7 +316,11 @@ function AuthStep({ language, onBack }: AuthStepProps) {
       >
         <Hero onBack={() => void leaveAuthentication()}>
           <View style={styles.authIllustration}>
-            <MaterialIcons color="#ffffff" name={passkeyReady ? "key" : "person-outline"} size={64} />
+            <MaterialIcons
+              color="#ffffff"
+              name={signedIn ? "check-circle" : passkeyReady ? "key" : "person-outline"}
+              size={64}
+            />
           </View>
           <Text style={styles.heroTitle}>{copy.title}</Text>
           <Text style={[styles.heroSubtitle, styles.authSubtitle]}>{copy.subtitle}</Text>
@@ -305,7 +328,7 @@ function AuthStep({ language, onBack }: AuthStepProps) {
 
         <View style={styles.content}>
           <View style={styles.authActions}>
-            {passkeyReady ? (
+            {passkeyReady || signedIn ? (
               <View style={styles.completedRow}>
                 {recoveryVerified ? (
                   <MaterialIcons color={YELLOW} name="vpn-key" size={22} />
@@ -331,6 +354,8 @@ function AuthStep({ language, onBack }: AuthStepProps) {
             >
               {busy ? (
                 <ActivityIndicator color={TEXT_GRAY} />
+              ) : signedIn ? (
+                <MaterialIcons color={YELLOW} name="arrow-forward" size={26} />
               ) : passkeyReady ? (
                 <MaterialIcons color={YELLOW} name="key" size={26} />
               ) : (
@@ -338,7 +363,7 @@ function AuthStep({ language, onBack }: AuthStepProps) {
               )}
               {!busy ? (
                 <Text style={styles.authButtonText}>
-                  {passkeyReady ? copy.passkey : copy.google}
+                  {signedIn ? copy.continue : passkeyReady ? copy.passkey : copy.google}
                 </Text>
               ) : null}
             </Pressable>
@@ -362,7 +387,7 @@ function AuthStep({ language, onBack }: AuthStepProps) {
             <View style={styles.securityNote}>
               <MaterialIcons color={MUTED_GRAY} name="lock-outline" size={16} />
               <Text style={styles.securityNoteText}>
-                {passkeyReady ? copy.passkeyNote : copy.privacy}
+                {passkeyReady || signedIn ? copy.passkeyNote : copy.privacy}
               </Text>
             </View>
 
@@ -602,6 +627,9 @@ export default function OnboardingScreen() {
   } = useAuth();
   const [language, setLanguage] = useState<AppLanguage | null>(null);
   const [profile, setProfile] = useState<LocalProfile | null>(null);
+  const [identityVerificationChoice, setIdentityVerificationChoice] =
+    useState<IdentityVerificationChoice>(null);
+  const [accountStepCompleted, setAccountStepCompleted] = useState(false);
   const [languageLoaded, setLanguageLoaded] = useState(false);
   const [profileLoadedFor, setProfileLoadedFor] = useState<string | null>(null);
   const [keySetupFor, setKeySetupFor] = useState<string | null>(null);
@@ -612,6 +640,8 @@ export default function OnboardingScreen() {
   const [keySetupState, setKeySetupState] = useState<KeySetupState>({ status: "loading" });
   const sessionRef = useRef(session);
   sessionRef.current = session;
+  const [identityVerificationChoiceLoadedFor, setIdentityVerificationChoiceLoadedFor] =
+    useState<string | null>(null);
 
   const reauthenticateKeySetup = async () => {
     if (keySetupActionBusy) return;
@@ -680,17 +710,36 @@ export default function OnboardingScreen() {
   }, []);
 
   useEffect(() => {
-    if (!session?.user_id) return;
+    if (!session?.user_id) {
+      setProfile(null);
+      setIdentityVerificationChoice(null);
+      setAccountStepCompleted(false);
+      setProfileLoadedFor(null);
+      setIdentityVerificationChoiceLoadedFor(null);
+      return;
+    }
 
     let active = true;
     const userID = session.user_id;
-    void loadLocalProfile(userID).then((storedProfile) => {
+    void Promise.all([
+      loadLocalProfile(userID),
+      loadIdentityVerificationChoice(userID),
+    ]).then(([storedProfile, storedIdentityVerificationChoice]) => {
       if (active) {
         setProfile(storedProfile);
+        setIdentityVerificationChoice(
+          storedIdentityVerificationChoice ??
+            storedProfile?.identityVerificationChoice ??
+            null,
+        );
         setProfileLoadedFor(userID);
+        setIdentityVerificationChoiceLoadedFor(userID);
       }
     }).catch(() => {
-      if (active) setProfileLoadedFor(userID);
+      if (active) {
+        setProfileLoadedFor(userID);
+        setIdentityVerificationChoiceLoadedFor(userID);
+      }
     });
     return () => {
       active = false;
@@ -789,6 +838,7 @@ export default function OnboardingScreen() {
         onContinue={async (selectedLanguage) => {
           await saveLanguage(selectedLanguage);
           setLanguage(selectedLanguage);
+          setAccountStepCompleted(false);
         }}
       />
     );
@@ -798,9 +848,11 @@ export default function OnboardingScreen() {
     return (
       <AuthStep
         language={language}
+        onAuthenticated={() => setAccountStepCompleted(true)}
         onBack={async () => {
           await clearLanguage();
           setLanguage(null);
+          setAccountStepCompleted(false);
         }}
       />
     );
@@ -937,7 +989,10 @@ export default function OnboardingScreen() {
     );
   }
 
-  if (profileLoadedFor !== session.user_id) {
+  if (
+    profileLoadedFor !== session.user_id ||
+    identityVerificationChoiceLoadedFor !== session.user_id
+  ) {
     return (
       <View style={styles.loadingScreen}>
         <ActivityIndicator color={BLUE} size="large" />
@@ -945,26 +1000,45 @@ export default function OnboardingScreen() {
     );
   }
 
-  if (profile?.completed) {
-    if (profile.identityVerificationChoice === null) {
-      const saveChoice = async (choice: "proceed" | "later") => {
+  if (!profile?.completed && !accountStepCompleted) {
+    return (
+      <AuthStep
+        language={language}
+        onAuthenticated={() => setAccountStepCompleted(true)}
+        onBack={async () => {
+          await clearLanguage();
+          setLanguage(null);
+          setAccountStepCompleted(false);
+        }}
+      />
+    );
+  }
+
+  if (identityVerificationChoice === null) {
+    const saveChoice = async (choice: Exclude<IdentityVerificationChoice, null>) => {
+      await saveIdentityVerificationChoice(session.user_id, choice);
+      setIdentityVerificationChoice(choice);
+
+      if (profile) {
         const nextProfile = {
           ...profile,
           identityVerificationChoice: choice,
         };
         await saveLocalProfile(session.user_id, nextProfile);
         setProfile(nextProfile);
-      };
+      }
+    };
 
-      return (
-        <IdentityVerificationPrompt
-          language={language}
-          onLater={() => saveChoice("later")}
-          onProceed={() => saveChoice("proceed")}
-        />
-      );
-    }
+    return (
+      <IdentityVerificationPrompt
+        language={language}
+        onLater={() => saveChoice("later")}
+        onProceed={() => saveChoice("proceed")}
+      />
+    );
+  }
 
+  if (profile?.completed) {
     return <Redirect href={language === "ja" ? "/japanese" : "/foreigner"} />;
   }
 
@@ -977,8 +1051,15 @@ export default function OnboardingScreen() {
         setLanguage(null);
       }}
       onSubmit={async (nextProfile) => {
-        await saveLocalProfile(session.user_id, nextProfile);
-        setProfile(nextProfile);
+        const profileWithIdentityVerificationChoice = {
+          ...nextProfile,
+          identityVerificationChoice,
+        };
+        await saveLocalProfile(
+          session.user_id,
+          profileWithIdentityVerificationChoice,
+        );
+        setProfile(profileWithIdentityVerificationChoice);
       }}
     />
   );
@@ -1053,9 +1134,6 @@ const styles = StyleSheet.create({
     paddingLeft: 5,
     alignItems: "center",
     justifyContent: "center",
-    borderWidth: 1.5,
-    borderColor: "rgba(255, 255, 255, 0.9)",
-    borderRadius: 21,
   },
   heroIconCircle: {
     width: 100,

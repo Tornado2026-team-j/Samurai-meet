@@ -1,20 +1,36 @@
 import * as SecureStore from "expo-secure-store";
 import { Platform } from "react-native";
 import {
+  parseIdentityVerificationChoice,
   parseLanguage,
   parseLocalProfile,
   type AppLanguage,
+  type IdentityVerificationChoice,
   type LocalProfile,
 } from "./onboarding-contract";
 
-export { parseLanguage, parseLocalProfile } from "./onboarding-contract";
-export type { AppLanguage, LocalProfile } from "./onboarding-contract";
+export {
+  parseIdentityVerificationChoice,
+  parseLanguage,
+  parseLocalProfile,
+} from "./onboarding-contract";
+export type {
+  AppLanguage,
+  IdentityVerificationChoice,
+  LocalProfile,
+} from "./onboarding-contract";
 
 const LANGUAGE_KEY = "samurai_meet_language_v1";
 const PROFILE_KEY_PREFIX = "samurai_meet_profile_v1_";
+const IDENTITY_VERIFICATION_CHOICE_KEY_PREFIX =
+  "samurai_meet_identity_verification_choice_v1_";
 
 function profileKey(userID: string): string {
   return `${PROFILE_KEY_PREFIX}${userID.replace(/[^A-Za-z0-9._-]/g, "_")}`;
+}
+
+function identityVerificationChoiceKey(userID: string): string {
+  return `${IDENTITY_VERIFICATION_CHOICE_KEY_PREFIX}${userID.replace(/[^A-Za-z0-9._-]/g, "_")}`;
 }
 
 async function getItem(key: string): Promise<string | null> {
@@ -57,6 +73,21 @@ export async function clearLanguage(): Promise<void> {
 
 export async function loadLocalProfile(userID: string): Promise<LocalProfile | null> {
   return parseLocalProfile(await getItem(profileKey(userID)));
+}
+
+export async function loadIdentityVerificationChoice(
+  userID: string,
+): Promise<IdentityVerificationChoice> {
+  return parseIdentityVerificationChoice(
+    await getItem(identityVerificationChoiceKey(userID)),
+  );
+}
+
+export async function saveIdentityVerificationChoice(
+  userID: string,
+  choice: Exclude<IdentityVerificationChoice, null>,
+): Promise<void> {
+  await setItem(identityVerificationChoiceKey(userID), choice);
 }
 
 export async function saveLocalProfile(

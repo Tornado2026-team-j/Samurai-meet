@@ -14,6 +14,8 @@ import {
   findMockMatchById,
   MOCK_MATCHES,
 } from "../../../mocks/matches";
+import { useAuth } from "../../../hooks/useAuth";
+import { sendRecruitmentInterest } from "../../../services/matching";
 import { formatTimeRange } from "../../../utils/time";
 
 const BLUE = "#00aeff";
@@ -35,14 +37,36 @@ const CATEGORY_IMAGES = {
 
 export default function JapaneseMatchDetailScreen() {
   const router = useRouter();
+  const { session, status } = useAuth();
   const { id } = useLocalSearchParams<{ id?: string | string[] }>();
   const matchId = Array.isArray(id) ? id[0] : id;
   const match = findMockMatchById(matchId) ?? MOCK_MATCHES[0];
-  const [isRequested, setIsRequested] = useState(false);
+  const [requestState, setRequestState] = useState<"idle" | "sending">("idle");
+  const [requestError, setRequestError] = useState<string | null>(null);
 
   if (!match) {
     return null;
   }
+
+  const sendInterest = async () => {
+    if (requestState === "sending") return;
+    if (status !== "signed_in" || !session) {
+      setRequestError("ログイン後にもう一度お試しください。");
+      return;
+    }
+
+    setRequestState("sending");
+    setRequestError(null);
+
+    try {
+      await sendRecruitmentInterest(match.id, session);
+      router.push("/japanese/guide-requested");
+    } catch {
+      setRequestError("応募を送信できませんでした。時間をおいてもう一度お試しください。");
+    } finally {
+      setRequestState("idle");
+    }
+  };
 
   return (
     <View style={styles.screen}>
@@ -149,19 +173,25 @@ export default function JapaneseMatchDetailScreen() {
 
           <Pressable
             accessibilityRole="button"
-            accessibilityState={{ disabled: isRequested }}
-            disabled={isRequested}
-            onPress={() => setIsRequested(true)}
+            accessibilityState={{ disabled: requestState === "sending" }}
+            disabled={requestState === "sending"}
+            onPress={() => void sendInterest()}
             style={({ pressed }) => [
               styles.guideButton,
-              isRequested && styles.guideButtonRequested,
+              requestState === "sending" && styles.guideButtonDisabled,
               pressed && styles.pressed,
             ]}
           >
             <Text style={styles.guideButtonText}>
-              {isRequested ? "案内リクエストを送信しました" : "この人を案内したい！"}
+              {requestState === "sending" ? "応募を送信中..." : "この人を案内したい！"}
             </Text>
           </Pressable>
+
+          {requestError ? (
+            <Text accessibilityRole="alert" style={styles.requestError}>
+              {requestError}
+            </Text>
+          ) : null}
         </View>
       </ScrollView>
     </View>
@@ -420,7 +450,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     backgroundColor: YELLOW,
   },
-  guideButtonRequested: {
+  guideButtonDisabled: {
     opacity: 0.72,
   },
   guideButtonText: {
@@ -429,6 +459,18 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     letterSpacing: 0,
     lineHeight: 18,
+  },
+  requestError: {
+    position: "absolute",
+    top: 811,
+    left: 45,
+    right: 45,
+    color: "#d45555",
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 0,
+    lineHeight: 14,
+    textAlign: "center",
   },
   pressed: {
     opacity: 0.72,
