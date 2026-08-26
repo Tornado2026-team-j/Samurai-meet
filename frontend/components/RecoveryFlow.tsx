@@ -473,17 +473,17 @@ export function RecoveryCompletion({
   const insets = useSafeAreaInsets();
   const copy = language === "ja"
     ? {
-        title: mode === "initial" ? "暗号鍵の登録が完了しました" : "アカウントの復旧が完了しました",
+        title: mode === "initial" ? "暗号鍵の登録が完了しました" : "Recovery Keyを確認しました",
         description: mode === "initial"
           ? "Recovery Keyを保存し、端末の暗号鍵を登録しました。"
-          : "新しい端末の暗号鍵とRecovery Keyを登録しました。",
+          : "Recovery Keyを確認し、この端末の暗号鍵を登録しました。",
         continue: "続ける",
       }
     : {
-        title: mode === "initial" ? "Encryption keys are ready" : "Account recovery is complete",
+        title: mode === "initial" ? "Encryption keys are ready" : "Recovery Key verified",
         description: mode === "initial"
           ? "Your Recovery Key and device encryption key have been registered."
-          : "The new device encryption key and Recovery Key have been registered.",
+          : "Your Recovery Key was verified and this device's encryption key was registered.",
         continue: "Continue",
       };
 
@@ -526,6 +526,8 @@ const styles = StyleSheet.create({
   title: { color: TEXT_GRAY, fontSize: 24, fontWeight: "700" },
   description: { color: MUTED_GRAY, fontSize: 15, lineHeight: 23 },
   accountReference: {
+    width: "100%",
+    alignSelf: "stretch",
     gap: 5,
     padding: 12,
     borderWidth: 1,
@@ -534,9 +536,25 @@ const styles = StyleSheet.create({
     backgroundColor: "#f5fbff",
   },
   accountReferenceLabel: { color: MUTED_GRAY, fontSize: 12, fontWeight: "600" },
-  accountReferenceRow: { minHeight: 38, flexDirection: "row", alignItems: "center", gap: 8 },
-  accountReferenceValue: { flex: 1, color: TEXT_GRAY, fontSize: 13, lineHeight: 19 },
+  accountReferenceRow: {
+    width: "100%",
+    minHeight: 38,
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+    flexWrap: "wrap",
+  },
+  accountReferenceValue: {
+    flexGrow: 1,
+    flexShrink: 1,
+    minWidth: 0,
+    paddingTop: 8,
+    color: TEXT_GRAY,
+    fontSize: 13,
+    lineHeight: 19,
+  },
   accountReferenceButton: {
+    flexShrink: 0,
     minHeight: 36,
     paddingHorizontal: 9,
     flexDirection: "row",

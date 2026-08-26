@@ -399,6 +399,7 @@ export default function ProfileScreen() {
       </View>
 
       <ScrollView
+        style={styles.profileScrollView}
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
       >
@@ -645,7 +646,12 @@ function CopyableInfoRow({
   return (
     <View style={[styles.copyableInfoRow, compact && styles.compactCopyableInfoRow]}>
       {label ? <Text style={styles.securityInfoLabel}>{label}</Text> : null}
-      <View style={styles.copyableInfoValueRow}>
+      <View
+        style={[
+          styles.copyableInfoValueRow,
+          compact && styles.compactCopyableInfoValueRow,
+        ]}
+      >
         {!hideValue ? <Text selectable style={styles.copyableInfoValue}>{value}</Text> : null}
         <Pressable
           accessibilityRole="button"
@@ -700,6 +706,8 @@ const styles = StyleSheet.create({
     paddingBottom: 18,
     flexDirection: "row",
     alignItems: "flex-end",
+    zIndex: 10,
+    elevation: 4,
     backgroundColor: BLUE,
     borderBottomLeftRadius: 36,
     borderBottomRightRadius: 36,
@@ -720,6 +728,9 @@ const styles = StyleSheet.create({
     padding: 24,
     paddingBottom: 40,
     gap: 16,
+  },
+  profileScrollView: {
+    flex: 1,
   },
   avatar: {
     width: 96,
@@ -814,6 +825,9 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
+  },
+  compactCopyableInfoValueRow: {
+    justifyContent: "flex-end",
   },
   copyableInfoValue: {
     flex: 1,

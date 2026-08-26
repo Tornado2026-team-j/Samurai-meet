@@ -392,7 +392,7 @@ export async function beginRecovery(token: string): Promise<RecoveryChallenge> {
       throw new Error('このアカウントにはRecovery Keyが登録されていません。Passkey認証後に新しいRecovery Keyを登録してください。');
     }
     if (reason instanceof Error && reason.message === '401: recovery_challenge_failed') {
-      throw new Error('Recovery Keyを確認できませんでした。もう一度Google認証からお試しください。');
+      throw new Error('Recovery Keyを確認できませんでした。本人確認状態を確認してから、もう一度お試しください。');
     }
     throw reason;
   }

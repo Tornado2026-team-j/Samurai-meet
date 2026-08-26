@@ -31,6 +31,13 @@ function testRandomBytes(start = 1): RandomBytes {
 }
 
 describe('フロント端末Key-A envelope', () => {
+  it('Recovery Keyは256ビットのBase64URL文字列として生成される', async () => {
+    const material = await createKeyMaterial(testRandomBytes());
+
+    expect(fromBase64URL(material.recoveryKey)).toHaveLength(32);
+    expect(material.recoveryKey).toMatch(/^[A-Za-z0-9_-]{43}$/);
+  });
+
   it('Recovery KeyでKey-Aを復号できる', async () => {
     const material = await createKeyMaterial(testRandomBytes());
     const recovered = recoverKeyA(material.recoveryKey, material.envelope);

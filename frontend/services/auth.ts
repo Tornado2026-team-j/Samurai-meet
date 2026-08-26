@@ -33,6 +33,7 @@ const OAUTH_VERIFIER_KEY = 'samurai_meet_oauth_verifier_v1';
 const SESSION_HANDOFF_VERIFIER_KEY = 'samurai_meet_session_handoff_verifier_v1';
 const SESSION_HANDOFF_REQUEST_KEY = 'samurai_meet_session_handoff_request_v1';
 const REFRESH_REQUEST_KEY = 'samurai_meet_refresh_request_v1';
+const RECOVERY_VERIFIED_USER_KEY = 'samurai_meet_recovery_verified_user_v1';
 const AUTH_REQUEST_TIMEOUT_MS = 15_000;
 
 type SessionResponse = { data?: Session };
@@ -41,6 +42,8 @@ type OAuthResponse = { data?: Session | PreAuth };
 export type AuthSnapshot = {
   session: Session | null;
   preAuth: PreAuth | null;
+  /** Presentation-only state: the Recovery Key was verified for this pre-auth user. */
+  recoveryVerified?: boolean;
 };
 
 async function getStoredItem(key: string): Promise<string | null> {
@@ -111,11 +114,17 @@ async function request<T>(path: string, init: RequestInit = {}, token?: string):
 async function persistSession(value: Session): Promise<void> {
   await setStoredItem(SESSION_KEY, JSON.stringify(storedSession(value)));
   await deleteStoredItem(PRE_AUTH_KEY);
+  await deleteStoredItem(RECOVERY_VERIFIED_USER_KEY);
 }
 
 async function persistPreAuth(value: PreAuth): Promise<void> {
   await setStoredItem(PRE_AUTH_KEY, JSON.stringify(value));
   await deleteStoredItem(SESSION_KEY);
+  await deleteStoredItem(RECOVERY_VERIFIED_USER_KEY);
+}
+
+export async function markRecoveryVerified(userID: string): Promise<void> {
+  await setStoredItem(RECOVERY_VERIFIED_USER_KEY, userID);
 }
 
 export async function clearAuthStorage(): Promise<void> {
@@ -126,6 +135,7 @@ export async function clearAuthStorage(): Promise<void> {
     deleteStoredItem(SESSION_HANDOFF_VERIFIER_KEY),
     deleteStoredItem(SESSION_HANDOFF_REQUEST_KEY),
     deleteStoredItem(REFRESH_REQUEST_KEY),
+    deleteStoredItem(RECOVERY_VERIFIED_USER_KEY),
   ]);
 }
 
@@ -150,9 +160,10 @@ function shouldClearStoredSession(error: unknown): boolean {
 }
 
 export async function restoreAuth(): Promise<AuthSnapshot> {
-  const [stored, preAuthValue] = await Promise.all([
+  const [stored, preAuthValue, recoveryVerifiedUserID] = await Promise.all([
     getStoredItem(SESSION_KEY),
     getStoredItem(PRE_AUTH_KEY),
+    getStoredItem(RECOVERY_VERIFIED_USER_KEY),
   ]);
   if (stored) {
     try {
@@ -169,7 +180,11 @@ export async function restoreAuth(): Promise<AuthSnapshot> {
     try {
       const parsed: unknown = JSON.parse(preAuthValue);
       if (!isPreAuth(parsed)) throw new SyntaxError('pre-auth shape is invalid');
-      return { session: null, preAuth: parsed };
+      return {
+        session: null,
+        preAuth: parsed,
+        recoveryVerified: recoveryVerifiedUserID === parsed.user_id,
+      };
     } catch {
       await clearAuthStorage();
     }
@@ -325,7 +340,9 @@ export async function beginPasskey(
     redirectURI,
   );
   if (result.type !== 'success') {
-    throw new Error('Passkey認証は完了しましたが、アプリへの戻りに失敗しました。もう一度お試しください');
+    throw new Error(language === 'ja'
+      ? 'Passkey認証の結果をアプリで受け取れませんでした。もう一度お試しください。'
+      : 'The app did not receive the Passkey result. Please try again.');
   }
   return completeAuthRedirect(result.url);
 }

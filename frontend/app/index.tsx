@@ -214,7 +214,7 @@ type AuthStepProps = {
 };
 
 function AuthStep({ language, onBack }: AuthStepProps) {
-  const { busy, continuePasskey, error, login, preAuth, recoverWithRecoveryKey, status } = useAuth();
+  const { busy, continuePasskey, error, login, preAuth, recoverWithRecoveryKey, recoveryVerified, status } = useAuth();
   const [showRecovery, setShowRecovery] = useState(false);
   const passkeyReady = status === "pre_auth" && preAuth !== null;
   const startAuthentication = async () => {
@@ -233,24 +233,32 @@ function AuthStep({ language, onBack }: AuthStepProps) {
     ? {
         title: passkeyReady ? "Passkeyを設定" : "アカウントを作成",
         subtitle: passkeyReady
-          ? "Google認証が完了しました。続けてこの端末を保護します。"
+          ? recoveryVerified
+            ? (preAuth?.passkey_registered
+              ? "Recovery Keyを確認しました。続けてPasskeyで本人確認します。"
+              : "Recovery Keyを確認しました。続けてこの端末のPasskeyを登録します。")
+            : "Google認証が完了しました。続けてこの端末を保護します。"
           : "Googleアカウントで安全に登録・ログインできます。",
         google: "Googleで続ける",
         passkey: preAuth?.passkey_registered ? "Passkeyで本人確認" : "Passkeyを登録",
         recovery: "Recovery Keyで復旧",
-        googleDone: "Google認証済み",
+        verificationDone: recoveryVerified ? "Recovery Key確認済み" : "Google認証済み",
         privacy: "メールアドレスは本人確認のためにのみ使用します",
         passkeyNote: "Passkeyはパスワードを保存せず、この端末の画面ロックで本人確認します",
       }
     : {
         title: passkeyReady ? "Set up a passkey" : "Create your account",
         subtitle: passkeyReady
-          ? "Google verification is complete. Now protect this device."
+          ? recoveryVerified
+            ? (preAuth?.passkey_registered
+              ? "Your Recovery Key was verified. Continue with Passkey verification."
+              : "Your Recovery Key was verified. Continue by creating a Passkey for this device.")
+            : "Google verification is complete. Now protect this device."
           : "Sign up or sign in securely with your Google account.",
         google: "Continue with Google",
         passkey: preAuth?.passkey_registered ? "Verify with passkey" : "Create a passkey",
         recovery: "Recover with Recovery Key",
-        googleDone: "Google verified",
+        verificationDone: recoveryVerified ? "Recovery Key verified" : "Google verified",
         privacy: "Your email is used only to verify your account",
         passkeyNote: "Passkeys use your device screen lock, so there is no password to store",
       };
@@ -289,10 +297,14 @@ function AuthStep({ language, onBack }: AuthStepProps) {
           <View style={styles.authActions}>
             {passkeyReady ? (
               <View style={styles.completedRow}>
-                <View style={styles.googleMarkSmall}>
-                  <FontAwesome color="#4285f4" name="google" size={19} />
-                </View>
-                <Text style={styles.completedText}>{copy.googleDone}</Text>
+                {recoveryVerified ? (
+                  <MaterialIcons color={YELLOW} name="vpn-key" size={22} />
+                ) : (
+                  <View style={styles.googleMarkSmall}>
+                    <FontAwesome color="#4285f4" name="google" size={19} />
+                  </View>
+                )}
+                <Text style={styles.completedText}>{copy.verificationDone}</Text>
                 <MaterialIcons color="#3d9a68" name="check-circle" size={22} />
               </View>
             ) : null}
@@ -678,7 +690,13 @@ export default function OnboardingScreen() {
         const localKeyA = await loadStoredKeyA(userID);
         if (!active) return;
         if (localKeyA) {
-          await ensureDeviceKeyB(activeSession);
+          const envelopes = await listKeyEnvelopes(activeSession);
+          const envelope = envelopes.find((item) => item.kdf_params.data_salt.length > 0);
+          if (!envelope) {
+            throw new Error("このアカウントの暗号鍵情報を確認できません。Recovery Keyで復旧してください。");
+          }
+          const keyB = await ensureDeviceKeyB(activeSession);
+          deriveDataKey(localKeyA, keyB.keyB, envelope.kdf_params.data_salt);
           if (!active) return;
           setKeySetupState({ status: "ready" });
           setKeySetupFor(userID);
@@ -746,6 +764,9 @@ export default function OnboardingScreen() {
       <View style={styles.loadingScreen}>
         <StatusBar style="dark" />
         <ActivityIndicator color={BLUE} size="large" />
+        <Text style={styles.loadingText}>
+          {language === "ja" ? "暗号鍵を確認しています…" : "Checking encryption keys…"}
+        </Text>
       </View>
     );
   }
@@ -925,6 +946,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "#ffffff",
+  },
+  loadingText: {
+    marginTop: 12,
+    color: MUTED_GRAY,
+    fontSize: 14,
   },
   keySetupErrorScreen: {
     flex: 1,

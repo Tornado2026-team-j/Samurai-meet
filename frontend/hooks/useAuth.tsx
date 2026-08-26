@@ -8,6 +8,7 @@ import {
   completeAuthRedirect,
   logout as logoutSession,
   logoutAll as logoutEverywhere,
+  markRecoveryVerified,
   parseAuthRedirect,
   refreshSession,
   restoreAuth,
@@ -39,7 +40,7 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 function message(error: unknown): string {
   if (!(error instanceof Error)) return '認証処理に失敗しました';
   if (error.message === '401: missing_or_invalid_access_token' || error.message === '401: invalid_pre_auth_token') {
-    return '認証情報の有効期限が切れました。Google認証からやり直してください。';
+    return '認証情報の有効期限が切れました。本人確認を最初からやり直してください。';
   }
   if (error.message === '429: recovery_rate_limited') {
     return 'Recovery Keyの試行回数が多すぎます。しばらく待ってから再試行してください。';
@@ -160,15 +161,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     const current = snapshotRef.current;
     if (!current.preAuth) {
-      setError('RecoveryにはGoogle認証が必要です');
+      setError('Recovery Keyでの復旧には、先にアカウントの本人確認が必要です');
       return;
     }
     setError(null);
     setBusy(true);
     const pending = recoverWithPreAuth(current.preAuth, recoveryKey).then((preAuth) => {
-      const next = { session: null, preAuth };
-      if (mountedRef.current) apply(next);
-      return next;
+      return markRecoveryVerified(preAuth.user_id).then(() => {
+        const next = { session: null, preAuth, recoveryVerified: true };
+        if (mountedRef.current) apply(next);
+        return next;
+      });
     }).catch((reason) => {
       if (mountedRef.current) {
         setError(message(reason));
