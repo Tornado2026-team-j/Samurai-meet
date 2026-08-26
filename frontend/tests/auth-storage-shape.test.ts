@@ -13,6 +13,28 @@ test('Secure Storageのpre-auth shapeを検証する', () => {
     pre_auth_token: 'p',
     passkey_required: true,
     passkey_registered: false,
+    recovery_available: false,
   })).toBe(true);
+  expect(isPreAuth({
+    user_id: 'u',
+    pre_auth_token: 'p',
+    passkey_required: true,
+    passkey_registered: true,
+    recovery_available: true,
+  })).toBe(true);
+  // Older deployed backends do not send recovery_available yet.
+  expect(isPreAuth({
+    user_id: 'u',
+    pre_auth_token: 'p',
+    passkey_required: true,
+    passkey_registered: false,
+  })).toBe(true);
+  expect(isPreAuth({
+    user_id: 'u',
+    pre_auth_token: 'p',
+    passkey_required: true,
+    passkey_registered: false,
+    recovery_available: 'true',
+  })).toBe(false);
   expect(isPreAuth({ user_id: 'u', pre_auth_token: 'p', passkey_required: 'true' })).toBe(false);
 });

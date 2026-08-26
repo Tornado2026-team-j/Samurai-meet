@@ -20,16 +20,24 @@ var (
 	keyVersionPattern   = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
 )
 
+const (
+	recoveryKDFAlgorithm = "HKDF-SHA256"
+	recoveryInfo         = "samurai-meet/recovery-key/v1"
+	recoverySaltBytes    = 16
+	dataSaltBytes        = 16
+)
+
 // Envelope is the server representation of a client-owned Key-A envelope.
 // EncryptedKeyA is opaque to the backend; the plaintext Key-A never crosses
 // the API and is never written to PostgreSQL.
 type Envelope struct {
-	KeyVersion    string          `json:"key_version"`
-	EncryptedKeyA string          `json:"encrypted_key_a"`
-	Nonce         string          `json:"nonce"`
-	KDFParams     json.RawMessage `json:"kdf_params"`
-	CreatedAt     time.Time       `json:"created_at"`
-	UpdatedAt     time.Time       `json:"updated_at"`
+	KeyVersion        string          `json:"key_version"`
+	EncryptedKeyA     string          `json:"encrypted_key_a"`
+	Nonce             string          `json:"nonce"`
+	KDFParams         json.RawMessage `json:"kdf_params"`
+	RecoveryPublicKey string          `json:"recovery_public_key,omitempty"`
+	CreatedAt         time.Time       `json:"created_at"`
+	UpdatedAt         time.Time       `json:"updated_at"`
 }
 
 type Service struct{ db *sql.DB }
@@ -43,20 +51,23 @@ func (s *Service) Upsert(ctx context.Context, userID string, envelope Envelope, 
 	created := now.UTC().Format(time.RFC3339Nano)
 	var result Envelope
 	var kdfParams, createdAt, updatedAt string
+	var recoveryPublicKey sql.NullString
 	err := s.db.QueryRowContext(ctx, `
-		INSERT INTO key_envelopes (id,user_id,encrypted_key_a,nonce,kdf_params,key_version,created_at,updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$7)
+		INSERT INTO key_envelopes (id,user_id,encrypted_key_a,nonce,kdf_params,recovery_public_key,key_version,created_at,updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$8)
 		ON CONFLICT (user_id,key_version) DO UPDATE SET
 			encrypted_key_a=EXCLUDED.encrypted_key_a,
 			nonce=EXCLUDED.nonce,
 			kdf_params=EXCLUDED.kdf_params,
+			recovery_public_key=EXCLUDED.recovery_public_key,
 			updated_at=EXCLUDED.updated_at
-		RETURNING encrypted_key_a,nonce,kdf_params,key_version,created_at,updated_at`,
-		newID(), userID, envelope.EncryptedKeyA, envelope.Nonce, string(envelope.KDFParams), envelope.KeyVersion, created,
-	).Scan(&result.EncryptedKeyA, &result.Nonce, &kdfParams, &result.KeyVersion, &createdAt, &updatedAt)
+		RETURNING encrypted_key_a,nonce,kdf_params,recovery_public_key,key_version,created_at,updated_at`,
+		newID(), userID, envelope.EncryptedKeyA, envelope.Nonce, string(envelope.KDFParams), nullableString(envelope.RecoveryPublicKey), envelope.KeyVersion, created,
+	).Scan(&result.EncryptedKeyA, &result.Nonce, &kdfParams, &recoveryPublicKey, &result.KeyVersion, &createdAt, &updatedAt)
 	if err != nil {
 		return Envelope{}, err
 	}
+	result.RecoveryPublicKey = recoveryPublicKey.String
 	result.KDFParams = json.RawMessage(kdfParams)
 	result.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt)
 	if err != nil {
@@ -73,7 +84,7 @@ func (s *Service) List(ctx context.Context, userID string) ([]Envelope, error) {
 	if strings.TrimSpace(userID) == "" {
 		return nil, ErrInvalidEnvelope
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT encrypted_key_a,nonce,kdf_params,key_version,created_at,updated_at FROM key_envelopes WHERE user_id=$1 ORDER BY updated_at DESC`, userID)
+	rows, err := s.db.QueryContext(ctx, `SELECT encrypted_key_a,nonce,kdf_params,recovery_public_key,key_version,created_at,updated_at FROM key_envelopes WHERE user_id=$1 ORDER BY updated_at DESC`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -95,14 +106,16 @@ func (s *Service) Get(ctx context.Context, userID, version string) (Envelope, er
 	}
 	var result Envelope
 	var kdfParams, createdAt, updatedAt string
-	err := s.db.QueryRowContext(ctx, `SELECT encrypted_key_a,nonce,kdf_params,key_version,created_at,updated_at FROM key_envelopes WHERE user_id=$1 AND key_version=$2`, userID, version).
-		Scan(&result.EncryptedKeyA, &result.Nonce, &kdfParams, &result.KeyVersion, &createdAt, &updatedAt)
+	var recoveryPublicKey sql.NullString
+	err := s.db.QueryRowContext(ctx, `SELECT encrypted_key_a,nonce,kdf_params,recovery_public_key,key_version,created_at,updated_at FROM key_envelopes WHERE user_id=$1 AND key_version=$2`, userID, version).
+		Scan(&result.EncryptedKeyA, &result.Nonce, &kdfParams, &recoveryPublicKey, &result.KeyVersion, &createdAt, &updatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Envelope{}, ErrEnvelopeNotFound
 	}
 	if err != nil {
 		return Envelope{}, err
 	}
+	result.RecoveryPublicKey = recoveryPublicKey.String
 	result.KDFParams = json.RawMessage(kdfParams)
 	result.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt)
 	if err != nil {
@@ -143,6 +156,11 @@ func validate(userID string, envelope Envelope) error {
 	if len(envelope.KDFParams) == 0 || len(envelope.KDFParams) > 4096 || envelope.KDFParams[0] != '{' || !json.Valid(envelope.KDFParams) {
 		return ErrInvalidEnvelope
 	}
+	if envelope.RecoveryPublicKey != "" {
+		if !validExactBase64(envelope.RecoveryPublicKey, 32) || !validRecoveryKDFParams(envelope.KDFParams) {
+			return ErrInvalidEnvelope
+		}
+	}
 	return nil
 }
 
@@ -157,12 +175,41 @@ func validBase64(value string, minBytes int) bool {
 	return len(raw) >= minBytes
 }
 
+func validExactBase64(value string, bytes int) bool {
+	if value == "" {
+		return false
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(value)
+	return err == nil && len(raw) == bytes
+}
+
+type recoveryKDFParams struct {
+	Algorithm string `json:"algorithm"`
+	Salt      string `json:"salt"`
+	Info      string `json:"info"`
+	DataSalt  string `json:"data_salt"`
+}
+
+func validRecoveryKDFParams(raw json.RawMessage) bool {
+	var params recoveryKDFParams
+	if err := json.Unmarshal(raw, &params); err != nil || params.Algorithm != recoveryKDFAlgorithm || params.Info == "" {
+		return false
+	}
+	info, err := base64.RawURLEncoding.DecodeString(params.Info)
+	if err != nil || string(info) != recoveryInfo || !validExactBase64(params.Salt, recoverySaltBytes) {
+		return false
+	}
+	return validExactBase64(params.DataSalt, dataSaltBytes)
+}
+
 func scanEnvelope(scanner interface{ Scan(...any) error }) (Envelope, error) {
 	var item Envelope
 	var kdfParams, createdAt, updatedAt string
-	if err := scanner.Scan(&item.EncryptedKeyA, &item.Nonce, &kdfParams, &item.KeyVersion, &createdAt, &updatedAt); err != nil {
+	var recoveryPublicKey sql.NullString
+	if err := scanner.Scan(&item.EncryptedKeyA, &item.Nonce, &kdfParams, &recoveryPublicKey, &item.KeyVersion, &createdAt, &updatedAt); err != nil {
 		return Envelope{}, err
 	}
+	item.RecoveryPublicKey = recoveryPublicKey.String
 	var err error
 	item.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt)
 	if err != nil {
@@ -174,6 +221,13 @@ func scanEnvelope(scanner interface{ Scan(...any) error }) (Envelope, error) {
 	}
 	item.KDFParams = json.RawMessage(kdfParams)
 	return item, nil
+}
+
+func nullableString(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
 }
 
 func newID() string {

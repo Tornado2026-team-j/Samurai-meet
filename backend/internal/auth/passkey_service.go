@@ -33,7 +33,7 @@ type passkeyUser struct {
 }
 
 func (u *passkeyUser) WebAuthnID() []byte                         { return []byte(u.id) }
-func (u *passkeyUser) WebAuthnName() string                       { return u.id }
+func (u *passkeyUser) WebAuthnName() string                       { return u.displayName }
 func (u *passkeyUser) WebAuthnDisplayName() string                { return u.displayName }
 func (u *passkeyUser) WebAuthnCredentials() []webauthn.Credential { return u.credentials }
 
@@ -61,6 +61,19 @@ func NewPasskeyService(database *sql.DB, relyingParty *webauthn.WebAuthn, sessio
 }
 
 func (s *PasskeyService) BeginRegistration(ctx context.Context, userID string, now time.Time) (PasskeyOptions, error) {
+	return s.beginRegistration(ctx, userID, now, false)
+}
+
+// BeginRegistrationForPreAuth is used after a valid pre-auth capability has
+// been issued by Google or Recovery Key verification. Recovery must be able
+// to add a new credential on a device that still has the old credential
+// listed in its platform authenticator. Ordinary authenticated registration
+// keeps the exclusion list and therefore still rejects duplicate credentials.
+func (s *PasskeyService) BeginRegistrationForPreAuth(ctx context.Context, userID string, now time.Time) (PasskeyOptions, error) {
+	return s.beginRegistration(ctx, userID, now, true)
+}
+
+func (s *PasskeyService) beginRegistration(ctx context.Context, userID string, now time.Time, allowExistingCredentials bool) (PasskeyOptions, error) {
 	if userID == "" {
 		return PasskeyOptions{}, errors.New("user ID is required")
 	}
@@ -68,13 +81,16 @@ func (s *PasskeyService) BeginRegistration(ctx context.Context, userID string, n
 	if err != nil {
 		return PasskeyOptions{}, err
 	}
-	creation, session, err := s.rp.BeginRegistration(user,
-		webauthn.WithExclusions(webauthn.Credentials(user.credentials).CredentialDescriptors()),
+	registrationOptions := []webauthn.RegistrationOption{
 		webauthn.WithAuthenticatorSelection(protocol.AuthenticatorSelection{
 			ResidentKey:      protocol.ResidentKeyRequirementPreferred,
 			UserVerification: protocol.VerificationRequired,
 		}),
-	)
+	}
+	if !allowExistingCredentials {
+		registrationOptions = append(registrationOptions, webauthn.WithExclusions(webauthn.Credentials(user.credentials).CredentialDescriptors()))
+	}
+	creation, session, err := s.rp.BeginRegistration(user, registrationOptions...)
 	if err != nil {
 		return PasskeyOptions{}, err
 	}
@@ -415,14 +431,14 @@ func (s *PasskeyService) consumeCeremony(ctx context.Context, token, kind, userI
 }
 
 func (s *PasskeyService) loadUser(ctx context.Context, userID string) (*passkeyUser, error) {
-	var status string
-	if err := s.db.QueryRowContext(ctx, `SELECT status FROM users WHERE id=$1`, userID).Scan(&status); err != nil {
+	var status, displayName string
+	if err := s.db.QueryRowContext(ctx, `SELECT status,COALESCE(display_name,'') FROM users WHERE id=$1`, userID).Scan(&status, &displayName); err != nil {
 		return nil, err
 	}
 	if status != "active" {
 		return nil, errors.New("user is inactive")
 	}
-	return s.loadUserWithCredentials(ctx, userID)
+	return s.loadUserWithCredentials(ctx, userID, displayName)
 }
 
 func (s *PasskeyService) loadUserByCredential(ctx context.Context, rawID []byte) (*passkeyUser, error) {
@@ -434,8 +450,9 @@ func (s *PasskeyService) loadUserByCredential(ctx context.Context, rawID []byte)
 	return s.loadUser(ctx, userID)
 }
 
-func (s *PasskeyService) loadUserWithCredentials(ctx context.Context, userID string) (*passkeyUser, error) {
-	user := &passkeyUser{id: userID, displayName: "Samurai Meet user"}
+func (s *PasskeyService) loadUserWithCredentials(ctx context.Context, userID, displayName string) (*passkeyUser, error) {
+	displayName = normalizedDisplayName(displayName, "")
+	user := &passkeyUser{id: userID, displayName: displayName}
 	rows, err := s.db.QueryContext(ctx, `SELECT credential_id,public_key,credential_json,sign_count FROM passkey_credentials WHERE user_id=$1 ORDER BY created_at`, userID)
 	if err != nil {
 		return nil, err

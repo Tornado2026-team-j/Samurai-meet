@@ -77,6 +77,7 @@ describe('認証handoff契約', () => {
     const parsed = new URL(buildPasskeyURL('samuraimeet://auth', 'challenge', 'bootstrap-token'));
     expect(parsed.searchParams.get('app_return_uri')).toBe('samuraimeet://auth');
     expect(parsed.searchParams.get('app_handoff_challenge')).toBe('challenge');
+    expect(parsed.searchParams.get('lang')).toBe('ja');
     const fragment = new URLSearchParams(parsed.hash.slice(1));
     expect([...fragment.keys()]).toEqual(['bootstrap_token']);
     expect(fragment.get('bootstrap_token')).toBe('bootstrap-token');
@@ -84,6 +85,15 @@ describe('認証handoff契約', () => {
     expect(fragment.get('pre_auth_token')).toBeNull();
     expect(fragment.get('session_id')).toBeNull();
     expect(fragment.get('user_id')).toBeNull();
+
+    const english = new URL(buildPasskeyURL(
+      'samuraimeet://auth',
+      'challenge',
+      'bootstrap-token',
+      undefined,
+      'en',
+    ));
+    expect(english.searchParams.get('lang')).toBe('en');
   });
 
   it('アプリ復帰URIをバックエンドの許可条件で検証する', () => {
@@ -106,6 +116,9 @@ describe('認証handoff契約', () => {
     });
     expect(parsePasskeyBridgeRequest(
       'https://samurai-meet.disnana.com/passkey?app_return_uri=samuraimeet%3A%2F%2Fauth&app_handoff_challenge=challenge#pre_auth_token=secret',
+    )).toBeNull();
+    expect(parsePasskeyBridgeRequest(
+      'https://samurai-meet.disnana.com/passkey?app_return_uri=samuraimeet%3A%2F%2Fauth&app_handoff_challenge=challenge&lang=fr#bootstrap_token=secret',
     )).toBeNull();
   });
 

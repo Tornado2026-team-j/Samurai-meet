@@ -7,12 +7,14 @@ import (
 
 func validPrivateUpload(contentType string) UploadInput {
 	return UploadInput{
-		Visibility:      "private",
-		ContentType:     contentType,
-		Nonce:           base64.RawURLEncoding.EncodeToString(make([]byte, 12)),
-		Algorithm:       PhotoAlgorithm,
-		KeyVersion:      "v1",
-		WrappedImageKey: base64.RawURLEncoding.EncodeToString(make([]byte, 32)),
+		Visibility:        "private",
+		ContentType:       contentType,
+		Nonce:             base64.RawURLEncoding.EncodeToString(make([]byte, 12)),
+		Algorithm:         PhotoAlgorithm,
+		KeyVersion:        "v1",
+		WrappedImageKey:   base64.RawURLEncoding.EncodeToString(make([]byte, 32)),
+		AccountWrappedKey: base64.RawURLEncoding.EncodeToString(make([]byte, 32)),
+		DeviceID:          "device-test",
 	}
 }
 

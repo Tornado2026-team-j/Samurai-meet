@@ -43,7 +43,7 @@ Samurai Meet は、次の分担で実装します。
 | 写真 | TypeScript で選択・暗号化・送信 | Go で MIME/サイズ/権限/ストレージ処理 | `photos`、非公開ストレージ |
 | 相互評価 | TypeScript で評価フォーム | Go で一回限り制約・集計 | `reviews`, `profile_likes` |
 | 通報・ブロック | TypeScript で入力・非表示制御 | Go で遮断・運営処理・監査 | `reports`, `blocks`, `audit_logs` |
-| Recovery Key | TypeScript で生成・Secure Storage・復号 | Go で暗号化 Key-A の認証付き取得 | `key_envelopes`、KMS / Secret Manager |
+| Recovery Key | TypeScript で生成・Secure Storage・復号 | Go で暗号化 Key-A envelopeとRecovery proofを認証 | `key_envelopes`、`recovery_challenges` |
 
 ## 3. 言語・責務の境界
 
