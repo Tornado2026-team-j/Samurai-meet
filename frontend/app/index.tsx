@@ -46,6 +46,11 @@ import {
   type LocalProfile,
 } from "../services/onboarding";
 
+type LoadedUserOnboardingState = {
+  profile: LocalProfile | null;
+  identityVerificationChoice: IdentityVerificationChoice;
+};
+
 const BLUE = "#5ec5f5";
 const YELLOW = "#e7b454";
 const TEXT_GRAY = "#535353";
@@ -724,17 +729,25 @@ export default function OnboardingScreen() {
 
     let active = true;
     const userID = session.user_id;
-    void Promise.all([
-      loadLocalProfile(userID),
-      loadIdentityVerificationChoice(userID),
-    ]).then(([storedProfile, storedIdentityVerificationChoice]) => {
-      if (active) {
-        setProfile(storedProfile);
-        setIdentityVerificationChoice(
-          storedIdentityVerificationChoice ??
+    const loadUserOnboardingState =
+      async (): Promise<LoadedUserOnboardingState> => {
+        const storedProfile = await loadLocalProfile(userID);
+        const storedIdentityVerificationChoice =
+          await loadIdentityVerificationChoice(userID);
+
+        return {
+          profile: storedProfile,
+          identityVerificationChoice:
+            storedIdentityVerificationChoice ??
             storedProfile?.identityVerificationChoice ??
             null,
-        );
+        };
+      };
+
+    void loadUserOnboardingState().then((storedState) => {
+      if (active) {
+        setProfile(storedState.profile);
+        setIdentityVerificationChoice(storedState.identityVerificationChoice);
         setProfileLoadedFor(userID);
         setIdentityVerificationChoiceLoadedFor(userID);
       }
