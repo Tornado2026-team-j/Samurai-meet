@@ -218,14 +218,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(async () => {
     const current = snapshotRef.current.session;
-    if (!current) return;
     setError(null);
     try {
-      await logoutSession(current);
+      if (current) await logoutSession(current);
     } catch (reason) {
       setError(message(reason));
     } finally {
-      apply({ session: null, preAuth: null });
+      try {
+        await clearAuthStorage();
+      } finally {
+        apply({ session: null, preAuth: null });
+      }
     }
   }, [apply]);
 

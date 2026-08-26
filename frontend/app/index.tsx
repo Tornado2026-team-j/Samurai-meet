@@ -214,9 +214,14 @@ type AuthStepProps = {
 };
 
 function AuthStep({ language, onBack }: AuthStepProps) {
-  const { busy, continuePasskey, error, login, preAuth, recoverWithRecoveryKey, recoveryVerified, status } = useAuth();
+  const { busy, continuePasskey, error, login, logout, preAuth, recoverWithRecoveryKey, recoveryVerified, status } = useAuth();
   const [showRecovery, setShowRecovery] = useState(false);
   const passkeyReady = status === "pre_auth" && preAuth !== null;
+  const leaveAuthentication = async () => {
+    if (busy) return;
+    await logout();
+    await onBack();
+  };
   const startAuthentication = async () => {
     try {
       if (passkeyReady) {
@@ -242,6 +247,7 @@ function AuthStep({ language, onBack }: AuthStepProps) {
         google: "Googleで続ける",
         passkey: preAuth?.passkey_registered ? "Passkeyで本人確認" : "Passkeyを登録",
         recovery: "Recovery Keyで復旧",
+        logout: "ログアウト",
         verificationDone: recoveryVerified ? "Recovery Key確認済み" : "Google認証済み",
         privacy: "メールアドレスは本人確認のためにのみ使用します",
         passkeyNote: "Passkeyはパスワードを保存せず、この端末の画面ロックで本人確認します",
@@ -258,6 +264,7 @@ function AuthStep({ language, onBack }: AuthStepProps) {
         google: "Continue with Google",
         passkey: preAuth?.passkey_registered ? "Verify with passkey" : "Create a passkey",
         recovery: "Recover with Recovery Key",
+        logout: "Log out",
         verificationDone: recoveryVerified ? "Recovery Key verified" : "Google verified",
         privacy: "Your email is used only to verify your account",
         passkeyNote: "Passkeys use your device screen lock, so there is no password to store",
@@ -285,7 +292,7 @@ function AuthStep({ language, onBack }: AuthStepProps) {
         contentContainerStyle={styles.stepScrollContent}
         showsVerticalScrollIndicator={false}
       >
-        <Hero onBack={() => void onBack()}>
+        <Hero onBack={() => void leaveAuthentication()}>
           <View style={styles.authIllustration}>
             <MaterialIcons color="#ffffff" name={passkeyReady ? "key" : "person-outline"} size={64} />
           </View>
@@ -360,6 +367,21 @@ function AuthStep({ language, onBack }: AuthStepProps) {
               <Text accessibilityRole="alert" style={styles.errorText}>
                 {error}
               </Text>
+            ) : null}
+
+            {passkeyReady ? (
+              <Pressable
+                accessibilityRole="button"
+                disabled={busy}
+                onPress={() => void leaveAuthentication()}
+                style={({ pressed }) => [
+                  styles.authLogoutButton,
+                  busy && styles.disabled,
+                  pressed && styles.pressed,
+                ]}
+              >
+                <Text style={styles.authLogoutButtonText}>{copy.logout}</Text>
+              </Pressable>
             ) : null}
           </View>
 
@@ -1173,6 +1195,20 @@ const styles = StyleSheet.create({
   },
   secondaryButtonText: {
     color: TEXT_GRAY,
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  authLogoutButton: {
+    minHeight: 44,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: BORDER_GRAY,
+    borderRadius: 22,
+    backgroundColor: "#ffffff",
+  },
+  authLogoutButtonText: {
+    color: MUTED_GRAY,
     fontSize: 14,
     fontWeight: "700",
   },
