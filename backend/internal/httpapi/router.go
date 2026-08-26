@@ -9,6 +9,7 @@ import (
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/auth"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/image"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/keys"
+	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/matching"
 )
 
 const APIV1Prefix = "/api/v1"
@@ -29,6 +30,7 @@ type RouterOptions struct {
 	Devices             *keys.DeviceService
 	Images              *image.Service
 	Accounts            *account.Service
+	Matching            *matching.Service
 }
 
 func NewRouter() http.Handler { return NewRouterWithOptions(RouterOptions{}) }
@@ -98,6 +100,14 @@ func NewRouterWithOptions(o RouterOptions) http.Handler {
 	}
 	if o.Sessions != nil && o.Accounts != nil {
 		m.HandleFunc(APIV1Prefix+"/me", deleteAccount(o.Accounts, o.Sessions))
+	}
+	if o.Sessions != nil && o.Matching != nil {
+		m.HandleFunc(recruitmentsPrefix, recruitmentCards(o.Matching, o.Sessions))
+		m.HandleFunc(recruitmentsPrefix+"/", recruitmentCardItem(o.Matching, o.Sessions))
+		m.HandleFunc(matchesPrefix+"/", matchAccept(o.Matching, o.Sessions))
+		m.HandleFunc(blocksPrefix, blocks(o.Matching, o.Sessions))
+		m.HandleFunc(blocksPrefix+"/", blockItem(o.Matching, o.Sessions))
+		m.HandleFunc(meBlocksPath, blocks(o.Matching, o.Sessions))
 	}
 	return withCORS(withJSONContentType(m), o)
 }

@@ -1,6 +1,6 @@
 # バックエンド API 仕様（実装基準）
 
-最終更新: 2026-08-24
+最終更新: 2026-08-27
 
 この文書は、現在のGo実装とExpoテストクライアントの契約です。状態は次の記号で表します。
 
@@ -371,9 +371,50 @@ SVG、GIF、HTMLなどブラウザで解釈され得る未許可MIMEは拒否し
 
 ### 6.5 未実装業務API
 
-プロフィール、本人確認、募集、検索、マッチ、評価、チャットQUIC用短命Chat Tokenは引き続き予定です。画像平文、Key-A、Key-B、Recovery Key、Refresh TokenをAPIログへ出さない不変条件は全機能に適用します。
+プロフィール、本人確認、キーワード検索、評価、チャット（REST/WebSocket）、チャットQUIC用短命Chat Tokenは引き続き予定です。募集カード・マッチングは7章の範囲だけ実装済みです。画像平文、Key-A、Key-B、Recovery Key、Refresh TokenをAPIログへ出さない不変条件は全機能に適用します。
 
-## 7. クライアント更新手順
+## 7. 募集カード・マッチング（一部実装）
+
+[機能仕様：募集カード・マッチング](../docs/features/matching.md)のうち、チャット解放に必要な最小範囲（カード作成、関心送信、承認、ブロック）だけを実装しています。キーワード・距離検索、カード編集・削除、`draft`公開ワークフロー、`matches/{id}/complete`は未実装です。DB設計は[docs/database.md](../docs/database.md) 6章を参照してください。
+
+全エンドポイントは`Authorization: Bearer <access_token>`が必須です（Passkey再認証は不要）。
+
+### 7.1 募集カード
+
+`POST /api/v1/recruitments`
+
+```json
+{
+  "activity": "大阪でたこ焼き屋巡り",
+  "location_label": "Osaka",
+  "available_date": "2026-08-30",
+  "start_time": "14:30",
+  "duration_hours": 2,
+  "distance_km": 3
+}
+```
+
+`distance_km`は`1 / 3 / 5`のみ。作成したカードは直後から`status="open"`です。レスポンスは`{ "data": <card> }`。
+
+`GET /api/v1/recruitments`：呼び出しユーザーが所有するカードの一覧（公開カードの検索はまだ実装していません）。
+
+`GET /api/v1/recruitments/{id}`：カード1件を取得します。
+
+### 7.2 関心・マッチ承認
+
+`POST /api/v1/recruitments/{id}/interest`：呼び出しユーザーがそのカードへ関心を送ります。カード所有者自身、`open`以外の状態のカード、ブロック関係がある相手への送信は拒否されます。同じカードへ二重に送ると`409 interest_already_sent`です。成功時は`status="pending"`の`match`を返します。
+
+`POST /api/v1/matches/{id}/accept`：カード所有者だけが呼び出せます。成功すると対象`match`が`status="accepted"`になり、カードも`status="matched"`になって以後の新規関心を受け付けません。チャット機能は`matches.status="accepted"`をアクセス許可の判定に使います。
+
+### 7.3 ブロック
+
+`POST /api/v1/blocks` `{ "user_id": "..." }`：呼び出しユーザーを起点にブロックを作成します（冪等）。
+`GET /api/v1/me/blocks`：自分がブロックしたユーザーIDの一覧。
+`DELETE /api/v1/blocks/{user_id}`：ブロックを解除します。
+
+通報（`reports`）、運営キュー、監査ログは未実装です（[docs/features/safety.md](../docs/features/safety.md)）。
+
+## 8. クライアント更新手順
 
 1. 起動、フォアグラウンド復帰、API呼び出し前にAccess Tokenの残り時間を確認する。
 2. 残り30秒以下ならクライアント内single-flightでRefreshを一つだけ実行する。
@@ -381,7 +422,7 @@ SVG、GIF、HTMLなどブラウザで解釈され得る未許可MIMEは拒否し
 4. 409 `refresh_reuse_detected`、Refresh失敗、handoff失敗時はAccess/Refreshと一時verifierを削除してログイン画面へ戻す。
 5. Refresh TokenはWebSocket・QUICのURLやメッセージへ送らない。Chat TokenはRESTで別発行する。
 
-## 8. 実装追加時の必須更新
+## 9. 実装追加時の必須更新
 
 実装を追加したら、同じ変更で次を更新します。
 

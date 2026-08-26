@@ -13,6 +13,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -26,6 +27,7 @@ import (
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/db"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/image"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/keys"
+	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/matching"
 )
 
 func TestAuthKeyImageAndAccountLifecycle(t *testing.T) {
@@ -309,6 +311,97 @@ func TestRecoveryReRegistrationRevokesPreviousPasskeys(t *testing.T) {
 	}
 	if _, err := preauth.Lookup(context.Background(), result.PreAuthToken, auth.PreAuthScopeRegister, userID, now.Add(time.Second)); err != nil {
 		t.Fatalf("recovery registration pre-auth was not issued: %v", err)
+	}
+}
+
+func TestMatchingLifecycle(t *testing.T) {
+	database := openIsolatedDatabase(t)
+	now := time.Date(2026, time.August, 27, 12, 0, 0, 0, time.UTC)
+	owner := randomID(t)
+	interested := randomID(t)
+	stranger := randomID(t)
+	for _, userID := range []string{owner, interested, stranger} {
+		if _, err := database.Exec(`INSERT INTO users (id,google_subject_id,status,created_at,updated_at) VALUES ($1,$2,'active',$3,$3)`, userID, "matching-google-"+userID, now.Format(time.RFC3339Nano)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	service := matching.NewService(database)
+	ctx := context.Background()
+
+	card, err := service.CreateCard(ctx, owner, "Takoyaki tour", "Osaka", "2026-08-30", "14:30", 2, 3, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if card.Status != matching.CardStatusOpen {
+		t.Fatalf("new card status = %q, want open", card.Status)
+	}
+
+	if _, err := service.SendInterest(ctx, card.ID, owner, now); !errors.Is(err, matching.ErrOwnCard) {
+		t.Fatalf("interest on own card error = %v, want ErrOwnCard", err)
+	}
+
+	if err := service.CreateBlock(ctx, owner, stranger, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.SendInterest(ctx, card.ID, stranger, now); !errors.Is(err, matching.ErrBlocked) {
+		t.Fatalf("interest from blocked user error = %v, want ErrBlocked", err)
+	}
+
+	match, err := service.SendInterest(ctx, card.ID, interested, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if match.Status != matching.MatchStatusPending {
+		t.Fatalf("new match status = %q, want pending", match.Status)
+	}
+
+	if _, err := service.SendInterest(ctx, card.ID, interested, now); !errors.Is(err, matching.ErrDuplicateInterest) {
+		t.Fatalf("duplicate interest error = %v, want ErrDuplicateInterest", err)
+	}
+
+	if _, err := service.AcceptMatch(ctx, match.ID, interested, now); !errors.Is(err, matching.ErrNotCardOwner) {
+		t.Fatalf("accept by non-owner error = %v, want ErrNotCardOwner", err)
+	}
+
+	accepted, err := service.AcceptMatch(ctx, match.ID, owner, now.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if accepted.Status != matching.MatchStatusAccepted {
+		t.Fatalf("accepted match status = %q, want accepted", accepted.Status)
+	}
+
+	if _, err := service.AcceptMatch(ctx, match.ID, owner, now.Add(2*time.Minute)); !errors.Is(err, matching.ErrMatchNotPending) {
+		t.Fatalf("re-accept error = %v, want ErrMatchNotPending", err)
+	}
+
+	matched, err := service.IsMatched(ctx, owner, interested)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !matched {
+		t.Fatal("IsMatched = false after acceptance, want true")
+	}
+
+	updatedCard, err := service.GetCard(ctx, card.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updatedCard.Status != matching.CardStatusMatched {
+		t.Fatalf("card status after acceptance = %q, want matched", updatedCard.Status)
+	}
+
+	if _, err := service.SendInterest(ctx, card.ID, stranger, now); !errors.Is(err, matching.ErrCardNotOpen) {
+		t.Fatalf("interest on a matched card error = %v, want ErrCardNotOpen", err)
+	}
+
+	interestedMatches, err := service.ListAcceptedMatches(ctx, interested)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(interestedMatches) != 1 || interestedMatches[0].ID != match.ID {
+		t.Fatalf("ListAcceptedMatches(interested) = %+v, want a single entry for %s", interestedMatches, match.ID)
 	}
 }
 

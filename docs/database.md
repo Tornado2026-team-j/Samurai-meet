@@ -1,6 +1,6 @@
 # DB仕様書（PostgreSQL）
 
-最終更新: 2026-08-24
+最終更新: 2026-08-27
 
 ## 1. 採用方針
 
@@ -32,6 +32,7 @@
 | `0016_recovery_proof.sql` | Recovery proof用の公開証明鍵、challenge、TTL・試行回数制限 |
 | `0017_user_display_name.sql` | Passkey表示名に使うユーザー表示名 |
 | `0018_device_image_keys.sql` | 端末公開鍵、画像鍵の端末別envelope、端末proof nonce、画像のKey-A由来wrapper |
+| `0019_matching.sql` | `recruitment_cards`（最小構成）、`matches`、`blocks`。チャット解放判定に必要な最小のマッチ永続化 |
 
 注意: 現行の簡易migration runnerはSQLファイルを順番に実行する。migration履歴テーブルによる本番適用管理を導入する場合は、既存環境の適用済み状態を確認してから切り替える。
 
@@ -182,16 +183,77 @@ Key-Bは端末ごとに生成し、Secure Storage／Keychain／Keystoreから外
 
 Recovery Keyで復号したKey-Aの所有証明を一時的に受け付けるためのchallengeを保存する。challenge本文、pre-auth token、署名は保存せず、challenge hashとpre-auth token hashだけを保持する。`source_session_id`または`pre_auth_token_hash`のどちらか一方に束縛し、10分の期限、最大5回の署名試行、pre-auth単位の発行レート制限、使用済みフラグを持つ。`users`、`sessions`の削除時はchallengeもcascadeまたは退会トランザクションで削除する。
 
-## 6. これから追加するテーブル・制約
+## 6. マッチング（実装済み: `recruitment_cards` / `matches` / `blocks`）
+
+チャット（[機能仕様：チャット](features/chat.md)）は`matches.status = accepted`の参加者だけが利用できます。そのマッチ成立をPostgreSQLへ永続化する最小構成として、`0019_matching.sql`で次の3テーブルを追加しました。設計の背景と対応する機能仕様は[機能仕様：募集カード・マッチング](features/matching.md)を参照してください。
+
+このフェーズでの方針:
+
+- マッチは「ユーザー同士が直接申し込む」形ではなく、仕様通り「募集カードへの関心 → カード所有者が承認」というフローで成立します（`matching.md` 4章）。
+- キーワード・距離検索、PostGIS、`draft`→`open`の公開ワークフロー、`reports`、監査ログは**今回のスコープ外**です。カードは作成時点で直接`open`になります。
+- `profiles`、`reviews`、`user_locations`、`identity_verifications`もまだ追加していません（表示名は既存の`users.display_name`、アイコンは`photos`の`visibility='profile'`を流用）。
+
+```mermaid
+erDiagram
+    users ||--o{ recruitment_cards : "owner_user_id"
+    users ||--o{ matches : "owner_user_id / interested_user_id"
+    users ||--o{ blocks : "blocker_user_id / blocked_user_id"
+    recruitment_cards ||--o{ matches : "recruitment_card_id"
+```
+
+### `recruitment_cards`
+
+| カラム | 型 | 用途 |
+| --- | --- | --- |
+| `id` | text | PK |
+| `owner_user_id` | text | 作成者、`users`へのFK |
+| `activity` | text | 交流したい内容の自由記述 |
+| `location_label` | text nullable | 表示用の場所ラベル。緯度経度・PostGIS距離検索はまだ持たない |
+| `available_date` / `start_time` | text | 日時・時間帯 |
+| `duration_hours` | integer | 1以上 |
+| `distance_km` | integer | `1 / 3 / 5`のみ許可（CHECK制約） |
+| `status` | text | `draft / open / matched / closed / expired`。現在の実装では作成時に直接`open`になり、`draft`公開ワークフローは未実装 |
+| `created_at` / `updated_at` | text | UTC RFC3339 |
+
+### `matches`
+
+| カラム | 型 | 用途 |
+| --- | --- | --- |
+| `id` | text | PK |
+| `recruitment_card_id` | text | `recruitment_cards`へのFK |
+| `owner_user_id` | text | カード所有者。素早い認可チェックのため`recruitment_cards`から複製 |
+| `interested_user_id` | text | 関心を送ったユーザー |
+| `status` | text | `pending / accepted / rejected / blocked / expired / completed` |
+| `created_at` / `updated_at` | text | UTC RFC3339 |
+
+`UNIQUE (recruitment_card_id, interested_user_id)`で同じユーザーが同じカードへ重複して関心を送れないようにします。`owner_user_id <> interested_user_id`をCHECK制約で強制し、自分のカードへの関心を防ぎます。カード所有者が承認すると`matches.status='accepted'`かつ`recruitment_cards.status='matched'`になり、以後そのカードは新しい関心を受け付けません（1枚のカードにつき成立は1件までという暫定判断。`matching.md`8章の要確認事項として残っています）。
+
+### `blocks`
+
+| カラム | 型 | 用途 |
+| --- | --- | --- |
+| `id` | text | PK |
+| `blocker_user_id` | text | ブロックした側 |
+| `blocked_user_id` | text | ブロックされた側 |
+| `created_at` | text | UTC RFC3339 |
+
+`UNIQUE (blocker_user_id, blocked_user_id)`で二重ブロックを防ぎます（`ON CONFLICT DO NOTHING`で冪等に扱う）。関心送信時（`matches`作成前）にこのテーブルを両方向でチェックし、ブロック関係があれば`ErrBlocked`を返します。`reports`、運営キュー、監査ログは`docs/features/safety.md`の範囲として別途実装します。
+
+### 実装
+
+`backend/internal/matching`がこの3テーブルを操作するService層です。HTTPハンドラは`backend/internal/httpapi/matching.go`（`POST/GET /recruitments`、`GET/POST /recruitments/{id}` と `/interest`、`POST /matches/{id}/accept`、`POST/GET /blocks`、`GET /me/blocks`、`DELETE /blocks/{user_id}`）。チャット機能は`matching.Service.IsMatched` / `ListAcceptedMatches`を使って`matches.status=accepted`を確認する想定です。
+
+## 7. これから追加するテーブル・制約
 
 - `profiles`: 名前、国籍、icon photo、本人確認状態、likes、monster
-- `recruitment_cards`: 日時、時間帯、keywords、表示半径1/3/5km
-- `matches`、`messages`、`reviews`、`user_locations`
-- `identity_verifications`、`reports`、`blocks`、`audit_logs`
+- `messages`: チャット本文（チャット機能実装時に追加）
+- `reviews`、`user_locations`
+- `identity_verifications`、`reports`、`audit_logs`
+- `recruitment_cards`への緯度経度・PostGIS列、距離検索インデックス
 
 これらはAPI実装時にmigrationを追加し、PostgreSQL integration test、API仕様書、機能仕様書を同じ変更で更新する。
 
-## 7. 削除・保持
+## 8. 削除・保持
 
 退会では次の順序を固定する。
 

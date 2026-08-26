@@ -4,6 +4,37 @@
 
 検証専用の `expo-test` と `dev-client` は廃止しました。新しいクライアント検証は `frontend/` のテストと実機E2Eで行います。
 
+## チャット機能 引き継ぎメモ（2026-08-27）
+
+### 現在の前提
+
+- 作業ブランチは `kazumatcho`。
+- チャット（`docs/features/chat.md`）は`matches.status=accepted`の参加者だけが使える設計だが、そのマッチ成立を永続化する`matches`テーブル自体が存在しなかった。フロントの「JAMES BROWN」等は`frontend/mocks/matches.ts`のモックで、実データではない。
+- `docs/features/matching.md`の設計（募集カードへの関心→カード所有者が承認）に合わせ、フェーズ0として`recruitment_cards`（最小構成）・`matches`・`blocks`を追加した（`backend/migrations/0019_matching.sql`、`backend/internal/matching`、`backend/internal/httpapi/matching.go`）。設計の詳細は[docs/database.md](../docs/database.md) 6章。
+- キーワード・距離検索、PostGIS、カード編集・削除、`draft`公開ワークフロー、`matches/{id}/complete`、通報（`reports`）は未実装。1枚のカードにつき成立は1件までという暫定判断をしている（`matching.md` 8章の要確認事項）。
+- 実DBでの`TestMatchingLifecycle`（`backend/internal/integration/integration_test.go`）は既存の統合テストと同じく`TEST_POSTGRES=1`環境でのみ実行され、未設定なら自動でスキップされる（Docker必須ではない。既存のPostgreSQLインストールでも、CIのようにGitHub Actionsのサービスコンテナでも可）。この作業をした際は手元にPostgreSQLが無かったので一時的にDockerコンテナで検証し、確認後に削除した。`go build`/`go vet`/`go test ./...`（`TestMatchingLifecycle`含む）は実DB上でPASS済み。
+
+### 未完了タスク（チャット本体、フェーズ1以降）
+
+1. **`messages`テーブルとチャットREST API**
+   - migrationで`messages(id, match_id, sender_user_id, body, client_message_id, server_seq, created_at, read_at)`を追加する。
+   - `backend/internal/chat`にService、`backend/internal/httpapi`にハンドラを実装する。`GET /chats`、`GET /chats/{id}/messages`、`POST /chats/{id}/messages`、`POST /chats/{id}/transport-token`。
+   - アクセス制御は`matching.Service.IsMatched` / `ListAcceptedMatches`と`blocks`を使う。
+
+2. **WebSocketサーバー**
+   - `wss://.../api/v1/ws/chats/{chat_id}`。Chat Token（`aud=samurai-meet-chat`、既存の`auth.Signer`を別audienceでもう1インスタンス生成すれば流用可能）で接続認証する。
+   - `message.send` / `message.read` / `typing.start` / `typing.stop`と`message.created` / `message.ack` / `message.read` / `error`。`client_message_id`で冪等化する。
+   - 詳細仕様は`docs/features/chat.md`、`docs/features/chat-transport.md`。
+
+3. **フロントエンド接続**
+   - `frontend/services/websocket.ts`、`frontend/hooks/useWebSocket.ts`は空ファイル。チャット画面（`app/chat/[id].tsx`等）も未作成。バックエンドのAPI/WS契約が固まってから着手する。
+
+### 再開時の順序
+
+1. `git status --short --branch` で未コミット差分を確認する。
+2. 可能ならDocker Desktopを起動し、`TEST_POSTGRES=1`で`go test ./...`（`TestMatchingLifecycle`含む）を一度実DBで確認する。
+3. 上記「未完了タスク」の1から順に着手する。実装ごとに`backend/API_SPEC.md`、`backend/STATUS.md`、`backend/TODO.md`、`docs/database.md`、該当する`docs/features/*.md`を同じ変更で更新する。
+
 ## Recovery Key / 端末Key-B 引き継ぎメモ（2026-08-26）
 
 ### 現在の前提
