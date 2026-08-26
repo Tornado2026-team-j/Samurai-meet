@@ -113,6 +113,7 @@ export default function JapaneseHomeScreen() {
             accessibilityLabel="プロフィール"
             accessibilityRole="button"
             hitSlop={8}
+            onPress={() => router.push("/profile")}
             style={({ pressed }) => [
               styles.headerIconButton,
               styles.profileButton,

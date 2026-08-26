@@ -12,11 +12,14 @@ import (
 )
 
 func accessClaims(r *http.Request, service *auth.SessionService) (auth.AccessClaims, bool) {
-	header := strings.TrimSpace(r.Header.Get("Authorization"))
-	if len(header) < len("Bearer ") || !strings.EqualFold(header[:len("Bearer ")], "Bearer ") {
+	if service == nil {
 		return auth.AccessClaims{}, false
 	}
-	claims, err := service.Authenticate(r.Context(), strings.TrimSpace(header[len("Bearer "):]), time.Now())
+	token := authorizationToken(r)
+	if token == "" {
+		return auth.AccessClaims{}, false
+	}
+	claims, err := service.Authenticate(r.Context(), token, time.Now())
 	return claims, err == nil
 }
 
@@ -48,8 +51,8 @@ func refreshSession(service *auth.SessionService) http.HandlerFunc {
 }
 func logoutSession(service *auth.SessionService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-		if token == r.Header.Get("Authorization") || token == "" {
+		token := authorizationToken(r)
+		if token == "" {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing_access_token"})
 			return
 		}

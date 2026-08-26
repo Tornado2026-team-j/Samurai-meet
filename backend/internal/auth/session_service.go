@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -36,7 +37,7 @@ func NewSessionService(database *sql.DB, signer *Signer) *SessionService {
 }
 
 func (s *SessionService) Authenticate(ctx context.Context, accessToken string, now time.Time) (AccessClaims, error) {
-	if s.signer == nil {
+	if s == nil || s.db == nil || s.signer == nil || strings.TrimSpace(accessToken) == "" {
 		return AccessClaims{}, errors.New("session signer is not configured")
 	}
 	claims, err := s.signer.Verify(accessToken, now)

@@ -1,6 +1,8 @@
 import { API_BASE_URL } from './api-config';
 import { isSession, type PasskeyBridgeRequest, type PreAuth, type Session } from './auth-contract';
 
+const PASSKEY_REQUEST_TIMEOUT_MS = 15_000;
+
 type PasskeySession = Pick<Session, 'user_id' | 'session_id' | 'access_token'>;
 type PasskeyOptionsResponse = {
   data?: {
@@ -15,19 +17,42 @@ async function request<T>(path: string, init: RequestInit = {}, token?: string):
   const headers = new Headers(init.headers ?? {});
   if (token) headers.set('Authorization', `Bearer ${token}`);
   if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
-  const response = await fetch(`${API_BASE_URL}${path}`, { ...init, headers });
-  const text = await response.text();
-  let body: T | { error?: string } | null = null;
+  const controller = new AbortController();
+  const timeoutID = setTimeout(() => controller.abort(), PASSKEY_REQUEST_TIMEOUT_MS);
+  const externalSignal = init.signal;
+  const abortFromExternalSignal = () => controller.abort();
+  if (externalSignal) {
+    if (externalSignal.aborted) controller.abort();
+    else externalSignal.addEventListener('abort', abortFromExternalSignal, { once: true });
+  }
+
   try {
-    body = text ? (JSON.parse(text) as T | { error?: string }) : null;
-  } catch {
-    body = null;
+    const response = await fetch(`${API_BASE_URL}${path}`, {
+      ...init,
+      headers,
+      signal: controller.signal,
+    });
+    const text = await response.text();
+    let body: T | { error?: string } | null = null;
+    try {
+      body = text ? (JSON.parse(text) as T | { error?: string }) : null;
+    } catch {
+      body = null;
+    }
+    if (!response.ok) {
+      const error = body && typeof body === 'object' && 'error' in body ? body.error : undefined;
+      throw new Error(`${response.status}: ${error ?? 'request failed'}`);
+    }
+    return body as T;
+  } catch (reason) {
+    if (reason instanceof Error && reason.name === 'AbortError' && !externalSignal?.aborted) {
+      throw new Error('通信がタイムアウトしました。接続を確認して再試行してください。');
+    }
+    throw reason;
+  } finally {
+    clearTimeout(timeoutID);
+    externalSignal?.removeEventListener('abort', abortFromExternalSignal);
   }
-  if (!response.ok) {
-    const error = body && typeof body === 'object' && 'error' in body ? body.error : undefined;
-    throw new Error(`${response.status}: ${error ?? 'request failed'}`);
-  }
-  return body as T;
 }
 
 export function encodeArrayBuffer(value: ArrayBuffer): string {

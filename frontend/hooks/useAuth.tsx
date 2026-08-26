@@ -8,6 +8,7 @@ import {
   completeAuthRedirect,
   logout as logoutSession,
   logoutAll as logoutEverywhere,
+  markRecoveryVerified,
   parseAuthRedirect,
   refreshSession,
   restoreAuth,
@@ -15,23 +16,39 @@ import {
   type PreAuth,
   type Session,
 } from '../services/auth';
+import type { AppLanguage } from '../services/onboarding-contract';
+import { deleteAccount as deleteAccountRemote, recoverWithPreAuth } from '../services/key-management';
 
 type AuthStatus = 'loading' | 'signed_out' | 'pre_auth' | 'signed_in';
 
 type AuthContextValue = AuthSnapshot & {
   status: AuthStatus;
+  busy: boolean;
   error: string | null;
+  getCurrentSession: () => Session | null;
   login: () => Promise<void>;
-  continuePasskey: () => Promise<void>;
+  continuePasskey: (language?: AppLanguage) => Promise<boolean>;
+  recoverWithRecoveryKey: (recoveryKey: string) => Promise<void>;
   refresh: () => Promise<void>;
   logout: () => Promise<void>;
   logoutAll: () => Promise<void>;
+  deleteAccount: () => Promise<boolean>;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 function message(error: unknown): string {
-  return error instanceof Error ? error.message : '認証処理に失敗しました';
+  if (!(error instanceof Error)) return '認証処理に失敗しました';
+  if (error.message === '401: missing_or_invalid_access_token' || error.message === '401: invalid_pre_auth_token') {
+    return '認証情報の有効期限が切れました。本人確認を最初からやり直してください。';
+  }
+  if (error.message === '429: recovery_rate_limited') {
+    return 'Recovery Keyの試行回数が多すぎます。しばらく待ってから再試行してください。';
+  }
+  if (error.message === '401: recovery_verification_failed' || error.message.includes('aes-gcm: invalid tag')) {
+    return 'Recovery Keyが正しくありません。保存したRecovery Keyを確認してください。';
+  }
+  return error.message;
 }
 
 function isHttpAuthFailure(error: unknown): boolean {
@@ -41,12 +58,13 @@ function isHttpAuthFailure(error: unknown): boolean {
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [snapshot, setSnapshot] = useState<AuthSnapshot>({ session: null, preAuth: null });
   const [status, setStatus] = useState<AuthStatus>('loading');
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const snapshotRef = useRef(snapshot);
   const statusRef = useRef(status);
   const mountedRef = useRef(false);
   const handledRedirects = useRef(new Set<string>());
-  const authInFlight = useRef<Promise<void> | null>(null);
+  const authInFlight = useRef<Promise<AuthSnapshot | null> | null>(null);
   const refreshInFlight = useRef<Promise<void> | null>(null);
 
   snapshotRef.current = snapshot;
@@ -94,35 +112,79 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, [apply, handleRedirect]);
 
-  const runAuth = useCallback((operation: () => Promise<AuthSnapshot | null>): Promise<void> => {
+  const runAuth = useCallback((operation: () => Promise<AuthSnapshot | null>, rethrow = false): Promise<AuthSnapshot | null> => {
     if (authInFlight.current) return authInFlight.current;
     setError(null);
-    setStatus('loading');
+    setBusy(true);
     const pending = operation().then((next) => {
       if (next) apply(next);
       else apply(snapshotRef.current);
+      return next;
     }).catch(async (reason) => {
       const current = snapshotRef.current;
       if (!current.session && isHttpAuthFailure(reason)) {
         await clearAuthStorage();
+        setError(message(reason));
         apply({ session: null, preAuth: null });
       } else {
         setError(message(reason));
         apply(current);
       }
+      if (rethrow) throw reason;
+      return null;
     }).finally(() => {
       if (authInFlight.current === pending) authInFlight.current = null;
+      setBusy(false);
     });
     authInFlight.current = pending;
     return pending;
   }, [apply]);
 
-  const login = useCallback(() => runAuth(beginGoogleLogin), [runAuth]);
+  const login = useCallback(async () => {
+    await runAuth(beginGoogleLogin);
+  }, [runAuth]);
 
-  const continuePasskey = useCallback(() => runAuth(() => {
+  const continuePasskey = useCallback(async (language?: AppLanguage): Promise<boolean> => {
+    const next = await runAuth(() => {
+      const current = snapshotRef.current;
+      return beginPasskey(current.preAuth, current.session, language);
+    }, true);
+    return next?.session !== null && next?.session !== undefined;
+  }, [runAuth]);
+
+  const getCurrentSession = useCallback(() => snapshotRef.current.session, []);
+
+  const recoverWithRecoveryKey = useCallback(async (recoveryKey: string) => {
+    if (authInFlight.current) {
+      await authInFlight.current;
+      return;
+    }
     const current = snapshotRef.current;
-    return beginPasskey(current.preAuth, current.session);
-  }), [runAuth]);
+    if (!current.preAuth) {
+      setError('Recovery Keyでの復旧には、先にアカウントの本人確認が必要です');
+      return;
+    }
+    setError(null);
+    setBusy(true);
+    const pending = recoverWithPreAuth(current.preAuth, recoveryKey).then((preAuth) => {
+      return markRecoveryVerified(preAuth.user_id).then(() => {
+        const next = { session: null, preAuth, recoveryVerified: true };
+        if (mountedRef.current) apply(next);
+        return next;
+      });
+    }).catch((reason) => {
+      if (mountedRef.current) {
+        setError(message(reason));
+        apply(current);
+      }
+      return null;
+    }).finally(() => {
+      if (authInFlight.current === pending) authInFlight.current = null;
+      setBusy(false);
+    });
+    authInFlight.current = pending;
+    await pending;
+  }, [apply]);
 
   const refresh = useCallback((): Promise<void> => {
     const current = snapshotRef.current.session;
@@ -156,14 +218,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(async () => {
     const current = snapshotRef.current.session;
-    if (!current) return;
     setError(null);
     try {
-      await logoutSession(current);
+      if (current) await logoutSession(current);
     } catch (reason) {
       setError(message(reason));
     } finally {
-      apply({ session: null, preAuth: null });
+      try {
+        await clearAuthStorage();
+      } finally {
+        apply({ session: null, preAuth: null });
+      }
     }
   }, [apply]);
 
@@ -180,16 +245,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [apply]);
 
+  const deleteAccount = useCallback(async (): Promise<boolean> => {
+    const current = snapshotRef.current.session;
+    if (!current) return false;
+    setError(null);
+    try {
+      await deleteAccountRemote(current);
+      await clearAuthStorage();
+      apply({ session: null, preAuth: null });
+      return true;
+    } catch (reason) {
+      setError(message(reason));
+      return false;
+    }
+  }, [apply]);
+
   const value = useMemo<AuthContextValue>(() => ({
     ...snapshot,
     status,
+    busy,
     error,
+    getCurrentSession,
     login,
     continuePasskey,
+    recoverWithRecoveryKey,
     refresh,
     logout,
     logoutAll,
-  }), [continuePasskey, error, login, logout, logoutAll, refresh, snapshot, status]);
+    deleteAccount,
+  }), [busy, continuePasskey, deleteAccount, error, getCurrentSession, login, logout, logoutAll, recoverWithRecoveryKey, refresh, snapshot, status]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

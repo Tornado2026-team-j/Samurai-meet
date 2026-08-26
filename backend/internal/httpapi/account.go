@@ -13,13 +13,19 @@ import (
 
 func deleteAccount(service *account.Service, sessions *auth.SessionService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		prepareSensitiveAuthResponse(w)
 		if r.Method != http.MethodDelete {
+			w.Header().Set("Allow", http.MethodDelete)
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
 		claims, ok := accessClaims(r, sessions)
 		if !ok {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing_or_invalid_access_token"})
+			return
+		}
+		if service == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "account_deletion_unavailable"})
 			return
 		}
 		if !requireRecentPasskey(r, sessions, claims) {

@@ -29,6 +29,9 @@
 | `0013_session_handoff_retry.sql` | session handoff再送を同一`request_id`に限定する列 |
 | `0014_passkey_bootstraps.sql` | Web Passkey用の短命bootstrap token hash、scope、source、期限、使用日時 |
 | `0015_passkey_bootstrap_binding.sql` | bootstrapとWebAuthn ceremony tokenのbinding hash |
+| `0016_recovery_proof.sql` | Recovery proof用の公開証明鍵、challenge、TTL・試行回数制限 |
+| `0017_user_display_name.sql` | Passkey表示名に使うユーザー表示名 |
+| `0018_device_image_keys.sql` | 端末公開鍵、画像鍵の端末別envelope、端末proof nonce、画像のKey-A由来wrapper |
 
 注意: 現行の簡易migration runnerはSQLファイルを順番に実行する。migration履歴テーブルによる本番適用管理を導入する場合は、既存環境の適用済み状態を確認してから切り替える。
 
@@ -40,6 +43,7 @@
 | --- | --- | --- |
 | `id` | text | サービス用個人識別ID、PK |
 | `google_subject_id` | text | Google OIDC `sub`、UNIQUE |
+| `display_name` | text | Passkeyの登録画面に表示するユーザー名。空の場合は安全な固定fallback |
 | `status` | text | `active / suspended / deleted` |
 | `created_at` / `updated_at` | text | UTC RFC3339 |
 | `deleted_at` | text | 論理削除時 |
@@ -152,7 +156,8 @@ Refreshは対象行を`FOR UPDATE`し、旧token使用済み化、新token追加
 | `nonce` | text | AES-256-GCM nonce |
 | `algorithm` | text | 現在`AES-256-GCM`のみ |
 | `key_version` | text | 鍵ローテーション |
-| `wrapped_image_key` | text | 端末鍵またはRSA-OAEPラップ済み画像鍵 |
+| `wrapped_image_key` | text | legacyまたはprofile用のwrapped画像鍵 |
+| `account_wrapped_image_key` | text | Key-A由来の鍵でラップした画像鍵。Recovery後の端末再登録に使う |
 | `wrapping_algorithm` | text | ラップ方式 |
 | `content_type` | text | profile復号配信時のMIME |
 | `size_bytes` | bigint | 保存暗号文のサイズ |
@@ -163,11 +168,19 @@ Refreshは対象行を`FOR UPDATE`し、旧token使用済み化、新token追加
 
 ### `key_envelopes`
 
-Key-AをRecovery Keyから導出した鍵で暗号化したenvelopeを保存する。`encrypted_key_a`、nonce、KDFパラメータ、key versionだけを保持し、Key-A、Key-B、Recovery Keyの平文を保持しない。HTTP APIは`GET/PUT/DELETE /api/v1/me/key-envelopes`で提供し、全操作に直近Passkey再認証を要求する。
+Key-AをRecovery Keyから導出した鍵で暗号化したenvelopeを保存する。`encrypted_key_a`、nonce、HKDFパラメータ、data salt、Ed25519 `recovery_public_key`、key versionだけを保持し、Key-A、Key-B、Recovery Keyの平文を保持しない。HTTP APIは`GET/PUT/DELETE /api/v1/me/key-envelopes`で提供し、全操作に直近Passkey再認証を要求する。公開証明鍵を持たない既存行はデータ保全のため残せるが、新Recovery proofには使わない。
 
-### `key_b_materials`
+### `devices` / `photo_device_key_envelopes` / `device_request_nonces`
 
-ユーザーごとに一つのKey-Bを保存する。`ciphertext`と`nonce`は`KEY_B_WRAP_KEY`（32 byte Base64URL）を使うAES-256-GCM値であり、Key-B平文を保存しない。AADはユーザーID、key version、wrap鍵IDへ結び付ける。wrap鍵IDが異なる場合は復号せずfail closedとする。`users`の削除時はこの行も同一トランザクションで削除する。
+Key-Bは端末ごとに生成し、Secure Storage／Keychain／Keystoreから外へ出さない。`devices`には`device_id`、version、Ed25519公開鍵、最終利用時刻だけを保存し、同じ端末IDの公開鍵差し替えは拒否する。`photo_device_key_envelopes`は画像鍵を端末Key-Bで包んだ値を端末単位で保存する。`account_wrapped_image_key`はRecovery後の新端末が画像鍵を自端末Key-Bで再包みするための暗号文であり、Key-AやKey-Bそのものではない。`device_request_nonces`は端末proofのnonce再利用を拒否する。`users`削除時は端末、envelope、nonceをcascadeまたは退会transactionで削除する。
+
+### `key_b_materials`（legacy）
+
+旧実装のアカウント共通Key-B用テーブル。現行APIでは参照・新規保存せず、既存データ保全のためmigrationからは削除しない。旧データを現行画像へ自動変換したことは意味しないため、legacy画像が残る本番環境では別途移行計画を確定する。
+
+### `recovery_challenges`
+
+Recovery Keyで復号したKey-Aの所有証明を一時的に受け付けるためのchallengeを保存する。challenge本文、pre-auth token、署名は保存せず、challenge hashとpre-auth token hashだけを保持する。`source_session_id`または`pre_auth_token_hash`のどちらか一方に束縛し、10分の期限、最大5回の署名試行、pre-auth単位の発行レート制限、使用済みフラグを持つ。`users`、`sessions`の削除時はchallengeもcascadeまたは退会トランザクションで削除する。
 
 ## 6. これから追加するテーブル・制約
 
@@ -185,7 +198,7 @@ Key-AをRecovery Keyから導出した鍵で暗号化したenvelopeを保存す�
 1. 新規認証・新規API利用を拒否する。
 2. DB user rowをロックし、全sessionを失効する。
 3. private暗号文ファイルとメモリcacheを削除する。
-4. refresh/passkey/challenge/key envelope/Key-B暗号文/handoff/photo metadataを削除して、users rowを完全削除する。
+4. refresh/passkey/challenge/key envelope/device/envelope/nonce/handoff/photo metadataを削除して、users rowを完全削除する。
 5. 削除結果を監査ログへ記録する（秘密情報は記録しない）。監査ログ実装まではアプリログへ秘密値を出さない。
 
 バックアップ上の物理削除期限、チャット保持期間、監査ログ保持期間は運用・法務決定後にmigrationと運用手順へ反映する。

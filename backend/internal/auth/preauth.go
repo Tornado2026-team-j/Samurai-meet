@@ -165,3 +165,10 @@ func hashPreAuthToken(token string) string {
 	sum := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(sum[:])
 }
+
+// HashPreAuthToken exposes only the one-way storage representation needed by
+// other authentication-bound services. The raw pre-auth token remains a
+// client-held capability and is never persisted by this helper.
+func HashPreAuthToken(token string) string {
+	return hashPreAuthToken(token)
+}

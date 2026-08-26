@@ -1,6 +1,6 @@
 # バックエンド
 
-Go + PostgreSQL のAPIです。UIは配信せず、正式クライアントは [`../frontend`](../frontend/README.md) が担当します。
+Go + PostgreSQL のAPIとWeb Passkey画面を配信します。ネイティブの正式クライアントは [`../frontend`](../frontend/README.md) が担当し、Web Passkeyはバックエンドの `/passkey` を使用します。
 
 ```powershell
 cd backend

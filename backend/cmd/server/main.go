@@ -53,6 +53,7 @@ func main() {
 		}
 	}
 	preauth := auth.NewPreAuthService(database)
+	recovery := keys.NewRecoveryService(database, preauth)
 	var oauthLogin *auth.OAuthLoginService
 	if cfg.GoogleOIDC.ClientID != "" && cfg.GoogleOIDC.ClientSecret != "" && cfg.GoogleOIDC.RedirectURI != "" && signer != nil {
 		google, e := auth.NewGoogleOIDC(ctx, cfg.GoogleOIDC)
@@ -89,15 +90,9 @@ func main() {
 	cache := image.NewCiphertextCache(cfg.ImageStorage.CiphertextCacheMaxBytes, time.Duration(cfg.ImageStorage.CiphertextCacheTTLSeconds)*time.Second)
 	images := image.NewService(database, store, cache, privateKey, cfg.ImageStorage.ProfileWrappingKeyVersion, int64(cfg.ImageStorage.MaxUploadBytes))
 	envelopes := keys.NewService(database)
-	var keyB *keys.KeyBService
-	if cfg.KeyB.WrapKey != "" {
-		keyB, e = keys.NewKeyBService(database, cfg.KeyB.WrapKey, cfg.KeyB.WrapKeyID)
-		if e != nil {
-			log.Fatalf("Key-B initialization failed: %v", e)
-		}
-	}
+	devices := keys.NewDeviceService(database)
 	accounts := account.NewService(database, images)
-	server := &http.Server{Addr: cfg.HTTPAddr, ReadHeaderTimeout: 10 * time.Second, Handler: httpapi.NewRouterWithOptions(httpapi.RouterOptions{Environment: cfg.Environment, AllowExpoGoRedirect: cfg.AllowExpoGoRedirect, DevClientOrigin: cfg.DevClientOrigin, ClientOrigin: cfg.ClientOrigin, OAuthLogin: oauthLogin, PreAuth: preauth, Sessions: sessions, SessionHandoffs: handoffs, PasskeyBootstraps: bootstraps, Passkeys: passkeys, KeyEnvelopes: envelopes, KeyB: keyB, Images: images, Accounts: accounts})}
+	server := &http.Server{Addr: cfg.HTTPAddr, ReadHeaderTimeout: 10 * time.Second, Handler: httpapi.NewRouterWithOptions(httpapi.RouterOptions{Environment: cfg.Environment, AllowExpoGoRedirect: cfg.AllowExpoGoRedirect, DevClientOrigin: cfg.DevClientOrigin, ClientOrigin: cfg.ClientOrigin, OAuthLogin: oauthLogin, PreAuth: preauth, Sessions: sessions, SessionHandoffs: handoffs, PasskeyBootstraps: bootstraps, Recovery: recovery, Passkeys: passkeys, KeyEnvelopes: envelopes, Devices: devices, Images: images, Accounts: accounts})}
 	log.Printf("backend server listening on %s (environment=%s)", cfg.HTTPAddr, cfg.Environment)
 	if e := server.ListenAndServe(); e != nil && e != http.ErrServerClosed {
 		log.Fatal(e)
