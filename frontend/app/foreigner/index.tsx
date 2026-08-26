@@ -52,21 +52,26 @@ export default function ForeignerHomeScreen() {
       <View style={styles.header}>
         <View style={styles.actionRow}>
           <View style={styles.searchField}>
-            <MaterialIcons
-              color="#949494"
-              name="search"
-              size={22}
-              style={styles.searchIcon}
-            />
+            <Pressable
+              accessibilityLabel="Open search preferences"
+              accessibilityRole="button"
+              hitSlop={8}
+              onPress={openSearchPreferences}
+              style={({ pressed }) => [
+                styles.searchIconButton,
+                pressed && styles.pressed,
+              ]}
+            >
+              <MaterialIcons color="#949494" name="search" size={22} />
+            </Pressable>
             <TextInput
               ref={searchInputRef}
               accessibilityLabel="Search"
               onChangeText={setQuery}
-              onFocus={openSearchPreferences}
+              onSubmitEditing={openSearchPreferences}
               placeholder="What would you like to do?"
               placeholderTextColor="#949494"
               returnKeyType="search"
-              showSoftInputOnFocus={false}
               style={styles.searchInput}
               value={query}
             />
@@ -195,9 +200,13 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     backgroundColor: "#ffffff",
   },
-  searchIcon: {
+  searchIconButton: {
     position: "absolute",
-    left: 14.2,
+    left: 12,
+    width: 28,
+    height: 28,
+    alignItems: "center",
+    justifyContent: "center",
   },
   searchInput: {
     width: "100%",
