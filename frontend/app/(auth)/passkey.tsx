@@ -1,4 +1,4 @@
-import MaterialIcons from '@expo/vector-icons/MaterialIcons';
+import { MaterialIcons } from '@expo/vector-icons';
 import { Redirect } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
@@ -12,11 +12,7 @@ import {
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { parsePasskeyBridgeRequest, type PasskeyBridgeRequest } from '../../services/auth-contract';
-import {
-  completeWebPasskey,
-  reauthWebPasskey,
-  startNativeSessionHandoff,
-} from '../../services/passkey-web';
+import { completeWebPasskeyBridge } from '../../services/passkey-web';
 
 function readBridgeRequest(): PasskeyBridgeRequest | null {
   if (Platform.OS !== 'web' || typeof globalThis.location === 'undefined') return null;
@@ -53,17 +49,8 @@ export default function PasskeyScreen() {
     };
   }, []);
 
-  const registered = request?.preAuth?.passkey_registered ?? true;
-  const title = request?.session
-    ? 'Passkeyで本人確認'
-    : registered
-      ? 'Passkeyでログイン'
-      : 'Passkeyを登録';
-  const description = request?.session
-    ? 'アプリへ安全に戻るため、端末の画面ロックで本人確認を行います。'
-    : registered
-      ? '登録済みのPasskeyを使ってアカウント作成を完了します。'
-      : 'この端末にPasskeyを登録してアカウントを保護します。パスワードは保存されません。';
+  const title = 'Passkeyで本人確認';
+  const description = 'アプリへ安全に戻るため、端末の画面ロックで本人確認を行います。';
 
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof globalThis.document === 'undefined') return;
@@ -81,20 +68,7 @@ export default function PasskeyScreen() {
     setBusy(true);
     setError(null);
     try {
-      let authenticatedSession;
-      if (request.preAuth) {
-        authenticatedSession = await completeWebPasskey(request.preAuth);
-      } else if (request.session) {
-        await reauthWebPasskey(request.session);
-        authenticatedSession = request.session;
-      } else {
-        throw new Error('Passkey request is invalid');
-      }
-      const handoffCode = await startNativeSessionHandoff(
-        authenticatedSession,
-        request.appReturnURI,
-        request.handoffChallenge,
-      );
+      const handoffCode = await completeWebPasskeyBridge(request);
       const returnURI = new URL(request.appReturnURI);
       returnURI.searchParams.set('session_handoff_code', handoffCode);
       globalThis.location.assign(returnURI.toString());

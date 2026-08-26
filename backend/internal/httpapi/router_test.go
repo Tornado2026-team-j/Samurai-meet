@@ -3,17 +3,18 @@ package httpapi
 import (
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/account"
+	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/auth"
+	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/keys"
 )
 
 func TestHealthz(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, APIV1Prefix+"/healthz", nil)
 	res := httptest.NewRecorder()
-
 	NewRouter().ServeHTTP(res, req)
-
 	if res.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", res.Code, http.StatusOK)
 	}
@@ -22,17 +23,76 @@ func TestHealthz(t *testing.T) {
 	}
 }
 
+func TestPasskeyPageIsServedByBackend(t *testing.T) {
+	for _, path := range []string{"/passkey", "/passkey/"} {
+		t.Run(path, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, path, nil)
+			res := httptest.NewRecorder()
+			NewRouter().ServeHTTP(res, req)
+
+			if res.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d", res.Code, http.StatusOK)
+			}
+			if got := res.Header().Get("Content-Type"); got != "text/html; charset=utf-8" {
+				t.Fatalf("Content-Type = %q", got)
+			}
+			if got := res.Header().Get("Cache-Control"); got != "no-store" {
+				t.Fatalf("Cache-Control = %q, want no-store", got)
+			}
+			if got := res.Header().Get("Referrer-Policy"); got != "no-referrer" {
+				t.Fatalf("Referrer-Policy = %q, want no-referrer", got)
+			}
+			if got := res.Header().Get("Content-Security-Policy"); !strings.Contains(got, "script-src 'nonce-") {
+				t.Fatalf("Content-Security-Policy = %q", got)
+			}
+			body := res.Body.String()
+			if !strings.Contains(body, "Passkeyで本人確認") {
+				t.Fatalf("page does not contain Passkey title")
+			}
+			if strings.Contains(body, passkeyPageNonceMarker) {
+				t.Fatalf("page contains the CSP nonce marker")
+			}
+		})
+	}
+}
+
+func TestPasskeyPageRejectsUnsupportedMethods(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/passkey", nil)
+	res := httptest.NewRecorder()
+	NewRouter().ServeHTTP(res, req)
+	if res.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want %d", res.Code, http.StatusMethodNotAllowed)
+	}
+	if got := res.Header().Get("Allow"); got != "GET, HEAD" {
+		t.Fatalf("Allow = %q, want GET, HEAD", got)
+	}
+}
+
+func TestPasskeyPageUsesRequestedLanguage(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/passkey?lang=en", nil)
+	res := httptest.NewRecorder()
+	NewRouter().ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", res.Code, http.StatusOK)
+	}
+	if body := res.Body.String(); !strings.Contains(body, `<html lang="en">`) || !strings.Contains(body, `const language = 'en'`) {
+		t.Fatalf("page was not rendered with English language: %s", body[:min(len(body), 400)])
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/passkey?lang=fr", nil)
+	res = httptest.NewRecorder()
+	NewRouter().ServeHTTP(res, req)
+	if body := res.Body.String(); !strings.Contains(body, `<html lang="ja">`) {
+		t.Fatalf("unsupported language did not fall back to Japanese")
+	}
+}
+
 func TestDevelopmentCORSAllowsOnlyDevClientOrigin(t *testing.T) {
-	handler := NewRouterWithOptions(RouterOptions{
-		Environment:     "development",
-		DevClientOrigin: "http://127.0.0.1:5173",
-	})
+	handler := NewRouterWithOptions(RouterOptions{Environment: "development", DevClientOrigin: "http://127.0.0.1:5173"})
 	req := httptest.NewRequest(http.MethodOptions, APIV1Prefix+"/healthz", nil)
 	req.Header.Set("Origin", "http://127.0.0.1:5173")
 	res := httptest.NewRecorder()
-
 	handler.ServeHTTP(res, req)
-
 	if res.Code != http.StatusNoContent {
 		t.Fatalf("status = %d, want %d", res.Code, http.StatusNoContent)
 	}
@@ -40,18 +100,12 @@ func TestDevelopmentCORSAllowsOnlyDevClientOrigin(t *testing.T) {
 		t.Fatalf("Access-Control-Allow-Origin = %q", got)
 	}
 }
-
 func TestProductionCORSAllowsOnlyPublicOrigin(t *testing.T) {
-	handler := NewRouterWithOptions(RouterOptions{
-		Environment:  "production",
-		ClientOrigin: "https://samurai-meet.disnana.com",
-	})
+	handler := NewRouterWithOptions(RouterOptions{Environment: "production", ClientOrigin: "https://samurai-meet.disnana.com"})
 	req := httptest.NewRequest(http.MethodOptions, APIV1Prefix+"/healthz", nil)
 	req.Header.Set("Origin", "https://samurai-meet.disnana.com")
 	res := httptest.NewRecorder()
-
 	handler.ServeHTTP(res, req)
-
 	if res.Code != http.StatusNoContent {
 		t.Fatalf("status = %d, want %d", res.Code, http.StatusNoContent)
 	}
@@ -60,34 +114,165 @@ func TestProductionCORSAllowsOnlyPublicOrigin(t *testing.T) {
 	}
 }
 
-func TestDevelopmentServesBrowserClientOnlyWhenConfigured(t *testing.T) {
-	directory := t.TempDir()
-	if err := os.WriteFile(filepath.Join(directory, "index.html"), []byte("<!doctype html><title>dev client</title>"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	handler := NewRouterWithOptions(RouterOptions{Environment: "development", DevClientDir: directory})
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+func TestCORSAllowsWebPasskeyBootstrapHeader(t *testing.T) {
+	handler := NewRouterWithOptions(RouterOptions{Environment: "development", DevClientOrigin: "http://127.0.0.1:5173"})
+	req := httptest.NewRequest(http.MethodOptions, APIV1Prefix+"/auth/passkey/web/options", nil)
+	req.Header.Set("Origin", "http://127.0.0.1:5173")
+	req.Header.Set("Access-Control-Request-Headers", "X-Web-Passkey-Token")
 	res := httptest.NewRecorder()
 	handler.ServeHTTP(res, req)
-
-	if res.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d", res.Code, http.StatusOK)
+	if res.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", res.Code, http.StatusNoContent)
 	}
-	if got := res.Header().Get("Content-Type"); got != "text/html; charset=utf-8" {
-		t.Fatalf("Content-Type = %q", got)
+	if got := res.Header().Get("Access-Control-Allow-Headers"); !strings.Contains(got, "X-Web-Passkey-Token") {
+		t.Fatalf("Access-Control-Allow-Headers = %q", got)
 	}
 }
 
-func TestProductionDoesNotServeBrowserClient(t *testing.T) {
-	directory := t.TempDir()
-	if err := os.WriteFile(filepath.Join(directory, "index.html"), []byte("should not be served"), 0o600); err != nil {
-		t.Fatal(err)
+func TestWebPasskeyHandlersFailClosedWithoutCredentials(t *testing.T) {
+	tests := map[string]http.Handler{
+		"options": passkeyWebOptions(nil, nil),
+		"reset":   passkeyWebReset(nil),
+		"verify":  passkeyWebVerify(nil, nil, nil, nil, nil),
 	}
-	handler := NewRouterWithOptions(RouterOptions{Environment: "production", DevClientDir: directory})
+	for name, handler := range tests {
+		t.Run(name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/", nil)
+			res := httptest.NewRecorder()
+			handler.ServeHTTP(res, req)
+
+			if res.Code != http.StatusUnauthorized {
+				t.Fatalf("status = %d, want %d", res.Code, http.StatusUnauthorized)
+			}
+			if got := res.Header().Get("Cache-Control"); got != "no-store" {
+				t.Fatalf("Cache-Control = %q, want no-store", got)
+			}
+			if got := res.Header().Get("Referrer-Policy"); got != "no-referrer" {
+				t.Fatalf("Referrer-Policy = %q, want no-referrer", got)
+			}
+			body := res.Body.String()
+			for _, secretName := range []string{"access_token", "refresh_token", "pre_auth_token", "bootstrap_token"} {
+				if strings.Contains(body, secretName) {
+					t.Fatalf("error response contains %q: %s", secretName, body)
+				}
+			}
+		})
+	}
+}
+
+func TestSensitiveAuthHandlersSetNoStoreHeaders(t *testing.T) {
+	tests := map[string]struct {
+		handler http.Handler
+		method  string
+	}{
+		"bootstrap":        {handler: passkeyBootstrap(nil, nil, nil, "development", false), method: http.MethodGet},
+		"handoff start":    {handler: sessionHandoffStart(nil, nil, "development", false), method: http.MethodGet},
+		"handoff exchange": {handler: sessionHandoffExchange(nil), method: http.MethodPost},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			req := httptest.NewRequest(test.method, "/", nil)
+			res := httptest.NewRecorder()
+			test.handler.ServeHTTP(res, req)
+			if got := res.Header().Get("Cache-Control"); got != "no-store" {
+				t.Fatalf("Cache-Control = %q, want no-store", got)
+			}
+			if got := res.Header().Get("Referrer-Policy"); got != "no-referrer" {
+				t.Fatalf("Referrer-Policy = %q, want no-referrer", got)
+			}
+		})
+	}
+}
+
+func TestRecoveryHandlersFailClosedWithoutCredentials(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		handler http.Handler
+	}{
+		{name: "challenge", handler: recoveryChallenge(nil, nil, nil)},
+		{name: "verify", handler: recoveryVerify(nil, nil, nil)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/", nil)
+			res := httptest.NewRecorder()
+			test.handler.ServeHTTP(res, req)
+			if res.Code != http.StatusServiceUnavailable {
+				t.Fatalf("status = %d, want %d", res.Code, http.StatusServiceUnavailable)
+			}
+			if got := res.Header().Get("Cache-Control"); got != "no-store" {
+				t.Fatalf("Cache-Control = %q, want no-store", got)
+			}
+			if got := res.Header().Get("Referrer-Policy"); got != "no-referrer" {
+				t.Fatalf("Referrer-Policy = %q, want no-referrer", got)
+			}
+		})
+	}
+}
+
+func TestRecoveryMissingMaterialIsNotAnEndpointNotFound(t *testing.T) {
+	res := httptest.NewRecorder()
+	writeRecoveryChallengeResult(res, keys.RecoveryChallenge{}, keys.ErrRecoveryUnavailable)
+	if res.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d", res.Code, http.StatusConflict)
+	}
+	if body := res.Body.String(); !strings.Contains(body, `"error":"recovery_not_configured"`) {
+		t.Fatalf("body = %s", body)
+	}
+}
+
+func TestDeviceRouteIsRegisteredWhenServiceUnavailable(t *testing.T) {
+	handler := NewRouterWithOptions(RouterOptions{Sessions: &auth.SessionService{}})
+	req := httptest.NewRequest(http.MethodGet, devicePath, nil)
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d; an unconfigured device service must not become a 404 route", res.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestProtectedHandlersRejectMissingAccessToken(t *testing.T) {
+	tests := map[string]http.Handler{
+		"logout all":        logoutAllSessions(nil),
+		"sessions":          listSessions(nil),
+		"revoke session":    revokeSession(nil),
+		"handoff start":     sessionHandoffStart(nil, nil, "development", false),
+		"register options":  passkeyRegisterOptions(nil, nil, nil),
+		"register verify":   passkeyRegisterVerify(nil, nil, nil),
+		"reauth options":    passkeyReauthOptions(nil, nil),
+		"reauth verify":     passkeyReauthVerify(nil, nil),
+		"passkey list":      passkeyList(nil, nil),
+		"passkey remove":    passkeyRemove(nil, nil),
+		"key envelope":      keyEnvelopeList(nil, nil),
+		"key envelope item": keyEnvelopeItem(nil, nil),
+		"devices":           deviceRegistrations(nil, nil),
+		"upload photo":      uploadPhoto(nil, nil, nil),
+		"owned photo":       ownedPhoto(nil, nil, nil),
+		"delete account":    deleteAccount(account.NewService(nil, nil), nil),
+	}
+	for name, handler := range tests {
+		t.Run(name, func(t *testing.T) {
+			method := http.MethodGet
+			if name == "logout all" || name == "handoff start" || name == "register verify" || name == "reauth verify" || name == "upload photo" || name == "delete account" {
+				method = http.MethodPost
+			}
+			if name == "delete account" {
+				method = http.MethodDelete
+			}
+			req := httptest.NewRequest(method, "/", nil)
+			res := httptest.NewRecorder()
+			handler.ServeHTTP(res, req)
+			if res.Code != http.StatusUnauthorized {
+				t.Fatalf("status = %d, want %d", res.Code, http.StatusUnauthorized)
+			}
+		})
+	}
+}
+
+func TestRouterDoesNotServeBrowserAssets(t *testing.T) {
+	handler := NewRouterWithOptions(RouterOptions{Environment: "development"})
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	res := httptest.NewRecorder()
 	handler.ServeHTTP(res, req)
-
 	if res.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want %d", res.Code, http.StatusNotFound)
 	}

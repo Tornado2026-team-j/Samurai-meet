@@ -6,7 +6,9 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
+	"unicode"
 )
 
 const OAuthHandoffTTL = 10 * time.Minute
@@ -16,6 +18,7 @@ type OAuthLoginResult struct {
 	PreAuthToken      string `json:"pre_auth_token"`
 	PasskeyRequired   bool   `json:"passkey_required"`
 	PasskeyRegistered bool   `json:"passkey_registered"`
+	RecoveryAvailable bool   `json:"recovery_available"`
 }
 type OAuthHandoff struct{ Code, AppRedirectURI string }
 type OAuthLoginService struct {
@@ -62,7 +65,8 @@ func (s *OAuthLoginService) Complete(ctx context.Context, code, state string, no
 	created := now.UTC().Format(time.RFC3339Nano)
 	candidateID := newID()
 	var userID, userStatus string
-	err = tx.QueryRowContext(ctx, `INSERT INTO users (id,google_subject_id,status,created_at,updated_at) VALUES ($1,$2,'active',$3,$3) ON CONFLICT (google_subject_id) DO UPDATE SET updated_at=EXCLUDED.updated_at RETURNING id,status`, candidateID, identity.Subject, created).Scan(&userID, &userStatus)
+	displayName := normalizedDisplayName(identity.DisplayName, identity.Email)
+	err = tx.QueryRowContext(ctx, `INSERT INTO users (id,google_subject_id,status,display_name,created_at,updated_at) VALUES ($1,$2,'active',$3,$4,$4) ON CONFLICT (google_subject_id) DO UPDATE SET updated_at=EXCLUDED.updated_at,display_name=CASE WHEN users.display_name='' THEN EXCLUDED.display_name ELSE users.display_name END RETURNING id,status`, candidateID, identity.Subject, displayName, created).Scan(&userID, &userStatus)
 	if err != nil {
 		return OAuthHandoff{}, err
 	}
@@ -81,6 +85,31 @@ func (s *OAuthLoginService) Complete(ctx context.Context, code, state string, no
 		return OAuthHandoff{}, err
 	}
 	return OAuthHandoff{Code: handoff, AppRedirectURI: oauthState.AppRedirectURI}, nil
+}
+
+func normalizedDisplayName(value, fallback string) string {
+	value = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, strings.TrimSpace(value))
+	if value == "" {
+		value = strings.Map(func(r rune) rune {
+			if unicode.IsControl(r) {
+				return -1
+			}
+			return r
+		}, strings.TrimSpace(fallback))
+	}
+	runes := []rune(value)
+	if len(runes) > 64 {
+		runes = runes[:64]
+	}
+	if len(runes) == 0 {
+		return "Samurai Meet"
+	}
+	return string(runes)
 }
 
 func (s *OAuthLoginService) ExchangeHandoff(ctx context.Context, handoff, verifier string, now time.Time) (OAuthLoginResult, error) {
@@ -126,11 +155,22 @@ func (s *OAuthLoginService) ExchangeHandoff(ctx context.Context, handoff, verifi
 	if err != nil {
 		return OAuthLoginResult{}, err
 	}
+	var recoveryAvailable bool
+	if err = tx.QueryRowContext(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM key_envelopes
+			WHERE user_id=$1
+			  AND recovery_public_key IS NOT NULL
+			  AND recovery_public_key <> ''
+		)`, userID).Scan(&recoveryAvailable); err != nil {
+		return OAuthLoginResult{}, err
+	}
 	result := OAuthLoginResult{
 		UserID:            userID,
 		PreAuthToken:      preAuthToken,
 		PasskeyRequired:   true,
 		PasskeyRegistered: credentialCount > 0,
+		RecoveryAvailable: recoveryAvailable,
 	}
 	payload, err := json.Marshal(result) // #nosec G117 -- immediately encrypted for one-time handoff retry storage; never logged or returned as JSON
 	if err != nil {

@@ -112,6 +112,46 @@ func (s *PreAuthService) ConsumeTx(tx *sql.Tx, token string, scope PreAuthScope,
 	return err
 }
 
+// ConsumeHash is used by server-side bootstrap flows that deliberately never
+// retain or reintroduce the raw pre-auth token after it leaves the app.
+func (s *PreAuthService) ConsumeHash(ctx context.Context, tokenHash string, scope PreAuthScope, userID string, now time.Time) error {
+	if s.db == nil || tokenHash == "" || !validPreAuthScope(scope) {
+		return ErrPreAuth
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err = s.consumeHashTx(tx, tokenHash, scope, userID, now); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// consumeHashTx consumes a pre-auth hash in the caller's transaction. Web
+// Passkey completion uses this to keep source-capability validation atomic
+// with credential and session creation.
+func (s *PreAuthService) consumeHashTx(tx *sql.Tx, tokenHash string, scope PreAuthScope, userID string, now time.Time) error {
+	if tx == nil || tokenHash == "" || !validPreAuthScope(scope) {
+		return ErrPreAuth
+	}
+	var storedUser, storedScope, expires string
+	err := tx.QueryRow(`SELECT user_id,scope,expires_at FROM pre_auth_tokens WHERE token_hash=$1 AND used_at IS NULL FOR UPDATE`, tokenHash).Scan(&storedUser, &storedScope, &expires)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrPreAuth
+	}
+	if err != nil {
+		return err
+	}
+	expiresAt, err := time.Parse(time.RFC3339Nano, expires)
+	if err != nil || !now.Before(expiresAt) || storedScope != string(scope) || (userID != "" && storedUser != userID) {
+		return ErrPreAuth
+	}
+	_, err = tx.Exec(`UPDATE pre_auth_tokens SET used_at=$1 WHERE token_hash=$2 AND used_at IS NULL`, now.UTC().Format(time.RFC3339Nano), tokenHash)
+	return err
+}
+
 func validPreAuthScope(scope PreAuthScope) bool {
 	switch scope {
 	case PreAuthScopeRegister, PreAuthScopeLogin, PreAuthScopeReauth:
@@ -124,4 +164,11 @@ func validPreAuthScope(scope PreAuthScope) bool {
 func hashPreAuthToken(token string) string {
 	sum := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(sum[:])
+}
+
+// HashPreAuthToken exposes only the one-way storage representation needed by
+// other authentication-bound services. The raw pre-auth token remains a
+// client-held capability and is never persisted by this helper.
+func HashPreAuthToken(token string) string {
+	return hashPreAuthToken(token)
 }

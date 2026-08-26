@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import MaterialIcons from "@expo/vector-icons/MaterialIcons";
-import { useLocalSearchParams } from "expo-router";
+import { MaterialIcons } from "@expo/vector-icons";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import {
   ActivityIndicator,
   Animated,
@@ -91,6 +91,7 @@ function Stepper({
 }
 
 export default function SearchPreferencesScreen() {
+  const router = useRouter();
   const { query } = useLocalSearchParams<{ query?: string | string[] }>();
   const initialQuery = Array.isArray(query) ? query[0] : query;
   const [description, setDescription] = useState(initialQuery ?? "");
@@ -653,9 +654,18 @@ export default function SearchPreferencesScreen() {
               <View style={styles.compactNotificationIcon}>
                 <MaterialIcons color="#ffffff" name="notifications-none" size={30} />
               </View>
-              <View style={styles.compactProfileIcon}>
+              <Pressable
+                accessibilityLabel="Profile"
+                accessibilityRole="button"
+                hitSlop={8}
+                onPress={() => router.push("/profile")}
+                style={({ pressed }) => [
+                  styles.compactProfileIcon,
+                  pressed && styles.pressed,
+                ]}
+              >
                 <MaterialIcons color="#ffffff" name="account-circle" size={30} />
-              </View>
+              </Pressable>
             </View>
             <Text style={styles.compactTitle}>Find Your Japan!</Text>
           </Animated.View>

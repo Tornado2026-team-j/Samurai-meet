@@ -17,25 +17,17 @@ type Config struct {
 	Environment         string
 	AllowExpoGoRedirect bool
 	DevClientOrigin     string
-	DevClientDir        string
 	ClientOrigin        string
 	Database            DatabaseConfig
 	ImageStorage        ImageStorageConfig
 	GoogleOIDC          GoogleOIDCConfig
 	WebAuthn            WebAuthnConfig
 	JWS                 JWSConfig
-	KeyB                KeyBConfig
 }
 
 type GoogleOIDCConfig struct{ ClientID, ClientSecret, RedirectURI string }
 type WebAuthnConfig struct{ RPID, RPOrigin, RPDisplayName string }
 type JWSConfig struct{ SigningKey, KeyID, VerifyKeys, Issuer, Audience string }
-
-// KeyBConfig contains only the server-side wrapping secret configuration. The
-// key material itself is generated per user and encrypted before it reaches
-// PostgreSQL. WrapKey is injected by the process environment or a secret
-// manager; it is never read back from the database or included in API output.
-type KeyBConfig struct{ WrapKey, WrapKeyID string }
 
 type ImageStorageConfig struct {
 	Directory                    string
@@ -69,7 +61,6 @@ func Load() Config {
 		Environment:         valueOrDefault("APP_ENV", "development"),
 		AllowExpoGoRedirect: boolValueOrDefault("ALLOW_EXPO_GO_REDIRECT", false),
 		DevClientOrigin:     valueOrDefault("DEV_CLIENT_ORIGIN", "http://127.0.0.1:5173"),
-		DevClientDir:        valueOrDefault("DEV_CLIENT_DIR", "dev-client"),
 		ClientOrigin:        os.Getenv("CLIENT_ORIGIN"),
 		Database: DatabaseConfig{
 			Host:     valueOrDefault("DB_HOST", "127.0.0.1"),
@@ -91,7 +82,6 @@ func Load() Config {
 		GoogleOIDC: GoogleOIDCConfig{os.Getenv("GOOGLE_CLIENT_ID"), os.Getenv("GOOGLE_CLIENT_SECRET"), os.Getenv("GOOGLE_REDIRECT_URI")},
 		WebAuthn:   WebAuthnConfig{valueOrDefault("WEBAUTHN_RP_ID", "localhost"), valueOrDefault("WEBAUTHN_RP_ORIGIN", "http://localhost:5173"), valueOrDefault("WEBAUTHN_RP_DISPLAY_NAME", "Samurai Meet")},
 		JWS:        JWSConfig{os.Getenv("JWS_SIGNING_KEY"), valueOrDefault("JWS_KEY_ID", "v1"), os.Getenv("JWS_VERIFY_KEYS"), valueOrDefault("JWS_ISSUER", "samurai-meet-api"), valueOrDefault("JWS_AUDIENCE", "samurai-meet-mobile")},
-		KeyB:       KeyBConfig{os.Getenv("KEY_B_WRAP_KEY"), valueOrDefault("KEY_B_WRAP_KEY_ID", "v1")},
 	}
 }
 

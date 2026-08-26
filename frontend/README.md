@@ -11,6 +11,10 @@ bun install --frozen-lockfile
 
 `bun.lock` は必ずコミットします。依存更新は `bun update` またはDependabotのPRで行い、lockfileだけを手編集しません。
 
+## Expo Goとの互換性
+
+このフロントエンドは、ストア版Expo Goで開発確認できるよう **Expo SDK 54系** に揃えています。Expo SDKを更新する場合は、先にExpo Goの対応SDKを確認してください。ストア版より新しいSDKを使う場合は、Expo GoではなくDevelopment Buildを用意します。
+
 ## 開発・検証
 
 ```powershell
@@ -21,7 +25,7 @@ bun run test
 bun run security:audit
 ```
 
-CIでは品質検査と`bun audit`を並列実行し、Bunのダウンロードキャッシュを `bun.lock` のハッシュで再利用します。最後にPRコメントとGitHub Actions Summaryへ集約結果を出します。横断のSecurity checks、CodeQL、Google OSV Scannerも同じPRで実行されます。
+CIでは品質検査と`bun run security:audit`を並列実行し、Bunのダウンロードキャッシュを `bun.lock` のハッシュで再利用します。最後にPRコメントとGitHub Actions Summaryへ集約結果を出します。横断のSecurity checks、CodeQL、Google OSV Scannerも同じPRで実行されます。
 
 `bun audit` の未承認・期限切れ脆弱性はCIを失敗として扱います。修正版が未公開で到達不能なものだけは `scripts/verify-audit.ts` と `osv-scanner.toml` の両方に、理由・影響範囲・失効日を記録した期限付き例外を置けます。例外の期限を延長する場合は、上流の修正版と到達可能性を再調査してPRレビューを必須とします。
 

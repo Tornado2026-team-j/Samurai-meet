@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -13,9 +14,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,7 +24,6 @@ import (
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/auth"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/config"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/db"
-	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/httpapi"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/image"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/keys"
 )
@@ -105,14 +105,22 @@ func TestAuthKeyImageAndAccountLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("session handoff create failed: %v", err)
 	}
-	appTokens, err := handoffs.Exchange(context.Background(), handoff.Code, handoffVerifier, now.Add(5*time.Second))
+	const handoffRequestID = "integration-session-handoff-exchange"
+	appTokens, err := handoffs.Exchange(context.Background(), handoff.Code, handoffVerifier, handoffRequestID, now.Add(5*time.Second))
 	if err != nil {
 		t.Fatalf("session handoff exchange failed: %v", err)
 	}
 	if appTokens.UserID != userID || appTokens.AccessToken == "" || appTokens.RefreshToken == "" {
 		t.Fatal("session handoff returned incomplete tokens")
 	}
-	if _, err = handoffs.Exchange(context.Background(), handoff.Code, "wrong-verifier", now.Add(6*time.Second)); err == nil {
+	retryTokens, err := handoffs.Exchange(context.Background(), handoff.Code, handoffVerifier, handoffRequestID, now.Add(6*time.Second))
+	if err != nil || retryTokens != appTokens {
+		t.Fatalf("same handoff request retry = %+v, err=%v", retryTokens, err)
+	}
+	if _, err = handoffs.Exchange(context.Background(), handoff.Code, handoffVerifier, "different-session-handoff-request", now.Add(7*time.Second)); err == nil {
+		t.Fatal("session handoff accepted a different request ID")
+	}
+	if _, err = handoffs.Exchange(context.Background(), handoff.Code, "wrong-verifier", handoffRequestID, now.Add(8*time.Second)); err == nil {
 		t.Fatal("session handoff accepted an incorrect verifier")
 	}
 
@@ -136,59 +144,26 @@ func TestAuthKeyImageAndAccountLifecycle(t *testing.T) {
 		t.Fatalf("key envelope list = %d, err=%v", len(listed), err)
 	}
 
-	keyBService, err := keys.NewKeyBService(database, base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x24}, 32)), "integration-v1")
+	devices := keys.NewDeviceService(database)
+	deviceID := "device-" + userID
+	devicePublicKey, devicePrivateKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
-	firstKeyB, err := keyBService.GetOrCreate(context.Background(), userID, now)
-	if err != nil {
+	if _, err := devices.Register(context.Background(), userID, deviceID, "v1", encode(devicePublicKey), now); err != nil {
 		t.Fatal(err)
 	}
-	secondKeyB, err := keyBService.GetOrCreate(context.Background(), userID, now.Add(time.Second))
-	if err != nil {
+	proofTimestamp := now.Add(time.Second).Format(time.RFC3339Nano)
+	proofNonce := encode(randomBytes(t, 16))
+	emptyHash := sha256.Sum256(nil)
+	bodyHash := encode(emptyHash[:])
+	proofMessage := strings.Join([]string{keys.DeviceProofDomain, userID, deviceID, http.MethodGet, "/api/v1/me/photos/example", proofTimestamp, proofNonce, bodyHash}, "\n")
+	proofSignature := encode(ed25519.Sign(devicePrivateKey, []byte(proofMessage)))
+	if err := devices.VerifyProof(context.Background(), userID, deviceID, http.MethodGet, "/api/v1/me/photos/example", proofTimestamp, proofNonce, bodyHash, proofSignature, now.Add(2*time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	if firstKeyB.KeyVersion != "v1" || firstKeyB != secondKeyB {
-		t.Fatalf("Key-B was not stable: first=%+v second=%+v", firstKeyB, secondKeyB)
-	}
-	var storedKeyBCiphertext string
-	if err := database.QueryRow(`SELECT ciphertext FROM key_b_materials WHERE user_id=$1`, userID).Scan(&storedKeyBCiphertext); err != nil {
-		t.Fatal(err)
-	}
-	if storedKeyBCiphertext == firstKeyB.KeyB {
-		t.Fatal("Key-B plaintext was stored in the database")
-	}
-	wrongKeyBService, err := keys.NewKeyBService(database, base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x25}, 32)), "integration-v1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := wrongKeyBService.GetOrCreate(context.Background(), userID, now); err != keys.ErrKeyBUnavailable {
-		t.Fatalf("wrong Key-B wrapping key error = %v, want %v", err, keys.ErrKeyBUnavailable)
-	}
-
-	concurrentUserID := randomID(t)
-	if _, err := database.Exec(`INSERT INTO users (id,google_subject_id,status,created_at,updated_at) VALUES ($1,$2,'active',$3,$3)`, concurrentUserID, "integration-google-"+concurrentUserID, now.Format(time.RFC3339Nano)); err != nil {
-		t.Fatal(err)
-	}
-	start := make(chan struct{})
-	keyBResults := make(chan keys.KeyBMaterial, 2)
-	keyBErrors := make(chan error, 2)
-	for i := 0; i < 2; i++ {
-		go func() {
-			<-start
-			material, getErr := keyBService.GetOrCreate(context.Background(), concurrentUserID, now)
-			keyBResults <- material
-			keyBErrors <- getErr
-		}()
-	}
-	close(start)
-	firstConcurrent, firstConcurrentErr := <-keyBResults, <-keyBErrors
-	secondConcurrent, secondConcurrentErr := <-keyBResults, <-keyBErrors
-	if firstConcurrentErr != nil || secondConcurrentErr != nil {
-		t.Fatalf("concurrent Key-B retrieval errors = %v, %v", firstConcurrentErr, secondConcurrentErr)
-	}
-	if firstConcurrent != secondConcurrent {
-		t.Fatalf("concurrent Key-B retrieval returned different values: first=%+v second=%+v", firstConcurrent, secondConcurrent)
+	if err := devices.VerifyProof(context.Background(), userID, deviceID, http.MethodGet, "/api/v1/me/photos/example", proofTimestamp, proofNonce, bodyHash, proofSignature, now.Add(2*time.Second)); err != keys.ErrDeviceProofReplay {
+		t.Fatalf("replayed device proof error = %v, want %v", err, keys.ErrDeviceProofReplay)
 	}
 
 	liveNow := time.Now().UTC()
@@ -199,18 +174,6 @@ func TestAuthKeyImageAndAccountLifecycle(t *testing.T) {
 	if _, err := database.Exec(`UPDATE sessions SET last_passkey_at=$1 WHERE id=$2`, liveNow.Format(time.RFC3339Nano), liveSession.SessionID); err != nil {
 		t.Fatal(err)
 	}
-	keyBHandler := httpapi.NewRouterWithOptions(httpapi.RouterOptions{Sessions: sessions, KeyB: keyBService})
-	keyBRequest := httptest.NewRequest(http.MethodGet, "/api/v1/me/key-b", nil)
-	keyBRequest.Header.Set("Authorization", "Bearer "+liveSession.AccessToken)
-	keyBResponse := httptest.NewRecorder()
-	keyBHandler.ServeHTTP(keyBResponse, keyBRequest)
-	if keyBResponse.Code != http.StatusOK {
-		t.Fatalf("Key-B HTTP status = %d, want %d: %s", keyBResponse.Code, http.StatusOK, keyBResponse.Body.String())
-	}
-	if got := keyBResponse.Header().Get("Cache-Control"); got != "private, no-store" {
-		t.Fatalf("Key-B Cache-Control = %q, want %q", got, "private, no-store")
-	}
-
 	profileKey, err := rsa.GenerateKey(rand.Reader, 3072)
 	if err != nil {
 		t.Fatal(err)
@@ -244,8 +207,10 @@ func TestAuthKeyImageAndAccountLifecycle(t *testing.T) {
 		Algorithm:         image.PhotoAlgorithm,
 		KeyVersion:        "v1",
 		WrappedImageKey:   encode(randomBytes(t, 32)),
+		AccountWrappedKey: encode(randomBytes(t, 32)),
+		DeviceID:          deviceID,
 		ServerWrappedKey:  encode(serverWrapped),
-		WrappingAlgorithm: "KEY-A-AES-GCM",
+		WrappingAlgorithm: "KEY-A-AES-GCM+KEY-B-AES-GCM",
 		Body:              bytes.NewReader(ciphertext),
 	}, now)
 	if err != nil {
@@ -258,7 +223,7 @@ func TestAuthKeyImageAndAccountLifecycle(t *testing.T) {
 	if !bytes.Equal(decoded, plaintext) {
 		t.Fatal("profile image plaintext did not round-trip")
 	}
-	if _, cachedCiphertext, err := images.GetCiphertext(context.Background(), userID, photo.ID); err != nil || !bytes.Equal(cachedCiphertext, ciphertext) {
+	if _, cachedCiphertext, err := images.GetCiphertext(context.Background(), userID, photo.ID, deviceID); err != nil || !bytes.Equal(cachedCiphertext, ciphertext) {
 		t.Fatalf("ciphertext read/cache failed: %v", err)
 	}
 
@@ -275,6 +240,75 @@ func TestAuthKeyImageAndAccountLifecycle(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(storageRoot, userID)); !os.IsNotExist(err) {
 		t.Fatalf("encrypted image directory remains: %v", err)
+	}
+}
+
+func TestRecoveryReRegistrationRevokesPreviousPasskeys(t *testing.T) {
+	database := openIsolatedDatabase(t)
+	now := time.Date(2026, time.August, 26, 12, 0, 0, 0, time.UTC)
+	userID := randomID(t)
+	if _, err := database.Exec(`INSERT INTO users (id,google_subject_id,status,created_at,updated_at) VALUES ($1,$2,'active',$3,$3)`, userID, "recovery-google-"+userID, now.Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+
+	keyA := randomBytes(t, ed25519.SeedSize)
+	privateKey := ed25519.NewKeyFromSeed(keyA)
+	dataSalt := randomBytes(t, 16)
+	kdfParams, err := json.Marshal(map[string]string{
+		"algorithm": "HKDF-SHA256",
+		"salt":      encode(randomBytes(t, 16)),
+		"info":      encode([]byte("samurai-meet/recovery-key/v1")),
+		"data_salt": encode(dataSalt),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelopes := keys.NewService(database)
+	if _, err = envelopes.Upsert(context.Background(), userID, keys.Envelope{
+		KeyVersion:        "v1",
+		EncryptedKeyA:     encode(randomBytes(t, 32)),
+		Nonce:             encode(randomBytes(t, 12)),
+		KDFParams:         kdfParams,
+		RecoveryPublicKey: encode(privateKey.Public().(ed25519.PublicKey)),
+	}, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = database.Exec(`INSERT INTO passkey_credentials (id,user_id,credential_id,public_key,credential_json,sign_count,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7)`, "old-passkey", userID, "old-credential", "old-public-key", "{}", 0, now.Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+
+	preauth := auth.NewPreAuthService(database)
+	preAuthToken, err := preauth.Issue(context.Background(), userID, auth.PreAuthScopeLogin, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recovery := keys.NewRecoveryService(database, preauth)
+	challenge, err := recovery.BeginForPreAuth(context.Background(), preAuthToken, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := recovery.VerifyForPreAuth(context.Background(), preAuthToken, keys.RecoveryProof{
+		ChallengeID: challenge.ChallengeID,
+		Challenge:   challenge.Challenge,
+		KeyVersion:  challenge.Envelope.KeyVersion,
+		Signature:   encode(ed25519.Sign(privateKey, keys.RecoveryProofMessage(userID, challenge.Envelope.KeyVersion, challenge.Challenge))),
+	}, now.Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.PasskeyRequired || result.PreAuthToken == "" {
+		t.Fatalf("recovery result = %+v", result)
+	}
+
+	var remaining int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM passkey_credentials WHERE user_id=$1`, userID).Scan(&remaining); err != nil {
+		t.Fatal(err)
+	}
+	if remaining != 0 {
+		t.Fatalf("old passkey rows after recovery = %d", remaining)
+	}
+	if _, err := preauth.Lookup(context.Background(), result.PreAuthToken, auth.PreAuthScopeRegister, userID, now.Add(time.Second)); err != nil {
+		t.Fatalf("recovery registration pre-auth was not issued: %v", err)
 	}
 }
 

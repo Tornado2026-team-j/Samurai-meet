@@ -1,0 +1,397 @@
+<!doctype html>
+<html lang="__PASSKEY_LANGUAGE__">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title id="page-title">Passkeyで本人確認 | Samurai Meet</title>
+    <style nonce="__CSP_NONCE__">
+      :root {
+        color-scheme: light;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #ffffff;
+        color: #1f2933;
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; min-width: 320px; background: #ffffff; }
+      .screen { min-height: 100vh; }
+      .hero {
+        min-height: 365px;
+        padding: 54px 24px 42px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        border-radius: 0 0 44px 44px;
+        background: #5ec5f5;
+      }
+      .icon {
+        width: 112px;
+        height: 112px;
+        margin-bottom: 23px;
+        display: grid;
+        place-items: center;
+        border: 2px solid rgba(255, 255, 255, .82);
+        border-radius: 50%;
+        color: #ffffff;
+        font-size: 52px;
+        background: rgba(255, 255, 255, .12);
+      }
+      h1 { margin: 0; color: #ffffff; font-size: 27px; line-height: 34px; }
+      .description { max-width: 390px; margin: 9px 0 0; color: rgba(255, 255, 255, .95); font-size: 14px; line-height: 22px; }
+      .content { width: min(100%, 480px); margin: 0 auto; padding: 30px 24px 32px; }
+      .security { display: flex; gap: 12px; min-height: 82px; padding: 16px; border-radius: 8px; background: #eef8f2; }
+      .security-icon { color: #3d9a68; font-size: 23px; }
+      .security-title { margin: 0 0 3px; color: #357a55; font-size: 14px; font-weight: 800; }
+      .security-text { margin: 0; color: #567064; font-size: 11px; line-height: 17px; }
+      button { width: 100%; min-height: 56px; margin-top: 18px; padding: 12px 20px; border: 0; border-radius: 8px; color: #ffffff; background: #e7b454; font: inherit; font-size: 16px; font-weight: 800; cursor: pointer; }
+      button:hover { filter: brightness(.97); }
+      button:disabled { cursor: wait; opacity: .55; }
+      .message { margin: 18px 0 0; color: #b42318; font-size: 13px; line-height: 20px; text-align: center; }
+      .invalid { padding: 16px; border: 1px solid #f0c8c4; border-radius: 8px; color: #8f2d25; background: #fff5f4; font-size: 13px; line-height: 20px; }
+      .note { margin: 18px 6px 0; color: #7d7d7d; font-size: 11px; line-height: 17px; text-align: center; }
+      [hidden] { display: none !important; }
+    </style>
+  </head>
+  <body>
+    <main class="screen">
+      <section class="hero">
+        <div class="icon" aria-hidden="true">⌁</div>
+        <h1 id="page-heading">Passkeyで本人確認</h1>
+        <p id="page-description" class="description">アプリへ安全に戻るため、端末の画面ロックで本人確認を行います。</p>
+      </section>
+      <section class="content">
+        <div id="invalid" class="invalid" hidden role="alert">Passkeyリクエストが無効です。アプリからもう一度お試しください。</div>
+        <div id="security" class="security" hidden>
+          <div class="security-icon" aria-hidden="true">✓</div>
+          <div>
+            <p id="security-title" class="security-title">安全な本人確認</p>
+            <p id="security-text" class="security-text">顔・指紋などの生体情報がSamurai Meetへ送信されることはありません。</p>
+          </div>
+        </div>
+        <button id="complete" type="button" hidden>Passkeyで本人確認</button>
+        <p id="message" class="message" hidden role="status"></p>
+        <p id="page-note" class="note">本人確認の完了後、一回限りの認証コードでアプリへ戻ります。</p>
+      </section>
+    </main>
+    <script nonce="__CSP_NONCE__">
+      (() => {
+        'use strict';
+
+        const API_BASE = '/api/v1';
+        const language = '__PASSKEY_LANGUAGE__';
+        const copy = language === 'en'
+          ? {
+              title: 'Verify with a passkey | Samurai Meet',
+              heading: 'Verify with a passkey',
+              description: 'Verify with your device screen lock to return safely to the app.',
+              registrationHeading: 'Register a new passkey',
+              registrationDescription: 'Register a new passkey on this device to return safely to the app.',
+              invalid: 'This passkey request is invalid. Please start again from the app.',
+              securityTitle: 'Secure verification',
+              securityText: 'Your biometric information is never sent to Samurai Meet.',
+              button: 'Verify with a passkey',
+              registrationButton: 'Register a new passkey',
+              note: 'After verification, you will return to the app with a one-time code.',
+              secureContext: 'Passkeys require an HTTPS connection',
+              unsupported: 'This browser does not support passkeys',
+              cancelled: 'Passkey verification was cancelled',
+              optionsInvalid: 'The passkey options response is invalid',
+              responseUnsupported: 'This passkey response is unsupported',
+              handoffInvalid: 'The passkey handoff response is invalid',
+              failed: 'Passkey processing failed',
+              preparing: 'Preparing your passkey…',
+              checking: 'Verifying your passkey…',
+              refreshing: 'Refreshing the passkey verification state…',
+              ready: 'Ready. Tap the button to continue.',
+              invalidState: 'The verification state was refreshed. Tap the button again.',
+              restart: 'The verification state could not be refreshed. Return to the app and start Passkey verification again.',
+            }
+          : {
+              title: 'Passkeyで本人確認 | Samurai Meet',
+              heading: 'Passkeyで本人確認',
+              description: 'アプリへ安全に戻るため、端末の画面ロックで本人確認を行います。',
+              registrationHeading: '新しいPasskeyを登録',
+              registrationDescription: 'この端末に新しいPasskeyを登録して、アプリへ安全に戻ります。',
+              invalid: 'Passkeyリクエストが無効です。アプリからもう一度お試しください。',
+              securityTitle: '安全な本人確認',
+              securityText: '顔・指紋などの生体情報がSamurai Meetへ送信されることはありません。',
+              button: 'Passkeyで本人確認',
+              registrationButton: '新しいPasskeyを登録',
+              note: '本人確認の完了後、一回限りの認証コードでアプリへ戻ります。',
+              secureContext: 'PasskeyにはHTTPS接続が必要です',
+              unsupported: 'このブラウザはPasskeyに対応していません',
+              cancelled: 'Passkey認証がキャンセルされました',
+              optionsInvalid: 'Passkey options response is invalid',
+              responseUnsupported: 'Passkey response is unsupported',
+              handoffInvalid: 'Passkey handoff response is invalid',
+              failed: 'Passkeyの処理に失敗しました',
+              preparing: 'Passkeyの準備中…',
+              checking: 'Passkeyを確認しています…',
+              refreshing: '認証状態を更新しています…',
+              ready: '準備ができました。ボタンを押して本人確認してください。',
+              invalidState: '認証状態を更新しました。もう一度ボタンを押してください。',
+              restart: '認証状態を更新できませんでした。アプリに戻って、もう一度Passkey認証を開始してください。',
+            };
+        const invalid = document.getElementById('invalid');
+        const security = document.getElementById('security');
+        const button = document.getElementById('complete');
+        const message = document.getElementById('message');
+        document.title = copy.title;
+        document.getElementById('page-heading').textContent = copy.heading;
+        document.getElementById('page-description').textContent = copy.description;
+        document.getElementById('security-title').textContent = copy.securityTitle;
+        document.getElementById('security-text').textContent = copy.securityText;
+        document.getElementById('complete').textContent = copy.button;
+        document.getElementById('page-note').textContent = copy.note;
+        invalid.textContent = copy.invalid;
+
+        function isAllowedAppReturnURI(value) {
+          let parsed;
+          try { parsed = new URL(value); } catch { return false; }
+          if (parsed.username || parsed.password || parsed.hash) return false;
+          if (value === 'samuraimeet://auth' || value === 'samuraimeettest://auth') return true;
+          return parsed.protocol === 'exp:'
+            && parsed.hostname.length > 0
+            && parsed.pathname.endsWith('/--/auth');
+        }
+
+        function readBridgeRequest() {
+          const parsed = new URL(window.location.href);
+          const appReturnURI = parsed.searchParams.get('app_return_uri') || '';
+          const handoffChallenge = parsed.searchParams.get('app_handoff_challenge') || '';
+          const fragment = new URLSearchParams(parsed.hash.slice(1));
+          const bootstrapToken = fragment.get('bootstrap_token');
+          const keys = [...fragment.keys()];
+          if (!isAllowedAppReturnURI(appReturnURI) || !handoffChallenge.trim()) return null;
+          if (!bootstrapToken || keys.length !== 1 || keys[0] !== 'bootstrap_token') return null;
+          return { appReturnURI, bootstrapToken };
+        }
+
+        function stripFragment() {
+          if (window.location.hash) {
+            window.history.replaceState(window.history.state, '', `${window.location.pathname}${window.location.search}`);
+          }
+        }
+
+        function decodeBase64URL(value) {
+          const normalized = value.replaceAll('-', '+').replaceAll('_', '/');
+          const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4);
+          const binary = atob(padded);
+          return Uint8Array.from(binary, (character) => character.charCodeAt(0)).buffer;
+        }
+
+        function encodeBase64URL(value) {
+          const bytes = new Uint8Array(value);
+          let binary = '';
+          for (const byte of bytes) binary += String.fromCharCode(byte);
+          return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');
+        }
+
+        function normalizeCreationOptions(options) {
+          const normalized = { ...options };
+          normalized.challenge = decodeBase64URL(String(options.challenge));
+          const user = options.user;
+          normalized.user = { ...user, id: decodeBase64URL(String(user.id)) };
+          normalized.excludeCredentials = (options.excludeCredentials || []).map((item) => ({
+            ...item,
+            id: decodeBase64URL(String(item.id)),
+          }));
+          return normalized;
+        }
+
+        function normalizeRequestOptions(options) {
+          const normalized = { ...options };
+          normalized.challenge = decodeBase64URL(String(options.challenge));
+          normalized.allowCredentials = (options.allowCredentials || []).map((item) => ({
+            ...item,
+            id: decodeBase64URL(String(item.id)),
+          }));
+          return normalized;
+        }
+
+        function credentialJSON(credential) {
+          const response = credential.response;
+          const body = {
+            id: credential.id,
+            type: credential.type,
+            rawId: encodeBase64URL(credential.rawId),
+            response: { clientDataJSON: encodeBase64URL(response.clientDataJSON) },
+            clientExtensionResults: credential.getClientExtensionResults(),
+          };
+          if ('attestationObject' in response) {
+            body.response.attestationObject = encodeBase64URL(response.attestationObject);
+            if (typeof response.getTransports === 'function') body.response.transports = response.getTransports();
+          } else if ('authenticatorData' in response) {
+            body.response.authenticatorData = encodeBase64URL(response.authenticatorData);
+            body.response.signature = encodeBase64URL(response.signature);
+            body.response.userHandle = response.userHandle ? encodeBase64URL(response.userHandle) : null;
+          } else {
+            throw new Error(copy.responseUnsupported);
+          }
+          if (credential.authenticatorAttachment) body.authenticatorAttachment = credential.authenticatorAttachment;
+          return body;
+        }
+
+        async function request(path, init) {
+          const response = await fetch(`${API_BASE}${path}`, init);
+          const text = await response.text();
+          let body = null;
+          try { body = text ? JSON.parse(text) : null; } catch { body = null; }
+          if (!response.ok) {
+            const error = body && typeof body === 'object' ? body.error : undefined;
+            throw new Error(`${response.status}: ${error || 'request failed'}`);
+          }
+          return body;
+        }
+
+        let optionsState = null;
+        let optionsRequest = null;
+        let running = false;
+
+        function errorName(error) {
+          return error && typeof error.name === 'string' ? error.name : '';
+        }
+
+        function showError(error) {
+          const name = errorName(error);
+          message.textContent = name === 'InvalidStateError'
+            ? copy.invalidState
+            : name === 'NotAllowedError' || name === 'AbortError'
+              ? copy.cancelled
+              : error instanceof Error ? error.message : copy.failed;
+          message.hidden = false;
+          button.disabled = false;
+        }
+
+        function webAuthnError(error) {
+          const wrapped = new Error(error instanceof Error ? error.message : copy.cancelled);
+          wrapped.name = errorName(error) || 'WebAuthnError';
+          wrapped.webAuthn = true;
+          return wrapped;
+        }
+
+        async function loadOptions(requestData) {
+          if (optionsState) return optionsState;
+          if (optionsRequest) return optionsRequest;
+          optionsRequest = request('/auth/passkey/web/options', {
+            method: 'POST',
+            headers: { 'X-Web-Passkey-Token': requestData.bootstrapToken },
+          }).then((optionsResponse) => {
+            const ceremonyToken = optionsResponse?.data?.ceremony_token;
+            const publicKey = optionsResponse?.data?.options?.publicKey;
+            if (!ceremonyToken || !publicKey) throw new Error(copy.optionsInvalid);
+            optionsState = {
+              ceremonyToken,
+              publicKey,
+              isRegistration: Object.prototype.hasOwnProperty.call(publicKey, 'user'),
+            };
+            if (optionsState.isRegistration) {
+              document.getElementById('page-heading').textContent = copy.registrationHeading;
+              document.getElementById('page-description').textContent = copy.registrationDescription;
+              button.textContent = copy.registrationButton;
+            }
+            return optionsState;
+          }).finally(() => {
+            optionsRequest = null;
+          });
+          return optionsRequest;
+        }
+
+        async function resetOptions(requestData, ceremonyToken) {
+          await request('/auth/passkey/web/reset', {
+            method: 'POST',
+            headers: {
+              'X-Web-Passkey-Token': requestData.bootstrapToken,
+              'X-Passkey-Ceremony-Token': ceremonyToken,
+            },
+          });
+          optionsState = null;
+          await loadOptions(requestData);
+        }
+
+        async function complete(requestData) {
+          if (!window.isSecureContext) throw new Error(copy.secureContext);
+          if (typeof window.PublicKeyCredential === 'undefined' || !navigator.credentials) {
+            throw new Error(copy.unsupported);
+          }
+          message.textContent = copy.checking;
+          message.hidden = false;
+          const currentOptions = optionsState || await loadOptions(requestData);
+          const { ceremonyToken, publicKey } = currentOptions;
+          let credential;
+          try {
+            credential = currentOptions.isRegistration
+              ? await navigator.credentials.create({ publicKey: normalizeCreationOptions(publicKey) })
+              : await navigator.credentials.get({ publicKey: normalizeRequestOptions(publicKey) });
+          } catch (error) {
+            throw webAuthnError(error);
+          }
+          if (!(credential instanceof window.PublicKeyCredential)) throw new Error(copy.cancelled);
+          const verifyResponse = await request('/auth/passkey/web/verify', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Web-Passkey-Token': requestData.bootstrapToken,
+              'X-Passkey-Ceremony-Token': ceremonyToken,
+            },
+            body: JSON.stringify(credentialJSON(credential)),
+          });
+          const handoffCode = verifyResponse?.data?.handoff_code;
+          if (!handoffCode || verifyResponse?.data?.app_redirect_uri !== requestData.appReturnURI) {
+            throw new Error(copy.handoffInvalid);
+          }
+          const returnURI = new URL(requestData.appReturnURI);
+          returnURI.searchParams.set('session_handoff_code', handoffCode);
+          window.location.assign(returnURI.toString());
+        }
+
+        async function handleCompletionError(requestData, error) {
+          const failedOptions = optionsState;
+          if (error && error.webAuthn === true && failedOptions?.ceremonyToken) {
+            message.textContent = copy.refreshing;
+            message.hidden = false;
+            try {
+              await resetOptions(requestData, failedOptions.ceremonyToken);
+              message.textContent = copy.ready;
+              message.hidden = false;
+              button.disabled = false;
+            } catch {
+              optionsState = null;
+              message.textContent = copy.restart;
+              message.hidden = false;
+              button.disabled = true;
+            }
+          } else {
+            showError(error);
+          }
+          running = false;
+        }
+
+        const requestData = readBridgeRequest();
+        stripFragment();
+        if (!requestData) {
+          invalid.hidden = false;
+        } else {
+          security.hidden = false;
+          button.hidden = false;
+          button.disabled = true;
+          message.textContent = copy.preparing;
+          message.hidden = false;
+          void loadOptions(requestData).then(() => {
+            if (!running) {
+              message.hidden = true;
+              button.disabled = false;
+            }
+          }).catch(showError);
+          button.addEventListener('click', () => {
+            if (running || button.disabled) return;
+            running = true;
+            button.disabled = true;
+            complete(requestData).catch((error) => handleCompletionError(requestData, error));
+          });
+        }
+      })();
+    </script>
+  </body>
+</html>

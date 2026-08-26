@@ -33,7 +33,7 @@ type passkeyUser struct {
 }
 
 func (u *passkeyUser) WebAuthnID() []byte                         { return []byte(u.id) }
-func (u *passkeyUser) WebAuthnName() string                       { return u.id }
+func (u *passkeyUser) WebAuthnName() string                       { return u.displayName }
 func (u *passkeyUser) WebAuthnDisplayName() string                { return u.displayName }
 func (u *passkeyUser) WebAuthnCredentials() []webauthn.Credential { return u.credentials }
 
@@ -61,6 +61,19 @@ func NewPasskeyService(database *sql.DB, relyingParty *webauthn.WebAuthn, sessio
 }
 
 func (s *PasskeyService) BeginRegistration(ctx context.Context, userID string, now time.Time) (PasskeyOptions, error) {
+	return s.beginRegistration(ctx, userID, now, false)
+}
+
+// BeginRegistrationForPreAuth is used after a valid pre-auth capability has
+// been issued by Google or Recovery Key verification. Recovery must be able
+// to add a new credential on a device that still has the old credential
+// listed in its platform authenticator. Ordinary authenticated registration
+// keeps the exclusion list and therefore still rejects duplicate credentials.
+func (s *PasskeyService) BeginRegistrationForPreAuth(ctx context.Context, userID string, now time.Time) (PasskeyOptions, error) {
+	return s.beginRegistration(ctx, userID, now, true)
+}
+
+func (s *PasskeyService) beginRegistration(ctx context.Context, userID string, now time.Time, allowExistingCredentials bool) (PasskeyOptions, error) {
 	if userID == "" {
 		return PasskeyOptions{}, errors.New("user ID is required")
 	}
@@ -68,13 +81,16 @@ func (s *PasskeyService) BeginRegistration(ctx context.Context, userID string, n
 	if err != nil {
 		return PasskeyOptions{}, err
 	}
-	creation, session, err := s.rp.BeginRegistration(user,
-		webauthn.WithExclusions(webauthn.Credentials(user.credentials).CredentialDescriptors()),
+	registrationOptions := []webauthn.RegistrationOption{
 		webauthn.WithAuthenticatorSelection(protocol.AuthenticatorSelection{
 			ResidentKey:      protocol.ResidentKeyRequirementPreferred,
 			UserVerification: protocol.VerificationRequired,
 		}),
-	)
+	}
+	if !allowExistingCredentials {
+		registrationOptions = append(registrationOptions, webauthn.WithExclusions(webauthn.Credentials(user.credentials).CredentialDescriptors()))
+	}
+	creation, session, err := s.rp.BeginRegistration(user, registrationOptions...)
 	if err != nil {
 		return PasskeyOptions{}, err
 	}
@@ -145,6 +161,17 @@ func (s *PasskeyService) saveCeremony(ctx context.Context, userID, kind string, 
 }
 
 func (s *PasskeyService) FinishRegistration(ctx context.Context, userID, token string, request *http.Request, now time.Time, preAuthToken string) (SessionTokens, error) {
+	return s.finishRegistration(ctx, userID, token, request, now, preAuthToken, "")
+}
+
+// FinishRegistrationWithPreAuthHash is the Web Passkey variant. It keeps the
+// source pre-auth consumption in the same transaction as credential/session
+// creation without retaining the raw pre-auth token in the browser flow.
+func (s *PasskeyService) FinishRegistrationWithPreAuthHash(ctx context.Context, userID, token string, request *http.Request, now time.Time, preAuthHash string) (SessionTokens, error) {
+	return s.finishRegistration(ctx, userID, token, request, now, "", preAuthHash)
+}
+
+func (s *PasskeyService) finishRegistration(ctx context.Context, userID, token string, request *http.Request, now time.Time, preAuthToken, preAuthHash string) (SessionTokens, error) {
 	if userID == "" || token == "" {
 		return SessionTokens{}, ErrPasskeyChallenge
 	}
@@ -170,13 +197,18 @@ func (s *PasskeyService) FinishRegistration(ctx context.Context, userID, token s
 	if _, err = tx.ExecContext(ctx, `INSERT INTO passkey_credentials (id,user_id,credential_id,public_key,credential_json,sign_count,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7)`, newID(), userID, encodedID, base64.RawURLEncoding.EncodeToString(credential.PublicKey), string(credentialJSON), credential.Authenticator.SignCount, created); err != nil {
 		return SessionTokens{}, err
 	}
-	if preAuthToken == "" {
+	if preAuthToken == "" && preAuthHash == "" {
 		return SessionTokens{}, tx.Commit()
 	}
 	if s.preauth == nil {
 		return SessionTokens{}, ErrPreAuth
 	}
-	if err = s.preauth.ConsumeTx(tx, preAuthToken, PreAuthScopeRegister, userID, now); err != nil {
+	if preAuthToken != "" {
+		err = s.preauth.ConsumeTx(tx, preAuthToken, PreAuthScopeRegister, userID, now)
+	} else {
+		err = s.preauth.consumeHashTx(tx, preAuthHash, PreAuthScopeRegister, userID, now)
+	}
+	if err != nil {
 		return SessionTokens{}, err
 	}
 	tokens, err := s.sessions.createSessionTx(ctx, tx, userID, now, true)
@@ -190,6 +222,16 @@ func (s *PasskeyService) FinishRegistration(ctx context.Context, userID, token s
 }
 
 func (s *PasskeyService) FinishLogin(ctx context.Context, token string, request *http.Request, now time.Time, preAuthToken, expectedUserID string) (SessionTokens, error) {
+	return s.finishLogin(ctx, token, request, now, preAuthToken, "", expectedUserID)
+}
+
+// FinishLoginWithPreAuthHash is the Web Passkey variant that consumes the
+// source pre-auth hash in the same transaction as credential/session changes.
+func (s *PasskeyService) FinishLoginWithPreAuthHash(ctx context.Context, token string, request *http.Request, now time.Time, preAuthHash, expectedUserID string) (SessionTokens, error) {
+	return s.finishLogin(ctx, token, request, now, "", preAuthHash, expectedUserID)
+}
+
+func (s *PasskeyService) finishLogin(ctx context.Context, token string, request *http.Request, now time.Time, preAuthToken, preAuthHash, expectedUserID string) (SessionTokens, error) {
 	ceremony, tx, err := s.consumeCeremony(ctx, token, "passkey_login", expectedUserID, now)
 	if err != nil {
 		return SessionTokens{}, err
@@ -211,11 +253,16 @@ func (s *PasskeyService) FinishLogin(ctx context.Context, token string, request 
 	if _, err = tx.ExecContext(ctx, `UPDATE passkey_credentials SET credential_json=$1,sign_count=$2,last_used_at=$3 WHERE user_id=$4 AND credential_id=$5`, string(credentialJSON), credential.Authenticator.SignCount, now.UTC().Format(time.RFC3339Nano), user.id, encodedID); err != nil {
 		return SessionTokens{}, err
 	}
-	if preAuthToken != "" {
+	if preAuthToken != "" || preAuthHash != "" {
 		if s.preauth == nil {
 			return SessionTokens{}, ErrPreAuth
 		}
-		if err = s.preauth.ConsumeTx(tx, preAuthToken, PreAuthScopeLogin, user.id, now); err != nil {
+		if preAuthToken != "" {
+			err = s.preauth.ConsumeTx(tx, preAuthToken, PreAuthScopeLogin, user.id, now)
+		} else {
+			err = s.preauth.consumeHashTx(tx, preAuthHash, PreAuthScopeLogin, user.id, now)
+		}
+		if err != nil {
 			return SessionTokens{}, err
 		}
 	}
@@ -384,14 +431,14 @@ func (s *PasskeyService) consumeCeremony(ctx context.Context, token, kind, userI
 }
 
 func (s *PasskeyService) loadUser(ctx context.Context, userID string) (*passkeyUser, error) {
-	var status string
-	if err := s.db.QueryRowContext(ctx, `SELECT status FROM users WHERE id=$1`, userID).Scan(&status); err != nil {
+	var status, displayName string
+	if err := s.db.QueryRowContext(ctx, `SELECT status,COALESCE(display_name,'') FROM users WHERE id=$1`, userID).Scan(&status, &displayName); err != nil {
 		return nil, err
 	}
 	if status != "active" {
 		return nil, errors.New("user is inactive")
 	}
-	return s.loadUserWithCredentials(ctx, userID)
+	return s.loadUserWithCredentials(ctx, userID, displayName)
 }
 
 func (s *PasskeyService) loadUserByCredential(ctx context.Context, rawID []byte) (*passkeyUser, error) {
@@ -403,8 +450,9 @@ func (s *PasskeyService) loadUserByCredential(ctx context.Context, rawID []byte)
 	return s.loadUser(ctx, userID)
 }
 
-func (s *PasskeyService) loadUserWithCredentials(ctx context.Context, userID string) (*passkeyUser, error) {
-	user := &passkeyUser{id: userID, displayName: "Samurai Meet user"}
+func (s *PasskeyService) loadUserWithCredentials(ctx context.Context, userID, displayName string) (*passkeyUser, error) {
+	displayName = normalizedDisplayName(displayName, "")
+	user := &passkeyUser{id: userID, displayName: displayName}
 	rows, err := s.db.QueryContext(ctx, `SELECT credential_id,public_key,credential_json,sign_count FROM passkey_credentials WHERE user_id=$1 ORDER BY created_at`, userID)
 	if err != nil {
 		return nil, err

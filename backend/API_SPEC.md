@@ -93,7 +93,8 @@ Response:
     "user_id": "opaque-user-id",
     "pre_auth_token": "Passkey専用の5分token",
     "passkey_required": true,
-    "passkey_registered": false
+    "passkey_registered": false,
+    "recovery_available": false
   }
 }
 ```
@@ -102,15 +103,58 @@ Google交換時点では通常のAccess/Refresh sessionを作成しません。`
 
 ### 3.4 Web PasskeyからExpo Goへのセッション復帰（実装済み）
 
-Expo GoはGoogle交換後の`pre_auth_token`をSecure Storageへ保存し、Web検証画面を次の値付きで開きます。
+Google交換後の`pre_auth_token`や既存sessionのAccess TokenをWeb URLへ渡してはいけません。Expo Goはまず、Bearer認証付きでbootstrapを発行します。
 
-- `app_return_uri`: Expo Goの`exp://.../--/auth`などの許可済みURI
-- `app_handoff_challenge`: Expo Goが保持するセッション復帰verifierのSHA-256 Base64URL
-- `pre_auth_token`とユーザーIDはURL fragmentでWeb画面へ渡し、HTTPリクエストには送らない。
+`POST /api/v1/auth/passkey/bootstrap`
 
-Web画面でPasskey登録または既知ユーザーのPasskeyログインが成功すると、Passkey後のAccess Tokenで`POST /api/v1/auth/session-handoff/start`を呼びます。APIは直近Passkey認証済みのWeb sessionだけを受け付け、別のアプリsessionを作成したうえで、SessionTokensを暗号化した10分のhandoff codeを返します。
+Request:
 
-続いてExpo Goが`POST /api/v1/auth/session-handoff/exchange`へ`handoff_code`とSecure Storageの`handoff_verifier`を送ります。code単体では交換できず、verifier不一致・期限切れ・許可外redirect URIは拒否します。成功時の`data`は通常のSessionTokensです。アプリが途中終了しても、verifierを保持していれば再交換できます。
+```json
+{
+  "scope": "passkey_register",
+  "app_redirect_uri": "samuraimeet://auth",
+  "app_handoff_challenge": "verifierのSHA-256 Base64URL"
+}
+```
+
+`scope`は`passkey_register`、`passkey_login`、`passkey_reauth`のいずれかです。初回登録・既知ユーザーログインでは`Authorization: Bearer <pre_auth_token>`、再認証では`Authorization: Bearer <access_token>`を送ります。サーバーはbootstrapのhash、ユーザー、元sessionまたはpre-auth hash、scope、redirect、challenge、期限（現在1分）、使用日時だけを保存し、平文bootstrapは保存しません。
+
+成功レスポンス:
+
+```json
+{
+  "data": {
+    "bootstrap_token": "短命・一回限りのopaque token",
+    "scope": "passkey_register",
+    "expires_at": "UTC RFC3339"
+  }
+}
+```
+
+Web URLのfragmentに入れてよい認証値は`bootstrap_token`だけです。Access Token、Refresh Token、`pre_auth_token`、ユーザーIDはURLへ入れません。Web画面はbootstrapを`X-Web-Passkey-Token`ヘッダーで送ります。
+
+`POST /api/v1/auth/passkey/web/options`
+
+- Header: `X-Web-Passkey-Token: <bootstrap_token>`
+- 成功時はWebAuthn optionsと短命ceremony tokenを返す。
+- `Cache-Control: no-store`、`Referrer-Policy: no-referrer`を付ける。
+- bootstrapへのceremony binding後の再options、期限切れ、scope不一致は拒否する。Recovery由来のpre-auth登録では、既存credentialを除外せず新しいPasskeyを追加できる。
+
+`POST /api/v1/auth/passkey/web/reset`
+
+- Header: `X-Web-Passkey-Token`と`X-Passkey-Ceremony-Token`
+- ブラウザ側のWebAuthn失敗時だけ、現在のceremonyを一回消費してbootstrapとのbindingを解除する。
+- 成功後は同じbootstrapで新しいoptionsを一度だけ取得できる。verify競合、使用済みbootstrap、期限切れは`409`または`401`で拒否する。
+
+`POST /api/v1/auth/passkey/web/verify`
+
+- Header: `X-Web-Passkey-Token`と`X-Passkey-Ceremony-Token`
+- Body: WebAuthn credential/assertion JSON
+- ceremony、bootstrap、元session/pre-authの有効性を確認し、bootstrapを一回消費する。
+- 成功時のレスポンスは`handoff_code`と`app_redirect_uri`だけで、Access/Refresh/Pre-auth tokenを返さない。
+- レスポンスには`Cache-Control: no-store`、`Referrer-Policy: no-referrer`を付ける。続くsession-handoffのstart/exchangeも同じ機密応答ヘッダーを付ける。
+
+続いてExpo Goが`POST /api/v1/auth/session-handoff/exchange`へ`handoff_code`、Secure Storageの`handoff_verifier`、必須の`request_id`を送ります。使用済みhandoffの再送は、同じrequest IDかつ30秒以内だけ同じ暗号化応答を返します。異なるrequest ID、期限切れ、verifier不一致は拒否します。
 
 ## 4. Passkey / WebAuthn
 
@@ -121,6 +165,7 @@ DBのchallengeは5分で期限切れになり、登録・認証の完了を問�
 `POST /api/v1/auth/passkey/register/options`
 
 - Authorization必須。Google直後は`pre_auth_token`、既存sessionからのPasskey追加はAccess Tokenを送ります。
+- WebAuthnの`user.name`と`user.displayName`には`users.display_name`を使い、内部のopaque user IDを表示名として返しません。Googleの表示名が空の場合はメール、最後に`Samurai Meet`へfallbackします。
 - Response:
 
 ```json
@@ -236,25 +281,56 @@ PUT body:
   "key_version": "v1",
   "encrypted_key_a": "Base64URLの暗号化済みKey-A",
   "nonce": "Base64URLのAES-GCM nonce",
-  "kdf_params": { "algorithm": "scrypt", "salt": "端末側のsalt" }
+  "kdf_params": {
+    "algorithm": "HKDF-SHA256",
+    "salt": "16 byteのBase64URL salt",
+    "info": "Base64URL(samurai-meet/recovery-key/v1)",
+    "data_salt": "16 byteのBase64URL salt"
+  },
+  "recovery_public_key": "32 byte Ed25519公開鍵のBase64URL"
 }
 ```
 
-サーバーはBase64URL形式・最小長・JSON形式だけを検証し、KDFを実行したりKey-Aを復号したりしません。
+`recovery_available`は既存のKey-A envelopeにRecovery公開鍵がある場合だけ`true`です。`false`の場合はRecovery Key復旧ではなく、Passkey成功後に新しいRecovery Keyを登録します。未設定アカウントへのRecovery challengeは`409 recovery_not_configured`を返します。
 
-### 6.2 Key-B（基盤実装済み）
+新しいenvelopeでは上記のKDF値、salt長、data salt長、Ed25519公開鍵長をサーバーも厳密に検証します。ただしサーバーはKDFを実行したりKey-Aを復号したりせず、Key-A、Recovery Keyの平文も受け取りません。公開証明鍵を持たない既存envelopeはデータ保全のため保存できますが、新Recoveryフローの対象にはしません。
 
-`GET /api/v1/me/key-b`はAccess Tokenと5分以内のPasskey再認証を要求します。レスポンスは`key_version`とBase64URLの`key_b`です。Key-Bはユーザーごとに初回生成し、`KEY_B_WRAP_KEY`（32 byte Base64URL）によるAES-256-GCM暗号文だけを`key_b_materials`へ保存します。平文はレスポンス生成時だけに保持し、ログやDBへ保存しません。wrap鍵IDが保存済み値と異なる場合はfail closedで`503 key_b_unavailable`を返します。
+### 6.1.1 Recovery Key proof（実装済み）
 
-成功時の応答は次のとおりです。
+| Method | Path | 認証 | 用途 |
+| --- | --- | --- | --- |
+| POST | `/api/v1/auth/recovery/challenge` | `passkey_login` / `passkey_register` pre-auth、またはAccess Token + 5分以内のPasskey再認証 | Recovery challengeとenvelopeを取得 |
+| POST | `/api/v1/auth/recovery/verify` | challengeを開始した同じpre-authまたはsession | Key-A由来のEd25519署名を検証 |
 
-```json
-{"data":{"key_version":"v1","key_b":"Base64URL"}}
+challengeは32 byte乱数、TTL 10分、1回限りです。challenge自体はDBへ保存せずSHA-256 hashだけを保存し、署名失敗は最大5回で消費します。最大回数到達後の検証は`429 recovery_rate_limited`（`Retry-After: 3600`）です。pre-auth単位では1時間に10回まで発行します。クライアントはRecovery Keyを端末内で復号にだけ使い、ローカル復号に失敗した場合もサーバーへ正しい形の無効proofを送って試行回数を同期します。UIでは暗号ライブラリの詳細エラーを表示しません。
+
+`samurai-meet/recovery-proof/v1\n<user_id>\n<key_version>\n<challenge>`
+
+レスポンスは`Cache-Control: no-store`で、Recovery Key・Key-A・Key-Bの平文をレスポンスへ含めません。
+
+### 6.2 端末固有Key-B（実装済み）
+
+Key-Bはアカウント共通のサーバー秘密ではありません。各端末がSecure Storage／Keychain／Keystoreで32 byte乱数を生成し、端末外へ送信せずに保持します。端末Key-BからEd25519公開鍵を導出し、サーバーには公開鍵とランダムな`device_id`だけを登録します。開発・本番とも`KEY_B_WRAP_KEY`は不要です。
+
+| Method | Path | 認証 | 用途 |
+| --- | --- | --- | --- |
+| POST | `/api/v1/me/devices` | Access Token + 5分以内のPasskey再認証 | 端末公開鍵を登録・再確認 |
+| GET | `/api/v1/me/devices` | Access Token + 5分以内のPasskey再認証 | 自分の端末登録メタデータ一覧 |
+
+登録bodyは`device_id`、`key_version`、`public_key`（Base64URL）です。同じ`device_id`に別の公開鍵を差し替えることはできません。Key-Bの平文、復号可能な暗号文、秘密鍵はAPIレスポンス・DB・ログに現れません。
+
+画像APIではAccess Tokenに加えて、端末Key-Bで次の署名を毎回検証します。時刻は5分以内、nonceはDBで一回限りにします。
+
+```text
+samurai-meet:device-proof/v1
+<user_id>
+<device_id>
+<method>
+<request_path>
+<timestamp>
+<nonce>
+<body_sha256_base64url>
 ```
-
-成功応答には`Cache-Control: private, no-store`を付けます。直近Passkeyがない場合は`403 recent_passkey_authentication_required`、保存済みwrap鍵IDが異なる場合は`503 key_b_unavailable`を返します。
-
-クライアント側のKey-AとのHKDF結合、KMS直結、鍵ローテーションと取得監査ログは未実装です。退会ではKey-B暗号文も削除します。
 
 ### 6.3 画像（実装済み）
 
@@ -263,9 +339,10 @@ PUT body:
 | Method | Path | 認証 | 用途 |
 | --- | --- | --- | --- |
 | GET | `/api/v1/keys/profile-image` | 不要 | profile画像用RSA-OAEP-256公開JWK取得 |
-| POST | `/api/v1/me/photos` | Access Token | 暗号文をprivate領域へ保存 |
-| GET | `/api/v1/me/photos/{id}` | 所有者Access Token | 暗号文を配信。レスポンスbodyはJSONではない |
-| DELETE | `/api/v1/me/photos/{id}` | 所有者Access Token | DB、ファイル、cacheを削除 |
+| POST | `/api/v1/me/photos` | Access Token + 端末署名 | 暗号文とKey-A/端末Key-Bの画像鍵envelopeを保存 |
+| GET | `/api/v1/me/photos/{id}` | 所有者Access Token + 端末署名 | 暗号文と対象端末のenvelopeを配信。bodyはJSONではない |
+| PUT | `/api/v1/me/photos/{id}/key-envelope` | 所有者Access Token + 端末署名 | Recovery後の新端末用envelopeを追加 |
+| DELETE | `/api/v1/me/photos/{id}` | 所有者Access Token + 端末署名 | DB、ファイル、cacheを削除 |
 | GET | `/api/v1/profile-photos/{id}` | 不要 | `profile`だけをサーバー復号して表示 |
 
 POSTは次のヘッダーを使用します。
@@ -277,16 +354,20 @@ POSTは次のヘッダーを使用します。
 | `X-Photo-Nonce` | 12byte AES-GCM nonceのBase64URL |
 | `X-Photo-Algorithm` | `AES-256-GCM` |
 | `X-Photo-Key-Version` | 端末鍵のversion |
-| `X-Photo-Wrapped-Key` | 端末側でラップした画像鍵 |
+| `X-Photo-Device-ID` | 登録済み端末ID |
+| `X-Photo-Wrapped-Key` | 端末Key-Bでラップした画像鍵 |
+| `X-Photo-Account-Wrapped-Key` | Key-A由来の鍵でラップした画像鍵。新端末復旧時の再包み用 |
 | `X-Photo-Server-Wrapped-Key` | `profile`のみ。API公開RSA鍵でラップした画像鍵 |
 | `X-Photo-Wrapping-Algorithm` | 端末側ラップ方式 |
+
+端末署名には`X-Device-Timestamp`、`X-Device-Nonce`、`X-Device-Body-SHA256`、`X-Device-Signature`を使います。本文ハッシュはサーバー側でも検算し、ヘッダーを書き換えただけでは通過できません。
 
 本文は暗号文のみで、既定の最大サイズは20MiBです。Goサーバーのcacheも暗号文だけを保持し、profile配信時に一時生成する平文はcacheしません。
 SVG、GIF、HTMLなどブラウザで解釈され得る未許可MIMEは拒否します。profile配信には`X-Content-Type-Options: nosniff`とCSPも付与します。
 
 ### 6.4 退会（実装済み）
 
-`DELETE /api/v1/me` に `{"confirm":"DELETE"}` を送り、Access Tokenと5分以内のPasskey再認証を要求します。処理中に全sessionを失効し、refresh/passkey/challenge/key envelope/handoff/photo metadataを削除し、暗号文画像フォルダとcacheを削除してからユーザー行を削除します。削除後は旧Access TokenもDBのsession行がないため拒否されます。
+`DELETE /api/v1/me` に `{"confirm":"DELETE"}` を送り、Access Tokenと5分以内のPasskey再認証を要求します。処理中に全sessionを失効し、refresh/pre-auth/passkey/recovery challenge/auth challenge/key envelope/端末公開鍵/画像envelope/handoff/photo metadataを削除し、暗号文画像フォルダとcacheを削除してからユーザー行を削除します。削除後は旧Access TokenもDBのsession行がないため拒否されます。フロントの削除ボタンはインライン確認後にPasskey再認証を開始しますが、認可の最終判断は常にこのAPIで行います。
 
 ### 6.5 未実装業務API
 

@@ -14,10 +14,15 @@ sequenceDiagram
   B-->>A: 一回限りhandoff code
   A->>B: verifier付きで交換
   B-->>A: 短命 pre-auth
-  A->>W: Passkey実行（戻り先とchallenge）
-  W->>B: Passkeyを検証
-  W-->>A: 一回限りsession handoff
-  A->>B: verifier付きで交換
+  A->>B: bootstrap発行（pre-auth Bearer）
+  B-->>A: 短命bootstrap token
+  A->>W: bootstrapだけをURL fragmentへ渡す
+  W->>B: options（bootstrap header）
+  B-->>W: WebAuthn options + ceremony token
+  W->>B: verify（bootstrap + ceremony headers）
+  B-->>W: handoff codeだけ
+  W-->>A: 許可済みdeep link
+  A->>B: handoff exchange（verifier + request_id）
   B-->>A: Access + Refresh session
 ```
 
@@ -25,7 +30,8 @@ sequenceDiagram
 stateDiagram-v2
   [*] --> signed_out
   signed_out --> pre_auth: Google交換
-  pre_auth --> signed_in: Passkey成功
+  pre_auth --> passkey_bootstrap: bootstrap発行
+  passkey_bootstrap --> signed_in: Web Passkey成功・handoff交換
   signed_in --> signed_out: logout / refresh失敗
   signed_in --> reauth_required: 鍵・退会など高権限操作
   reauth_required --> signed_in: Passkey再認証

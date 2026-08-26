@@ -1,16 +1,21 @@
-import MaterialIcons from '@expo/vector-icons/MaterialIcons';
+import { MaterialIcons } from '@expo/vector-icons';
 import { Redirect, useLocalSearchParams, useRouter } from 'expo-router';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useAuth } from '../../hooks/useAuth';
 
 export default function OAuthCompleteScreen() {
-  const { handoff_code: handoffCode } = useLocalSearchParams<{ handoff_code?: string }>();
+  const {
+    handoff_code: handoffCode,
+    session_handoff_code: sessionHandoffCode,
+  } = useLocalSearchParams<{ handoff_code?: string; session_handoff_code?: string }>();
   const { error, status } = useAuth();
   const router = useRouter();
+  const hasHandoffCode = typeof handoffCode === 'string' && handoffCode.length > 0
+    || typeof sessionHandoffCode === 'string' && sessionHandoffCode.length > 0;
 
   if (status === 'pre_auth' || status === 'signed_in') return <Redirect href="/" />;
 
-  const invalid = typeof handoffCode !== 'string' || handoffCode.length === 0;
+  const invalid = !hasHandoffCode;
   if (invalid || error) {
     return (
       <View style={styles.screen}>
