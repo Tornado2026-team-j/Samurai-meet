@@ -1,6 +1,6 @@
 # API仕様書
 
-最終更新: 2026-08-24
+最終更新: 2026-08-26
 
 現在のGo実装との厳密な契約は [backend/API_SPEC.md](../backend/API_SPEC.md) を正とする。この文書では、フロントエンドが使う公開APIを、実装済みと予定に分けて一覧化する。
 
@@ -59,7 +59,7 @@ https://samurai-meet.disnana.com/auth/callback
 }
 ```
 
-`recovery_available`は既存のKey-A envelopeにRecovery公開鍵がある場合だけ`true`です。`false`の場合はRecovery Key復旧ではなく、Passkey成功後に新しいRecovery Keyを登録します。未設定アカウントへのRecovery challengeは`409 recovery_not_configured`を返します。
+`recovery_available`はv2 Master Key envelopeにRecovery公開鍵がある場合だけ`true`です。`false`の場合はRecovery Phrase復旧ではなく、Passkey成功後に新しいv2 Recovery Phraseを登録します。移行後に旧envelopeしかない、または未設定のアカウントへのRecovery challengeは`409 recovery_not_configured`を返します。
 
 Google交換時点では通常sessionを発行しない。`pre_auth_token`はExpo Goがbootstrap発行にBearerで使う短命の内部資格情報で、Web URLへ渡してはいけません。アプリURIの許可値は、本番`samuraimeet://auth`、開発用Expo Goの`samuraimeettest://auth`または`exp://<host>/--/auth`です。ブラウザ開発クライアントは、設定済みOriginの`/auth/complete`だけを完全一致で許可します。Expo Goの`exp://`は`ALLOW_EXPO_GO_REDIRECT=true`を設定した開発確認時だけ許可する。
 
@@ -130,28 +130,69 @@ Refresh request:
 
 互換のため`refresh_request_id`も受理する。Access TokenはHS256 JWS-JWTで1分、sessionは絶対90日・アイドル30日。Refresh Tokenは32byte乱数で、DBにはhashだけを保存する。更新ごとにrotationし、同じrequest IDだけ30秒再送可能。別request IDの使用済みtokenはreuseとしてsession family全体を失効し、409を返す。
 
+### プロフィール（バックエンド実装済み・オンボーディング同期済み）
+
+| Method | Path | 用途 |
+| --- | --- | --- |
+| GET | `/api/v1/me` | 自分のプロフィール取得 |
+| PATCH | `/api/v1/me/profile` | 名前、国籍、自己紹介の更新 |
+
+`PATCH`の入力は`name`、`nationality_code`、`bio`です。名前は最大64、bioは最大1000 Unicode code points、国コードは大文字2文字です。指定しない項目は既存値を維持しますが、完成プロフィールでは名前と国コードが必須です。名前は次回以降のPasskey登録表示名にも同期しますが、既存PasskeyのOS表示名は変更されません。本人確認状態・いいね数・アイコン参照はこのAPIから更新できません。成功時は`{ "data": { ... } }`、不正値は`400 invalid_profile`です。
+
+### 募集・検索・マッチ（バックエンド・募集フローのフロント接続済み）
+
+| Method | Path | 用途 |
+| --- | --- | --- |
+| POST | `/api/v1/recruitments` | 募集作成 |
+| GET | `/api/v1/recruitments` | 現在地・日時・keywordで検索 |
+| GET | `/api/v1/recruitments/{id}` | 募集詳細 |
+| PATCH | `/api/v1/recruitments/{id}` | 募集更新 |
+| DELETE | `/api/v1/recruitments/{id}` | 募集をclosed化 |
+| POST | `/api/v1/recruitments/{id}/interest` | 関心を送る |
+| GET | `/api/v1/matches?role=owner&status=pending&limit=50` | 自分の募集への応募一覧 |
+| GET | `/api/v1/matches/{id}` | 参加者向けマッチ詳細 |
+| POST | `/api/v1/matches/{id}/accept` | カード所有者が承認 |
+| POST | `/api/v1/matches/{id}/reject` | カード所有者が辞退 |
+| POST | `/api/v1/matches/{id}/complete` | 参加者が完了 |
+| POST | `/api/v1/matches/{id}/meeting` | 承認済みマッチの会合セッション作成 |
+| POST | `/api/v1/me/location` | 現在地を1時間保存 |
+
+募集は`Food` / `Places` / `Activity` / `Other`、公開半径は1/3/5kmに限定します。検索結果とカード詳細に正確な緯度・経度は含めず、位置が利用できる場合だけ`distance_band`を返します。現行はGoのHaversine計算で、PostGISは未導入です。重複関心は`409 interest_already_sent`、期限切れは`409 recruitment_expired`、ブロック関係は404相当で返します。
+
 ## 3. 未実装API
 
-### プロフィール・本人確認（未実装）
+### プロフィール・本人確認
 
 | Method | Path | 用途 |
 | --- | --- | --- |
-| GET | `/api/v1/me` | 自分のユーザー・プロフィール取得 |
-| PATCH | `/api/v1/me/profile` | 名前、国籍、自己紹介、アイコン参照の更新 |
 | POST | `/api/v1/me/verification` | 本人確認開始 |
 
-### 募集・検索・マッチ
+### 評価・本人確認・通知
 
 | Method | Path | 用途 |
 | --- | --- | --- |
-| POST | `/api/v1/recruitments` | 日時、時間帯、keywords、表示半径1/3/5kmで募集作成 |
-| GET | `/api/v1/recruitments` | 現在地とkeywordで検索 |
-| PATCH/DELETE | `/api/v1/recruitments/{id}` | 募集更新・削除 |
-| POST | `/api/v1/recruitments/{id}/interest` | 関心を送る |
-| POST | `/api/v1/matches/{id}/accept` | 相互承認 |
 | POST | `/api/v1/matches/{id}/reviews` | 相互評価 |
+| POST | `/api/v1/me/verification` | Stripe Identity等の本人確認開始 |
+| POST | `/api/v1/notifications/read` | 通知既読（予定） |
 
-正確な現在地は他ユーザーへ返さず、距離判定だけに利用する。PostGISを使う場合もDBはPostgreSQLのまま。
+本人確認済みマークは、クライアントの戻り値ではなく、署名検証済みWebhookを受けたバックエンドだけが設定します。
+
+### チャット・会合（バックエンドREST実装済み・フロント未接続）
+
+| Method | Path | 用途 |
+| --- | --- | --- |
+| GET | `/api/v1/chats` | チャット一覧 |
+| GET | `/api/v1/chats/{id}/messages` | 暗号化メッセージ履歴 |
+| POST | `/api/v1/chats/{id}/messages` | E2EE暗号文の送信 |
+| POST | `/api/v1/chats/{id}/read` | 既読更新 |
+| POST | `/api/v1/chats/{id}/transport-token` | 対象chat専用短命token |
+| GET | `/api/v1/meetings/{id}` | 会合セッション取得 |
+| POST | `/api/v1/meetings/{id}/start` | 会合開始 |
+| POST | `/api/v1/meetings/{id}/end` | 会合終了 |
+| GET | `/api/v1/meetings/{id}/proximity` | 直近の距離補助値 |
+| POST | `/api/v1/meetings/{id}/proximity` | Bluetooth／位置推測の補助値送信 |
+
+チャット送信は`accepted`マッチの参加者だけが行え、平文ではなくBase64URLのAES-256-GCM暗号文だけを保存します。同じ`client_message_id`の再送は冪等です。現時点はRESTの履歴取得・送信・既読と短命transport tokenまでで、WebSocketのリアルタイム配送は未実装です。距離補助値はクライアント推定であり、本人確認や安全判定には使いません。
 
 ### 画像・鍵（実装済み）
 
@@ -162,27 +203,19 @@ Refresh request:
 | GET | `/api/v1/me/photos/{id}` | 所有者向け暗号文を配信 |
 | DELETE | `/api/v1/me/photos/{id}` | DB、privateファイル、cacheを削除 |
 | GET | `/api/v1/profile-photos/{id}` | profile画像だけをサーバー復号して配信 |
-| GET | `/api/v1/me/key-envelopes` | Access Tokenと5分以内のPasskey再認証が必要な暗号化Key-A envelope一覧 |
-| PUT | `/api/v1/me/key-envelopes/{key_version}` | Access Tokenと5分以内のPasskey再認証が必要な暗号化Key-A envelope保存・version更新 |
+| GET | `/api/v1/me/key-envelopes` | Access Tokenと5分以内のPasskey再認証が必要なroot-key envelope一覧 |
+| PUT | `/api/v1/me/key-envelopes/{key_version}` | Access Tokenと5分以内のPasskey再認証が必要なroot-key envelope保存・version更新 |
 | GET | `/api/v1/me/key-envelopes/{key_version}` | Access Tokenと5分以内のPasskey再認証が必要な指定version取得 |
 | DELETE | `/api/v1/me/key-envelopes/{key_version}` | Access Tokenと5分以内のPasskey再認証が必要な指定version削除 |
 | POST | `/api/v1/me/devices` | Access Tokenと5分以内のPasskey再認証が必要な端末公開鍵登録 |
 | GET | `/api/v1/me/devices` | Access Tokenと5分以内のPasskey再認証が必要な端末メタデータ一覧 |
 | POST | `/api/v1/auth/recovery/challenge` | pre-authまたはAccess Token + 5分以内のPasskey再認証でRecovery challenge取得 |
-| POST | `/api/v1/auth/recovery/verify` | 同じ認証主体のchallengeにKey-A由来の署名を提示 |
+| POST | `/api/v1/auth/recovery/verify` | 同じ認証主体のchallengeにRecovery Phraseで復号したroot由来の署名を提示 |
 | DELETE | `/api/v1/me` | Access Tokenと5分以内のPasskey再認証、およびconfirm付きの退会・完全削除 |
 
-画像平文、画像鍵、Key-A、Key-B、Recovery KeyはAPIログへ出さない。Key-Bは端末ごとにSecure Storageへ生成・保存し、サーバーへは公開鍵と`device_id`だけを登録する。private画像の各リクエストは端末Key-B由来の署名、時刻、ワンタイムnonce、body hashを要求し、サーバー単独で画像を復号できない。`KEY_B_WRAP_KEY`やサーバーからのKey-B取得APIは使用しない。Key-A/Key-BのHKDF結合、Recovery proof、Secure Storage保存、既存Key-A/data saltを維持したRecovery Key再生成は実装済み。Recovery challengeはhashのみをDBに保存し、TTL・最大5回の検証試行・1時間あたり10回の発行制限を設ける。profile画像はサーバー公開鍵で画像鍵をwrapして互換配信し、private画像は端末側鍵を使う。画像uploadの正確な`X-Photo-*`ヘッダーは [backend/API_SPEC.md](../backend/API_SPEC.md) を参照する。
+画像平文、画像鍵、Master Key、Key-B、Recovery PhraseはAPIログへ出さない。Key-Bは端末ごとにSecure Storageへ生成・保存し、サーバーへは公開鍵と`device_id`だけを登録する。private画像の各リクエストは端末Key-B由来の署名、時刻、ワンタイムnonce、body hashを要求し、サーバー単独で画像を復号できない。`KEY_B_WRAP_KEY`やサーバーからのKey-B取得APIは使用しない。Key-Bは画像鍵の包みと端末proofに、Master Keyはアカウントrootの包みに、Recovery Phraseはv2 root envelopeの包みに用途を分離する。Recovery challengeはhashのみをDBに保存し、TTL・最大5回の検証試行・1時間あたり10回の発行制限を設ける。profile画像はサーバー公開鍵で画像鍵をwrapして互換配信し、private画像は端末側鍵を使う。画像uploadの正確な`X-Photo-*`ヘッダーは [backend/API_SPEC.md](../backend/API_SPEC.md) を参照する。
 
-### チャット
-
-| Method | Path | 用途 |
-| --- | --- | --- |
-| GET | `/api/v1/chats` | チャット一覧 |
-| GET | `/api/v1/chats/{id}/messages` | 履歴取得 |
-| POST | `/api/v1/chats/{id}/transport-token` | 対象chat専用短命token |
-
-QUIC / WebTransport / WebSocketのChat TokenはAccess TokenやRefresh Tokenと別audienceで発行し、Refresh Tokenを通信路へ送らない。
+Chat TokenはAccess TokenやRefresh Tokenと別audienceで発行し、Refresh Tokenを通信路へ送らない。正確なbody形式、TTL、暗号文サイズは [backend/API_SPEC.md](../backend/API_SPEC.md) のチャット節を参照する。
 
 ## 4. Token更新タイミング
 
@@ -193,7 +226,28 @@ QUIC / WebTransport / WebSocketのChat TokenはAccess TokenやRefresh Tokenと�
 5. Refresh失敗、409 reuse、session失効時はAccess/Refreshを削除し、GoogleまたはPasskeyへ戻る。
 6. バックグラウンド中に定期Refreshしない。
 
-端末登録、Key-A envelope、Recoveryのsession経路、退会はRefreshだけでは許可せず、直近Passkey再認証を要求する。Recoveryの新端末経路はGoogle後の短命pre-authに限定し、challenge開始とverifyで同じpre-auth hash・scope・userを再検証する。端末画像APIはAccess Tokenだけで完結させず、端末Key-Bのproofも要求する。
+端末登録、root-key envelope、Recoveryのsession経路、退会はRefreshだけでは許可せず、直近Passkey再認証を要求する。Recoveryの新端末経路はGoogle後の短命pre-authに限定し、challenge開始とverifyで同じpre-auth hash・scope・userを再検証する。端末画像APIはAccess Tokenだけで完結させず、端末Key-Bのproofも要求する。
+
+### クライアント所有鍵・機種変更（v2）
+
+暗号鍵の最終設計と脅威モデルは [proton-style-key-management/proposal.md](ai/security/proton-style-key-management/proposal.md) を参照する。
+この節のAPIは、サーバーがMaster Keyを復号できないことを前提に、端末間で暗号文envelopeを中継する。
+
+| Method | Path | 認証 | 用途 |
+| --- | --- | --- | --- |
+| POST | `/api/v1/me/devices` | Access Token + 直近Passkey | Ed25519 Key-B公開鍵と任意のX25519合意公開鍵を登録 |
+| GET | `/api/v1/me/devices` | Access Token + 直近Passkey | 端末公開メタデータ一覧 |
+| POST | `/api/v1/me/device-transfers` | Access Token + 直近Passkey + 対象端末proof | 新端末向け移行要求を作成 |
+| GET | `/api/v1/me/device-transfers` | Access Token + 直近Passkey + 端末proof | 保留中の移行要求を取得 |
+| GET | `/api/v1/me/device-transfers/{id}` | Access Token + 直近Passkey + 対象端末proof | 対象端末が包み済みMaster Keyを取得 |
+| POST | `/api/v1/me/device-transfers/{id}/approve` | Access Token + 直近Passkey + 旧端末proof | ユーザー確認済みのopaque envelopeを登録 |
+| POST | `/api/v1/me/device-transfers/{id}/complete` | Access Token + 直近Passkey + 対象端末proof | 新端末の復号・保存完了を通知 |
+
+作成bodyは`target_device_id`、`target_key_version`、`target_public_key`、`verification_code`です。コードの平文はDBへ保存せず、サーバーはtarget公開鍵の差し替えを承認bodyから受け付けません。approve bodyの`wrapped_master_key`はX25519 + HKDF-SHA256 + AES-256-GCMのopaque envelopeで、APIは形式と宛先公開鍵だけを検証します。コードは端末間の取り違え防止用であり、サーバー侵害への対抗にはユーザーがfingerprintを照合するかQR/OOBで公開鍵を直接確認する必要があります。
+
+移行要求は15分で失効し、ユーザーごとの同時保留数を制限します。GETは`pending`中にwrapped値を返さず、`approved`または`completed`の対象端末にだけ返します。Access Tokenだけ、別ユーザーのdevice ID、期限切れ・再利用・不一致proofでは移行できません。
+
+v2のRecovery envelopeは24語Recovery Phraseのentropyを端末内でArgon2id + HKDF-SHA256に通してMaster KeyをAES-256-GCMで包みます。phrase自体、Master Key、Key-B平文はAPIへ送信しません。root-key protocolはv2だけを受け付けます。`/me/key-envelopes/{key_version}`で旧versionを指定した要求は`410 legacy_key_version_disabled`、移行後に旧envelopeしかないアカウントのRecovery challengeは`409 recovery_not_configured`です。pre-release migration `0022_disable_legacy_root_keys.sql`で旧envelopeと旧Key-B materialを削除するため、古い開発アカウントはv2鍵登録をやり直してください。Recovery成功後は新しいPhraseを表示し、ユーザー確認後にenvelopeを保存します。保存に失敗した場合は端末内のpending materialを残し、成功時だけ旧Phraseを無効化します。
 
 ## 5. 実装変更時の同期対象
 
