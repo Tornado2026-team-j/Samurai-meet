@@ -67,6 +67,7 @@ export default function ForeignerHomeScreen() {
             accessibilityLabel="Profile"
             accessibilityRole="button"
             hitSlop={8}
+            onPress={() => router.push("/profile")}
             style={styles.profileButton}
           >
             <MaterialIcons color="#ffffff" name="account-circle" size={30} />
