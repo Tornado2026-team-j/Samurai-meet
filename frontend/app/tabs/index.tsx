@@ -45,6 +45,18 @@ const EXPANSION_DURATION = 360;
 type PreviewStatus = "idle" | "loading" | "success" | "error";
 type PublishStatus = "idle" | "publishing";
 
+function isSessionRefreshFailure(error: unknown): boolean {
+  return error instanceof Error && /^(401|409):/u.test(error.message);
+}
+
+function isRecruitmentInputFailure(error: unknown): boolean {
+  return error instanceof Error && [
+    "invalid_recruitment_date",
+    "invalid_recruitment_duration",
+    "invalid_recruitment_time",
+  ].includes(error.message);
+}
+
 function countryCodeToFlag(countryCode: string): string {
   const normalizedCode = countryCode.trim().toUpperCase();
 
@@ -308,7 +320,7 @@ export default function SearchPreferencesScreen() {
       router.replace("/foreigner");
     } catch (error) {
       if (error instanceof Error && error.name === "AbortError") {
-        setPublishError("The local API did not respond. Check that the Go server is running and try again.");
+        setPublishError("The server request timed out. Check your connection and try again.");
         return;
       }
       if (error instanceof APIError) {
@@ -331,6 +343,10 @@ export default function SearchPreferencesScreen() {
           default:
             setPublishError("The server could not publish this recruitment. Try again shortly.");
         }
+      } else if (isSessionRefreshFailure(error)) {
+        setPublishError("Your session expired. Sign in again before publishing.");
+      } else if (isRecruitmentInputFailure(error)) {
+        setPublishError("Check the recruitment date, time, and duration.");
       } else if (error instanceof Error && error.message === "not_signed_in") {
         setPublishError("Please sign in again before publishing.");
       } else if (error instanceof Error && error.message === "recruitment_date_in_past") {
@@ -338,7 +354,7 @@ export default function SearchPreferencesScreen() {
       } else if (error instanceof Error && error.message === "recruitment_must_end_same_day") {
         setPublishError("The recruitment must end on the same day.");
       } else {
-        setPublishError("The local API could not be reached. Check the Go server and your iPhone network connection.");
+        setPublishError("The server could not be reached. Check your iPhone network connection and try again.");
       }
     } finally {
       setPublishStatus("idle");
