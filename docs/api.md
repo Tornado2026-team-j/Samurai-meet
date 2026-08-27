@@ -167,15 +167,23 @@ Refresh request:
 | --- | --- | --- |
 | POST | `/api/v1/me/verification` | 本人確認開始 |
 
-### 評価・本人確認・通知
+### 評価・本人確認
 
 | Method | Path | 用途 |
 | --- | --- | --- |
 | POST | `/api/v1/matches/{id}/reviews` | 相互評価 |
 | POST | `/api/v1/me/verification` | Stripe Identity等の本人確認開始 |
-| POST | `/api/v1/notifications/read` | 通知既読（予定） |
 
 本人確認済みマークは、クライアントの戻り値ではなく、署名検証済みWebhookを受けたバックエンドだけが設定します。
+
+### 通知（バックエンドREST・フロント画面接続済み）
+
+| Method | Path | 用途 |
+| --- | --- | --- |
+| GET | `/api/v1/notifications?unread_only=false&limit=50` | 直近7日間の自分の通知一覧 |
+| POST | `/api/v1/notifications/{id}/read` | 通知を既読にする |
+
+応募、承認・辞退、暗号化チャットメッセージ送信時にサーバーで通知を作成します。通知画面の表示文はクライアント側で日本語／英語に変換し、チャット本文は保存・表示しません。
 
 ### チャット・会合（バックエンドREST実装済み・フロント未接続）
 

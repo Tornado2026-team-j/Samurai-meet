@@ -31,6 +31,7 @@ import { fetchWithAutoRefresh } from './authenticated-fetch';
 
 const KEY_A_STORAGE_PREFIX = 'samurai_meet_key_a_v1_';
 const RECOVERY_KEY_STORAGE_PREFIX = 'samurai_meet_recovery_key_v1_';
+const KEY_ENVELOPE_STORAGE_PREFIX = 'samurai_meet_key_envelope_v1_';
 const INITIAL_KEY_MATERIAL_DRAFT_PREFIX = 'samurai_meet_initial_key_material_draft_v1_';
 const RECOVERY_KEY_ROTATION_PENDING_PREFIX = 'samurai_meet_recovery_key_rotation_pending_v1_';
 const RECOVERY_KEY_ROTATION_MATERIAL_PREFIX = 'samurai_meet_recovery_key_rotation_material_v1_';
@@ -125,6 +126,10 @@ function keyAStorageKey(userID: string): string {
 
 function recoveryKeyStorageKey(userID: string): string {
   return `${RECOVERY_KEY_STORAGE_PREFIX}${storageSuffix(userID)}`;
+}
+
+function keyEnvelopeStorageKey(userID: string): string {
+  return `${KEY_ENVELOPE_STORAGE_PREFIX}${storageSuffix(userID)}`;
 }
 
 function initialKeyMaterialDraftStorageKey(userID: string): string {
@@ -316,6 +321,26 @@ export async function loadStoredRecoveryKey(userID: string): Promise<string | nu
 }
 
 /**
+ * The encrypted envelope is cached in Secure Storage so ordinary app startup
+ * does not need the privileged server envelope endpoint. The server remains
+ * authoritative for recovery and key-management operations.
+ */
+export async function loadStoredKeyEnvelope(userID: string): Promise<KeyEnvelope | null> {
+  const stored = await getStoredItem(keyEnvelopeStorageKey(userID));
+  if (!stored) return null;
+  try {
+    const parsed: unknown = JSON.parse(stored);
+    return isKeyEnvelope(parsed) ? normalizeKeyEnvelope(parsed) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function saveStoredKeyEnvelope(userID: string, envelope: KeyEnvelope): Promise<void> {
+  await setStoredItem(keyEnvelopeStorageKey(userID), JSON.stringify(envelope));
+}
+
+/**
  * Recovery verification succeeds before the new Passkey session exists. Keep
  * this local marker so the post-Passkey key setup cannot silently treat the
  * old Recovery Phrase as complete. It is a workflow marker, not an auth
@@ -453,7 +478,10 @@ export async function saveKeyMaterial(userID: string, keyA: Uint8Array, recovery
   if (keyA.length !== 32 || envelope.key_version !== 'v2') throw new Error('Invalid Master Key');
   const normalizedRecoveryKey = normalizeRecoveryMaterial(recoveryKey, envelope);
   await verifyKeyMaterial(keyA, normalizedRecoveryKey, envelope);
-  await persistKeyMaterial(userID, keyA, normalizedRecoveryKey);
+  await Promise.all([
+    persistKeyMaterial(userID, keyA, normalizedRecoveryKey),
+    saveStoredKeyEnvelope(userID, envelope),
+  ]);
 }
 
 export async function saveStoredKeyA(userID: string, keyA: Uint8Array): Promise<void> {
@@ -465,6 +493,7 @@ export async function clearKeyMaterial(userID: string): Promise<void> {
 	await Promise.all([
 		deleteStoredItem(keyAStorageKey(userID)),
 		deleteStoredItem(recoveryKeyStorageKey(userID)),
+		deleteStoredItem(keyEnvelopeStorageKey(userID)),
 		clearInitialKeyMaterialDraft(userID),
 		clearRecoveryKeyRotationPending(userID),
 		deleteDeviceStoredItem(deviceIDStorageKey(userID)),
@@ -515,7 +544,9 @@ export async function saveKeyEnvelope(session: Session, envelope: KeyEnvelope): 
     body: JSON.stringify(envelope),
   }, session);
   if (!response.data || !isKeyEnvelope(response.data)) throw new Error('Key-A envelope save response is invalid');
-  return normalizeKeyEnvelope(response.data);
+  const normalized = normalizeKeyEnvelope(response.data);
+  await saveStoredKeyEnvelope(session.user_id, normalized);
+  return normalized;
 }
 
 export async function loadStoredDeviceKeyB(userID: string): Promise<DeviceKeyMaterial | null> {

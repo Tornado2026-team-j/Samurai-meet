@@ -1,8 +1,6 @@
-import Constants from "expo-constants";
 import {
   defaultAPIBaseURL,
   isLocalWebOrigin,
-  localNativeAPIBaseURL,
   originFromAPIBaseURL,
   DEFAULT_WEB_APP_ORIGIN,
 } from "./api-config.shared";
@@ -10,18 +8,16 @@ import {
 export {
   defaultAPIBaseURL,
   isLocalWebOrigin,
-  localNativeAPIBaseURL,
   originFromAPIBaseURL,
 } from "./api-config.shared";
 
 const configuredApiBaseURL = process.env.EXPO_PUBLIC_API_BASE_URL?.trim();
 const configuredWebAppOrigin = process.env.EXPO_PUBLIC_WEB_APP_ORIGIN?.trim();
 const runtimeLocation = typeof globalThis.location === "undefined" ? undefined : globalThis.location;
-const metroHostUri = Constants.expoConfig?.hostUri;
 
 export const API_BASE_URL = (
   configuredApiBaseURL
-    || defaultAPIBaseURL(runtimeLocation, process.env.NODE_ENV, metroHostUri)
+    || defaultAPIBaseURL(runtimeLocation, process.env.NODE_ENV)
 ).replace(/\/+$/, "");
 
 /**

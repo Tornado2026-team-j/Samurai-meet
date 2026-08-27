@@ -24,6 +24,7 @@ import {
   ensureDeviceAgreementKey,
   isRecoveryKeyRotationPending,
   listKeyEnvelopes,
+  loadStoredKeyEnvelope,
   loadStoredKeyA,
   loadPendingRecoveryKeyRotation,
   loadInitialKeyMaterialDraft,
@@ -869,20 +870,23 @@ export default function OnboardingScreen() {
     void (async () => {
       try {
         await withTimeout((async () => {
-          const [pendingRotation, initialDraft, storedKeyA] = await Promise.all([
+          const [pendingRotation, initialDraft, storedKeyA, storedEnvelope] = await Promise.all([
             loadPendingRecoveryKeyRotation(userID),
             loadInitialKeyMaterialDraft(userID),
             loadStoredKeyA(userID),
+            loadStoredKeyEnvelope(userID),
           ]);
           const localKeyA = storedKeyA ?? pendingRotation?.keyA ?? null;
           if (!active) return;
           if (localKeyA) {
-            setKeySetupStage("loading_envelopes");
-            const envelopes = await listKeyEnvelopes(activeSession);
-            const envelope = envelopes.find((item) => item.recovery_public_key.length > 0)
-              ?? envelopes.find((item) => item.kdf_params.data_salt.length > 0);
+            // A local Key-A means this device has already completed setup.
+            // Use the securely cached envelope for ordinary startup; fetching
+            // the server envelope is a recent-Passkey-gated operation.
+            const envelope = pendingRotation?.envelope ?? storedEnvelope;
             if (!envelope) {
-              throw new Error("このアカウントの暗号鍵情報を確認できません。Recovery Phraseで復旧してください。");
+              setKeySetupState({ status: "ready" });
+              setKeySetupFor(userID);
+              return;
             }
             const kdfImplementation = await getRecoveryKDFImplementation(envelope.kdf_params.argon2id);
             if (!active) return;
@@ -915,9 +919,6 @@ export default function OnboardingScreen() {
             }
             setKeySetupState({ status: "ready" });
             setKeySetupFor(userID);
-            // Warm the device registration in the background. It is required
-            // by protected photo APIs, but must not block account onboarding.
-            void ensureDeviceAgreementKey(activeSession).catch(() => undefined);
             return;
           }
 

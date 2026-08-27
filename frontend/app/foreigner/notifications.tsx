@@ -1,13 +1,27 @@
-import { useMemo, useState, type ComponentProps } from "react";
+import { useCallback, useMemo, useState, type ComponentProps } from "react";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
-import { useRouter } from "expo-router";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { useFocusEffect, useRouter } from "expo-router";
+import {
+  ActivityIndicator,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import { StatusBar } from "expo-status-bar";
-import { MOCK_FOREIGNER_NOTIFICATIONS } from "../../mocks/notifications";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useAuth } from "../../hooks/useAuth";
+import { APIError } from "../../services/api-client";
+import {
+  listNotifications,
+  markNotificationRead,
+  toNotificationView,
+} from "../../services/notifications";
 import type {
-  ForeignerNotification,
-  ForeignerNotificationType,
   NotificationPeriod,
+  NotificationType,
+  NotificationView,
 } from "../../types/notification";
 
 const BLUE = "#5ec5f5";
@@ -39,7 +53,7 @@ const PERIOD_LABELS: Record<NotificationPeriod, string> = {
 };
 
 const NOTIFICATION_ICONS: Record<
-  ForeignerNotificationType,
+  NotificationType,
   NotificationIconStyle
 > = {
   new_application: {
@@ -53,6 +67,12 @@ const NOTIFICATION_ICONS: Record<
     color: LINK_BLUE,
     backgroundColor: SOFT_BLUE,
     borderColor: "#caeafd",
+  },
+  application_rejected: {
+    name: "sentiment-dissatisfied",
+    color: MUTED_GRAY,
+    backgroundColor: "#f7f7f7",
+    borderColor: BORDER_GRAY,
   },
   new_message: {
     name: "chat-bubble-outline",
@@ -92,7 +112,7 @@ const NOTIFICATION_ICONS: Record<
   },
 };
 
-function NotificationIcon({ type }: { type: ForeignerNotificationType }) {
+function NotificationIcon({ type }: { type: NotificationType }) {
   const icon = NOTIFICATION_ICONS[type];
 
   return (
@@ -114,8 +134,8 @@ function NotificationCard({
   notification,
   onPress,
 }: {
-  notification: ForeignerNotification;
-  onPress: (notification: ForeignerNotification) => void;
+  notification: NotificationView;
+  onPress: (notification: NotificationView) => void;
 }) {
   return (
     <Pressable
@@ -150,14 +170,71 @@ function NotificationCard({
 
 export default function ForeignerNotificationsScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const { getCurrentSession, refresh, session, status } = useAuth();
   const [filter, setFilter] = useState<Filter>("all");
+  const [liveNotifications, setLiveNotifications] = useState<NotificationView[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const loadNotifications = useCallback(() => {
+    const controller = new AbortController();
+    let cancelled = false;
+
+    const load = async () => {
+      const activeSession = getCurrentSession() ?? session;
+      if (status !== "signed_in" || !activeSession) {
+        if (!cancelled) {
+          setLiveNotifications([]);
+          setLoading(false);
+          setLoadError("ログイン後に通知を表示できます。");
+        }
+        return;
+      }
+
+      setLoading(true);
+      setLoadError(null);
+      try {
+        let records;
+        try {
+          records = await listNotifications(activeSession, { limit: 50 }, controller.signal);
+        } catch (error) {
+          if (!(error instanceof APIError) || error.status !== 401) throw error;
+          await refresh();
+          const refreshedSession = getCurrentSession();
+          if (!refreshedSession) throw error;
+          records = await listNotifications(refreshedSession, { limit: 50 }, controller.signal);
+        }
+        if (!cancelled) {
+          const now = new Date();
+          setLiveNotifications(records.map((record) => toNotificationView(record, "en", now)));
+        }
+      } catch (error) {
+        if (error instanceof Error && error.name === "AbortError") return;
+        if (!cancelled) {
+          setLiveNotifications([]);
+          setLoadError("通知を読み込めませんでした。時間をおいて再試行してください。");
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    void load();
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [getCurrentSession, refresh, session, status]);
+
+  useFocusEffect(loadNotifications);
+
   const notifications = useMemo(() => {
     if (filter === "unread") {
-      return MOCK_FOREIGNER_NOTIFICATIONS.filter((notification) => notification.unread);
+      return liveNotifications.filter((notification) => notification.unread);
     }
 
-    return MOCK_FOREIGNER_NOTIFICATIONS;
-  }, [filter]);
+    return liveNotifications;
+  }, [filter, liveNotifications]);
   const notificationGroups = useMemo(
     () =>
       (["today", "past_7_days"] as const)
@@ -170,8 +247,22 @@ export default function ForeignerNotificationsScreen() {
         .filter((group) => group.notifications.length > 0),
     [notifications],
   );
-  const openNotification = (notification: ForeignerNotification) => {
-    if (notification.type !== "new_application") return;
+  const openNotification = async (notification: NotificationView) => {
+    const activeSession = getCurrentSession() ?? session;
+    if (notification.unread) {
+      setLiveNotifications((current) => current.map((item) => (
+        item.id === notification.id ? { ...item, unread: false } : item
+      )));
+      if (activeSession) {
+        try {
+          await markNotificationRead(activeSession, notification.id);
+        } catch {
+          // The next focus reload reflects the server state if marking failed.
+        }
+      }
+    }
+
+    if (notification.type !== "new_application" && notification.type !== "match_confirmed") return;
 
     router.push({
       pathname: "/foreigner/applications/[id]",
@@ -189,7 +280,11 @@ export default function ForeignerNotificationsScreen() {
           accessibilityRole="button"
           hitSlop={10}
           onPress={() => router.back()}
-          style={({ pressed }) => [styles.backButton, pressed && styles.pressed]}
+          style={({ pressed }) => [
+            styles.backButton,
+            { top: Math.max(insets.top + 8, 49) },
+            pressed && styles.pressed,
+          ]}
         >
           <MaterialIcons color="#ffffff" name="chevron-left" size={30} />
         </Pressable>
@@ -231,7 +326,23 @@ export default function ForeignerNotificationsScreen() {
           })}
         </View>
 
-        {notificationGroups.length > 0 ? (
+        {loading ? (
+          <View style={styles.emptyState}>
+            <ActivityIndicator color={BLUE} size="small" />
+            <Text style={styles.emptyTitle}>Loading notifications...</Text>
+          </View>
+        ) : loadError ? (
+          <View style={styles.emptyState}>
+            <Text accessibilityRole="alert" style={styles.emptyTitle}>{loadError}</Text>
+            <Pressable
+              accessibilityRole="button"
+              onPress={loadNotifications}
+              style={({ pressed }) => [styles.retryButton, pressed && styles.pressed]}
+            >
+              <Text style={styles.retryButtonText}>Retry</Text>
+            </Pressable>
+          </View>
+        ) : notificationGroups.length > 0 ? (
           notificationGroups.map((group) => (
             <View key={group.period} style={styles.section}>
               <Text style={styles.sectionTitle}>{PERIOD_LABELS[group.period]}</Text>
@@ -435,6 +546,22 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     letterSpacing: 0,
     lineHeight: 18,
+    textAlign: "center",
+  },
+  retryButton: {
+    minWidth: 78,
+    minHeight: 34,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 14,
+    paddingHorizontal: 16,
+    borderRadius: 17,
+    backgroundColor: YELLOW,
+  },
+  retryButtonText: {
+    color: "#ffffff",
+    fontSize: 13,
+    fontWeight: "800",
   },
   pressed: {
     opacity: 0.72,

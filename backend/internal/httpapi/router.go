@@ -12,6 +12,7 @@ import (
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/keys"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/matching"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/meeting"
+	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/notification"
 	profileuser "github.com/Tornado2026-team-j/Samurai-meet/backend/internal/user"
 )
 
@@ -38,6 +39,7 @@ type RouterOptions struct {
 	Matching            *matching.Service
 	Chats               *chat.Service
 	Meetings            *meeting.Service
+	Notifications       *notification.Service
 }
 
 func NewRouter() http.Handler { return NewRouterWithOptions(RouterOptions{}) }
@@ -127,6 +129,10 @@ func NewRouterWithOptions(o RouterOptions) http.Handler {
 	if o.Sessions != nil && o.Chats != nil {
 		m.HandleFunc(chatPath, chatCollection(o.Chats, o.Sessions))
 		m.HandleFunc(chatPath+"/", chatItem(o.Chats, o.Sessions))
+	}
+	if o.Sessions != nil && o.Notifications != nil {
+		m.HandleFunc(notificationPath, notificationCollection(o.Notifications, o.Sessions))
+		m.HandleFunc(notificationPath+"/", notificationItem(o.Notifications, o.Sessions))
 	}
 	if o.Sessions != nil && o.Meetings != nil {
 		m.HandleFunc(meetingPath+"/", meetingItem(o.Meetings, o.Sessions))

@@ -1,7 +1,6 @@
 import {
   defaultAPIBaseURL,
   isLocalWebOrigin,
-  localNativeAPIBaseURL,
   originFromAPIBaseURL,
 } from "./api-config.shared";
 import { DEFAULT_WEB_APP_ORIGIN } from "./api-config.shared";
@@ -9,7 +8,6 @@ import { DEFAULT_WEB_APP_ORIGIN } from "./api-config.shared";
 export {
   defaultAPIBaseURL,
   isLocalWebOrigin,
-  localNativeAPIBaseURL,
   originFromAPIBaseURL,
 } from "./api-config.shared";
 

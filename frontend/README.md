@@ -39,7 +39,7 @@ CIでは品質検査と`bun run security:audit`を並列実行し、Bunのダウ
 - Refresh失敗、session handoff失敗、ログアウト時は一時verifierとsession情報を削除します。通信結果が不明なRefreshでは同じrequest IDを保持して再試行できます。
 - Expo GoではWeb Passkeyをアプリ内ブラウザで実行します。pre-auth tokenやAccess TokenをURL queryへ置かず、Passkey用fragmentまたは短命なsession handoffだけを使います。
 
-APIの開発上書きは `.env` の `EXPO_PUBLIC_API_BASE_URL` で指定できます。未指定時は、Expo Webを `http://localhost` または `http://127.0.0.1` で開いた場合に `http://127.0.0.1:8080/api/v1` を、Expoネイティブの開発クライアントではMetroが公開するプライベートLANホストの8080番へ自動接続します。本番ビルドやHTTPSトンネルは本番URLへ戻るため、明示的にAPIを上書きしてください。Web Passkeyページは同じGoバックエンドの`/passkey`を開くため、明示的にAPIを上書きする場合は`EXPO_PUBLIC_WEB_APP_ORIGIN`も同じ開発環境に合わせてください。
+APIの開発上書きは `.env` の `EXPO_PUBLIC_API_BASE_URL` で指定できます。未指定時は、Expo Webを `http://localhost` または `http://127.0.0.1` で開いた場合だけ `http://127.0.0.1:8080/api/v1` を使い、それ以外（iPhoneのExpo Goを含む）は `https://samurai-meet.disnana.com/api/v1` に接続します。ローカルGo APIへ接続する場合は、端末から到達できるURLを明示してください。Web Passkeyページは同じGoバックエンドの`/passkey`を開くため、明示的にAPIを上書きする場合は`EXPO_PUBLIC_WEB_APP_ORIGIN`も同じ開発環境に合わせてください。
 
 デスクトップのローカル確認例:
 
@@ -50,7 +50,7 @@ $env:EXPO_PUBLIC_WEB_APP_ORIGIN="http://localhost:8081"
 
 バックエンドを同じPCで起動する場合は、Go側にも`APP_ENV=development`、`DEV_CLIENT_ORIGIN=http://localhost:8081`、`WEBAUTHN_RP_ID=localhost`、`WEBAUTHN_RP_ORIGIN=http://localhost:8081`、`GOOGLE_REDIRECT_URI=http://localhost:8080/auth/callback`を設定します。Google Cloud Consoleにも同じcallbackを登録してください。`APP_ENV`だけを変更しても、`.env`に残った本番callbackや本番DB接続先は切り替わりません。
 
-iPhoneのExpo Goから同一LANのGo APIを確認する場合は、Go側を`:8080`で待ち受け、iPhoneと開発PCを同じネットワークに接続します。ExpoがMetroのプライベートホストを公開できない構成やHTTPSトンネルを使う場合は、`EXPO_PUBLIC_API_BASE_URL`へiPhoneから到達できるURLを明示してください。API接続先を切り替えた場合、セッションはサーバー環境ごとに別なので、その環境で再ログインします。Google OAuthをトンネルで完結させる場合は、Go側のcallbackとGoogle Cloud Consoleの登録値も同じ公開Originに揃え、環境変数を変更した後はExpoを再起動してください。
+iPhoneのExpo GoからローカルGo APIを確認する場合だけ、`EXPO_PUBLIC_API_BASE_URL`へiPhoneから到達できるURL（例: `http://192.168.11.16:8080/api/v1`）を明示してください。通常は本番APIドメインへ接続します。API接続先を切り替えた場合、セッションはサーバー環境ごとに別なので、その環境で再ログインします。Google OAuthをトンネルで完結させる場合は、Go側のcallbackとGoogle Cloud Consoleの登録値も同じ公開Originに揃え、環境変数を変更した後はExpoを再起動してください。
 
 募集フローは、プロフィール同期後に募集を公開し、別ユーザーが現在地・キーワードで検索して関心を送り、募集者が応募一覧から承認または辞退できます。現在地を使う場合は`expo-location`の前景位置情報許可が必要です。許可しなくてもキーワード検索と募集公開は継続できますが、距離による絞り込みは行われません。
 

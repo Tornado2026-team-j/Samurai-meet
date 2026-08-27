@@ -11,7 +11,9 @@ import {
   View,
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "../../hooks/useAuth";
+import { useUnreadNotifications } from "../../hooks/useUnreadNotifications";
 import { APIError } from "../../services/api-client";
 import { listMatches, type MatchView } from "../../services/matching";
 
@@ -24,7 +26,9 @@ const SOFT_BLUE = "#eff8ff";
 
 export default function ForeignerHomeScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const { getCurrentSession, refresh, session, status } = useAuth();
+  const hasUnreadNotifications = useUnreadNotifications();
   const [query, setQuery] = useState("");
   const [applications, setApplications] = useState<MatchView[]>([]);
   const [loading, setLoading] = useState(true);
@@ -115,7 +119,12 @@ export default function ForeignerHomeScreen() {
       <StatusBar style="light" />
 
       <View style={styles.header}>
-        <View style={styles.actionRow}>
+        <View
+          style={[
+            styles.actionRow,
+            { top: Math.max(insets.top + 8, 45) },
+          ]}
+        >
           <View style={styles.searchField}>
             <Pressable
               accessibilityLabel="Open search preferences"
@@ -157,7 +166,7 @@ export default function ForeignerHomeScreen() {
               name="notifications-none"
               size={30}
             />
-            <View style={styles.notificationBadge} />
+            {hasUnreadNotifications ? <View style={styles.notificationBadge} /> : null}
           </Pressable>
 
           <Pressable
@@ -171,7 +180,14 @@ export default function ForeignerHomeScreen() {
           </Pressable>
         </View>
 
-        <Text style={styles.title}>Find Your Japan!</Text>
+        <Text
+          style={[
+            styles.title,
+            { top: Math.max(insets.top + 71, 108) },
+          ]}
+        >
+          Find Your Japan!
+        </Text>
       </View>
 
       <ScrollView

@@ -454,7 +454,7 @@ export default function SearchPreferencesScreen() {
             }}
             style={({ pressed }) => [
               styles.menuBackButton,
-              { top: Math.max(insets.top, 16) },
+              { top: Math.max(insets.top + 4, 16) },
               pressed && styles.pressed,
             ]}
           >
@@ -472,6 +472,7 @@ export default function SearchPreferencesScreen() {
             {
               opacity: contentOpacity,
               pointerEvents: isConfirmationVisible ? "none" : "auto",
+              top: Math.max(insets.top + 10, 41),
               transform: [{ translateY: contentTranslateY }],
             },
           ]}
@@ -481,13 +482,14 @@ export default function SearchPreferencesScreen() {
               <Text style={styles.label}>What would you like to do?</Text>
               <TextInput
                 accessibilityLabel="Activity description"
+                blurOnSubmit
                 maxLength={160}
-                multiline
                 onChangeText={setDescription}
+                onSubmitEditing={() => Keyboard.dismiss()}
                 placeholder="Please tell us more about what you'd like to do or see"
                 placeholderTextColor={PLACEHOLDER_GRAY}
+                returnKeyType="done"
                 style={[styles.input, styles.descriptionInput]}
-                textAlignVertical="top"
                 value={description}
               />
             </View>
@@ -503,7 +505,9 @@ export default function SearchPreferencesScreen() {
                 />
                 <TextInput
                   accessibilityLabel="Location"
+                  blurOnSubmit
                   onChangeText={setLocation}
+                  onSubmitEditing={() => Keyboard.dismiss()}
                   placeholder="Osaka,Umeda"
                   placeholderTextColor={PLACEHOLDER_GRAY}
                   returnKeyType="search"
@@ -537,7 +541,9 @@ export default function SearchPreferencesScreen() {
                 <TextInput
                   ref={dateInputRef}
                   accessibilityLabel="Date"
+                  blurOnSubmit
                   onChangeText={setDate}
+                  onSubmitEditing={() => Keyboard.dismiss()}
                   placeholder={suggestedDate}
                   placeholderTextColor={PLACEHOLDER_GRAY}
                   style={[styles.input, styles.dateInput]}
@@ -783,7 +789,7 @@ export default function SearchPreferencesScreen() {
               },
             ]}
           >
-            <View style={styles.compactActionRow}>
+            <View style={[styles.compactActionRow, { top: Math.max(insets.top + 4, 45) }]}>
               <View style={styles.compactSearchField}>
                 <MaterialIcons
                   color={PLACEHOLDER_GRAY}
@@ -811,7 +817,7 @@ export default function SearchPreferencesScreen() {
                 <MaterialIcons color="#ffffff" name="account-circle" size={30} />
               </Pressable>
             </View>
-            <Text style={styles.compactTitle}>Find Your Japan!</Text>
+            <Text style={[styles.compactTitle, { top: Math.max(insets.top + 64, 108) }]}>Find Your Japan!</Text>
           </Animated.View>
         )}
       </Animated.View>
@@ -1159,13 +1165,11 @@ const styles = StyleSheet.create({
   },
   descriptionInput: {
     position: "absolute",
-    top: 23,
+    top: 27,
     width: "100%",
     height: 59,
-    paddingTop: 6,
-    paddingRight: 6,
-    paddingBottom: 6,
-    paddingLeft: 6,
+    paddingHorizontal: 16,
+    paddingVertical: 0,
   },
   whereGroup: {
     position: "absolute",

@@ -15,5 +15,8 @@ export type {
   JapaneseNotification,
   JapaneseNotificationType,
   NotificationDestination,
+  NotificationRecord,
   NotificationPeriod,
+  NotificationType,
+  NotificationView,
 } from "./notification";

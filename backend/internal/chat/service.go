@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/auth"
+	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/notification"
 )
 
 var (
@@ -37,8 +38,9 @@ const (
 // Service persists ciphertext-only chat messages. The server never receives
 // or decrypts the message body.
 type Service struct {
-	db     *sql.DB
-	signer *auth.Signer
+	db            *sql.DB
+	signer        *auth.Signer
+	notifications *notification.Service
 }
 
 type ChatSummary struct {
@@ -95,8 +97,12 @@ type chatAccess struct {
 	OtherUserID string
 }
 
-func NewService(database *sql.DB, signer *auth.Signer) *Service {
-	return &Service{db: database, signer: signer}
+func NewService(database *sql.DB, signer *auth.Signer, notificationServices ...*notification.Service) *Service {
+	var notifications *notification.Service
+	if len(notificationServices) > 0 {
+		notifications = notificationServices[0]
+	}
+	return &Service{db: database, signer: signer, notifications: notifications}
 }
 
 func (s *Service) List(ctx context.Context, userID string, now time.Time) ([]ChatSummary, error) {
@@ -206,6 +212,7 @@ func (s *Service) SendMessage(ctx context.Context, userID, chatID string, input 
 		return Message{}, err
 	}
 	created := now.UTC().Format(time.RFC3339Nano)
+	createdNewMessage := false
 	var message Message
 	err = tx.QueryRowContext(ctx, `
 		INSERT INTO messages (id,chat_id,sender_user_id,client_message_id,ciphertext,nonce,algorithm,key_version,created_at)
@@ -228,11 +235,38 @@ func (s *Service) SendMessage(ctx context.Context, userID, chatID string, input 
 		return Message{}, err
 	} else if _, err = tx.ExecContext(ctx, `UPDATE chat_threads SET updated_at=$1 WHERE id=$2`, created, access.ChatID); err != nil {
 		return Message{}, err
+	} else {
+		createdNewMessage = true
+	}
+	if createdNewMessage && s.notifications != nil {
+		actorName, nameErr := s.notificationActorNameTx(ctx, tx, userID)
+		if nameErr != nil {
+			return Message{}, nameErr
+		}
+		if err = s.notifications.CreateTx(ctx, tx, notification.CreateInput{
+			UserID:      access.OtherUserID,
+			EventKey:    "new_message:" + message.ID,
+			Type:        notification.TypeNewMessage,
+			TargetID:    access.ChatID,
+			Destination: notification.DestinationChat,
+			ActorName:   actorName,
+		}, now); err != nil {
+			return Message{}, err
+		}
 	}
 	if err = tx.Commit(); err != nil {
 		return Message{}, err
 	}
 	return message, nil
+}
+
+func (s *Service) notificationActorNameTx(ctx context.Context, tx *sql.Tx, userID string) (string, error) {
+	var name string
+	err := tx.QueryRowContext(ctx, `
+		SELECT COALESCE(NULLIF(p.name,''),u.display_name,'')
+		FROM users u LEFT JOIN profiles p ON p.user_id=u.id
+		WHERE u.id=$1 AND u.status='active'`, userID).Scan(&name)
+	return strings.TrimSpace(name), err
 }
 
 func (s *Service) MarkRead(ctx context.Context, userID, chatID string, sequence int64, now time.Time) error {

@@ -524,9 +524,18 @@ proximityのbodyは次の形式です。
 
 DBには会合中の参加者ごと・方式ごとに最新1件だけを保持し、取得時刻から5分を超えた値は返しません。会合終了時に補助値を削除します。実際のBLE/UWB測定、OS権限、近接UIはネイティブクライアントの責務です。
 
-### 6.9 未実装業務API
+### 6.9 通知一覧・未読管理（実装済み）
 
-本人確認（Stripe Identity等）、評価、通知一覧、ブロック・通報登録、WebSocketリアルタイム配送、チャット内写真送信は引き続き予定です。Stripe Identityを採用する場合も、Stripe Webhookの署名検証・イベント冪等性・対象ユーザー紐付けが成功するまで`identity_status=verified`へ遷移させません。画像平文、Key-A、Key-B、Recovery Key、Refresh TokenをAPIログへ出さない不変条件は全機能に適用します。
+| Method | Path | 認証 | 用途 |
+| --- | --- | --- | --- |
+| GET | `/api/v1/notifications?unread_only=false&limit=50` | Access Token | 直近7日間の通知一覧 |
+| POST | `/api/v1/notifications/{id}/read` | Access Token | 自分の通知を既読にする（冪等） |
+
+通知は応募、承認・辞退、暗号化チャットメッセージの作成と同じDBトランザクションで保存します。`event_key`で冪等化し、一覧はユーザー本人の通知だけを返します。通知本文はクライアントが言語別に生成し、チャットの平文・暗号文・鍵は通知へ保存しません。現在のクライアントはExpo画面からこの一覧と既読APIを利用します。
+
+### 6.10 未実装業務API
+
+本人確認（Stripe Identity等）、評価、ブロック・通報登録、WebSocketリアルタイム配送、チャット内写真送信は引き続き予定です。Stripe Identityを採用する場合も、Stripe Webhookの署名検証・イベント冪等性・対象ユーザー紐付けが成功するまで`identity_status=verified`へ遷移させません。画像平文、Key-A、Key-B、Recovery Key、Refresh TokenをAPIログへ出さない不変条件は全機能に適用します。
 
 ## 7. クライアント更新手順
 
