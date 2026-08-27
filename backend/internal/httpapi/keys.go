@@ -34,7 +34,12 @@ func keyEnvelopeList(service *keys.Service, sessions *auth.SessionService) http.
 			writeJSON(w, http.StatusOK, map[string]any{"data": result})
 		case http.MethodPut:
 			var input keys.Envelope
-			if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16*1024)).Decode(&input); err != nil {
+			decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16*1024))
+			if err := decoder.Decode(&input); err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_key_envelope_request"})
+				return
+			}
+			if err := ensureJSONBodyConsumed(decoder); err != nil {
 				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_key_envelope_request"})
 				return
 			}
@@ -70,10 +75,19 @@ func keyEnvelopeItem(service *keys.Service, sessions *auth.SessionService) http.
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_key_version"})
 			return
 		}
+		if version != keys.ClientRootKeyVersion {
+			writeJSON(w, http.StatusGone, map[string]string{"error": "legacy_key_version_disabled"})
+			return
+		}
 		switch r.Method {
 		case http.MethodPut:
 			var input keys.Envelope
-			if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16*1024)).Decode(&input); err != nil {
+			decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16*1024))
+			if err := decoder.Decode(&input); err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_key_envelope_request"})
+				return
+			}
+			if err := ensureJSONBodyConsumed(decoder); err != nil {
 				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_key_envelope_request"})
 				return
 			}

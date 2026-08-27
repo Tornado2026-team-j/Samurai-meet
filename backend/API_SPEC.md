@@ -13,6 +13,7 @@
 - 本番 Base URL: `https://samurai-meet.disnana.com/api/v1`
 - ローカル Base URL: `http://127.0.0.1:8080/api/v1`
 - すべての業務APIはGo APIを経由する。SQLiteは使用しない。
+- `APP_ENV=production` では `CLIENT_ORIGIN` とWebAuthn Origin/RP IDを公開Originに揃える。単一ホスト構成でPostgreSQLが同一ホストのloopback（`127.0.0.1`、`::1`、`localhost`）に限定される場合だけ、TLSなしの`DB_SSLMODE=disable`を許可する。外部DBは`require`、`verify-ca`、`verify-full`のいずれかを必須とする。
 - Content-Type: `application/json; charset=utf-8`
 - 時刻: UTCのRFC3339文字列
 - サービス内部ID:現在は暗号学的乱数から作るopaque `TEXT`。クライアントは形式を仮定しない。
@@ -55,7 +56,7 @@ Expoテストクライアントの「状態を更新」は`/api/v1/readyz`を呼
 - 本番アプリ: `samuraimeet://auth`
 - 開発用Expo Go: `samuraimeettest://auth` または `exp://<host>/--/auth`
 - Web開発クライアント: 設定済み`CLIENT_ORIGIN`または開発Originの`/auth/complete`（完全一致）
-- `exp://` は`APP_ENV=development`、`test`、またはローカル専用の`ALLOW_EXPO_GO_REDIRECT=true`のときだけ許可する。
+- `exp://<host>/--/auth` は通常`APP_ENV=development`または`test`だけで許可する。CF Tunnelなどでproduction設定のバックエンドへExpo Goから接続する場合は、`ALLOW_EXPO_GO_REDIRECT=true`を明示したときだけ許可する。APIのorigin（例: `https://samurai-meet.disnana.com`）とアプリの戻り先（`exp://...`）は別の値であり、前者を通っていても後者の形式検証は維持する。
 - Google Consoleに登録するURIはアプリURIではなく、常に `https://samurai-meet.disnana.com/auth/callback`。
 
 サーバーはOAuth stateとGoogle用PKCE verifierをPostgreSQLへ10分保存し、Googleへリダイレクトします。stateはhashだけを検索キーにし、callbackで一回だけ消費します。

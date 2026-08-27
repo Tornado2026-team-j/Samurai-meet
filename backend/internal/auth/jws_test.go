@@ -88,3 +88,10 @@ func TestSignerRejectsUnknownOrInvalidJWSHeader(t *testing.T) {
 		t.Fatal("JWS with unknown kid accepted")
 	}
 }
+
+func TestRotatingSignerRejectsKeysThatAESCannotUse(t *testing.T) {
+	tooLong := base64.RawURLEncoding.EncodeToString(make([]byte, 33))
+	if _, err := NewRotatingSigner("v1", map[string]string{"v1": tooLong}, "issuer", "audience"); err == nil {
+		t.Fatal("signer accepted a 33-byte key")
+	}
+}

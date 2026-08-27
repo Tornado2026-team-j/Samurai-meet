@@ -21,8 +21,9 @@ var (
 )
 
 const (
-	recoveryKDFAlgorithm = "HKDF-SHA256"
-	recoveryInfo         = "samurai-meet/recovery-key/v1"
+	ClientRootKeyVersion = "v2"
+	recoveryKDFAlgorithm = "Argon2id+HKDF-SHA256"
+	recoveryInfo         = "samurai-meet/recovery-phrase/v2"
 	recoverySaltBytes    = 16
 	dataSaltBytes        = 16
 )
@@ -45,14 +46,22 @@ type Service struct{ db *sql.DB }
 func NewService(database *sql.DB) *Service { return &Service{db: database} }
 
 func (s *Service) Upsert(ctx context.Context, userID string, envelope Envelope, now time.Time) (Envelope, error) {
+	if s == nil || s.db == nil {
+		return Envelope{}, ErrInvalidEnvelope
+	}
 	if err := validate(userID, envelope); err != nil {
 		return Envelope{}, err
 	}
 	created := now.UTC().Format(time.RFC3339Nano)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Envelope{}, err
+	}
+	defer tx.Rollback()
 	var result Envelope
 	var kdfParams, createdAt, updatedAt string
 	var recoveryPublicKey sql.NullString
-	err := s.db.QueryRowContext(ctx, `
+	err = tx.QueryRowContext(ctx, `
 		INSERT INTO key_envelopes (id,user_id,encrypted_key_a,nonce,kdf_params,recovery_public_key,key_version,created_at,updated_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$8)
 		ON CONFLICT (user_id,key_version) DO UPDATE SET
@@ -67,6 +76,12 @@ func (s *Service) Upsert(ctx context.Context, userID string, envelope Envelope, 
 	if err != nil {
 		return Envelope{}, err
 	}
+	// Replacing the Recovery envelope revokes every challenge issued for the
+	// previous phrase. Otherwise an old phrase could remain usable during the
+	// ten-minute challenge TTL after a successful rotation.
+	if _, err = tx.ExecContext(ctx, `DELETE FROM recovery_challenges WHERE user_id=$1 AND used_at IS NULL`, userID); err != nil {
+		return Envelope{}, err
+	}
 	result.RecoveryPublicKey = recoveryPublicKey.String
 	result.KDFParams = json.RawMessage(kdfParams)
 	result.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt)
@@ -77,14 +92,17 @@ func (s *Service) Upsert(ctx context.Context, userID string, envelope Envelope, 
 	if err != nil {
 		return Envelope{}, err
 	}
+	if err = tx.Commit(); err != nil {
+		return Envelope{}, err
+	}
 	return result, nil
 }
 
 func (s *Service) List(ctx context.Context, userID string) ([]Envelope, error) {
-	if strings.TrimSpace(userID) == "" {
+	if s == nil || s.db == nil || strings.TrimSpace(userID) == "" {
 		return nil, ErrInvalidEnvelope
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT encrypted_key_a,nonce,kdf_params,recovery_public_key,key_version,created_at,updated_at FROM key_envelopes WHERE user_id=$1 ORDER BY updated_at DESC`, userID)
+	rows, err := s.db.QueryContext(ctx, `SELECT encrypted_key_a,nonce,kdf_params,recovery_public_key,key_version,created_at,updated_at FROM key_envelopes WHERE user_id=$1 AND key_version=$2 ORDER BY updated_at DESC`, userID, ClientRootKeyVersion)
 	if err != nil {
 		return nil, err
 	}
@@ -101,7 +119,7 @@ func (s *Service) List(ctx context.Context, userID string) ([]Envelope, error) {
 }
 
 func (s *Service) Get(ctx context.Context, userID, version string) (Envelope, error) {
-	if strings.TrimSpace(userID) == "" || !keyVersionPattern.MatchString(version) {
+	if s == nil || s.db == nil || strings.TrimSpace(userID) == "" || version != ClientRootKeyVersion {
 		return Envelope{}, ErrInvalidEnvelope
 	}
 	var result Envelope
@@ -129,10 +147,15 @@ func (s *Service) Get(ctx context.Context, userID, version string) (Envelope, er
 }
 
 func (s *Service) Delete(ctx context.Context, userID, version string) error {
-	if strings.TrimSpace(userID) == "" || !keyVersionPattern.MatchString(version) {
+	if s == nil || s.db == nil || strings.TrimSpace(userID) == "" || version != ClientRootKeyVersion {
 		return ErrInvalidEnvelope
 	}
-	result, err := s.db.ExecContext(ctx, `DELETE FROM key_envelopes WHERE user_id=$1 AND key_version=$2`, userID, version)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `DELETE FROM key_envelopes WHERE user_id=$1 AND key_version=$2`, userID, version)
 	if err != nil {
 		return err
 	}
@@ -143,36 +166,26 @@ func (s *Service) Delete(ctx context.Context, userID, version string) error {
 	if count != 1 {
 		return ErrEnvelopeNotFound
 	}
-	return nil
+	if _, err = tx.ExecContext(ctx, `DELETE FROM recovery_challenges WHERE user_id=$1 AND used_at IS NULL`, userID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func validate(userID string, envelope Envelope) error {
-	if strings.TrimSpace(userID) == "" || !keyVersionPattern.MatchString(envelope.KeyVersion) {
+	if strings.TrimSpace(userID) == "" || envelope.KeyVersion != ClientRootKeyVersion {
 		return ErrInvalidEnvelope
 	}
-	if !validBase64(envelope.EncryptedKeyA, 16) || !validBase64(envelope.Nonce, 12) {
+	if !validExactBase64(envelope.EncryptedKeyA, 32+16) || !validExactBase64(envelope.Nonce, 12) {
 		return ErrInvalidEnvelope
 	}
 	if len(envelope.KDFParams) == 0 || len(envelope.KDFParams) > 4096 || envelope.KDFParams[0] != '{' || !json.Valid(envelope.KDFParams) {
 		return ErrInvalidEnvelope
 	}
-	if envelope.RecoveryPublicKey != "" {
-		if !validExactBase64(envelope.RecoveryPublicKey, 32) || !validRecoveryKDFParams(envelope.KDFParams) {
-			return ErrInvalidEnvelope
-		}
+	if !validExactBase64(envelope.RecoveryPublicKey, 32) || !validRecoveryKDFParams(envelope.KDFParams) {
+		return ErrInvalidEnvelope
 	}
 	return nil
-}
-
-func validBase64(value string, minBytes int) bool {
-	if value == "" {
-		return false
-	}
-	raw, err := base64.RawURLEncoding.DecodeString(value)
-	if err != nil {
-		return false
-	}
-	return len(raw) >= minBytes
 }
 
 func validExactBase64(value string, bytes int) bool {
@@ -184,22 +197,32 @@ func validExactBase64(value string, bytes int) bool {
 }
 
 type recoveryKDFParams struct {
-	Algorithm string `json:"algorithm"`
-	Salt      string `json:"salt"`
-	Info      string `json:"info"`
-	DataSalt  string `json:"data_salt"`
+	Algorithm string        `json:"algorithm"`
+	Salt      string        `json:"salt"`
+	Info      string        `json:"info"`
+	DataSalt  string        `json:"data_salt"`
+	Argon2id  *argon2Params `json:"argon2id,omitempty"`
+}
+
+type argon2Params struct {
+	MemoryKiB   int `json:"memory_kib"`
+	Iterations  int `json:"iterations"`
+	Parallelism int `json:"parallelism"`
 }
 
 func validRecoveryKDFParams(raw json.RawMessage) bool {
 	var params recoveryKDFParams
-	if err := json.Unmarshal(raw, &params); err != nil || params.Algorithm != recoveryKDFAlgorithm || params.Info == "" {
+	if err := json.Unmarshal(raw, &params); err != nil || params.Info == "" {
 		return false
 	}
 	info, err := base64.RawURLEncoding.DecodeString(params.Info)
-	if err != nil || string(info) != recoveryInfo || !validExactBase64(params.Salt, recoverySaltBytes) {
+	if err != nil || !validExactBase64(params.Salt, recoverySaltBytes) || !validExactBase64(params.DataSalt, dataSaltBytes) {
 		return false
 	}
-	return validExactBase64(params.DataSalt, dataSaltBytes)
+	return params.Algorithm == recoveryKDFAlgorithm && string(info) == recoveryInfo && params.Argon2id != nil &&
+		params.Argon2id.MemoryKiB >= 8192 && params.Argon2id.MemoryKiB <= 262144 &&
+		params.Argon2id.Iterations >= 1 && params.Argon2id.Iterations <= 10 &&
+		params.Argon2id.Parallelism >= 1 && params.Argon2id.Parallelism <= 4
 }
 
 func scanEnvelope(scanner interface{ Scan(...any) error }) (Envelope, error) {

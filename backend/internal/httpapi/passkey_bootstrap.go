@@ -21,7 +21,16 @@ func passkeyBootstrap(service *auth.PasskeyBootstrapService, sessions *auth.Sess
 			AppRedirectURI   string `json:"app_redirect_uri"`
 			HandoffChallenge string `json:"app_handoff_challenge"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&input); err != nil || !allowedAppRedirectURI(input.AppRedirectURI, environment, allowExpoGo) || strings.TrimSpace(input.HandoffChallenge) == "" {
+		if r.Body == nil || r.ContentLength > 8*1024 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_request"})
+			return
+		}
+		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8*1024))
+		if err := decoder.Decode(&input); err != nil || !allowedAppRedirectURI(input.AppRedirectURI, environment, allowExpoGo) || strings.TrimSpace(input.HandoffChallenge) == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_request"})
+			return
+		}
+		if err := ensureJSONBodyConsumed(decoder); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_request"})
 			return
 		}
@@ -31,6 +40,10 @@ func passkeyBootstrap(service *auth.PasskeyBootstrapService, sessions *auth.Sess
 		if claims, ok := accessClaims(r, sessions); ok {
 			if scope != auth.PasskeyBootstrapRegister && scope != auth.PasskeyBootstrapReauth {
 				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid_passkey_scope"})
+				return
+			}
+			if scope == auth.PasskeyBootstrapRegister && !requireRecentPasskey(r, sessions, claims) {
+				writeRecentPasskeyRequired(w)
 				return
 			}
 			result, err = service.IssueFromSession(r.Context(), claims.Subject, claims.SessionID, scope, input.AppRedirectURI, input.HandoffChallenge, time.Now())

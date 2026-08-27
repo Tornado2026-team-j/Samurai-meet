@@ -35,4 +35,10 @@ func TestAllowedAppRedirectURI(t *testing.T) {
 	if !allowedOAuthRedirectURI("http://localhost:5173/auth/complete", "development", false, "", "http://localhost:5173") {
 		t.Fatal("local web callback should be allowed in development")
 	}
+	if !allowedOAuthRedirectURI("http://localhost:8081/auth/complete", "development", false, "", "") {
+		t.Fatal("Expo Web callback on localhost:8081 should be allowed in development")
+	}
+	if allowedOAuthRedirectURI("http://localhost:8081/auth/complete", "production", false, "https://samurai-meet.disnana.com", "") {
+		t.Fatal("localhost callback must be rejected in production")
+	}
 }

@@ -11,6 +11,12 @@ import (
 
 var ErrRefreshReuse = errors.New("refresh token reuse detected")
 
+const (
+	accessTokenMaxSize  = 4096
+	refreshTokenMaxSize = 512
+	requestIDMaxSize    = 128
+)
+
 type SessionTokens struct {
 	UserID       string `json:"user_id"`
 	SessionID    string `json:"session_id"`
@@ -60,7 +66,7 @@ func (s *SessionService) Authenticate(ctx context.Context, accessToken string, n
 }
 
 func (s *SessionService) CreateSession(ctx context.Context, userID string, now time.Time) (SessionTokens, error) {
-	if s.signer == nil {
+	if s == nil || s.db == nil || s.signer == nil || strings.TrimSpace(userID) == "" {
 		return SessionTokens{}, errors.New("session signer is not configured")
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -116,18 +122,45 @@ func (s *SessionService) createSessionTx(ctx context.Context, tx *sql.Tx, userID
 // HasRecentPasskey is used only for privileged handoffs that transfer a
 // freshly authenticated browser session to another client.
 func (s *SessionService) HasRecentPasskey(ctx context.Context, userID, sessionID string, now time.Time) (bool, error) {
+	return s.hasRecentPasskeyQuery(ctx, nil, userID, sessionID, now)
+}
+
+func (s *SessionService) hasRecentPasskeyTx(ctx context.Context, tx *sql.Tx, userID, sessionID string, now time.Time) (bool, error) {
+	return s.hasRecentPasskeyQuery(ctx, tx, userID, sessionID, now)
+}
+
+func (s *SessionService) hasRecentPasskeyQuery(ctx context.Context, tx *sql.Tx, userID, sessionID string, now time.Time) (bool, error) {
+	if s == nil || (tx == nil && s.db == nil) || strings.TrimSpace(userID) == "" || strings.TrimSpace(sessionID) == "" {
+		return false, errors.New("session is invalid")
+	}
+	var status, expiresAtText, lastSeenAtText string
 	var lastPasskey sql.NullString
-	if err := s.db.QueryRowContext(ctx, `SELECT last_passkey_at FROM sessions WHERE id=$1 AND user_id=$2 AND status='active'`, sessionID, userID).Scan(&lastPasskey); err != nil {
+	var err error
+	query := `SELECT status,expires_at,last_seen_at,last_passkey_at FROM sessions WHERE id=$1 AND user_id=$2`
+	if tx != nil {
+		err = tx.QueryRowContext(ctx, query+` FOR UPDATE`, sessionID, userID).Scan(&status, &expiresAtText, &lastSeenAtText, &lastPasskey)
+	} else {
+		err = s.db.QueryRowContext(ctx, query, sessionID, userID).Scan(&status, &expiresAtText, &lastSeenAtText, &lastPasskey)
+	}
+	if err != nil {
 		return false, err
 	}
-	if !lastPasskey.Valid || lastPasskey.String == "" {
+	if status != string(SessionActive) || !lastPasskey.Valid || lastPasskey.String == "" {
 		return false, nil
 	}
-	last, err := time.Parse(time.RFC3339Nano, lastPasskey.String)
-	return err == nil && now.Before(last.Add(RecentPasskeyAuthTTL)), err
+	expiresAt, expiresErr := time.Parse(time.RFC3339Nano, expiresAtText)
+	lastSeenAt, lastSeenErr := time.Parse(time.RFC3339Nano, lastSeenAtText)
+	lastPasskeyAt, passkeyErr := time.Parse(time.RFC3339Nano, lastPasskey.String)
+	if expiresErr != nil || lastSeenErr != nil || passkeyErr != nil || !now.Before(expiresAt) || !now.Before(lastSeenAt.Add(RefreshIdleTTL)) {
+		return false, nil
+	}
+	return now.Before(lastPasskeyAt.Add(RecentPasskeyAuthTTL)), nil
 }
 
 func (s *SessionService) ListForUser(ctx context.Context, userID, currentSessionID string) ([]SessionSummary, error) {
+	if s == nil || s.db == nil || strings.TrimSpace(userID) == "" {
+		return nil, errors.New("session is invalid")
+	}
 	rows, err := s.db.QueryContext(ctx, `SELECT id,COALESCE(device_name,''),created_at,last_seen_at,expires_at FROM sessions WHERE user_id=$1 AND status='active' AND revoked_at IS NULL AND expires_at>$2 ORDER BY last_seen_at DESC`, userID, time.Now().UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return nil, err
@@ -159,6 +192,9 @@ func (s *SessionService) ListForUser(ctx context.Context, userID, currentSession
 }
 
 func (s *SessionService) RevokeOwnedSession(ctx context.Context, userID, sessionID, reason string, now time.Time) error {
+	if s == nil || s.db == nil || strings.TrimSpace(userID) == "" || strings.TrimSpace(sessionID) == "" {
+		return errors.New("session is invalid")
+	}
 	result, err := s.db.ExecContext(ctx, `UPDATE sessions SET status='revoked',revoked_at=$1,revoked_reason=$2 WHERE id=$3 AND user_id=$4 AND revoked_at IS NULL`, now.UTC().Format(time.RFC3339Nano), reason, sessionID, userID)
 	if err != nil {
 		return err
@@ -175,14 +211,20 @@ func (s *SessionService) RevokeOwnedSession(ctx context.Context, userID, session
 }
 
 func (s *SessionService) RevokeAll(ctx context.Context, userID, reason string, now time.Time) error {
+	if s == nil || s.store == nil || strings.TrimSpace(userID) == "" {
+		return errors.New("session is invalid")
+	}
 	return s.store.RevokeAllForUser(ctx, userID, reason, now)
 }
 
 func (s *SessionService) Refresh(ctx context.Context, token, requestID string, now time.Time) (SessionTokens, error) {
-	if s.signer == nil {
+	if s == nil || s.db == nil || s.signer == nil {
 		return SessionTokens{}, errors.New("session signer is not configured")
 	}
-	if requestID == "" {
+	if token == "" || len(token) > refreshTokenMaxSize {
+		return SessionTokens{}, errors.New("refresh token is invalid")
+	}
+	if requestID == "" || len(requestID) > requestIDMaxSize {
 		return SessionTokens{}, errors.New("refresh request ID is required")
 	}
 	hash, err := HashRefreshToken(token)
@@ -279,6 +321,9 @@ func (s *SessionService) Refresh(ctx context.Context, token, requestID string, n
 }
 
 func (s *SessionService) Logout(ctx context.Context, accessToken string, now time.Time) error {
+	if s == nil || len(accessToken) == 0 || len(accessToken) > accessTokenMaxSize {
+		return errors.New("session is invalid")
+	}
 	claims, err := s.Authenticate(ctx, accessToken, now)
 	if err != nil {
 		return err

@@ -50,8 +50,8 @@ func NewRotatingSigner(activeKeyID string, encodedKeys map[string]string, issuer
 			return nil, errors.New("JWS verification key ID is invalid")
 		}
 		key, err := base64.RawURLEncoding.DecodeString(encodedKey)
-		if err != nil || len(key) < 32 {
-			return nil, errors.New("JWS keys must be Base64URL-encoded values of at least 32 bytes")
+		if err != nil || len(key) != 32 {
+			return nil, errors.New("JWS keys must be Base64URL-encoded values of exactly 32 bytes")
 		}
 		keys[keyID] = append([]byte(nil), key...)
 	}
@@ -85,6 +85,9 @@ func (s *Signer) Issue(userID, sessionID, tokenID string, now time.Time) (string
 	return unsigned + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil)), claims, nil
 }
 func (s *Signer) Verify(token string, now time.Time) (AccessClaims, error) {
+	if len(token) > 4096 {
+		return AccessClaims{}, errors.New("JWS token is too large")
+	}
 	p := strings.Split(token, ".")
 	if len(p) != 3 {
 		return AccessClaims{}, errors.New("invalid JWS format")
@@ -119,7 +122,7 @@ func (s *Signer) Verify(token string, now time.Time) (AccessClaims, error) {
 	if err = json.Unmarshal(raw, &c); err != nil {
 		return AccessClaims{}, err
 	}
-	if c.Issuer != s.issuer || c.Audience != s.audience || c.Subject == "" || c.SessionID == "" || c.TokenID == "" || now.Unix() >= c.ExpiresAt {
+	if c.Issuer != s.issuer || c.Audience != s.audience || c.Subject == "" || c.SessionID == "" || c.TokenID == "" || c.IssuedAt <= 0 || c.ExpiresAt <= c.IssuedAt || c.ExpiresAt-c.IssuedAt > int64(AccessTokenTTL/time.Second) || c.IssuedAt > now.Add(time.Minute).Unix() || now.Unix() >= c.ExpiresAt {
 		return AccessClaims{}, fmt.Errorf("invalid JWS claims")
 	}
 	return c, nil

@@ -9,8 +9,8 @@ import (
 )
 
 func TestRecoveryProofMessageIsDomainSeparated(t *testing.T) {
-	want := "samurai-meet/recovery-proof/v1\nuser-1\nv1\nchallenge"
-	if got := string(RecoveryProofMessage("user-1", "v1", "challenge")); got != want {
+	want := "samurai-meet/recovery-proof/v2\nuser-1\nv2\nchallenge"
+	if got := string(RecoveryProofMessage("user-1", "v2", "challenge")); got != want {
 		t.Fatalf("proof message = %q, want %q", got, want)
 	}
 }
@@ -22,14 +22,19 @@ func TestRecoveryEnvelopeValidationBindsKDFParameters(t *testing.T) {
 		Salt:      base64.RawURLEncoding.EncodeToString(make([]byte, recoverySaltBytes)),
 		Info:      base64.RawURLEncoding.EncodeToString([]byte(recoveryInfo)),
 		DataSalt:  base64.RawURLEncoding.EncodeToString(make([]byte, dataSaltBytes)),
+		Argon2id: &argon2Params{
+			MemoryKiB:   8192,
+			Iterations:  1,
+			Parallelism: 1,
+		},
 	}
 	raw, err := json.Marshal(params)
 	if err != nil {
 		t.Fatal(err)
 	}
 	envelope := Envelope{
-		KeyVersion:        "v1",
-		EncryptedKeyA:     base64.RawURLEncoding.EncodeToString(make([]byte, 32)),
+		KeyVersion:        ClientRootKeyVersion,
+		EncryptedKeyA:     base64.RawURLEncoding.EncodeToString(make([]byte, 32+16)),
 		Nonce:             base64.RawURLEncoding.EncodeToString(make([]byte, 12)),
 		KDFParams:         raw,
 		RecoveryPublicKey: base64.RawURLEncoding.EncodeToString(key),

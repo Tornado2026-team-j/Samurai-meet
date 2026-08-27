@@ -11,10 +11,11 @@ func validPrivateUpload(contentType string) UploadInput {
 		ContentType:       contentType,
 		Nonce:             base64.RawURLEncoding.EncodeToString(make([]byte, 12)),
 		Algorithm:         PhotoAlgorithm,
-		KeyVersion:        "v1",
-		WrappedImageKey:   base64.RawURLEncoding.EncodeToString(make([]byte, 32)),
-		AccountWrappedKey: base64.RawURLEncoding.EncodeToString(make([]byte, 32)),
+		KeyVersion:        PhotoKeyVersion,
+		WrappedImageKey:   base64.RawURLEncoding.EncodeToString(make([]byte, wrappedImageKeyBytes)),
+		AccountWrappedKey: base64.RawURLEncoding.EncodeToString(make([]byte, wrappedImageKeyBytes)),
 		DeviceID:          "device-test",
+		WrappingAlgorithm: InitialImageWrappingAlgorithm,
 	}
 }
 

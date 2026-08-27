@@ -16,11 +16,14 @@ import (
 )
 
 const (
-	RecoveryChallengeTTL  = 10 * time.Minute
-	RecoveryMaxAttempts   = 5
-	RecoveryRateWindow    = time.Hour
-	RecoveryMaxChallenges = 10
-	recoveryProofDomain   = "samurai-meet/recovery-proof/v1"
+	RecoveryChallengeTTL       = 10 * time.Minute
+	RecoveryMaxAttempts        = 5
+	RecoveryRateWindow         = time.Hour
+	RecoveryMaxChallenges      = 10
+	recoveryProofDomain        = "samurai-meet/recovery-proof/v2"
+	recoveryChallengeIDMaxSize = 256
+	recoveryChallengeMaxSize   = 256
+	recoverySignatureMaxSize   = 256
 )
 
 var (
@@ -107,8 +110,22 @@ func (s *RecoveryService) begin(ctx context.Context, userID, sessionID, preAuthT
 	if err != nil {
 		return RecoveryChallenge{}, err
 	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return RecoveryChallenge{}, err
+	}
+	defer tx.Rollback()
+	// Serialize the per-user quota check with the insert. Without this lock,
+	// concurrent requests could all observe the same count and exceed the
+	// hourly challenge limit.
+	var lockedUserID string
+	if err = tx.QueryRowContext(ctx, `SELECT id FROM users WHERE id=$1 FOR UPDATE`, userID).Scan(&lockedUserID); errors.Is(err, sql.ErrNoRows) {
+		return RecoveryChallenge{}, ErrRecoveryChallenge
+	} else if err != nil {
+		return RecoveryChallenge{}, err
+	}
 	var recentChallenges int
-	if err = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM recovery_challenges WHERE user_id=$1 AND created_at>$2`, userID, now.Add(-RecoveryRateWindow).UTC().Format(time.RFC3339Nano)).Scan(&recentChallenges); err != nil {
+	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM recovery_challenges WHERE user_id=$1 AND created_at>$2`, userID, now.Add(-RecoveryRateWindow).UTC().Format(time.RFC3339Nano)).Scan(&recentChallenges); err != nil {
 		return RecoveryChallenge{}, err
 	}
 	if recentChallenges >= RecoveryMaxChallenges {
@@ -125,7 +142,7 @@ func (s *RecoveryService) begin(ctx context.Context, userID, sessionID, preAuthT
 	challenge := base64.RawURLEncoding.EncodeToString(challengeBytes)
 	challengeID := base64.RawURLEncoding.EncodeToString(idBytes)
 	expires := now.Add(RecoveryChallengeTTL).UTC()
-	_, err = s.db.ExecContext(ctx, `
+	_, err = tx.ExecContext(ctx, `
 		INSERT INTO recovery_challenges
 		(id,user_id,source_session_id,pre_auth_token_hash,pre_auth_scope,key_version,recovery_public_key,challenge_hash,expires_at,created_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
@@ -141,6 +158,9 @@ func (s *RecoveryService) begin(ctx context.Context, userID, sessionID, preAuthT
 		now.UTC().Format(time.RFC3339Nano),
 	)
 	if err != nil {
+		return RecoveryChallenge{}, err
+	}
+	if err = tx.Commit(); err != nil {
 		return RecoveryChallenge{}, err
 	}
 	return RecoveryChallenge{ChallengeID: challengeID, Challenge: challenge, Envelope: envelope, ExpiresAt: expires}, nil
@@ -226,7 +246,7 @@ func (s *RecoveryService) verify(ctx context.Context, userID, sessionID, preAuth
 		if _, err = tx.ExecContext(ctx, `DELETE FROM passkey_credentials WHERE user_id=$1`, userID); err != nil {
 			return RecoveryResult{}, err
 		}
-		result.PreAuthToken, err = s.preauth.IssueTx(ctx, tx, userID, auth.PreAuthScopeRegister, now)
+		result.PreAuthToken, err = s.preauth.IssueRecoveryRegistrationTx(ctx, tx, userID, now)
 		if err != nil {
 			return RecoveryResult{}, err
 		}
@@ -260,8 +280,8 @@ func (s *RecoveryService) recoveryEnvelope(ctx context.Context, userID string) (
 	err := s.db.QueryRowContext(ctx, `
 		SELECT encrypted_key_a,nonce,kdf_params,recovery_public_key,key_version,created_at,updated_at
 		FROM key_envelopes
-		WHERE user_id=$1 AND recovery_public_key IS NOT NULL AND recovery_public_key <> ''
-		ORDER BY updated_at DESC LIMIT 1`, userID).
+		WHERE user_id=$1 AND key_version=$2 AND recovery_public_key IS NOT NULL AND recovery_public_key <> ''
+		ORDER BY updated_at DESC LIMIT 1`, userID, ClientRootKeyVersion).
 		Scan(&envelope.EncryptedKeyA, &envelope.Nonce, &kdfParams, &publicKey, &envelope.KeyVersion, &createdAt, &updatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Envelope{}, ErrRecoveryUnavailable
@@ -276,14 +296,17 @@ func (s *RecoveryService) recoveryEnvelope(ctx context.Context, userID string) (
 		return Envelope{}, err
 	}
 	envelope.UpdatedAt, err = time.Parse(time.RFC3339Nano, updatedAt)
-	if err != nil || !validExactBase64(envelope.RecoveryPublicKey, ed25519.PublicKeySize) || !validRecoveryKDFParams(envelope.KDFParams) {
+	if err != nil || validate(userID, envelope) != nil {
 		return Envelope{}, ErrRecoveryUnavailable
 	}
 	return envelope, nil
 }
 
 func validRecoveryProofInput(proof RecoveryProof) bool {
-	return strings.TrimSpace(proof.ChallengeID) != "" && strings.TrimSpace(proof.Challenge) != "" && keyVersionPattern.MatchString(proof.KeyVersion) && strings.TrimSpace(proof.Signature) != ""
+	return len(proof.ChallengeID) <= recoveryChallengeIDMaxSize &&
+		len(proof.Challenge) <= recoveryChallengeMaxSize &&
+		len(proof.Signature) <= recoverySignatureMaxSize &&
+		strings.TrimSpace(proof.ChallengeID) != "" && strings.TrimSpace(proof.Challenge) != "" && proof.KeyVersion == ClientRootKeyVersion && strings.TrimSpace(proof.Signature) != ""
 }
 
 func hashRecoveryChallenge(value string) string {

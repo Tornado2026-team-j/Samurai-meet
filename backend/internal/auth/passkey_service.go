@@ -15,7 +15,10 @@ import (
 	"github.com/go-webauthn/webauthn/webauthn"
 )
 
-const passkeyChallengeTTL = 5 * time.Minute
+const (
+	passkeyChallengeTTL         = 5 * time.Minute
+	passkeyCeremonyTokenMaxSize = 256
+)
 
 var ErrPasskeyChallenge = errors.New("passkey ceremony is invalid, expired, or already used")
 
@@ -171,8 +174,54 @@ func (s *PasskeyService) FinishRegistrationWithPreAuthHash(ctx context.Context, 
 	return s.finishRegistration(ctx, userID, token, request, now, "", preAuthHash)
 }
 
+// FinishRegistrationForSession completes a registration ceremony that was
+// started from an already authenticated application session. The ceremony
+// must be verified as a real WebAuthn registration and the same session is
+// marked as recently Passkey-authenticated atomically with credential
+// insertion. It must never mint a session merely because a browser bootstrap
+// token exists.
+func (s *PasskeyService) FinishRegistrationForSession(ctx context.Context, userID, sessionID, token string, request *http.Request, now time.Time) error {
+	if s == nil || s.db == nil || s.rp == nil || userID == "" || sessionID == "" || token == "" || len(token) > passkeyCeremonyTokenMaxSize || s.sessions == nil {
+		return ErrPasskeyChallenge
+	}
+	ceremony, tx, err := s.consumeCeremony(ctx, token, "passkey_register", userID, now)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	user, err := s.loadUser(ctx, userID)
+	if err != nil {
+		return err
+	}
+	credential, err := s.rp.FinishRegistration(user, ceremony.Session, request)
+	if err != nil {
+		return err
+	}
+	encodedID := base64.RawURLEncoding.EncodeToString(credential.ID)
+	credentialJSON, err := json.Marshal(credential)
+	if err != nil {
+		return err
+	}
+	usedAt := now.UTC().Format(time.RFC3339Nano)
+	if _, err = tx.ExecContext(ctx, `INSERT INTO passkey_credentials (id,user_id,credential_id,public_key,credential_json,sign_count,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7)`, newID(), userID, encodedID, base64.RawURLEncoding.EncodeToString(credential.PublicKey), string(credentialJSON), credential.Authenticator.SignCount, usedAt); err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE sessions SET last_passkey_at=$1 WHERE id=$2 AND user_id=$3 AND status='active' AND revoked_at IS NULL`, usedAt, sessionID, userID)
+	if err != nil {
+		return err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if count != 1 {
+		return errors.New("session is inactive")
+	}
+	return tx.Commit()
+}
+
 func (s *PasskeyService) finishRegistration(ctx context.Context, userID, token string, request *http.Request, now time.Time, preAuthToken, preAuthHash string) (SessionTokens, error) {
-	if userID == "" || token == "" {
+	if s == nil || s.db == nil || s.rp == nil || userID == "" || token == "" || len(token) > passkeyCeremonyTokenMaxSize {
 		return SessionTokens{}, ErrPasskeyChallenge
 	}
 	ceremony, tx, err := s.consumeCeremony(ctx, token, "passkey_register", userID, now)
@@ -232,6 +281,9 @@ func (s *PasskeyService) FinishLoginWithPreAuthHash(ctx context.Context, token s
 }
 
 func (s *PasskeyService) finishLogin(ctx context.Context, token string, request *http.Request, now time.Time, preAuthToken, preAuthHash, expectedUserID string) (SessionTokens, error) {
+	if s == nil || s.db == nil || s.rp == nil || token == "" || len(token) > passkeyCeremonyTokenMaxSize {
+		return SessionTokens{}, ErrPasskeyChallenge
+	}
 	ceremony, tx, err := s.consumeCeremony(ctx, token, "passkey_login", expectedUserID, now)
 	if err != nil {
 		return SessionTokens{}, err
@@ -279,7 +331,7 @@ func (s *PasskeyService) finishLogin(ctx context.Context, token string, request 
 // FinishReauth verifies a user-bound assertion and marks the current session
 // as recently Passkey-authenticated. It does not issue or rotate tokens.
 func (s *PasskeyService) FinishReauth(ctx context.Context, userID, sessionID, token string, request *http.Request, now time.Time) error {
-	if userID == "" || sessionID == "" || token == "" {
+	if s == nil || s.db == nil || s.rp == nil || userID == "" || sessionID == "" || token == "" || len(token) > passkeyCeremonyTokenMaxSize {
 		return ErrPasskeyChallenge
 	}
 	ceremony, tx, err := s.consumeCeremony(ctx, token, "passkey_reauth", userID, now)
@@ -398,12 +450,19 @@ func (s *PasskeyService) ListCredentials(ctx context.Context, userID string) ([]
 }
 
 func (s *PasskeyService) consumeCeremony(ctx context.Context, token, kind, userID string, now time.Time) (passkeyCeremony, *sql.Tx, error) {
+	if s == nil || s.db == nil || token == "" || len(token) > passkeyCeremonyTokenMaxSize {
+		return passkeyCeremony{}, nil, ErrPasskeyChallenge
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return passkeyCeremony{}, nil, err
 	}
+	// Callers commit the transaction after the WebAuthn assertion and any
+	// related session mutation succeed. Roll back only while this function still
+	// owns validation; the returned transaction must remain usable by callers.
+	rollback := true
 	defer func() {
-		if err != nil {
+		if rollback {
 			_ = tx.Rollback()
 		}
 	}()
@@ -427,6 +486,7 @@ func (s *PasskeyService) consumeCeremony(ctx context.Context, token, kind, userI
 	if _, err = tx.ExecContext(ctx, `UPDATE auth_challenges SET used_at=$1 WHERE token_hash=$2`, now.UTC().Format(time.RFC3339Nano), hashOAuthState(token)); err != nil {
 		return passkeyCeremony{}, nil, err
 	}
+	rollback = false
 	return ceremony, tx, nil
 }
 
