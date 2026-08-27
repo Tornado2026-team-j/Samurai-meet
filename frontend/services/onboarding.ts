@@ -96,3 +96,11 @@ export async function saveLocalProfile(
 ): Promise<void> {
   await setItem(profileKey(userID), JSON.stringify(profile));
 }
+
+export async function clearLocalProfile(userID: string): Promise<void> {
+  await deleteItem(profileKey(userID));
+}
+
+export async function clearIdentityVerificationChoice(userID: string): Promise<void> {
+  await deleteItem(identityVerificationChoiceKey(userID));
+}

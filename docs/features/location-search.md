@@ -1,5 +1,7 @@
 # 機能仕様：現在地取得・キーワード検索
 
+最終更新: 2026-08-26
+
 ## 1. 対象
 
 現在地を使って、近くで交流可能な募集カードを検索します。正確な位置は他ユーザーへ表示しません。
@@ -12,7 +14,7 @@
 2. TypeScript で OS の位置情報許可を要求する。
 3. 許可された場合、現在地と精度を Go API へ送る。
 4. Go API が緯度・経度、精度、取得日時、許可状態を検証する。
-5. PostgreSQL / PostGIS が募集カードとの距離を計算する。
+5. Go APIが募集カードとの距離を計算する（現行はHaversine。PostGISは将来の性能改善候補）。
 6. 公開半径、日時、キーワード、ブロック状態を適用する。
 7. 検索結果には正確な緯度・経度ではなく、距離帯を返す。
 
@@ -34,22 +36,23 @@
 | OS 許可、現在地取得、検索 UI | TypeScript / TSX |
 | 入力正規化、debounce、ページング | TypeScript |
 | 位置の認証・精度・期限検証 | Go |
-| 距離・公開半径判定 | SQL / PostGIS + Go |
+| 距離・公開半径判定 | GoのHaversine + PostgreSQL |
 | キーワード検索 API | Go + SQL |
 | 検索結果カード表示 | TypeScript / TSX |
 
 ## 5. API / DB
 
-- `POST /me/location`
-- `GET /recruitments?keyword=&available_date=&radius_km=&verified_only=`
+- `POST /api/v1/me/location`
+- `GET /api/v1/recruitments?keyword=&available_date=&radius_km=&verified_only=`
 - テーブル：`user_locations`、`recruitment_cards`、`blocks`
-- `recruitment_cards.location` と `user_locations.location` に PostGIS の地理空間インデックスを作成する。
+- 現行は緯度・経度を個別のDB列で保存し、PostGISの地理空間インデックスは未導入。
 
 ## 6. 位置情報のプライバシー
 
 - 他ユーザーへ正確な緯度・経度を返さない。
 - 表示は「1 km 以内」「約 3 km」などの距離帯にする。
 - 位置情報には `captured_at`、`accuracy_m`、`expires_at` を持たせる。
+- 位置情報の有効期限は取得時刻から1時間。未来5分超・24時間より古い取得時刻は拒否する。
 - 期限切れ位置を検索に使わない。
 - 位置情報拒否時はキーワード・日時検索を提供する。
 - 募集カード作成時の位置を保存するか、最新位置だけを使うかは要確認。
@@ -68,3 +71,13 @@
 - 距離の基準地点をユーザーの最新位置にするかカード作成地点にするか。
 - 時間帯の重なり判定とタイムゾーン。
 - 位置情報の保持期間と削除タイミング。
+
+## 9. 会合中の距離補助
+
+承認済みマッチの会合セッションが`active`の間だけ、ネイティブクライアントがBluetoothまたは自分の位置情報から推定した距離を補助表示に使えます。
+
+- APIは`bluetooth_rssi`、`bluetooth_uwb`、`location_inference`の方式と、距離・信頼度・端末内サンプルIDだけを受け取る。
+- BLE MAC、RSSI生値、ビーコン識別子、緯度経度は受け取らず、DBにも保存しない。
+- DBには参加者ごと・方式ごとの最新1件だけを保持し、5分を超えた値は返さない。会合終了時に削除する。
+- クライアント由来の推定値は`verified=false`で返し、本人確認、マッチ成立、入場許可、安全判定の根拠には使わない。
+- 実際のBluetooth測定、OS権限、端末間の近接処理はiOS/Android側の実装範囲とする。

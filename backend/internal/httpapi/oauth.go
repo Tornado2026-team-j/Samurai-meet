@@ -36,13 +36,8 @@ func allowedOAuthRedirectURI(raw, environment string, allowExpoGo bool, clientOr
 	if raw == "" || strings.ContainsAny(raw, "\r\n") {
 		return false
 	}
-	origins := []string{clientOrigin}
-	if environment == "development" || environment == "test" {
-		origins = append(origins, devClientOrigin, "http://localhost:5173", "http://127.0.0.1:5173")
-	}
-	for _, origin := range origins {
-		origin = strings.TrimRight(strings.TrimSpace(origin), "/")
-		if origin != "" && raw == origin+"/auth/complete" {
+	for _, origin := range clientOrigins(environment, clientOrigin, devClientOrigin) {
+		if raw == origin+"/auth/complete" {
 			return true
 		}
 	}
@@ -51,6 +46,11 @@ func allowedOAuthRedirectURI(raw, environment string, allowExpoGo bool, clientOr
 
 func googleStart(service *auth.OAuthLoginService, environment string, allowExpoGo bool, clientOrigin, devClientOrigin string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", http.MethodGet)
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
 		redirectURI, challenge := r.URL.Query().Get("app_redirect_uri"), r.URL.Query().Get("handoff_challenge")
 		if !allowedOAuthRedirectURI(redirectURI, environment, allowExpoGo, clientOrigin, devClientOrigin) || challenge == "" {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_app_redirect"})
@@ -67,6 +67,12 @@ func googleStart(service *auth.OAuthLoginService, environment string, allowExpoG
 
 func googleCallback(service *auth.OAuthLoginService, environment string, allowExpoGo bool, clientOrigin, devClientOrigin string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		prepareSensitiveAuthResponse(w)
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", http.MethodGet)
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
 		result, err := service.Complete(r.Context(), r.URL.Query().Get("code"), r.URL.Query().Get("state"), time.Now())
 		if err != nil {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "google_callback_failed"})
@@ -86,11 +92,26 @@ func googleCallback(service *auth.OAuthLoginService, environment string, allowEx
 
 func googleExchange(service *auth.OAuthLoginService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		prepareSensitiveAuthResponse(w)
+		if r.Method != http.MethodPost {
+			w.Header().Set("Allow", http.MethodPost)
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		if r.Body == nil || r.ContentLength > 8*1024 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_request"})
+			return
+		}
 		var request struct {
 			HandoffCode     string `json:"handoff_code"`
 			HandoffVerifier string `json:"handoff_verifier"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request.HandoffCode == "" || request.HandoffVerifier == "" {
+		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8*1024))
+		if err := decoder.Decode(&request); err != nil || request.HandoffCode == "" || request.HandoffVerifier == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_request"})
+			return
+		}
+		if err := ensureJSONBodyConsumed(decoder); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_request"})
 			return
 		}

@@ -16,11 +16,25 @@ func sessionHandoffStart(service *auth.SessionHandoffService, sessions *auth.Ses
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing_or_invalid_access_token"})
 			return
 		}
+		if r.Method != http.MethodPost {
+			w.Header().Set("Allow", http.MethodPost)
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		if r.Body == nil || r.ContentLength > 8*1024 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_app_redirect"})
+			return
+		}
 		var input struct {
 			AppRedirectURI string `json:"app_redirect_uri"`
 			Challenge      string `json:"handoff_challenge"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&input); err != nil || !allowedAppRedirectURI(input.AppRedirectURI, environment, allowExpoGo) || strings.TrimSpace(input.Challenge) == "" {
+		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8*1024))
+		if err := decoder.Decode(&input); err != nil || !allowedAppRedirectURI(input.AppRedirectURI, environment, allowExpoGo) || strings.TrimSpace(input.Challenge) == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_app_redirect"})
+			return
+		}
+		if err := ensureJSONBodyConsumed(decoder); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_app_redirect"})
 			return
 		}
@@ -36,12 +50,26 @@ func sessionHandoffStart(service *auth.SessionHandoffService, sessions *auth.Ses
 func sessionHandoffExchange(service *auth.SessionHandoffService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		prepareSensitiveAuthResponse(w)
+		if r.Method != http.MethodPost {
+			w.Header().Set("Allow", http.MethodPost)
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		if r.Body == nil || r.ContentLength > 8*1024 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_request"})
+			return
+		}
 		var input struct {
 			Code      string `json:"handoff_code"`
 			Verifier  string `json:"handoff_verifier"`
 			RequestID string `json:"request_id"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&input); err != nil || input.Code == "" || input.Verifier == "" || strings.TrimSpace(input.RequestID) == "" {
+		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8*1024))
+		if err := decoder.Decode(&input); err != nil || input.Code == "" || input.Verifier == "" || strings.TrimSpace(input.RequestID) == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_request"})
+			return
+		}
+		if err := ensureJSONBodyConsumed(decoder); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_request"})
 			return
 		}

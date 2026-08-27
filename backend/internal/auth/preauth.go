@@ -15,6 +15,8 @@ const (
 	PreAuthScopeRegister PreAuthScope = "passkey_register"
 	PreAuthScopeLogin    PreAuthScope = "passkey_login"
 	PreAuthScopeReauth   PreAuthScope = "passkey_reauth"
+	preAuthTokenMaxSize               = 256
+	preAuthHashSize                   = 64
 )
 
 type PreAuthScope string
@@ -22,10 +24,11 @@ type PreAuthScope string
 var ErrPreAuth = errors.New("pre-auth token is invalid, expired, used, or out of scope")
 
 type PreAuthClaims struct {
-	Token     string
-	UserID    string
-	Scope     PreAuthScope
-	ExpiresAt time.Time
+	Token            string
+	UserID           string
+	Scope            PreAuthScope
+	ExpiresAt        time.Time
+	RecoveryVerified bool
 }
 
 type PreAuthService struct {
@@ -37,6 +40,9 @@ func NewPreAuthService(database *sql.DB) *PreAuthService {
 }
 
 func (s *PreAuthService) Issue(ctx context.Context, userID string, scope PreAuthScope, now time.Time) (string, error) {
+	if s == nil || s.db == nil {
+		return "", ErrPreAuth
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return "", err
@@ -53,7 +59,25 @@ func (s *PreAuthService) Issue(ctx context.Context, userID string, scope PreAuth
 }
 
 func (s *PreAuthService) IssueTx(_ context.Context, tx *sql.Tx, userID string, scope PreAuthScope, now time.Time) (string, error) {
-	if userID == "" || !validPreAuthScope(scope) {
+	if s == nil || tx == nil {
+		return "", ErrPreAuth
+	}
+	return s.issueTx(tx, userID, scope, now, "")
+}
+
+// IssueRecoveryRegistrationTx issues the registration capability returned
+// after Google plus a valid Recovery Phrase proof. The marker is server-side
+// authorization state for the emergency account-deletion path; it is not
+// exposed as a client decision and is consumed in the same delete transaction.
+func (s *PreAuthService) IssueRecoveryRegistrationTx(_ context.Context, tx *sql.Tx, userID string, now time.Time) (string, error) {
+	if s == nil || tx == nil {
+		return "", ErrPreAuth
+	}
+	return s.issueTx(tx, userID, PreAuthScopeRegister, now, now.UTC().Format(time.RFC3339Nano))
+}
+
+func (s *PreAuthService) issueTx(tx *sql.Tx, userID string, scope PreAuthScope, now time.Time, recoveryVerifiedAt string) (string, error) {
+	if tx == nil || userID == "" || !validPreAuthScope(scope) {
 		return "", ErrPreAuth
 	}
 	raw := make([]byte, 32)
@@ -63,7 +87,7 @@ func (s *PreAuthService) IssueTx(_ context.Context, tx *sql.Tx, userID string, s
 	token := base64.RawURLEncoding.EncodeToString(raw)
 	hash := hashPreAuthToken(token)
 	created := now.UTC().Format(time.RFC3339Nano)
-	_, err := tx.Exec(`INSERT INTO pre_auth_tokens (id,user_id,token_hash,scope,expires_at,created_at) VALUES ($1,$2,$3,$4,$5,$6)`, newID(), userID, hash, string(scope), now.Add(PreAuthTokenTTL).UTC().Format(time.RFC3339Nano), created)
+	_, err := tx.Exec(`INSERT INTO pre_auth_tokens (id,user_id,token_hash,scope,expires_at,recovery_verified_at,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7)`, newID(), userID, hash, string(scope), now.Add(PreAuthTokenTTL).UTC().Format(time.RFC3339Nano), nullableString(recoveryVerifiedAt), created)
 	if err != nil {
 		return "", err
 	}
@@ -71,11 +95,11 @@ func (s *PreAuthService) IssueTx(_ context.Context, tx *sql.Tx, userID string, s
 }
 
 func (s *PreAuthService) Lookup(ctx context.Context, token string, scope PreAuthScope, userID string, now time.Time) (PreAuthClaims, error) {
-	if token == "" || !validPreAuthScope(scope) {
+	if s == nil || s.db == nil || token == "" || len(token) > preAuthTokenMaxSize || !validPreAuthScope(scope) {
 		return PreAuthClaims{}, ErrPreAuth
 	}
-	var storedUser, storedScope, expires string
-	err := s.db.QueryRowContext(ctx, `SELECT user_id,scope,expires_at FROM pre_auth_tokens WHERE token_hash=$1 AND used_at IS NULL AND expires_at>$2`, hashPreAuthToken(token), now.UTC().Format(time.RFC3339Nano)).Scan(&storedUser, &storedScope, &expires)
+	var storedUser, storedScope, expires, recoveryVerifiedAt string
+	err := s.db.QueryRowContext(ctx, `SELECT user_id,scope,expires_at,COALESCE(recovery_verified_at,'') FROM pre_auth_tokens WHERE token_hash=$1 AND used_at IS NULL AND expires_at>$2`, hashPreAuthToken(token), now.UTC().Format(time.RFC3339Nano)).Scan(&storedUser, &storedScope, &expires, &recoveryVerifiedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return PreAuthClaims{}, ErrPreAuth
 	}
@@ -89,11 +113,11 @@ func (s *PreAuthService) Lookup(ctx context.Context, token string, scope PreAuth
 	if err != nil {
 		return PreAuthClaims{}, ErrPreAuth
 	}
-	return PreAuthClaims{Token: token, UserID: storedUser, Scope: scope, ExpiresAt: expiresAt}, nil
+	return PreAuthClaims{Token: token, UserID: storedUser, Scope: scope, ExpiresAt: expiresAt, RecoveryVerified: recoveryVerifiedAt != ""}, nil
 }
 
 func (s *PreAuthService) ConsumeTx(tx *sql.Tx, token string, scope PreAuthScope, userID string, now time.Time) error {
-	if token == "" || !validPreAuthScope(scope) {
+	if tx == nil || token == "" || len(token) > preAuthTokenMaxSize || !validPreAuthScope(scope) {
 		return ErrPreAuth
 	}
 	var storedUser, storedScope, expires string
@@ -115,7 +139,7 @@ func (s *PreAuthService) ConsumeTx(tx *sql.Tx, token string, scope PreAuthScope,
 // ConsumeHash is used by server-side bootstrap flows that deliberately never
 // retain or reintroduce the raw pre-auth token after it leaves the app.
 func (s *PreAuthService) ConsumeHash(ctx context.Context, tokenHash string, scope PreAuthScope, userID string, now time.Time) error {
-	if s.db == nil || tokenHash == "" || !validPreAuthScope(scope) {
+	if s == nil || s.db == nil || len(tokenHash) != preAuthHashSize || tokenHash == "" || !validPreAuthScope(scope) {
 		return ErrPreAuth
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -133,7 +157,7 @@ func (s *PreAuthService) ConsumeHash(ctx context.Context, tokenHash string, scop
 // Passkey completion uses this to keep source-capability validation atomic
 // with credential and session creation.
 func (s *PreAuthService) consumeHashTx(tx *sql.Tx, tokenHash string, scope PreAuthScope, userID string, now time.Time) error {
-	if tx == nil || tokenHash == "" || !validPreAuthScope(scope) {
+	if tx == nil || len(tokenHash) != preAuthHashSize || tokenHash == "" || !validPreAuthScope(scope) {
 		return ErrPreAuth
 	}
 	var storedUser, storedScope, expires string

@@ -1,22 +1,38 @@
 import { describe, expect, it } from 'bun:test';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import {
-  createRecoveryKeyMaterial,
+  ARGON2ID_DEFAULTS,
+  canonicalizeRecoveryPhrase,
+  createDeviceAgreementKeyMaterial,
+  createDeviceTransferVerificationCode,
   createKeyMaterial,
+  createRecoveryPhraseMaterial,
   decryptPhotoBytes,
-  deriveDataKey,
+  deriveAccountDataKey,
+  deviceAgreementPublicKey,
   devicePublicKey,
   encryptPhotoBytes,
   fromBase64URL,
   hashBytes,
-  recoverKeyA,
+  normalizeRecoveryPhrase,
   recoveryProofMessage,
+  recoveryPhraseMatches,
+  recoverKeyAAsync,
   signRecoveryProof,
   signDeviceProof,
+  unwrapMasterKeyForDevice,
   unwrapPhotoKey,
   unwrapPhotoKeyWithAccount,
+  wrapMasterKeyForDevice,
+  type Argon2idParams,
   type RandomBytes,
 } from '../services/crypto';
+
+const TEST_ARGON2ID: Argon2idParams = {
+  memory_kib: 8192,
+  iterations: 1,
+  parallelism: 1,
+};
 
 function testRandomBytes(start = 1): RandomBytes {
   let seed = start;
@@ -30,74 +46,87 @@ function testRandomBytes(start = 1): RandomBytes {
   };
 }
 
-describe('フロント端末Key-A envelope', () => {
-  it('Recovery Keyは256ビットのBase64URL文字列として生成される', async () => {
-    const material = await createKeyMaterial(testRandomBytes());
+async function testKeyMaterial(start = 1) {
+  return createKeyMaterial(testRandomBytes(start), TEST_ARGON2ID);
+}
 
-    expect(fromBase64URL(material.recoveryKey)).toHaveLength(32);
-    expect(material.recoveryKey).toMatch(/^[A-Za-z0-9_-]{43}$/);
+describe('フロント端末所有Master Key envelope', () => {
+  it('Recovery Phraseの安全なKDFパラメータを維持する', () => {
+    expect(ARGON2ID_DEFAULTS).toEqual({
+      memory_kib: 32 * 1024,
+      iterations: 3,
+      parallelism: 1,
+    });
   });
 
-  it('Recovery KeyでKey-Aを復号できる', async () => {
-    const material = await createKeyMaterial(testRandomBytes());
-    const recovered = recoverKeyA(material.recoveryKey, material.envelope);
+  it('Recovery Phraseは256ビットentropy由来の24語で生成される', async () => {
+    const material = await testKeyMaterial();
+
+    expect(material.envelope.key_version).toBe('v2');
+    expect(material.recoveryPhrase).toBe(material.recoveryKey);
+    expect(material.recoveryKey.trim().split(/\s+/u)).toHaveLength(24);
+    expect(material.envelope.kdf_params.algorithm).toBe('Argon2id+HKDF-SHA256');
+  });
+
+  it('コピーした改行・不可視文字を含む24語を同じPhraseとして扱う', async () => {
+    const material = await testKeyMaterial();
+    const copied = `\uFEFF${material.recoveryKey.replaceAll(' ', '\n\u200B')}`;
+
+    expect(canonicalizeRecoveryPhrase(copied)).toBe(material.recoveryKey);
+    expect(recoveryPhraseMatches(material.recoveryKey, copied)).toBe(true);
+    expect(normalizeRecoveryPhrase(copied)).toBe(material.recoveryKey);
+  });
+
+  it('Recovery PhraseでMaster Keyを端末内復号できる', async () => {
+    const material = await testKeyMaterial();
+    const recovered = await recoverKeyAAsync(material.recoveryKey, material.envelope);
     expect(Array.from(recovered)).toEqual(Array.from(material.keyA));
   });
 
-  it('違うRecovery Keyでは復号できない', async () => {
-    const material = await createKeyMaterial(testRandomBytes(1));
-    const other = await createKeyMaterial(testRandomBytes(10));
-    expect(() => recoverKeyA(other.recoveryKey, material.envelope)).toThrow();
+  it('違うRecovery Phraseでは復号できない', async () => {
+    const material = await testKeyMaterial(1);
+    const other = await testKeyMaterial(10);
+    await expect(recoverKeyAAsync(other.recoveryKey, material.envelope)).rejects.toThrow();
   });
 
   it('salt、nonce、data saltを暗号化境界に含める', async () => {
-    const material = await createKeyMaterial(testRandomBytes());
+    const material = await testKeyMaterial();
     expect(material.envelope.kdf_params.salt.length).toBeGreaterThan(0);
     expect(material.envelope.kdf_params.data_salt.length).toBeGreaterThan(0);
     expect(material.envelope.nonce.length).toBeGreaterThan(0);
 
+    const other = await testKeyMaterial(40);
     const tampered = {
       ...material.envelope,
       kdf_params: {
         ...material.envelope.kdf_params,
-        data_salt: (await createKeyMaterial(testRandomBytes(40))).envelope.kdf_params.data_salt,
+        data_salt: other.envelope.kdf_params.data_salt,
       },
     };
-    expect(() => recoverKeyA(material.recoveryKey, tampered)).toThrow();
+    await expect(recoverKeyAAsync(material.recoveryKey, tampered)).rejects.toThrow();
   });
 
-  it('Key-AからRecovery proof署名を作成できる', async () => {
-    const material = await createKeyMaterial(testRandomBytes());
-    const challenge = 'challenge-value';
-    const signature = fromBase64URL(signRecoveryProof(material.keyA, 'user-1', 'v1', challenge));
-    const publicKey = fromBase64URL(material.envelope.recovery_public_key);
-    expect(ed25519.verify(signature, recoveryProofMessage('user-1', 'v1', challenge), publicKey)).toBe(true);
-    expect(ed25519.verify(signature, recoveryProofMessage('user-1', 'v1', 'other'), publicKey)).toBe(false);
-  });
+  it('Master KeyからRecovery Phraseを再生成してdata saltを維持する', async () => {
+    const material = await testKeyMaterial();
+    const rotated = await createRecoveryPhraseMaterial(material.keyA, material.envelope, testRandomBytes(80));
 
-  it('Key-AとKey-Bの結合鍵は入力ごとに変わる', async () => {
-    const material = await createKeyMaterial(testRandomBytes());
-    const keyB = new Uint8Array(32).fill(9);
-    const otherKeyB = new Uint8Array(32).fill(10);
-    const dataKey = deriveDataKey(material.keyA, keyB, material.envelope.kdf_params.data_salt);
-    const otherDataKey = deriveDataKey(material.keyA, otherKeyB, material.envelope.kdf_params.data_salt);
-    expect(Array.from(dataKey)).not.toEqual(Array.from(otherDataKey));
-  });
-
-  it('Recovery Key再生成ではKey-Aとdata saltを維持する', async () => {
-    const material = await createKeyMaterial(testRandomBytes());
-    const rotated = await createRecoveryKeyMaterial(material.keyA, material.envelope, testRandomBytes(80));
-
-    expect(Array.from(recoverKeyA(rotated.recoveryKey, rotated.envelope))).toEqual(Array.from(material.keyA));
+    expect(Array.from(await recoverKeyAAsync(rotated.recoveryKey, rotated.envelope))).toEqual(Array.from(material.keyA));
     expect(rotated.envelope.kdf_params.data_salt).toBe(material.envelope.kdf_params.data_salt);
     expect(rotated.recoveryKey).not.toBe(material.recoveryKey);
     expect(rotated.envelope.kdf_params.salt).not.toBe(material.envelope.kdf_params.salt);
     expect(rotated.envelope.encrypted_key_a).not.toBe(material.envelope.encrypted_key_a);
-    expect(() => recoverKeyA(material.recoveryKey, rotated.envelope)).toThrow();
+    await expect(recoverKeyAAsync(material.recoveryKey, rotated.envelope)).rejects.toThrow();
   });
 
-  it('画像鍵はアカウント包みと端末包みを分け、端末Key-Bが違えば復号できない', async () => {
-    const material = await createKeyMaterial(testRandomBytes());
+  it('アカウントrootは端末Key-Bに依存しない', async () => {
+    const material = await testKeyMaterial();
+    const root = deriveAccountDataKey(material.keyA, material.envelope.kdf_params.data_salt);
+    const sameRoot = deriveAccountDataKey(material.keyA, material.envelope.kdf_params.data_salt);
+    expect(Array.from(root)).toEqual(Array.from(sameRoot));
+  });
+
+  it('画像鍵はアカウント包みと端末包みを分ける', async () => {
+    const material = await testKeyMaterial();
     const keyB = new Uint8Array(32).fill(21);
     const otherKeyB = new Uint8Array(32).fill(22);
     const plaintext = new Uint8Array([1, 2, 3, 4, 5]);
@@ -127,5 +156,30 @@ describe('フロント端末Key-A envelope', () => {
       new TextEncoder().encode(`samurai-meet:device-proof/v1\nuser-1\ndevice-a\nGET\n/api/v1/me/photos/p1\n${timestamp}\n${nonce}\n${bodyHash}`),
       fromBase64URL(devicePublicKey(keyB)),
     )).toBe(true);
+  });
+
+  it('端末間移行はX25519でMaster Keyだけを新端末公開鍵へ包む', async () => {
+    const material = await testKeyMaterial();
+    const target = await createDeviceAgreementKeyMaterial(testRandomBytes(200));
+    const wrapped = await wrapMasterKeyForDevice(material.keyA, target.publicKey, 'transfer-1', 'target-device', testRandomBytes(220));
+    const recovered = unwrapMasterKeyForDevice(wrapped, target.privateKey, 'transfer-1', 'target-device');
+    expect(Array.from(recovered)).toEqual(Array.from(material.keyA));
+    expect(deviceAgreementPublicKey(target.privateKey)).toBe(target.publicKey);
+    const other = await createDeviceAgreementKeyMaterial(testRandomBytes(240));
+    expect(() => unwrapMasterKeyForDevice(wrapped, other.privateKey, 'transfer-1', 'target-device')).toThrow();
+  });
+
+  it('端末移行確認コードは曖昧文字を含まない8文字', async () => {
+    const code = await createDeviceTransferVerificationCode(testRandomBytes());
+    expect(code).toMatch(/^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{8}$/);
+  });
+
+  it('Recovery proofはv2 root protocolへ署名する', async () => {
+    const material = await testKeyMaterial();
+    const challenge = 'challenge-value';
+    const signature = fromBase64URL(signRecoveryProof(material.keyA, 'user-1', 'v2', challenge));
+    const publicKey = fromBase64URL(material.envelope.recovery_public_key);
+    expect(ed25519.verify(signature, recoveryProofMessage('user-1', 'v2', challenge), publicKey)).toBe(true);
+    expect(ed25519.verify(signature, recoveryProofMessage('user-1', 'v2', 'other'), publicKey)).toBe(false);
   });
 });

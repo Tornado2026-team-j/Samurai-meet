@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { MaterialIcons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import {
+  ActivityIndicator,
   Pressable,
   Image,
   ScrollView,
@@ -10,12 +11,13 @@ import {
   View,
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
-import {
-  findMockMatchById,
-  MOCK_MATCHES,
-} from "../../../mocks/matches";
 import { useAuth } from "../../../hooks/useAuth";
-import { sendRecruitmentInterest } from "../../../services/matching";
+import {
+  getRecruitment,
+  recruitmentToMatchCard,
+  sendRecruitmentInterest,
+} from "../../../services/matching";
+import type { MatchCardData } from "../../../types/match";
 import { formatTimeRange } from "../../../utils/time";
 
 const BLUE = "#00aeff";
@@ -40,12 +42,67 @@ export default function JapaneseMatchDetailScreen() {
   const { session, status } = useAuth();
   const { id } = useLocalSearchParams<{ id?: string | string[] }>();
   const matchId = Array.isArray(id) ? id[0] : id;
-  const match = findMockMatchById(matchId) ?? MOCK_MATCHES[0];
+  const [match, setMatch] = useState<MatchCardData | null>(null);
+  const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading");
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [requestState, setRequestState] = useState<"idle" | "sending">("idle");
   const [requestError, setRequestError] = useState<string | null>(null);
 
+  useEffect(() => {
+    const controller = new AbortController();
+    let cancelled = false;
+
+    const load = async () => {
+      if (!matchId || status !== "signed_in" || !session) {
+        if (!cancelled) {
+          setLoadState("error");
+          setLoadError("ログイン後に募集を表示できます。");
+        }
+        return;
+      }
+
+      setLoadState("loading");
+      setLoadError(null);
+      try {
+        const recruitment = await getRecruitment(matchId, session, controller.signal);
+        if (!cancelled) {
+          setMatch(recruitmentToMatchCard(recruitment));
+          setLoadState("ready");
+        }
+      } catch (error) {
+        if (error instanceof Error && error.name === "AbortError") return;
+        if (!cancelled) {
+          setLoadState("error");
+          setLoadError("募集を読み込めませんでした。募集が終了した可能性があります。");
+        }
+      }
+    };
+
+    void load();
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [matchId, session, status]);
+
   if (!match) {
-    return null;
+    return (
+      <View style={styles.loadingScreen}>
+        <StatusBar style="light" />
+        {loadState === "loading" ? <ActivityIndicator color={HEADER_BLUE} /> : null}
+        <Text accessibilityRole={loadState === "error" ? "alert" : undefined} style={styles.loadingText}>
+          {loadState === "loading" ? "募集を読み込み中..." : loadError}
+        </Text>
+        <Pressable
+          accessibilityLabel="前の画面に戻る"
+          accessibilityRole="button"
+          onPress={() => router.back()}
+          style={({ pressed }) => [styles.loadingBackButton, pressed && styles.pressed]}
+        >
+          <Text style={styles.loadingBackButtonText}>戻る</Text>
+        </Pressable>
+      </View>
+    );
   }
 
   const sendInterest = async () => {
@@ -202,6 +259,35 @@ const styles = StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: "#ffffff",
+  },
+  loadingScreen: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 32,
+    gap: 14,
+    backgroundColor: "#ffffff",
+  },
+  loadingText: {
+    color: TEXT_GRAY,
+    fontSize: 14,
+    fontWeight: "700",
+    lineHeight: 20,
+    textAlign: "center",
+  },
+  loadingBackButton: {
+    minWidth: 84,
+    minHeight: 36,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 16,
+    borderRadius: 18,
+    backgroundColor: YELLOW,
+  },
+  loadingBackButtonText: {
+    color: "#ffffff",
+    fontSize: 13,
+    fontWeight: "800",
   },
   scrollContent: {
     minHeight: 844,

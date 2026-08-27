@@ -1,7 +1,8 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { MaterialIcons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import {
+  ActivityIndicator,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -11,7 +12,14 @@ import {
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import MatchCard from "../../components/MatchCard";
-import { MOCK_MATCHES } from "../../mocks/matches";
+import { useAuth } from "../../hooks/useAuth";
+import { APIError } from "../../services/api-client";
+import { getCurrentCoordinates } from "../../services/location";
+import {
+  recruitmentToMatchCard,
+  searchRecruitments,
+  updateCurrentLocation,
+} from "../../services/matching";
 import type { MatchCardData } from "../../types/match";
 
 const BLUE = "#5ec5f5";
@@ -30,14 +38,19 @@ const CATEGORIES = [
 
 export default function JapaneseHomeScreen() {
   const router = useRouter();
+  const { getCurrentSession, refresh, session, status } = useAuth();
   const [query, setQuery] = useState("");
+  const [submittedQuery, setSubmittedQuery] = useState("");
+  const [matches, setMatches] = useState<MatchCardData[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<(typeof CATEGORIES)[number]>(
     "すべて",
   );
   const filteredMatches = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase();
 
-    return MOCK_MATCHES.filter((match) => {
+    return matches.filter((match) => {
       const matchesCategory =
         selectedCategory === "すべて" ||
         match.category === selectedCategory;
@@ -48,7 +61,82 @@ export default function JapaneseHomeScreen() {
 
       return matchesCategory && matchesQuery;
     });
-  }, [query, selectedCategory]);
+  }, [matches, query, selectedCategory]);
+
+  const loadRecruitments = useCallback(() => {
+    const controller = new AbortController();
+    let cancelled = false;
+
+    const run = async () => {
+      const activeSession = getCurrentSession() ?? session;
+      if (status !== "signed_in" || !activeSession) {
+        if (!cancelled) {
+          setLoading(false);
+          setLoadError("ログイン後に募集を表示できます。");
+        }
+        return;
+      }
+
+      setLoading(true);
+      setLoadError(null);
+      try {
+        let coordinates = null;
+        try {
+          coordinates = await getCurrentCoordinates();
+        } catch {
+          coordinates = null;
+        }
+        if (coordinates) {
+          await updateCurrentLocation(coordinates, activeSession, controller.signal).catch(() => undefined);
+        }
+
+        let result;
+        try {
+          result = await searchRecruitments(
+            activeSession,
+            {
+              keywords: submittedQuery ? [submittedQuery] : [],
+              latitude: coordinates?.latitude,
+              longitude: coordinates?.longitude,
+              limit: 50,
+            },
+            controller.signal,
+          );
+        } catch (error) {
+          if (!(error instanceof APIError) || error.status !== 401) throw error;
+          await refresh();
+          const refreshedSession = getCurrentSession();
+          if (!refreshedSession) throw error;
+          result = await searchRecruitments(
+            refreshedSession,
+            {
+              keywords: submittedQuery ? [submittedQuery] : [],
+              latitude: coordinates?.latitude,
+              longitude: coordinates?.longitude,
+              limit: 50,
+            },
+            controller.signal,
+          );
+        }
+        if (!cancelled) setMatches(result.map(recruitmentToMatchCard));
+      } catch (error) {
+        if (error instanceof Error && error.name === "AbortError") return;
+        if (!cancelled) {
+          setLoadError("募集を読み込めませんでした。時間をおいて再試行してください。");
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    void run();
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [getCurrentSession, refresh, session, status, submittedQuery]);
+
+  useFocusEffect(loadRecruitments);
   const openMatch = (match: MatchCardData) => {
     router.push({
       pathname: "/japanese/matches/[id]",
@@ -65,11 +153,27 @@ export default function JapaneseHomeScreen() {
         showsVerticalScrollIndicator={false}
         style={styles.matchList}
       >
-        {filteredMatches.map((match) => (
+        {loading ? (
+          <View style={styles.statePanel}>
+            <ActivityIndicator color={BLUE} size="small" />
+            <Text style={styles.stateText}>募集を読み込み中...</Text>
+          </View>
+        ) : loadError ? (
+          <View style={styles.statePanel}>
+            <Text accessibilityRole="alert" style={styles.stateText}>{loadError}</Text>
+            <Pressable
+              accessibilityRole="button"
+              onPress={loadRecruitments}
+              style={({ pressed }) => [styles.retryButton, pressed && styles.pressed]}
+            >
+              <Text style={styles.retryButtonText}>再試行</Text>
+            </Pressable>
+          </View>
+        ) : filteredMatches.map((match) => (
           <MatchCard key={match.id} match={match} onOpen={openMatch} />
         ))}
 
-        {filteredMatches.length === 0 && (
+        {!loading && !loadError && filteredMatches.length === 0 && (
           <Text style={styles.emptyText}>該当する募集がありません</Text>
         )}
       </ScrollView>
@@ -86,6 +190,7 @@ export default function JapaneseHomeScreen() {
             <TextInput
               accessibilityLabel="キーワードで検索"
               onChangeText={setQuery}
+              onSubmitEditing={() => setSubmittedQuery(query.trim())}
               placeholder="キーワードで検索"
               placeholderTextColor={PLACEHOLDER_GRAY}
               returnKeyType="search"
@@ -294,6 +399,34 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     letterSpacing: 0,
     lineHeight: 18,
+  },
+  statePanel: {
+    minHeight: 120,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 28,
+    gap: 12,
+  },
+  stateText: {
+    color: PLACEHOLDER_GRAY,
+    fontSize: 13,
+    fontWeight: "600",
+    lineHeight: 18,
+    textAlign: "center",
+  },
+  retryButton: {
+    minWidth: 78,
+    minHeight: 32,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 14,
+    borderRadius: 16,
+    backgroundColor: YELLOW,
+  },
+  retryButtonText: {
+    color: "#ffffff",
+    fontSize: 12,
+    fontWeight: "800",
   },
   pressed: {
     opacity: 0.72,

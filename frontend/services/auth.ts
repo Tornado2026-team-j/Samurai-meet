@@ -8,6 +8,7 @@ import {
   encodeBase64URL,
   isPasskeyBootstrap,
   isPreAuth,
+  isSession,
   isStoredSession,
   parseAuthRedirect as parseAuthRedirectContract,
   storedSession,
@@ -36,6 +37,9 @@ const REFRESH_REQUEST_KEY = 'samurai_meet_refresh_request_v1';
 const RECOVERY_VERIFIED_USER_KEY = 'samurai_meet_recovery_verified_user_v1';
 const AUTH_REQUEST_TIMEOUT_MS = 15_000;
 
+const sessionRefreshes = new Map<string, Promise<Session>>();
+const sessionListeners = new Set<(session: Session | null) => void>();
+
 type SessionResponse = { data?: Session };
 type OAuthResponse = { data?: Session | PreAuth };
 
@@ -45,6 +49,19 @@ export type AuthSnapshot = {
   /** Presentation-only state: the Recovery Key was verified for this pre-auth user. */
   recoveryVerified?: boolean;
 };
+
+/**
+ * Lets API consumers keep their in-memory session aligned when a request
+ * refreshes the rotating refresh token outside AuthProvider.
+ */
+export function subscribeSessionChanges(listener: (session: Session | null) => void): () => void {
+  sessionListeners.add(listener);
+  return () => sessionListeners.delete(listener);
+}
+
+function notifySessionChanges(session: Session | null): void {
+  for (const listener of sessionListeners) listener(session);
+}
 
 async function getStoredItem(key: string): Promise<string | null> {
   if (Platform.OS === 'web') {
@@ -115,12 +132,33 @@ async function persistSession(value: Session): Promise<void> {
   await setStoredItem(SESSION_KEY, JSON.stringify(storedSession(value)));
   await deleteStoredItem(PRE_AUTH_KEY);
   await deleteStoredItem(RECOVERY_VERIFIED_USER_KEY);
+  notifySessionChanges(value);
 }
 
-async function persistPreAuth(value: PreAuth): Promise<void> {
+/**
+ * Persists the current one-time pre-auth capability before the UI advances.
+ * Recovery replaces the consumed Google pre-auth with a new registration
+ * pre-auth, so this must also be callable by the Recovery service before a
+ * Fast Refresh or process death can discard the only copy.
+ */
+export async function persistPreAuth(value: PreAuth): Promise<void> {
   await setStoredItem(PRE_AUTH_KEY, JSON.stringify(value));
   await deleteStoredItem(SESSION_KEY);
   await deleteStoredItem(RECOVERY_VERIFIED_USER_KEY);
+}
+
+async function isStoredSessionCurrent(value: StoredSession): Promise<boolean> {
+  const stored = await getStoredItem(SESSION_KEY);
+  if (!stored) return false;
+  try {
+    const parsed: unknown = JSON.parse(stored);
+    return isStoredSession(parsed)
+      && parsed.user_id === value.user_id
+      && parsed.session_id === value.session_id
+      && parsed.refresh_token === value.refresh_token;
+  } catch {
+    return false;
+  }
 }
 
 export async function markRecoveryVerified(userID: string): Promise<void> {
@@ -137,6 +175,7 @@ export async function clearAuthStorage(): Promise<void> {
     deleteStoredItem(REFRESH_REQUEST_KEY),
     deleteStoredItem(RECOVERY_VERIFIED_USER_KEY),
   ]);
+  notifySessionChanges(null);
 }
 
 async function refreshStoredSession(value: StoredSession): Promise<Session> {
@@ -146,7 +185,10 @@ async function refreshStoredSession(value: StoredSession): Promise<Session> {
     method: 'POST',
     body: JSON.stringify({ refresh_token: value.refresh_token, request_id: requestID }),
   });
-  if (!response.data) throw new Error('refresh response is empty');
+  if (!response.data || !isSession(response.data)) throw new Error('refresh response is invalid');
+  if (!(await isStoredSessionCurrent(value))) {
+    throw new Error('session storage is no longer current');
+  }
   // 新Refresh Tokenを先に保存し、保存失敗時は同じrequest_idで再送できるようにする。
   await persistSession(response.data);
   await deleteStoredItem(REFRESH_REQUEST_KEY);
@@ -156,7 +198,9 @@ async function refreshStoredSession(value: StoredSession): Promise<Session> {
 function shouldClearStoredSession(error: unknown): boolean {
   if (error instanceof SyntaxError) return true;
   if (!(error instanceof Error)) return false;
-  return /^4\d\d:/.test(error.message) || error.message === 'refresh response is empty';
+  return /^4\d\d:/.test(error.message)
+    || error.message === 'refresh response is empty'
+    || error.message === 'refresh response is invalid';
 }
 
 export async function restoreAuth(): Promise<AuthSnapshot> {
@@ -174,6 +218,7 @@ export async function restoreAuth(): Promise<AuthSnapshot> {
     } catch (reason) {
       // HTTPの認証失敗や破損値だけを消去し、通信結果不明時はrequest_idを残して再試行できるようにする。
       if (shouldClearStoredSession(reason)) await clearAuthStorage();
+      else throw reason;
     }
   }
   if (preAuthValue && !stored) {
@@ -193,7 +238,50 @@ export async function restoreAuth(): Promise<AuthSnapshot> {
 }
 
 export async function refreshSession(session: Session): Promise<Session> {
-  return refreshStoredSession(storedSession(session));
+  const refreshKey = `${session.user_id}:${session.session_id}`;
+  const existing = sessionRefreshes.get(refreshKey);
+  if (existing) {
+    const next = await existing;
+    Object.assign(session, next);
+    return next;
+  }
+
+  let source: StoredSession | null = null;
+  const pending = (async () => {
+    try {
+      // A passkey handoff or another API request may have persisted a newer
+      // rotating refresh token while this caller still holds the old object.
+      // Prefer the latest same-account value from Secure Storage.
+      const storedValue = await getStoredItem(SESSION_KEY);
+      if (!storedValue) throw new Error('session storage is missing');
+      const parsed: unknown = JSON.parse(storedValue);
+      if (!isStoredSession(parsed) || parsed.user_id !== session.user_id) {
+        throw new Error('session storage is no longer current');
+      }
+      source = parsed;
+      const next = await refreshStoredSession(parsed);
+      Object.assign(session, next);
+      return next;
+    } catch (reason) {
+      if (reason instanceof Error
+        && (/^401:|^409:/u).test(reason.message)
+        && source
+        && await isStoredSessionCurrent(source)) {
+        await clearAuthStorage();
+      }
+      throw reason;
+    }
+  })();
+  sessionRefreshes.set(refreshKey, pending);
+  void pending.then(
+    () => {
+      if (sessionRefreshes.get(refreshKey) === pending) sessionRefreshes.delete(refreshKey);
+    },
+    () => {
+      if (sessionRefreshes.get(refreshKey) === pending) sessionRefreshes.delete(refreshKey);
+    },
+  );
+  return pending;
 }
 
 export function createVerifier(): string {
@@ -265,12 +353,15 @@ async function completeAuthRedirectInternal(redirect: AuthRedirect): Promise<Aut
   if (!response.data) throw new Error('OAuth response is empty');
   await deleteStoredItem(OAUTH_VERIFIER_KEY);
   await deleteStoredItem(SESSION_HANDOFF_VERIFIER_KEY);
-  if ('access_token' in response.data) {
+  if (isSession(response.data)) {
     await persistSession(response.data);
     return { session: response.data, preAuth: null };
   }
-  await persistPreAuth(response.data);
-  return { session: null, preAuth: response.data };
+  if (isPreAuth(response.data)) {
+    await persistPreAuth(response.data);
+    return { session: null, preAuth: response.data };
+  }
+  throw new Error('OAuth response is invalid');
 }
 
 const redirectPromises = new Map<string, Promise<AuthSnapshot>>();
@@ -306,10 +397,13 @@ export async function beginPasskey(
       return { session: nextSession, preAuth: null };
     }
     if (session) {
-      await reauthWebPasskey(session);
-      return { session, preAuth: null };
+      const currentSession = await refreshSession(session);
+      await reauthWebPasskey(currentSession);
+      return { session: currentSession, preAuth: null };
     }
   }
+
+  const currentSession = session ? await refreshSession(session) : null;
 
   const verifier = createVerifier();
   const digest = await Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, verifier, {
@@ -320,7 +414,7 @@ export async function beginPasskey(
   const scope = preAuth
     ? (preAuth.passkey_registered ? 'passkey_login' : 'passkey_register')
     : 'passkey_reauth';
-  const sourceToken = preAuth?.pre_auth_token ?? session?.access_token;
+  const sourceToken = preAuth?.pre_auth_token ?? currentSession?.access_token;
   if (!sourceToken) throw new Error('authentication token is missing');
   const bootstrapResponse = await request<{ data?: PasskeyBootstrap }>('/auth/passkey/bootstrap', {
     method: 'POST',
@@ -348,17 +442,43 @@ export async function beginPasskey(
 }
 
 export async function logout(session: Session): Promise<void> {
-  try {
-    await request('/auth/logout', { method: 'POST' }, session.access_token);
-  } finally {
-    await clearAuthStorage();
-  }
+	try {
+		let current = session;
+		try {
+			current = await refreshSession(session);
+		} catch {
+			// A dead/expired session must not prevent local logout. The server
+			// rejects the stale token and the provider still clears all local
+			// credentials below.
+		}
+		try {
+			await request('/auth/logout', { method: 'POST' }, current.access_token);
+		} catch {
+			// Logout is intentionally best effort once local credentials are
+			// removed. This avoids trapping a user on a signed-in screen when
+			// the API is temporarily unavailable.
+		}
+	} finally {
+		await clearAuthStorage();
+	}
 }
 
 export async function logoutAll(session: Session): Promise<void> {
-  try {
-    await request('/auth/logout-all', { method: 'POST' }, session.access_token);
-  } finally {
-    await clearAuthStorage();
-  }
+	try {
+		let current = session;
+		try {
+			current = await refreshSession(session);
+		} catch {
+			// Keep local logout usable even when the rotating refresh token is no
+			// longer accepted. The active session is already invalid server-side
+			// in that case, or will expire independently.
+		}
+		try {
+			await request('/auth/logout-all', { method: 'POST' }, current.access_token);
+		} catch {
+			// See logout: local credentials are always cleared.
+		}
+	} finally {
+		await clearAuthStorage();
+	}
 }

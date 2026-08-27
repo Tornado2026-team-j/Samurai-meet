@@ -48,3 +48,86 @@ func TestLoadReadsSeparateDatabaseSettings(t *testing.T) {
 		t.Fatalf("Database = %+v", got)
 	}
 }
+
+func TestProductionValidationFailsClosed(t *testing.T) {
+	cfg := Config{Environment: "production"}
+	if err := cfg.ValidateForEnvironment(); err == nil {
+		t.Fatal("production configuration with missing secrets should fail")
+	}
+}
+
+func TestProductionValidationAcceptsCompleteSecureConfiguration(t *testing.T) {
+	cfg := Config{
+		Environment:  "production",
+		ClientOrigin: "https://samurai-meet.disnana.com",
+		Database:     DatabaseConfig{Password: "db-password", SSLMode: "verify-full"},
+		GoogleOIDC:   GoogleOIDCConfig{ClientID: "client", ClientSecret: "secret", RedirectURI: "https://samurai-meet.disnana.com/auth/callback"},
+		WebAuthn:     WebAuthnConfig{RPID: "samurai-meet.disnana.com", RPOrigin: "https://samurai-meet.disnana.com"},
+		JWS:          JWSConfig{SigningKey: "encoded-key", KeyID: "v1", Issuer: "issuer", Audience: "audience"},
+		ImageStorage: ImageStorageConfig{ProfileWrappingPrivateKeyPEM: "injected-secret"},
+	}
+	if err := cfg.ValidateForEnvironment(); err != nil {
+		t.Fatalf("complete production configuration rejected: %v", err)
+	}
+}
+
+func TestProductionValidationAcceptsLoopbackDatabaseWithoutTLS(t *testing.T) {
+	cfg := Config{
+		Environment:  "production",
+		ClientOrigin: "https://samurai-meet.disnana.com",
+		Database:     DatabaseConfig{Host: "127.0.0.1", Password: "db-password", SSLMode: "disable"},
+		GoogleOIDC:   GoogleOIDCConfig{ClientID: "client", ClientSecret: "secret", RedirectURI: "https://samurai-meet.disnana.com/auth/callback"},
+		WebAuthn:     WebAuthnConfig{RPID: "samurai-meet.disnana.com", RPOrigin: "https://samurai-meet.disnana.com"},
+		JWS:          JWSConfig{SigningKey: "encoded-key", KeyID: "v1", Issuer: "issuer", Audience: "audience"},
+		ImageStorage: ImageStorageConfig{ProfileWrappingPrivateKeyPEM: "injected-secret"},
+	}
+	if err := cfg.ValidateForEnvironment(); err != nil {
+		t.Fatalf("loopback production configuration rejected: %v", err)
+	}
+}
+
+func TestProductionValidationAcceptsExplicitExpoGoRedirect(t *testing.T) {
+	cfg := Config{
+		Environment:         "production",
+		AllowExpoGoRedirect: true,
+		ClientOrigin:        "https://samurai-meet.disnana.com",
+		Database:            DatabaseConfig{Host: "db.internal", Password: "db-password", SSLMode: "verify-full"},
+		GoogleOIDC:          GoogleOIDCConfig{ClientID: "client", ClientSecret: "secret", RedirectURI: "https://samurai-meet.disnana.com/auth/callback"},
+		WebAuthn:            WebAuthnConfig{RPID: "samurai-meet.disnana.com", RPOrigin: "https://samurai-meet.disnana.com"},
+		JWS:                 JWSConfig{SigningKey: "encoded-key", KeyID: "v1", Issuer: "issuer", Audience: "audience"},
+		ImageStorage:        ImageStorageConfig{ProfileWrappingPrivateKeyPEM: "injected-secret"},
+	}
+	if err := cfg.ValidateForEnvironment(); err != nil {
+		t.Fatalf("explicit Expo Go redirect configuration rejected: %v", err)
+	}
+}
+
+func TestProductionValidationRejectsPlaintextNetworkDatabase(t *testing.T) {
+	cfg := Config{
+		Environment:  "production",
+		ClientOrigin: "https://samurai-meet.disnana.com",
+		Database:     DatabaseConfig{Host: "db.internal", Password: "db-password", SSLMode: "disable"},
+		GoogleOIDC:   GoogleOIDCConfig{ClientID: "client", ClientSecret: "secret", RedirectURI: "https://samurai-meet.disnana.com/auth/callback"},
+		WebAuthn:     WebAuthnConfig{RPID: "samurai-meet.disnana.com", RPOrigin: "https://samurai-meet.disnana.com"},
+		JWS:          JWSConfig{SigningKey: "encoded-key", KeyID: "v1", Issuer: "issuer", Audience: "audience"},
+		ImageStorage: ImageStorageConfig{ProfileWrappingPrivateKeyPEM: "injected-secret"},
+	}
+	if err := cfg.ValidateForEnvironment(); err == nil {
+		t.Fatal("plaintext network database should be rejected in production")
+	}
+}
+
+func TestProductionValidationRejectsInsecureOriginsAndDatabase(t *testing.T) {
+	cfg := Config{
+		Environment:  "production",
+		ClientOrigin: "http://samurai-meet.disnana.com",
+		Database:     DatabaseConfig{Password: "db-password", SSLMode: "disable"},
+		GoogleOIDC:   GoogleOIDCConfig{ClientID: "client", ClientSecret: "secret", RedirectURI: "http://samurai-meet.disnana.com/auth/callback"},
+		WebAuthn:     WebAuthnConfig{RPID: "samurai-meet.disnana.com", RPOrigin: "http://samurai-meet.disnana.com"},
+		JWS:          JWSConfig{SigningKey: "encoded-key", KeyID: "v1", Issuer: "issuer", Audience: "audience"},
+		ImageStorage: ImageStorageConfig{ProfileWrappingPrivateKeyPEM: "injected-secret"},
+	}
+	if err := cfg.ValidateForEnvironment(); err == nil {
+		t.Fatal("insecure production configuration should fail")
+	}
+}

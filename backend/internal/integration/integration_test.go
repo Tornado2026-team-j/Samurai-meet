@@ -125,13 +125,15 @@ func TestAuthKeyImageAndAccountLifecycle(t *testing.T) {
 	}
 
 	envelopes := keys.NewService(database)
-	encryptedKeyA := randomBytes(t, 32)
+	recoveryPrivateKey := newRecoveryPrivateKey(t)
+	encryptedKeyA := randomBytes(t, 32+16)
 	envelopeNonce := randomBytes(t, 12)
 	storedEnvelope, err := envelopes.Upsert(context.Background(), userID, keys.Envelope{
-		KeyVersion:    "v1",
-		EncryptedKeyA: encode(encryptedKeyA),
-		Nonce:         encode(envelopeNonce),
-		KDFParams:     json.RawMessage(`{"algorithm":"scrypt","salt":"integration","work_factor":1}`),
+		KeyVersion:        keys.ClientRootKeyVersion,
+		EncryptedKeyA:     encode(encryptedKeyA),
+		Nonce:             encode(envelopeNonce),
+		KDFParams:         recoveryKDFParams(t, randomBytes(t, 16)),
+		RecoveryPublicKey: encode(recoveryPrivateKey.Public().(ed25519.PublicKey)),
 	}, now)
 	if err != nil {
 		t.Fatal(err)
@@ -206,8 +208,8 @@ func TestAuthKeyImageAndAccountLifecycle(t *testing.T) {
 		Nonce:             encode(nonce),
 		Algorithm:         image.PhotoAlgorithm,
 		KeyVersion:        "v1",
-		WrappedImageKey:   encode(randomBytes(t, 32)),
-		AccountWrappedKey: encode(randomBytes(t, 32)),
+		WrappedImageKey:   encode(randomBytes(t, 12+32+16)),
+		AccountWrappedKey: encode(randomBytes(t, 12+32+16)),
 		DeviceID:          deviceID,
 		ServerWrappedKey:  encode(serverWrapped),
 		WrappingAlgorithm: "KEY-A-AES-GCM+KEY-B-AES-GCM",
@@ -251,26 +253,18 @@ func TestRecoveryReRegistrationRevokesPreviousPasskeys(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	keyA := randomBytes(t, ed25519.SeedSize)
-	privateKey := ed25519.NewKeyFromSeed(keyA)
+	privateKey := newRecoveryPrivateKey(t)
 	dataSalt := randomBytes(t, 16)
-	kdfParams, err := json.Marshal(map[string]string{
-		"algorithm": "HKDF-SHA256",
-		"salt":      encode(randomBytes(t, 16)),
-		"info":      encode([]byte("samurai-meet/recovery-key/v1")),
-		"data_salt": encode(dataSalt),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	kdfParams := recoveryKDFParams(t, dataSalt)
 	envelopes := keys.NewService(database)
-	if _, err = envelopes.Upsert(context.Background(), userID, keys.Envelope{
-		KeyVersion:        "v1",
-		EncryptedKeyA:     encode(randomBytes(t, 32)),
+	_, err := envelopes.Upsert(context.Background(), userID, keys.Envelope{
+		KeyVersion:        keys.ClientRootKeyVersion,
+		EncryptedKeyA:     encode(randomBytes(t, 32+16)),
 		Nonce:             encode(randomBytes(t, 12)),
 		KDFParams:         kdfParams,
 		RecoveryPublicKey: encode(privateKey.Public().(ed25519.PublicKey)),
-	}, now); err != nil {
+	}, now)
+	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err = database.Exec(`INSERT INTO passkey_credentials (id,user_id,credential_id,public_key,credential_json,sign_count,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7)`, "old-passkey", userID, "old-credential", "old-public-key", "{}", 0, now.Format(time.RFC3339Nano)); err != nil {
@@ -307,8 +301,12 @@ func TestRecoveryReRegistrationRevokesPreviousPasskeys(t *testing.T) {
 	if remaining != 0 {
 		t.Fatalf("old passkey rows after recovery = %d", remaining)
 	}
-	if _, err := preauth.Lookup(context.Background(), result.PreAuthToken, auth.PreAuthScopeRegister, userID, now.Add(time.Second)); err != nil {
+	recoveryRegistrationClaims, err := preauth.Lookup(context.Background(), result.PreAuthToken, auth.PreAuthScopeRegister, userID, now.Add(time.Second))
+	if err != nil {
 		t.Fatalf("recovery registration pre-auth was not issued: %v", err)
+	}
+	if !recoveryRegistrationClaims.RecoveryVerified {
+		t.Fatal("recovery registration pre-auth is missing the server-side recovery proof marker")
 	}
 }
 
@@ -362,3 +360,27 @@ func randomBytes(t *testing.T, size int) []byte {
 func randomID(t *testing.T) string { return encode(randomBytes(t, 16)) }
 
 func encode(raw []byte) string { return base64.RawURLEncoding.EncodeToString(raw) }
+
+func newRecoveryPrivateKey(t *testing.T) ed25519.PrivateKey {
+	t.Helper()
+	return ed25519.NewKeyFromSeed(randomBytes(t, ed25519.SeedSize))
+}
+
+func recoveryKDFParams(t *testing.T, dataSalt []byte) json.RawMessage {
+	t.Helper()
+	params, err := json.Marshal(map[string]any{
+		"algorithm": "Argon2id+HKDF-SHA256",
+		"salt":      encode(randomBytes(t, 16)),
+		"info":      encode([]byte("samurai-meet/recovery-phrase/v2")),
+		"data_salt": encode(dataSalt),
+		"argon2id": map[string]int{
+			"memory_kib":  8192,
+			"iterations":  1,
+			"parallelism": 1,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return params
+}

@@ -11,7 +11,7 @@ QUIC は TLS 1.3 を使って通信を保護しますが、チャット参加者
 | トークン | 対象 | 暫定有効期間 | 発行経路 |
 | --- | --- | --- | --- |
 | Access Token | REST API、通常のセッション | 1 分（案）。残り 30 秒で切替 | Google + Passkey 成功後、または Refresh |
-| Chat Token | QUIC / WebTransport のチャット接続 | Access Token の切替とは独立した短命 token | 有効な Access Token で REST API を呼び出す |
+| Chat Token | WebSocket / WebTransport のチャット接続 | Access Token の切替とは独立した2分の短命 token | 有効な Access Token で REST API を呼び出す |
 | Refresh Token | Access Token の更新 | 30 日アイドル / 90 日絶対 | QUIC 上では使用しない |
 
 Access Token の 1 分期限と、Refresh 時に旧 Access Token を `exp` まで許可する切替処理は、[認証機能仕様](auth.md) と [API 仕様書](../api.md) に定義します。Chat Token の期限・切替はこの Access Token 更新とは別に決定します。
@@ -28,9 +28,7 @@ Chat Token は JWS 署名付き JWT とします。
   "sid": "session-uuid",
   "chat_id": "match-uuid",
   "jti": "chat-token-uuid",
-  "token_seq": 12,
-  "transport": "quic",
-  "scope": ["chat:connect", "chat:send"],
+  "transport": "websocket",
   "iat": 1724414400,
   "exp": 1724414460
 }
@@ -38,12 +36,12 @@ Chat Token は JWS 署名付き JWT とします。
 
 - `aud` は `samurai-meet-chat` に限定する。
 - `chat_id` は一つのマッチに限定する。
-- `scope` 外の REST API、プロフィール、Recovery、Key-B API には使えない。
+- Chat TokenはRESTのAccess Tokenとして扱わず、対象chat transportの接続開始だけに使う。
 - `sid` で `sessions` と紐付け、セッション失効を反映する。
-- `token_seq` は更新順序を管理し、古い token への巻き戻しを防ぐ。
+- `token_seq` による更新順序管理はWebSocket配送実装時に追加する。
 - Token を URL の query string に含めない。HTTP/3 なら認証ヘッダー、独自 QUIC なら認証 handshake frame を使う。
 
-## 4. 発行 API
+## 4. 発行 API（REST実装済み）
 
 ### `POST /chats/{chat_id}/transport-token`
 
@@ -55,28 +53,27 @@ Chat Token は JWS 署名付き JWT とします。
 - ブロック・停止・通報による遮断状態がない
 - 対象チャットが削除・終了されていない
 
-Response（例）：
+Response（現行）：
 
 ```json
 {
   "data": {
     "chat_token": "short-lived-chat-jwt",
     "expires_at": "2026-08-23T12:01:00Z",
-    "token_seq": 12,
-    "transport": "quic"
+    "transport": "websocket"
   }
 }
 ```
 
-Chat Token は Refresh Token で更新しません。期限前に、通常の REST API で次の Chat Token を取得します。
+Chat Token は Refresh Token で更新しません。期限前に、通常の REST API で次の Chat Token を取得します。現行APIは`websocket`または`webtransport`を受け付け、tokenに対象chat、session、transportを束縛します。
 
-## 5. Chat Token の切り替え
+## 5. Chat Token の切り替え（WebSocket配送実装時に追加）
 
 Chat Token を更新する場合も短い重複期間と `token_seq` を利用できますが、これは Access Token の Refresh Token ローテーションとは別の処理です。
 
 - Chat Token の期限前に次の token を取得する。
 - 切り替え中は旧 token と新 token に 10〜15 秒程度の重複期間を持たせる。
-- サーバーは `token_seq` が現在値より古い token への巻き戻しを拒否する。
+- `token_seq`や接続単位の巻き戻し防止はWebSocket/WebTransport実装時に追加する。
 - Refresh Token は Chat Token の切り替えには使わない。
 - 期限切れを待ってから更新せず、通信中の token が有効な間に切り替える。
 
@@ -103,9 +100,9 @@ QUIC の 0-RTT アプリケーションデータは攻撃者に再送される�
 
 | 処理 | 実装 |
 | --- | --- |
-| Chat Token 取得、切り替え、期限管理 | TypeScript / React Native |
+| Chat Token 取得、切り替え、期限管理 | TypeScript / React Native（未接続） |
 | QUIC / WebTransport クライアント | TypeScript + native module。Expo の対応状況を PoC で確認 |
-| Chat Token 発行・検証 | Go |
+| Chat Token 発行・検証 | Go（REST発行と署名検証を実装済み） |
 | QUIC / HTTP/3 サーバー | Go。採用ライブラリを PoC で決定 |
 | 参加者・セッション・ブロック判定 | Go + PostgreSQL |
 | 失効通知 | PostgreSQL `LISTEN / NOTIFY` または heartbeat / polling |
@@ -116,8 +113,8 @@ Expo の標準機能だけで QUIC / WebTransport クライアントが利用で
 
 - 通常の Access Token で Chat Token を取得できる。
 - Chat Token をプロフィール、Recovery、Key-B、他のチャットへ利用できない。
-- 期限前に次の Chat Token へ切り替えられる。
-- 古い `token_seq` へ巻き戻せない。
+- 期限前に次の Chat Token をRESTで取得できる。
+- WebSocket配送追加時に古いtokenの接続巻き戻しを拒否する。
 - セッション失効、ブロック、マッチ終了後にチャット接続が閉じる。
 - 0-RTT でメッセージ送信などの状態変更ができない。
 - Chat Token、Refresh Token が URL、ログ、クラッシュレポートに出ない。

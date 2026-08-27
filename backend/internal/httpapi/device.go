@@ -13,9 +13,11 @@ import (
 const devicePath = APIV1Prefix + "/me/devices"
 
 type deviceRegistrationInput struct {
-	DeviceID   string `json:"device_id"`
-	KeyVersion string `json:"key_version"`
-	PublicKey  string `json:"public_key"`
+	DeviceID            string `json:"device_id"`
+	KeyVersion          string `json:"key_version"`
+	PublicKey           string `json:"public_key"`
+	AgreementKeyVersion string `json:"agreement_key_version"`
+	AgreementPublicKey  string `json:"agreement_public_key"`
 }
 
 func deviceRegistrations(service *keys.DeviceService, sessions *auth.SessionService) http.HandlerFunc {
@@ -54,13 +56,46 @@ func deviceRegistrations(service *keys.DeviceService, sessions *auth.SessionServ
 				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_device_key_registration"})
 				return
 			}
-			device, err := service.Register(r.Context(), claims.Subject, strings.TrimSpace(input.DeviceID), strings.TrimSpace(input.KeyVersion), strings.TrimSpace(input.PublicKey), now())
+			if err := ensureJSONBodyConsumed(decoder); err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_device_key_registration"})
+				return
+			}
+			input.DeviceID = strings.TrimSpace(input.DeviceID)
+			input.KeyVersion = strings.TrimSpace(input.KeyVersion)
+			input.PublicKey = strings.TrimSpace(input.PublicKey)
+			input.AgreementKeyVersion = strings.TrimSpace(input.AgreementKeyVersion)
+			input.AgreementPublicKey = strings.TrimSpace(input.AgreementPublicKey)
+			if (input.AgreementKeyVersion == "") != (input.AgreementPublicKey == "") {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_device_agreement_registration"})
+				return
+			}
+			var (
+				device keys.Device
+				err    error
+			)
+			if input.AgreementKeyVersion != "" {
+				device, err = service.RegisterWithAgreement(r.Context(), claims.Subject, input.DeviceID, input.KeyVersion, input.PublicKey, input.AgreementKeyVersion, input.AgreementPublicKey, now())
+			} else {
+				device, err = service.Register(r.Context(), claims.Subject, input.DeviceID, input.KeyVersion, input.PublicKey, now())
+			}
 			if errors.Is(err, keys.ErrInvalidDevice) {
 				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_device_key_registration"})
 				return
 			}
 			if errors.Is(err, keys.ErrDeviceKeyMismatch) {
 				writeJSON(w, http.StatusConflict, map[string]string{"error": "device_key_mismatch"})
+				return
+			}
+			if errors.Is(err, keys.ErrInvalidDeviceAgreement) {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_device_agreement_registration"})
+				return
+			}
+			if errors.Is(err, keys.ErrDeviceAgreementMismatch) {
+				writeJSON(w, http.StatusConflict, map[string]string{"error": "device_agreement_key_mismatch"})
+				return
+			}
+			if errors.Is(err, keys.ErrDeviceNotFound) {
+				writeJSON(w, http.StatusNotFound, map[string]string{"error": "device_key_registration_not_found"})
 				return
 			}
 			if err != nil {

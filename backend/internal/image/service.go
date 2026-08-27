@@ -17,11 +17,17 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/keys"
 )
 
 const (
-	DefaultMaxUploadBytes = 20 * 1024 * 1024
-	PhotoAlgorithm        = "AES-256-GCM"
+	DefaultMaxUploadBytes         = 20 * 1024 * 1024
+	PhotoAlgorithm                = "AES-256-GCM"
+	PhotoKeyVersion               = "v1"
+	DeviceImageWrappingAlgorithm  = "KEY-B-AES-GCM"
+	InitialImageWrappingAlgorithm = "KEY-A-AES-GCM+KEY-B-AES-GCM"
+	wrappedImageKeyBytes          = 12 + 32 + 16
 )
 
 var (
@@ -140,9 +146,6 @@ func (s *Service) Upload(ctx context.Context, userID string, input UploadInput, 
 	storagePath := filepath.ToSlash(filepath.Join(userID, photoID+".bin"))
 	created := now.UTC().Format(time.RFC3339Nano)
 	deviceWrappingAlgorithm := input.WrappingAlgorithm
-	if deviceWrappingAlgorithm == "" {
-		deviceWrappingAlgorithm = "KEY-A-AES-GCM+KEY-B-AES-GCM"
-	}
 	wrappingAlgorithm := deviceWrappingAlgorithm
 	if input.Visibility == "profile" {
 		wrappingAlgorithm += "+RSA-OAEP-256:" + s.profileKeyVersion
@@ -257,7 +260,7 @@ func (s *Service) GetPublicProfileImage(ctx context.Context, photoID string) (Ph
 	if err != nil {
 		return Photo{}, nil, err
 	}
-	if !isSupportedContentType(photo.ContentType) {
+	if photo.KeyVersion != PhotoKeyVersion || photo.Algorithm != PhotoAlgorithm || photo.WrappingAlgorithm != InitialImageWrappingAlgorithm+"+RSA-OAEP-256:"+s.profileKeyVersion || !isSupportedContentType(photo.ContentType) {
 		return Photo{}, nil, ErrInvalidPhoto
 	}
 	photo.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt)
@@ -320,7 +323,7 @@ type DeviceKeyEnvelopeInput struct {
 }
 
 func (s *Service) PutDeviceKeyEnvelope(ctx context.Context, userID, photoID string, input DeviceKeyEnvelopeInput, now time.Time) error {
-	if !safeComponent.MatchString(input.DeviceID) || !safeComponent.MatchString(input.KeyVersion) || !validOpaqueKey(input.WrappedImageKey) || input.WrappingAlgorithm == "" || strings.ContainsAny(input.WrappingAlgorithm, "\r\n") {
+	if !safeComponent.MatchString(input.DeviceID) || input.KeyVersion != PhotoKeyVersion || !validExactBase64(input.WrappedImageKey, wrappedImageKeyBytes) || input.WrappingAlgorithm != DeviceImageWrappingAlgorithm {
 		return ErrInvalidPhoto
 	}
 	registered, err := s.deviceRegistered(ctx, userID, input.DeviceID)
@@ -334,7 +337,7 @@ func (s *Service) PutDeviceKeyEnvelope(ctx context.Context, userID, photoID stri
 	if err != nil {
 		return err
 	}
-	if !validOpaqueKey(photo.AccountWrappedKey) {
+	if photo.KeyVersion != PhotoKeyVersion || !validExactBase64(photo.AccountWrappedKey, wrappedImageKeyBytes) {
 		return ErrInvalidPhoto
 	}
 	stamp := now.UTC().Format(time.RFC3339Nano)
@@ -351,8 +354,9 @@ func (s *Service) PutDeviceKeyEnvelope(ctx context.Context, userID, photoID stri
 	return err
 }
 
-// DeleteUserFiles is called by the account-deletion transaction before child
-// rows are removed. If this fails, the account transaction must be rolled back.
+// DeleteUserFiles is idempotent and removes only ciphertext below the
+// user-specific storage directory. Account deletion calls it after the
+// database transaction commits; a durable cleanup job allows retrying it.
 func (s *Service) DeleteUserFiles(userID string) error {
 	if err := s.store.DeleteUserCiphertext(userID); err != nil {
 		return err
@@ -363,12 +367,71 @@ func (s *Service) DeleteUserFiles(userID string) error {
 	return nil
 }
 
+// ProcessPendingUserFileCleanup retries durable account-deletion jobs. It is
+// safe to call on every server startup because storage deletion is idempotent
+// and a successfully cleaned job is removed only after the filesystem call
+// succeeds.
+func (s *Service) ProcessPendingUserFileCleanup(ctx context.Context, limit int, now time.Time) error {
+	if s == nil || s.db == nil || s.store == nil {
+		return nil
+	}
+	if limit <= 0 || limit > 1000 {
+		limit = 100
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT user_id FROM storage_cleanup_jobs ORDER BY created_at LIMIT $1`, limit)
+	if err != nil {
+		return err
+	}
+	userIDs := make([]string, 0, limit)
+	for rows.Next() {
+		var userID string
+		if err = rows.Scan(&userID); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		userIDs = append(userIDs, userID)
+	}
+	if err = rows.Close(); err != nil {
+		return err
+	}
+	if err = rows.Err(); err != nil {
+		return err
+	}
+	var firstErr error
+	for _, userID := range userIDs {
+		if cleanupErr := s.DeleteUserFiles(userID); cleanupErr != nil {
+			_, _ = s.db.ExecContext(ctx, `UPDATE storage_cleanup_jobs SET attempts=attempts+1,last_error=$1,updated_at=$2 WHERE user_id=$3`, truncateImageCleanupError(cleanupErr), now.UTC().Format(time.RFC3339Nano), userID)
+			if firstErr == nil {
+				firstErr = cleanupErr
+			}
+			continue
+		}
+		if _, err = s.db.ExecContext(ctx, `DELETE FROM storage_cleanup_jobs WHERE user_id=$1`, userID); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+		}
+	}
+	return firstErr
+}
+
+func truncateImageCleanupError(err error) string {
+	if err == nil {
+		return ""
+	}
+	message := err.Error()
+	if len(message) > 512 {
+		return message[:512]
+	}
+	return message
+}
+
 func (s *Service) deviceRegistered(ctx context.Context, userID, deviceID string) (bool, error) {
 	if !safeComponent.MatchString(deviceID) {
 		return false, ErrDeviceNotRegistered
 	}
 	var registered bool
-	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM devices WHERE user_id=$1 AND device_id=$2)`, userID, deviceID).Scan(&registered)
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM devices WHERE user_id=$1 AND device_id=$2 AND key_version=$3)`, userID, deviceID, keys.DeviceKeyVersion).Scan(&registered)
 	return registered, err
 }
 
@@ -402,10 +465,10 @@ func validateUpload(input UploadInput, profilePrivateKey *rsa.PrivateKey) error 
 	if input.Visibility != "private" && input.Visibility != "profile" {
 		return ErrInvalidPhoto
 	}
-	if input.Algorithm != PhotoAlgorithm || !safeComponent.MatchString(input.KeyVersion) {
+	if input.Algorithm != PhotoAlgorithm || input.KeyVersion != PhotoKeyVersion || input.WrappingAlgorithm != InitialImageWrappingAlgorithm {
 		return ErrInvalidPhoto
 	}
-	if !validImageNonce(input.Nonce) || !validOpaqueKey(input.WrappedImageKey) || !validOpaqueKey(input.AccountWrappedKey) || !safeComponent.MatchString(input.DeviceID) {
+	if !validImageNonce(input.Nonce) || !validExactBase64(input.WrappedImageKey, wrappedImageKeyBytes) || !validExactBase64(input.AccountWrappedKey, wrappedImageKeyBytes) || !safeComponent.MatchString(input.DeviceID) {
 		return ErrInvalidPhoto
 	}
 	if input.ContentType == "" {
@@ -428,7 +491,7 @@ func validateUpload(input UploadInput, profilePrivateKey *rsa.PrivateKey) error 
 		}
 		return nil
 	}
-	if profilePrivateKey == nil || !validOpaqueKey(input.ServerWrappedKey) {
+	if profilePrivateKey == nil || !validExactBase64(input.ServerWrappedKey, profilePrivateKey.Size()) {
 		return ErrInvalidPhoto
 	}
 	wrapped, err := base64.RawURLEncoding.DecodeString(input.ServerWrappedKey)
@@ -457,9 +520,12 @@ func validImageNonce(value string) bool {
 	return err == nil && len(raw) == 12
 }
 
-func validOpaqueKey(value string) bool {
+func validExactBase64(value string, expectedBytes int) bool {
+	if value == "" || expectedBytes <= 0 {
+		return false
+	}
 	raw, err := base64.RawURLEncoding.DecodeString(value)
-	return err == nil && len(raw) >= 16
+	return err == nil && len(raw) == expectedBytes
 }
 
 func nullableString(value string) any {

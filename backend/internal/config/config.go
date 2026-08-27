@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -51,6 +53,95 @@ type DatabaseConfig struct {
 	Schema   string
 }
 
+// ValidateForEnvironment fails closed for production-like deployments. A
+// server with a missing signing key or an unprotected network database
+// transport must not start a partially working authentication service. The
+// single-host deployment may use a loopback-only PostgreSQL connection when
+// PostgreSQL TLS is not enabled.
+func (c Config) ValidateForEnvironment() error {
+	environment := strings.ToLower(strings.TrimSpace(c.Environment))
+	if environment != "production" && environment != "prod" {
+		return nil
+	}
+	var missing []string
+	if strings.TrimSpace(c.JWS.SigningKey) == "" {
+		missing = append(missing, "JWS_SIGNING_KEY")
+	}
+	if strings.TrimSpace(c.JWS.KeyID) == "" {
+		missing = append(missing, "JWS_KEY_ID")
+	}
+	if strings.TrimSpace(c.JWS.Issuer) == "" {
+		missing = append(missing, "JWS_ISSUER")
+	}
+	if strings.TrimSpace(c.JWS.Audience) == "" {
+		missing = append(missing, "JWS_AUDIENCE")
+	}
+	if !validSecureOrigin(c.ClientOrigin) {
+		missing = append(missing, "CLIENT_ORIGIN (https origin)")
+	}
+	if strings.TrimSpace(c.Database.Password) == "" {
+		missing = append(missing, "DB_PASSWORD")
+	}
+	if !secureDatabaseTransport(c.Database) {
+		missing = append(missing, "DB_SSLMODE (TLS required unless DB_HOST is loopback)")
+	}
+	if strings.TrimSpace(c.GoogleOIDC.ClientID) == "" || strings.TrimSpace(c.GoogleOIDC.ClientSecret) == "" || !validSecureURL(c.GoogleOIDC.RedirectURI) {
+		missing = append(missing, "GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET/GOOGLE_REDIRECT_URI")
+	}
+	if strings.TrimSpace(c.ImageStorage.ProfileWrappingPrivateKeyPEM) == "" {
+		missing = append(missing, "PROFILE_WRAPPING_PRIVATE_KEY_PEM")
+	}
+	if !validSecureOrigin(c.WebAuthn.RPOrigin) || strings.TrimSpace(c.WebAuthn.RPID) == "" {
+		missing = append(missing, "WEBAUTHN_RP_ID/WEBAUTHN_RP_ORIGIN (https origin)")
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("production configuration is incomplete: %s", strings.Join(missing, ", "))
+	}
+	return nil
+}
+
+func validSecureOrigin(value string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	return err == nil && parsed.Scheme == "https" && parsed.Host != "" && parsed.User == nil &&
+		(parsed.Path == "" || parsed.Path == "/") && parsed.RawQuery == "" && parsed.Fragment == ""
+}
+
+func validSecureURL(value string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	return err == nil && parsed.Scheme == "https" && parsed.Host != "" && parsed.User == nil && parsed.Path == "/auth/callback" && parsed.RawQuery == "" && parsed.Fragment == ""
+}
+
+func secureSSLMode(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "require", "verify-ca", "verify-full":
+		return true
+	default:
+		return false
+	}
+}
+
+// secureDatabaseTransport accepts a plaintext PostgreSQL connection only when
+// the database is explicitly on the same host. Production deployments using a
+// network database must still use TLS; this exception is for the supported
+// single-host deployment where the database is not reachable through the
+// tunnel or a network interface.
+func secureDatabaseTransport(database DatabaseConfig) bool {
+	if secureSSLMode(database.SSLMode) {
+		return true
+	}
+	return strings.EqualFold(strings.TrimSpace(database.SSLMode), "disable") && isLoopbackHost(database.Host)
+}
+
+func isLoopbackHost(value string) bool {
+	host := strings.TrimSpace(value)
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	host = strings.Trim(host, "[]")
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
 func Load() Config {
 	if err := LoadDotEnv(".env"); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: .env を読み込めません: %v\n", err)
@@ -60,7 +151,7 @@ func Load() Config {
 		HTTPAddr:            valueOrDefault("HTTP_ADDR", ":8080"),
 		Environment:         valueOrDefault("APP_ENV", "development"),
 		AllowExpoGoRedirect: boolValueOrDefault("ALLOW_EXPO_GO_REDIRECT", false),
-		DevClientOrigin:     valueOrDefault("DEV_CLIENT_ORIGIN", "http://127.0.0.1:5173"),
+		DevClientOrigin:     valueOrDefault("DEV_CLIENT_ORIGIN", "http://localhost:8081"),
 		ClientOrigin:        os.Getenv("CLIENT_ORIGIN"),
 		Database: DatabaseConfig{
 			Host:     valueOrDefault("DB_HOST", "127.0.0.1"),
@@ -80,7 +171,7 @@ func Load() Config {
 			MaxUploadBytes:               intValueOrDefault("IMAGE_MAX_UPLOAD_BYTES", 20*1024*1024),
 		},
 		GoogleOIDC: GoogleOIDCConfig{os.Getenv("GOOGLE_CLIENT_ID"), os.Getenv("GOOGLE_CLIENT_SECRET"), os.Getenv("GOOGLE_REDIRECT_URI")},
-		WebAuthn:   WebAuthnConfig{valueOrDefault("WEBAUTHN_RP_ID", "localhost"), valueOrDefault("WEBAUTHN_RP_ORIGIN", "http://localhost:5173"), valueOrDefault("WEBAUTHN_RP_DISPLAY_NAME", "Samurai Meet")},
+		WebAuthn:   WebAuthnConfig{valueOrDefault("WEBAUTHN_RP_ID", "localhost"), valueOrDefault("WEBAUTHN_RP_ORIGIN", "http://localhost:8081"), valueOrDefault("WEBAUTHN_RP_DISPLAY_NAME", "Samurai Meet")},
 		JWS:        JWSConfig{os.Getenv("JWS_SIGNING_KEY"), valueOrDefault("JWS_KEY_ID", "v1"), os.Getenv("JWS_VERIFY_KEYS"), valueOrDefault("JWS_ISSUER", "samurai-meet-api"), valueOrDefault("JWS_AUDIENCE", "samurai-meet-mobile")},
 	}
 }

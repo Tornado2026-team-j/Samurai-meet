@@ -10,6 +10,7 @@ import {
   storedSession,
   type Session,
 } from '../services/auth-contract';
+import { defaultAPIBaseURL, isLocalWebOrigin, originFromAPIBaseURL } from '../services/api-config';
 
 const session: Session = {
   user_id: 'user-1',
@@ -19,6 +20,22 @@ const session: Session = {
 };
 
 describe('認証handoff契約', () => {
+  it('ローカルWebだけ開発APIを既定値にする', () => {
+    expect(isLocalWebOrigin({ protocol: 'http:', hostname: 'localhost' })).toBe(true);
+    expect(isLocalWebOrigin({ protocol: 'http:', hostname: '127.0.0.1' })).toBe(true);
+    expect(isLocalWebOrigin({ protocol: 'https:', hostname: 'localhost' })).toBe(false);
+    expect(isLocalWebOrigin({ protocol: 'http:', hostname: 'samurai-meet.disnana.com' })).toBe(false);
+    expect(defaultAPIBaseURL({ protocol: 'http:', hostname: 'localhost' }, 'development')).toBe('http://127.0.0.1:8080/api/v1');
+    expect(defaultAPIBaseURL({ protocol: 'http:', hostname: 'localhost' }, 'production')).toBe('https://samurai-meet.disnana.com/api/v1');
+    expect(defaultAPIBaseURL({ protocol: 'https:', hostname: 'samurai-meet.disnana.com' }, 'development')).toBe('https://samurai-meet.disnana.com/api/v1');
+  });
+
+  it('API上書きから同じWeb Passkey originを導出する', () => {
+    expect(originFromAPIBaseURL('http://192.168.0.10:8080/api/v1')).toBe('http://192.168.0.10:8080');
+    expect(originFromAPIBaseURL('https://samurai-meet.disnana.com/api/v1/')).toBe('https://samurai-meet.disnana.com');
+    expect(originFromAPIBaseURL('not a url')).toBeNull();
+  });
+
   it('認証redirectからOAuth handoff codeを取り出す', () => {
     expect(parseAuthRedirect('samuraimeet://auth?handoff_code=one-time-code')).toEqual({
       handoffCode: 'one-time-code',

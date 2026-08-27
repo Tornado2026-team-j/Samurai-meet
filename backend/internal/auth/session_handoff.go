@@ -37,15 +37,15 @@ func (s *SessionHandoffService) Create(ctx context.Context, userID, sessionID, a
 	if s.db == nil || s.sessions == nil || s.signer == nil || userID == "" || sessionID == "" || appRedirectURI == "" || challenge == "" {
 		return SessionHandoff{}, ErrSessionHandoff
 	}
-	recent, err := s.sessions.HasRecentPasskey(ctx, userID, sessionID, now)
-	if err != nil || !recent {
-		return SessionHandoff{}, ErrSessionHandoff
-	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return SessionHandoff{}, err
 	}
 	defer tx.Rollback()
+	recent, err := s.sessions.hasRecentPasskeyTx(ctx, tx, userID, sessionID, now)
+	if err != nil || !recent {
+		return SessionHandoff{}, ErrSessionHandoff
+	}
 	tokens, err := s.sessions.createSessionTx(ctx, tx, userID, now, true)
 	if err != nil {
 		return SessionHandoff{}, err

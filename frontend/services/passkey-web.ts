@@ -1,9 +1,9 @@
 import { API_BASE_URL } from './api-config';
+import { fetchWithAutoRefresh } from './authenticated-fetch';
 import { isSession, type PasskeyBridgeRequest, type PreAuth, type Session } from './auth-contract';
 
 const PASSKEY_REQUEST_TIMEOUT_MS = 15_000;
 
-type PasskeySession = Pick<Session, 'user_id' | 'session_id' | 'access_token'>;
 type PasskeyOptionsResponse = {
   data?: {
     ceremony_token?: string;
@@ -52,6 +52,29 @@ async function request<T>(path: string, init: RequestInit = {}, token?: string):
   } finally {
     clearTimeout(timeoutID);
     externalSignal?.removeEventListener('abort', abortFromExternalSignal);
+  }
+}
+
+async function requestWithSession<T>(path: string, init: RequestInit, session: Session): Promise<T> {
+  try {
+    const response = await fetchWithAutoRefresh(path, session, init, PASSKEY_REQUEST_TIMEOUT_MS);
+    const text = await response.text();
+    let body: T | { error?: string } | null = null;
+    try {
+      body = text ? (JSON.parse(text) as T | { error?: string }) : null;
+    } catch {
+      body = null;
+    }
+    if (!response.ok) {
+      const error = body && typeof body === 'object' && 'error' in body ? body.error : undefined;
+      throw new Error(`${response.status}: ${error ?? 'request failed'}`);
+    }
+    return body as T;
+  } catch (reason) {
+    if (reason instanceof Error && reason.name === 'AbortError' && !init.signal?.aborted) {
+      throw new Error('通信がタイムアウトしました。接続を確認して再試行してください。');
+    }
+    throw reason;
   }
 }
 
@@ -180,20 +203,20 @@ export async function completeWebPasskey(preAuth: PreAuth): Promise<Session> {
   return preAuth.passkey_registered ? loginPasskey(preAuth) : registerPasskey(preAuth);
 }
 
-export async function reauthWebPasskey(session: PasskeySession): Promise<void> {
+export async function reauthWebPasskey(session: Session): Promise<void> {
   assertWebAuthn();
-  const options = passkeyOptions(await request<PasskeyOptionsResponse>(
+  const options = passkeyOptions(await requestWithSession<PasskeyOptionsResponse>(
     '/auth/passkey/reauth/options',
     { method: 'POST' },
-    session.access_token,
+    session,
   ));
   const credential = await navigator.credentials.get({ publicKey: normalizeRequestOptions(options.publicKey) });
   if (!(credential instanceof PublicKeyCredential)) throw new Error('Passkey再認証がキャンセルされました');
-  await request('/auth/passkey/reauth/verify', {
+  await requestWithSession('/auth/passkey/reauth/verify', {
     method: 'POST',
     headers: { 'X-Passkey-Ceremony-Token': options.ceremonyToken },
     body: JSON.stringify(credentialJSON(credential)),
-  }, session.access_token);
+  }, session);
 }
 
 /**
@@ -224,17 +247,17 @@ export async function completeWebPasskeyBridge(bridge: PasskeyBridgeRequest): Pr
 }
 
 export async function startNativeSessionHandoff(
-  session: PasskeySession,
+  session: Session,
   appReturnURI: string,
   handoffChallenge: string,
 ): Promise<string> {
-  const response = await request<HandoffResponse>('/auth/session-handoff/start', {
+  const response = await requestWithSession<HandoffResponse>('/auth/session-handoff/start', {
     method: 'POST',
     body: JSON.stringify({
       app_redirect_uri: appReturnURI,
       handoff_challenge: handoffChallenge,
     }),
-  }, session.access_token);
+  }, session);
   const code = response.data?.handoff_code;
   if (!code || response.data?.app_redirect_uri !== appReturnURI) {
     throw new Error('Session handoff response is invalid');
