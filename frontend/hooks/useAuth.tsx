@@ -30,6 +30,7 @@ type AuthContextValue = AuthSnapshot & {
   login: () => Promise<void>;
   continuePasskey: (language?: AppLanguage) => Promise<boolean>;
   recoverWithRecoveryKey: (recoveryKey: string) => Promise<void>;
+  retryRestore: () => Promise<void>;
   refresh: () => Promise<void>;
   logout: () => Promise<void>;
   logoutAll: () => Promise<void>;
@@ -116,6 +117,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     restoreInFlight.current = pending;
     return pending;
   }, [apply]);
+
+  const retryRestore = useCallback(async () => {
+    await restoreStoredAuth();
+  }, [restoreStoredAuth]);
 
   useEffect(() => {
     return subscribeSessionChanges((next) => {
@@ -319,11 +324,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     login,
     continuePasskey,
     recoverWithRecoveryKey,
+    retryRestore,
     refresh,
     logout,
     logoutAll,
     deleteAccount,
-  }), [busy, continuePasskey, deleteAccount, error, getCurrentSession, login, logout, logoutAll, recoverWithRecoveryKey, refresh, snapshot, status]);
+  }), [busy, continuePasskey, deleteAccount, error, getCurrentSession, login, logout, logoutAll, recoverWithRecoveryKey, refresh, retryRestore, snapshot, status]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

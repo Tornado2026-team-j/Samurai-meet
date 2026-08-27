@@ -695,9 +695,11 @@ export default function OnboardingScreen() {
   const {
     continuePasskey,
     deleteAccount,
+    error: authError,
     getCurrentSession,
     logout,
     refresh,
+    retryRestore,
     session,
     status,
   } = useAuth();
@@ -716,6 +718,7 @@ export default function OnboardingScreen() {
   const [keySetupState, setKeySetupState] = useState<KeySetupState>({ status: "loading" });
   const [keySetupStage, setKeySetupStage] = useState<KeySetupStage>("loading_local");
   const [keyKDFImplementation, setKeyKDFImplementation] = useState<RecoveryKDFImplementation | null>(null);
+  const [restoreRetrying, setRestoreRetrying] = useState(false);
   const sessionRef = useRef(session);
   sessionRef.current = session;
   const languageRef = useRef(language);
@@ -741,6 +744,16 @@ export default function OnboardingScreen() {
         : "Passkey re-authentication failed.");
     } finally {
       setKeySetupActionBusy(false);
+    }
+  };
+
+  const retryAuthRestore = async () => {
+    if (restoreRetrying) return;
+    setRestoreRetrying(true);
+    try {
+      await retryRestore();
+    } finally {
+      setRestoreRetrying(false);
     }
   };
 
@@ -956,7 +969,33 @@ export default function OnboardingScreen() {
     return (
       <View style={styles.loadingScreen}>
         <StatusBar style="dark" />
-        <ActivityIndicator color={BLUE} size="large" />
+        {authError ? (
+          <>
+            <MaterialIcons color={YELLOW} name="cloud-off" size={42} />
+            <Text accessibilityRole="alert" style={styles.loadingText}>{authError}</Text>
+            <Text style={styles.loadingHint}>
+              接続を確認してから再試行してください。 / Check the connection and retry.
+            </Text>
+            <Pressable
+              accessibilityRole="button"
+              disabled={restoreRetrying}
+              onPress={() => void retryAuthRestore()}
+              style={({ pressed }) => [
+                styles.restoreRetryButton,
+                restoreRetrying && styles.disabled,
+                pressed && styles.pressed,
+              ]}
+            >
+              {restoreRetrying ? (
+                <ActivityIndicator color="#ffffff" />
+              ) : (
+                <Text style={styles.restoreRetryButtonText}>再試行 / Retry</Text>
+              )}
+            </Pressable>
+          </>
+        ) : (
+          <ActivityIndicator color={BLUE} size="large" />
+        )}
       </View>
     );
   }
@@ -1244,6 +1283,21 @@ const styles = StyleSheet.create({
     marginTop: 6,
     color: MUTED_GRAY,
     fontSize: 12,
+  },
+  restoreRetryButton: {
+    minWidth: 132,
+    minHeight: 40,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 18,
+    paddingHorizontal: 18,
+    borderRadius: 20,
+    backgroundColor: YELLOW,
+  },
+  restoreRetryButtonText: {
+    color: "#ffffff",
+    fontSize: 13,
+    fontWeight: "800",
   },
   keySetupErrorScreen: {
     flex: 1,

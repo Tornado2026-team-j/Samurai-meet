@@ -10,7 +10,12 @@ import {
   storedSession,
   type Session,
 } from '../services/auth-contract';
-import { defaultAPIBaseURL, isLocalWebOrigin, originFromAPIBaseURL } from '../services/api-config';
+import {
+  defaultAPIBaseURL,
+  isLocalWebOrigin,
+  localNativeAPIBaseURL,
+  originFromAPIBaseURL,
+} from '../services/api-config';
 
 const session: Session = {
   user_id: 'user-1',
@@ -28,6 +33,13 @@ describe('認証handoff契約', () => {
     expect(defaultAPIBaseURL({ protocol: 'http:', hostname: 'localhost' }, 'development')).toBe('http://127.0.0.1:8080/api/v1');
     expect(defaultAPIBaseURL({ protocol: 'http:', hostname: 'localhost' }, 'production')).toBe('https://samurai-meet.disnana.com/api/v1');
     expect(defaultAPIBaseURL({ protocol: 'https:', hostname: 'samurai-meet.disnana.com' }, 'development')).toBe('https://samurai-meet.disnana.com/api/v1');
+  });
+
+  it('ネイティブ開発時はMetroのプライベートホストへローカルAPIを接続する', () => {
+    expect(localNativeAPIBaseURL('192.168.1.24:8081')).toBe('http://192.168.1.24:8080/api/v1');
+    expect(defaultAPIBaseURL(undefined, 'development', '192.168.1.24:8081')).toBe('http://192.168.1.24:8080/api/v1');
+    expect(defaultAPIBaseURL(undefined, 'production', '192.168.1.24:8081')).toBe('https://samurai-meet.disnana.com/api/v1');
+    expect(localNativeAPIBaseURL('samurai-meet.disnana.com:8081')).toBeNull();
   });
 
   it('API上書きから同じWeb Passkey originを導出する', () => {
