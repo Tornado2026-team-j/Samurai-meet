@@ -1,29 +1,29 @@
 # アーキテクチャ概要
 
+現行の実装はGo REST API、PostgreSQL、非公開画像ストレージを中心とする。QUIC／WebTransportによるリアルタイム配送とPostGISは将来構成であり、図中の点線で示す。募集の利用日・開始／終了時刻は`Asia/Tokyo`固定の壁時計、絶対時刻はUTCで扱う。
+
 ## 1. システム構成
 
 ```mermaid
 flowchart LR
     App[Expo / React Native<br/>TypeScript]
     API[Go REST API]
-    WS[Go WebSocket]
-    QUIC[Go QUIC / HTTP3]
+    QUIC[予定: Go QUIC / HTTP3 WebTransport]
     Auth[Google OAuth2 / OIDC]
     Passkey[Passkey / WebAuthn]
-    DB[(PostgreSQL<br/>+ PostGIS)]
+    DB[(PostgreSQL)]
     Storage[(Private Image Storage)]
     KMS[KMS / Secret Manager]
     Admin[運営管理 API / UI]
 
     App --> API
-    App --> WS
-    App --> QUIC
+    App -. 予定 .-> QUIC
     API --> Auth
     API --> Passkey
     API --> DB
     API --> Storage
     API --> KMS
-    WS --> DB
+    QUIC -. 予定 .-> DB
     Admin --> API
 ```
 
@@ -32,13 +32,13 @@ flowchart LR
 | レイヤー | 主な責務 | 実装 |
 | --- | --- | --- |
 | Presentation | 画面、フォーム、ナビゲーション、表示状態 | React Native / TypeScript |
-| Client Service | REST、WebSocket、位置情報、Secure Storage | TypeScript |
+| Client Service | REST、位置情報、Secure Storage。QUIC／WebTransportは予定 | TypeScript |
 | API Handler | HTTP 入出力、認証コンテキスト、エラー変換 | Go |
-| Domain Service | カード公開、距離、マッチ、評価、通報のルール | Go |
-| Repository | SQL、トランザクション、PostGIS クエリ | Go + SQL |
-| Persistence | ユーザー、カード、マッチ、メッセージ等 | PostgreSQL + PostGIS |
+| Domain Service | カード公開、Haversine距離、マッチのルール。評価・通報は予定 | Go |
+| Repository | SQL、トランザクション | Go + SQL |
+| Persistence | ユーザー、カード、マッチ、メッセージ等 | PostgreSQL（PostGIS未導入） |
 | File Storage | 写真本体、暗号化済みファイル | 非公開ストレージ |
-| QUIC / HTTP/3 | チャット用の低遅延 transport、Chat Token 検証 | Go + native client module |
+| QUIC / HTTP/3 | チャット用の低遅延transport、Chat Token検証（予定） | Go + native client module |
 
 ## 3. データの流れ
 
@@ -47,7 +47,7 @@ flowchart LR
 1. アプリが位置情報利用の同意を取得する。
 2. アプリが現在地を Go API へ送る。
 3. API が認証ユーザー、精度、期限、入力値を検証する。
-4. PostgreSQL / PostGIS が募集カードとの距離を計算する。
+4. GoのHaversine計算が募集カードとの距離を判定する。PostGISは未導入である。
 5. API が公開半径内か、カードが有効か、ブロック対象でないかを判定する。
 6. アプリへは距離帯または丸めたエリアだけを返す。
 
@@ -56,10 +56,10 @@ flowchart LR
 1. マッチ成立後、アプリがRESTでチャットを遅延作成し、対象chat専用の短命Chat Tokenを取得する。
 2. 現行MVPでは暗号化メッセージをRESTで送受信し、`sequence` cursorで未同期分を補完する。
 3. Go APIがユーザー、match、block、sessionの権限を確認し、平文を復号せず暗号文を保存する。
-4. WebSocketを追加する場合は、同じChat Tokenで接続し、サーバー時刻・sequenceを付与して相手へ配信する。
+4. 将来、QUIC（native QUICまたはHTTP/3 WebTransport）へ同じChat Tokenで接続し、サーバー時刻・sequenceを付与して相手へ配信する。現行はこの段階を実装していない。
 5. 会合中のBluetooth／位置推測値は別の短期補助APIで受け、認証や安全判定には利用しない。
 
-QUIC / WebTransport を採用する場合は、通常の Access Token とは別に Chat Token を発行します。Chat Token の期限・切り替えは Access Token の Refresh 処理とは独立させ、対象 `chat_id` と `sid` に限定します。Refresh Token は QUIC 上へ送信しません。
+現行のチャットはRESTの履歴取得・暗号文送信・既読更新を中心とし、リアルタイム配送は未実装です。将来の候補としてQUICを標準とし、HTTP/3 WebTransportもQUIC上の実装形態として扱います。WebSocketを採用する場合は、技術的成立性・性能・保守性・セキュリティ影響を比較してチームで合意します。Chat Tokenは通常のAccess Tokenとは別に発行する設計ですが、現行HTTP handlerの既定`quic`とチャットサービスの受理値`websocket`／`webtransport`が不一致であるため、token endpointもコード整合まで動作済みとみなしません。Refresh Tokenは将来のtransportへ送信しません。
 
 ### 3.3 写真
 
@@ -118,7 +118,8 @@ stateDiagram-v2
 | Google 認証失敗 | セッションを作成せず、再試行可能なエラーを表示 |
 | Passkey 認証失敗 | 認証情報の有無を推測できないメッセージを表示 |
 | 位置情報拒否 | 位置情報なし検索へフォールバック。正確な距離検索は不可 |
-| WebSocket 切断 | 再接続し、REST で未同期メッセージを補完 |
+| QUIC 切断（将来実装） | 再接続し、REST で未同期メッセージを補完。現行はRESTポーリングを使う |
+| チャット送信結果不明 | 同じ `client_message_id` で期限・回数を制限して再送し、サーバー側の冪等結果を受け取る |
 | 写真アップロード失敗 | 再試行可能な状態を表示し、未完了ファイルを公開しない |
 | DB 一時障害 | リクエスト ID を返し、リトライ可能な処理だけ再試行 |
 | Recovery Phrase 紛失 | 原則として復号不可。登録時に明示し、サポートは復号できない |
@@ -130,7 +131,7 @@ stateDiagram-v2
 - アクセストークンは JWS 署名付き JWT とし、JWT の `sid` で DB のセッションを参照する。
 - API は署名と有効期限の検証後、`sessions.revoked_at IS NULL`、ユーザー状態、セッション期限を確認する。
 - Redis 等の別セッション DB は導入しない。
-- WebSocket は接続時と heartbeat 時にセッションを再検証し、失効を検知したら接続を閉じる。
+- 将来のQUICは接続時とheartbeat時にセッションを再検証し、失効を検知したら接続を閉じる。現行のRESTにはQUIC接続状態はない。
 - PostgreSQL の複数 API インスタンスで即時通知が必要になった場合は、PostgreSQL の `LISTEN / NOTIFY` を利用する。
 
 ## 8. クライアント所有暗号鍵（v2）

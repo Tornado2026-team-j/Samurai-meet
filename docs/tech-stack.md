@@ -1,5 +1,7 @@
 # 技術選定・実装分担
 
+本表は、現行実装と将来の採用候補を分けて読む。現行のチャット配送はRESTであり、QUIC／WebTransportは未実装の計画である。募集日時は`Asia/Tokyo`固定の壁時計、絶対時刻はUTCとする。
+
 ## 1. 結論
 
 Samurai Meet は、次の分担で実装します。
@@ -8,19 +10,18 @@ Samurai Meet は、次の分担で実装します。
 | --- | --- | --- | --- |
 | モバイル UI | 画面、フォーム、ナビゲーション | TypeScript / TSX | Expo、React Native、Expo Router、`frontend/app` |
 | クライアント状態管理 | 認証状態、検索条件、チャット状態 | TypeScript | React Hooks、`frontend/hooks` |
-| クライアント通信 | REST、WebSocket、認証セッション | TypeScript | `frontend/services/api.ts`、`websocket.ts` |
+| クライアント通信 | REST、認証セッション。QUIC／WebTransportは予定 | TypeScript | `frontend/services/api.ts`。`quic.ts`は未実装 |
 | クライアント暗号化 | Key-A、Recovery Key、HKDF、AES-GCM | TypeScript + OS の暗号 API | Secure Storage、必要に応じて Expo Native Module |
 | Google 認証クライアント | OAuth2 / OIDC の開始、コールバック | TypeScript | Expo Auth Session 等 |
 | Passkey クライアント | Passkey の登録・認証 UI | TypeScript + OS API | WebAuthn / Passkey 対応ライブラリ |
 | REST API | 認証後の業務 API、プロフィール、カード、評価 | Go | `backend/internal/*/handler.go` |
 | 業務ロジック | マッチング、公開半径、状態遷移 | Go | `backend/internal/*/service.go` |
-| WebSocket | チャットの接続、配送、再接続制御 | Go | `backend/internal/chat/websocket.go` |
-| QUIC / HTTP/3 チャット通信 | チャット接続、短命 token、低遅延配送 | Go + TypeScript / native module | Go の QUIC / HTTP/3 server、モバイル native transport。MVP は WebSocket fallback |
+| QUIC / HTTP/3 チャット通信（予定） | チャット接続、短命 token、低遅延配送、再接続制御 | Go + TypeScript / native module | 現在はRESTのチャット部品のみ。QUIC／HTTP/3 serverとモバイルnative transportはPoC後に実装。WebSocketの例外採用はチーム合意が必要 |
 | OAuth / Passkey 検証 | Google ID Token、WebAuthn assertion 検証 | Go | `backend/internal/auth` |
 | 画像 API | アップロード、認可、メタデータ、削除 | Go | `backend/internal/image` |
 | 画像変換・検査 | リサイズ、サムネイル、EXIF 除去、形式検査 | Go | 画像処理ライブラリを採用。運用要件により専用 worker 化 |
 | 永続化 | ユーザー、カード、マッチ、チャット、評価 | Go + SQL | PostgreSQL（開発・CI・運用） |
-| 距離検索 | 現在地と募集カードの距離判定 | SQL | PostgreSQL / PostGIS |
+| 距離検索 | 現在地と募集カードの距離判定 | Go + SQL | 現在はGo Haversine。PostGISは将来候補 |
 | セッション失効 | Access Token の検証、Refresh Token ローテーション | Go + SQL | `sessions`, `refresh_tokens` |
 | DB migration | テーブル、制約、インデックス、削除方針 | SQL | `backend/migrations/*.sql`、PostgreSQLのみ |
 | テスト | UI、API、業務ロジック、E2E、鍵生成 | TypeScript / Go / Python / SQL | Bun test、Go test、Python unittest、API/E2E テスト |
@@ -38,8 +39,9 @@ Samurai Meet は、次の分担で実装します。
 | キーワード検索 | TypeScript で検索条件とカード表示 | Go で条件検証・距離検索・並び替え | `recruitment_cards`、PostgreSQL / PostGIS |
 | 募集カード | TypeScript で作成・編集 UI | Go で状態遷移・期限切れ処理 | `recruitment_cards` |
 | マッチング | TypeScript で関心・承認状態表示 | Go で重複防止・相互承認・認可 | `matches` |
-| チャット | TypeScript で WebSocket、キャッシュ、再接続 | Go で接続認証・配送・順序確定 | `messages` |
-| チャット通信認証 | TypeScript で Chat Token 更新・切替 | Go で `aud`、`chat_id`、`sid`、`token_seq` を検証 | `sessions`、`matches` |
+| チャット | TypeScriptでREST履歴・送信・既読を接続（未接続） | Goで暗号文保存・認可・冪等処理 | `messages` |
+| チャット通信認証（予定） | QUIC接続時のChat Token更新・切替 | Goで`aud`、`chat_id`、`sid`、`token_seq`を検証 | `sessions`、`matches` |
+| 通知 | TypeScriptで一覧・既読・未読表示 | Goでイベント生成・保存・認可 | `notifications` |
 | 写真 | TypeScript で選択・暗号化・送信 | Go で MIME/サイズ/権限/ストレージ処理 | `photos`、非公開ストレージ |
 | 相互評価 | TypeScript で評価フォーム | Go で一回限り制約・集計 | `reviews`, `profile_likes` |
 | 通報・ブロック | TypeScript で入力・非表示制御 | Go で遮断・運営処理・監査 | `reports`, `blocks`, `audit_logs` |
@@ -51,10 +53,10 @@ Samurai Meet は、次の分担で実装します。
 
 - 画面の描画と入力状態の管理
 - OS 権限の取得（位置情報、写真、通知）
-- API / WebSocket クライアント
+- REST APIクライアント。QUIC／WebTransportクライアントは予定
 - クライアントに保持する認証状態
 - Key-A の生成、Secure Storage への保存、暗号化対象データのクライアント処理
-- オフライン時の UI 状態と再接続
+- オフライン時のUI状態とREST再試行。QUIC再接続は予定
 
 ### 3.2 Go で行う処理
 
@@ -62,15 +64,15 @@ Samurai Meet は、次の分担で実装します。
 - セッション、認可、ユーザー状態の管理
 - プロフィール、募集カード、マッチ、チャット、評価の業務処理
 - 公開半径、期限、ブロック状態などのサーバー側判定
-- WebSocket 接続、メッセージ順序、再送・重複排除
-- Chat Token の発行、短期期限、順次切り替え、QUIC / HTTP/3 の接続認証
+- （予定）QUIC接続、メッセージ順序、再送・重複排除
+- Chat Tokenの発行・短期期限・対象chat束縛は部品あり。順次切り替え、QUIC／HTTP/3接続認証は予定
 - 画像アップロードの認証、検査、ストレージ連携
 - 管理者操作と監査ログ
 
 ### 3.3 SQL で行う処理
 
 - テーブル、外部キー、UNIQUE / CHECK 制約
-- PostgreSQL / PostGIS による距離検索
+- 現在はGo Haversineによる距離判定。PostgreSQL / PostGISへの移行は将来候補
 - 検索用インデックス
 - 集計値の再計算、データ保持・削除用の DB 処理
 
@@ -81,7 +83,7 @@ Samurai Meet は、次の分担で実装します。
 - Google のメールアドレスをサービスの主キーにしない。
 - 秘密鍵、Key-A、Recovery Key の平文を Go API のログや DB に保存しない。
 - Access Token は JWS 署名付き JWT、Refresh Token は DB ハッシュ + ローテーションで管理する。
-- WebSocket の認可を UI の表示制御だけに依存しない。
+- 将来QUICを追加しても、その認可をUIの表示制御だけに依存しない。
 
 ## 5. 実装時の注意
 

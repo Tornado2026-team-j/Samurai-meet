@@ -10,7 +10,7 @@
 | F-04 | 現在地・検索 | [location-search.md](location-search.md) |
 | F-05 | 募集・マッチング | [matching.md](matching.md) |
 | F-06 | チャット | [chat.md](chat.md) |
-| F-06b | チャット通信トークン（QUIC / WebTransport） | [chat-transport.md](chat-transport.md) |
+| F-06b | 予定：チャット通信トークン（QUIC） | [chat-transport.md](chat-transport.md) |
 | F-07 | 写真 | [photos.md](photos.md) |
 | F-08 | 相互評価・いいね | [reviews.md](reviews.md) |
 | F-09 | 通報・ブロック | [safety.md](safety.md) |
