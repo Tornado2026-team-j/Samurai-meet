@@ -40,6 +40,7 @@ export type NotificationView = {
   period: NotificationPeriod;
   destination: NotificationDestination;
   targetId: string;
+  recruitmentId?: string;
 };
 
 // Keep the old screen-facing names as aliases while both roles consume the

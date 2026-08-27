@@ -60,6 +60,31 @@ func recruitmentCollection(service *matching.Service, sessions *auth.SessionServ
 	}
 }
 
+func ownedRecruitmentCollection(service *matching.Service, sessions *auth.SessionService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims, ok := accessClaims(r, sessions)
+		if !ok {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing_or_invalid_access_token"})
+			return
+		}
+		if service == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "matching_unavailable"})
+			return
+		}
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", "GET")
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		items, err := service.ListOwnedRecruitments(r.Context(), claims.Subject, time.Now())
+		if err != nil {
+			writeMatchingError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"data": items})
+	}
+}
+
 func recruitmentItem(service *matching.Service, sessions *auth.SessionService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		claims, ok := accessClaims(r, sessions)
@@ -234,6 +259,8 @@ func matchAction(service *matching.Service, sessions *auth.SessionService, meeti
 			result, err = service.CompleteMatch(r.Context(), claims.Subject, matchID, time.Now())
 		case "reject":
 			result, err = service.RejectMatch(r.Context(), claims.Subject, matchID, time.Now())
+		case "withdraw":
+			result, err = service.WithdrawInterest(r.Context(), claims.Subject, matchID, time.Now())
 		default:
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "match_not_found"})
 			return

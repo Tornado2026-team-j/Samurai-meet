@@ -1,5 +1,5 @@
 import type { Session } from "./auth-contract";
-import { requestAPI } from "./api-client";
+import { APIError, requestAPI } from "./api-client";
 import type { MatchCardData, MatchCategory } from "../types/match";
 
 export type RecruitmentStatus =
@@ -14,6 +14,7 @@ export type MatchStatus =
   | "pending"
   | "accepted"
   | "rejected"
+  | "cancelled"
   | "blocked"
   | "expired"
   | "completed";
@@ -52,6 +53,22 @@ export type RecruitmentCreateRequest = {
   longitude?: number;
   location_accuracy_m?: number;
   status: Extract<RecruitmentStatus, "draft" | "open" | "closed">;
+};
+
+export type RecruitmentUpdateRequest = {
+  category?: MatchCategory;
+  available_date?: string;
+  start_time?: string;
+  end_time?: string;
+  timezone?: string;
+  keywords?: string[];
+  description?: string;
+  visibility_radius_km?: 1 | 3 | 5;
+  latitude?: number;
+  longitude?: number;
+  location_accuracy_m?: number;
+  clear_location?: boolean;
+  status?: Extract<RecruitmentStatus, "draft" | "open" | "closed">;
 };
 
 export type RecruitmentSearchParams = {
@@ -174,17 +191,77 @@ export async function getRecruitment(
   return response.data;
 }
 
+export async function listMyRecruitments(
+  session: Session,
+  signal?: AbortSignal,
+): Promise<Recruitment[]> {
+  const response = await requestAPI<DataResponse<Recruitment[]>>(
+    "/recruitments/mine",
+    session,
+    { method: "GET", signal },
+  );
+  return Array.isArray(response.data) ? response.data : [];
+}
+
+export async function updateRecruitment(
+  recruitmentId: string,
+  session: Session,
+  patch: RecruitmentUpdateRequest,
+  signal?: AbortSignal,
+): Promise<Recruitment> {
+  const response = await requestAPI<DataResponse<Recruitment>>(
+    `/recruitments/${encodeURIComponent(recruitmentId)}`,
+    session,
+    { method: "PATCH", body: JSON.stringify(patch), signal },
+  );
+  if (!response.data) throw new Error("recruitment response is empty");
+  return response.data;
+}
+
+export async function closeRecruitment(
+  recruitmentId: string,
+  session: Session,
+  signal?: AbortSignal,
+): Promise<void> {
+  await requestAPI<null>(
+    `/recruitments/${encodeURIComponent(recruitmentId)}`,
+    session,
+    { method: "DELETE", signal },
+  );
+}
+
 export async function sendRecruitmentInterest(
   recruitmentId: string,
   session: Session,
   signal?: AbortSignal,
 ): Promise<RecruitmentInterest | null> {
-  const response = await requestAPI<DataResponse<RecruitmentInterest>>(
-    `/recruitments/${encodeURIComponent(recruitmentId)}/interest`,
-    session,
-    { method: "POST", signal },
-  );
-  return response.data ?? null;
+  try {
+    const response = await requestAPI<DataResponse<RecruitmentInterest>>(
+      `/recruitments/${encodeURIComponent(recruitmentId)}/interest`,
+      session,
+      { method: "POST", signal },
+    );
+    return response.data ?? null;
+  } catch (error) {
+    if (error instanceof APIError && error.status === 409 && error.code === "interest_already_sent") {
+      const existing = error.data;
+      if (isRecruitmentInterest(existing)) return existing;
+    }
+    throw error;
+  }
+}
+
+function isRecruitmentInterest(value: unknown): value is RecruitmentInterest {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Record<string, unknown>;
+  return typeof candidate.id === "string"
+    && candidate.id.length > 0
+    && typeof candidate.recruitment_id === "string"
+    && candidate.recruitment_id.length > 0
+    && typeof candidate.status === "string"
+    && ["pending", "accepted", "rejected", "cancelled", "blocked", "expired", "completed"].includes(candidate.status)
+    && typeof candidate.created_at === "string"
+    && typeof candidate.updated_at === "string";
 }
 
 export async function listMatches(
@@ -243,6 +320,20 @@ export function rejectMatch(
   signal?: AbortSignal,
 ): Promise<RecruitmentInterest> {
   return updateMatch(matchId, "reject", session, signal);
+}
+
+export async function withdrawRecruitmentInterest(
+  matchId: string,
+  session: Session,
+  signal?: AbortSignal,
+): Promise<RecruitmentInterest> {
+  const response = await requestAPI<DataResponse<RecruitmentInterest>>(
+    `/matches/${encodeURIComponent(matchId)}/withdraw`,
+    session,
+    { method: "POST", signal },
+  );
+  if (!response.data) throw new Error("match response is empty");
+  return response.data;
 }
 
 export function completeMatch(

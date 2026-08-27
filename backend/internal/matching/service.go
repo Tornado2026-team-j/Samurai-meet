@@ -332,6 +332,63 @@ func (s *Service) SearchRecruitments(ctx context.Context, userID string, params 
 	return result, nil
 }
 
+// ListOwnedRecruitments returns every recruitment owned by the authenticated
+// user, including drafts and closed or expired history. It is intentionally a
+// separate operation from public search, which must never include the caller's
+// own cards.
+func (s *Service) ListOwnedRecruitments(ctx context.Context, userID string, now time.Time) ([]Recruitment, error) {
+	if s == nil || s.db == nil || strings.TrimSpace(userID) == "" {
+		return nil, ErrRecruitmentNotFound
+	}
+	nowText := now.UTC().Format(time.RFC3339Nano)
+	if _, err := s.db.ExecContext(ctx, `
+		UPDATE recruitment_cards SET status='expired',updated_at=$1
+		WHERE owner_user_id=$2 AND status IN ('open','matched') AND expires_at <= $1`, nowText, userID); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT r.id, r.owner_user_id, r.category, COALESCE(p.name,''),
+		       COALESCE(p.nationality_code,''), r.available_date, r.start_time,
+		       r.end_time, r.timezone, r.keywords_json, r.description,
+		       r.visibility_radius_km, r.latitude, r.longitude,
+		       r.location_accuracy_m, r.status, r.expires_at, r.created_at,
+		       r.updated_at, COALESCE(p.identity_status,'unverified')
+		FROM recruitment_cards r
+		JOIN users u ON u.id=r.owner_user_id AND u.status='active'
+		LEFT JOIN profiles p ON p.user_id=r.owner_user_id
+		WHERE r.owner_user_id=$1
+		ORDER BY r.updated_at DESC
+		LIMIT $2`, userID, maxSearchLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make([]Recruitment, 0, maxSearchLimit)
+	for rows.Next() {
+		var record cardRecord
+		if err = rows.Scan(
+			&record.ID, &record.OwnerUserID, &record.Category, &record.AuthorName,
+			&record.NationalityCode, &record.AvailableDate, &record.StartTime,
+			&record.EndTime, &record.Timezone, &record.KeywordsJSON, &record.Description,
+			&record.VisibilityRadiusKM, &record.Latitude, &record.Longitude,
+			&record.LocationAccuracyM, &record.Status, &record.ExpiresAt, &record.CreatedAt,
+			&record.UpdatedAt, &record.IdentityStatus,
+		); err != nil {
+			return nil, err
+		}
+		keywords, decodeErr := decodeKeywords(record.KeywordsJSON)
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+		result = append(result, buildRecruitment(record, keywords, ""))
+	}
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
 func (s *Service) GetRecruitment(ctx context.Context, userID, recruitmentID string, now time.Time) (Recruitment, error) {
 	record, err := s.loadCard(ctx, recruitmentID)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -372,7 +429,7 @@ func (s *Service) UpdateRecruitment(ctx context.Context, userID, recruitmentID s
 	if record.OwnerUserID != userID {
 		return Recruitment{}, ErrForbidden
 	}
-	if record.Status == "expired" || record.Status == "completed" {
+	if record.Status == "expired" || record.Status == "completed" || record.Status == "closed" {
 		return Recruitment{}, ErrInvalidState
 	}
 	if record.Status == "matched" && changesRecruitmentContent(patch) {
@@ -536,6 +593,86 @@ func (s *Service) SendInterest(ctx context.Context, userID, recruitmentID string
 		return Match{}, err
 	}
 	return Match{ID: id, RecruitmentID: recruitmentID, Status: "pending", CreatedAt: created, UpdatedAt: created}, nil
+}
+
+// WithdrawInterest allows only the requester to cancel a pending application.
+// A cancelled application remains in matches so the owner and requester keep
+// a consistent history and the unique card/requester relation stays intact.
+func (s *Service) WithdrawInterest(ctx context.Context, userID, matchID string, now time.Time) (Match, error) {
+	if s == nil || s.db == nil || strings.TrimSpace(userID) == "" || strings.TrimSpace(matchID) == "" {
+		return Match{}, ErrMatchNotFound
+	}
+	if err := s.expirePendingMatches(ctx, now); err != nil {
+		return Match{}, err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Match{}, err
+	}
+	defer tx.Rollback()
+
+	var match Match
+	var ownerID, requesterID, description, expiresAt string
+	var matchedAt sql.NullString
+	if err = tx.QueryRowContext(ctx, `
+		SELECT m.id,m.card_id,m.requester_user_id,m.owner_user_id,m.status,
+		       m.matched_at,m.created_at,m.updated_at,r.expires_at,r.description
+		FROM matches m JOIN recruitment_cards r ON r.id=m.card_id
+		WHERE m.id=$1 FOR UPDATE`, matchID).Scan(
+		&match.ID, &match.RecruitmentID, &requesterID, &ownerID, &match.Status,
+		&matchedAt, &match.CreatedAt, &match.UpdatedAt, &expiresAt, &description); errors.Is(err, sql.ErrNoRows) {
+		return Match{}, ErrMatchNotFound
+	} else if err != nil {
+		return Match{}, err
+	}
+	if matchedAt.Valid {
+		match.MatchedAt = matchedAt.String
+	}
+	if requesterID != userID {
+		return Match{}, ErrForbidden
+	}
+	if match.Status != "pending" {
+		return Match{}, ErrInvalidState
+	}
+	if !beforeExpiry(expiresAt, now) {
+		updated := now.UTC().Format(time.RFC3339Nano)
+		if _, err = tx.ExecContext(ctx, `UPDATE matches SET status='expired',updated_at=$1 WHERE id=$2 AND status='pending'`, updated, matchID); err != nil {
+			return Match{}, err
+		}
+		if err = tx.Commit(); err != nil {
+			return Match{}, err
+		}
+		return Match{}, ErrRecruitmentExpired
+	}
+	updated := now.UTC().Format(time.RFC3339Nano)
+	if _, err = tx.ExecContext(ctx, `
+		UPDATE matches SET status='cancelled',updated_at=$1
+		WHERE id=$2 AND requester_user_id=$3 AND status='pending'`, updated, matchID, userID); err != nil {
+		return Match{}, err
+	}
+	if s.notifications != nil {
+		actorName, nameErr := s.notificationActorNameTx(ctx, tx, requesterID)
+		if nameErr != nil {
+			return Match{}, nameErr
+		}
+		if err = s.notifications.CreateTx(ctx, tx, notification.CreateInput{
+			UserID:        ownerID,
+			EventKey:      "application_withdrawn:" + matchID,
+			Type:          notification.TypeApplicationWithdrawn,
+			TargetID:      matchID,
+			RecruitmentID: match.RecruitmentID,
+			Destination:   notification.DestinationApplicants,
+			ActorName:     actorName,
+			Context:       description,
+		}, now); err != nil {
+			return Match{}, err
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return Match{}, err
+	}
+	match.Status, match.UpdatedAt = "cancelled", updated
+	return match, nil
 }
 
 func (s *Service) ListMatches(ctx context.Context, userID string, params MatchListParams, now time.Time) ([]MatchView, error) {
@@ -1000,7 +1137,7 @@ func normalizeMatchListParams(params MatchListParams) (MatchListParams, error) {
 	}
 	params.Status = strings.TrimSpace(params.Status)
 	if params.Status != "" && params.Status != "pending" && params.Status != "accepted" &&
-		params.Status != "rejected" && params.Status != "blocked" && params.Status != "expired" &&
+		params.Status != "rejected" && params.Status != "cancelled" && params.Status != "blocked" && params.Status != "expired" &&
 		params.Status != "completed" {
 		return MatchListParams{}, ErrInvalidInput
 	}

@@ -14,6 +14,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "../../hooks/useAuth";
 import { APIError } from "../../services/api-client";
 import {
+  getNotificationNavigation,
   listNotifications,
   markNotificationRead,
   toNotificationView,
@@ -262,11 +263,8 @@ export default function JapaneseNotificationsScreen() {
       }
     }
 
-    if (notification.type !== "match_confirmed" && notification.type !== "application_rejected") return;
-    router.push({
-      pathname: "/japanese/guide-requested",
-      params: { matchId: notification.targetId },
-    });
+    const navigation = getNotificationNavigation(notification);
+    if (navigation) router.push(navigation);
   };
 
   return (

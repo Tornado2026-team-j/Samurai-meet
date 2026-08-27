@@ -119,6 +119,7 @@ func NewRouterWithOptions(o RouterOptions) http.Handler {
 	}
 	if o.Sessions != nil && o.Matching != nil {
 		m.HandleFunc(recruitmentPath, recruitmentCollection(o.Matching, o.Sessions))
+		m.HandleFunc(recruitmentPath+"/mine", ownedRecruitmentCollection(o.Matching, o.Sessions))
 		m.HandleFunc(recruitmentPath+"/", recruitmentItem(o.Matching, o.Sessions))
 		m.HandleFunc(APIV1Prefix+"/matches", matchCollection(o.Matching, o.Sessions))
 		m.HandleFunc(APIV1Prefix+"/matches/", matchAction(o.Matching, o.Sessions, o.Meetings))

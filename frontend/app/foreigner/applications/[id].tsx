@@ -10,10 +10,13 @@ import {
   View,
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "../../../hooks/useAuth";
+import { APIError } from "../../../services/api-client";
 import {
   acceptMatch,
   getMatch,
+  listMatches,
   rejectMatch,
   type MatchView,
 } from "../../../services/matching";
@@ -27,9 +30,14 @@ const SOFT_BLUE = "#eff8ff";
 
 export default function ForeignerApplicationDetailScreen() {
   const router = useRouter();
-  const { getCurrentSession, session, status } = useAuth();
-  const { id } = useLocalSearchParams<{ id?: string | string[] }>();
+  const insets = useSafeAreaInsets();
+  const { getCurrentSession, refresh, session, status } = useAuth();
+  const { id, recruitmentId } = useLocalSearchParams<{
+    id?: string | string[];
+    recruitmentId?: string | string[];
+  }>();
   const applicationId = Array.isArray(id) ? id[0] : id;
+  const recruitmentID = Array.isArray(recruitmentId) ? recruitmentId[0] : recruitmentId;
   const [application, setApplication] = useState<MatchView | null>(null);
   const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading");
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -53,7 +61,37 @@ export default function ForeignerApplicationDetailScreen() {
       setLoadState("loading");
       setLoadError(null);
       try {
-        const result = await getMatch(applicationId, activeSession, controller.signal);
+        const loadWithSession = async (currentSession: typeof activeSession) => {
+          try {
+            return await getMatch(applicationId, currentSession, controller.signal);
+          } catch (error) {
+            if (!(error instanceof APIError) || error.status !== 404) throw error;
+            const ownerMatches = await listMatches(
+              currentSession,
+              { role: "owner", limit: 50 },
+              controller.signal,
+            );
+            const fallback = ownerMatches.find((item) =>
+              item.id === applicationId
+              || item.recruitment.id === recruitmentID
+              || item.recruitment.id === applicationId,
+            );
+            if (!fallback) throw error;
+            return fallback;
+          }
+        };
+        const loadWithRefresh = async () => {
+          try {
+            return await loadWithSession(activeSession);
+          } catch (error) {
+            if (!(error instanceof APIError) || error.status !== 401) throw error;
+            await refresh();
+            const refreshedSession = getCurrentSession();
+            if (!refreshedSession) throw error;
+            return loadWithSession(refreshedSession);
+          }
+        };
+        const result = await loadWithRefresh();
         if (!cancelled) {
           setApplication(result);
           setLoadState("ready");
@@ -72,7 +110,7 @@ export default function ForeignerApplicationDetailScreen() {
       cancelled = true;
       controller.abort();
     };
-  }, [applicationId, getCurrentSession, session, status]);
+  }, [applicationId, getCurrentSession, refresh, recruitmentID, session, status]);
 
   if (!application) {
     return (
@@ -96,8 +134,12 @@ export default function ForeignerApplicationDetailScreen() {
 
   const choseGuide = application.status === "accepted" || application.status === "completed";
   const declined = application.status === "rejected";
+  const withdrawn = application.status === "cancelled";
   const unavailable = application.status === "expired" || application.status === "blocked";
-  const decided = choseGuide || declined || unavailable;
+  const recruitmentClosed = application.status === "pending"
+    && application.recruitment.status !== "open"
+    && application.recruitment.status !== "matched";
+  const decided = choseGuide || declined || withdrawn || unavailable || recruitmentClosed;
 
   const decide = async (action: "accept" | "reject") => {
     if (decided || actionState !== "idle") return;
@@ -110,9 +152,19 @@ export default function ForeignerApplicationDetailScreen() {
     setActionState(action === "accept" ? "accepting" : "rejecting");
     setActionError(null);
     try {
-      const result = action === "accept"
-        ? await acceptMatch(application.id, activeSession)
-        : await rejectMatch(application.id, activeSession);
+      const runAction = async (currentSession: typeof activeSession) => action === "accept"
+        ? await acceptMatch(application.id, currentSession)
+        : await rejectMatch(application.id, currentSession);
+      let result;
+      try {
+        result = await runAction(activeSession);
+      } catch (error) {
+        if (!(error instanceof APIError) || error.status !== 401) throw error;
+        await refresh();
+        const refreshedSession = getCurrentSession();
+        if (!refreshedSession) throw error;
+        result = await runAction(refreshedSession);
+      }
       setApplication((current) => current ? { ...current, status: result.status, updated_at: result.updated_at, matched_at: result.matched_at } : current);
     } catch {
       setActionError("応募の処理に失敗しました。最新状態を確認して再試行してください。");
@@ -131,7 +183,11 @@ export default function ForeignerApplicationDetailScreen() {
           accessibilityRole="button"
           hitSlop={10}
           onPress={() => router.back()}
-          style={({ pressed }) => [styles.backButton, pressed && styles.pressed]}
+          style={({ pressed }) => [
+            styles.backButton,
+            { top: Math.max(insets.top + 8, 49) },
+            pressed && styles.pressed,
+          ]}
         >
           <MaterialIcons color="#ffffff" name="chevron-left" size={30} />
         </Pressable>
@@ -140,7 +196,7 @@ export default function ForeignerApplicationDetailScreen() {
       </View>
 
       <ScrollView
-        contentContainerStyle={styles.content}
+        contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 220 }]}
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.profileCard}>
@@ -160,7 +216,12 @@ export default function ForeignerApplicationDetailScreen() {
         </View>
       </ScrollView>
 
-      <View style={styles.bottomActions}>
+      <View
+        style={[
+          styles.bottomActions,
+          { paddingBottom: Math.max(insets.bottom + 20, 34) },
+        ]}
+      >
         {decided ? (
           <View
             accessibilityRole="text"
@@ -177,10 +238,14 @@ export default function ForeignerApplicationDetailScreen() {
                 declined && styles.resultTextDeclined,
               ]}
             >
-              {choseGuide
-                ? "Guide chosen"
-                : unavailable && application.status === "expired"
-                  ? "Application expired"
+                {choseGuide
+                  ? "Guide chosen"
+                  : withdrawn
+                    ? "Application withdrawn"
+                    : recruitmentClosed
+                      ? "Recruitment closed"
+                  : unavailable && application.status === "expired"
+                    ? "Application expired"
                   : unavailable
                     ? "Application unavailable"
                     : "Application declined"}

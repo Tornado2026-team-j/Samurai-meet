@@ -4,6 +4,7 @@ const PROTECTED_ROUTE_ROOTS = [
   "/foreigner",
   "/japanese",
   "/profile",
+  "/recruitments",
   "/tabs",
 ] as const;
 

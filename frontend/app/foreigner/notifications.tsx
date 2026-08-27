@@ -14,6 +14,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "../../hooks/useAuth";
 import { APIError } from "../../services/api-client";
 import {
+  getNotificationNavigation,
   listNotifications,
   markNotificationRead,
   toNotificationView,
@@ -262,12 +263,8 @@ export default function ForeignerNotificationsScreen() {
       }
     }
 
-    if (notification.type !== "new_application" && notification.type !== "match_confirmed") return;
-
-    router.push({
-      pathname: "/foreigner/applications/[id]",
-      params: { id: notification.targetId },
-    });
+    const navigation = getNotificationNavigation(notification);
+    if (navigation) router.push(navigation);
   };
 
   return (
