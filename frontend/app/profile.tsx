@@ -4,9 +4,7 @@ import * as Clipboard from "expo-clipboard";
 import { useRouter } from "expo-router";
 import {
   ActivityIndicator,
-  KeyboardAvoidingView,
   Modal,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -26,6 +24,7 @@ import {
   type GeneratedKeyMaterial,
   type RecoveryRotationStage,
 } from "../services/key-management";
+import { resetDeviceLocalData } from "../services/device-reset";
 import { toBase64URL } from "../services/crypto";
 import type { Session } from "../services/auth-contract";
 import {
@@ -80,14 +79,23 @@ const COPY = {
     deviceKeyBUnavailable: "この端末にKey-Bがありません。再認証して端末登録をやり直してください。",
     deviceKeyBRevealError: "Key-Bを表示できませんでした。Passkey再認証後にもう一度お試しください。",
     deviceInfoLoading: "端末情報を読み込んでいます…",
-    regenerateRecoveryKey: "Recovery Keyを再生成",
-    recoveryDescription: "Recovery Keyを紛失した場合や、一度使った後はここから新しい鍵へ更新できます。既存データの暗号鍵は変わりません。",
+    regenerateRecoveryKey: "Recovery Phraseを再生成",
+    recoveryDescription: "Recovery Phraseを紛失した場合や、一度使った後はここから新しいPhraseへ更新できます。既存データの暗号鍵は変わりません。",
     recoveryStageReauthenticating: "Passkeyで本人確認中…",
     recoveryStageKeyA: "端末の暗号鍵を確認中…",
     recoveryStageEnvelope: "サーバーの暗号鍵情報を確認中…",
-    recoveryStageGenerating: "新しいRecovery Keyを生成中…",
-    recoveryStageSaving: "新しいRecovery Keyを登録中…",
-    recoveryError: "Recovery Keyの再生成に失敗しました。Passkey再認証後にもう一度お試しください。",
+    recoveryStageGenerating: "新しいRecovery Phraseを生成中…",
+    recoveryStageSaving: "新しいRecovery Phraseを登録中…",
+    recoveryError: "Recovery Phraseの再生成に失敗しました。Passkey再認証後にもう一度お試しください。",
+    resetDeviceData: "この端末のデータを初期化",
+    resetDeviceTitle: "この端末を初期化しますか？",
+    resetDeviceWarning: "この端末に保存されている暗号鍵、端末ID、Recovery Phrase、ログイン情報、プロフィールのローカルデータを削除します。",
+    resetDeviceScope: "サーバー上のアカウント・暗号化画像・メッセージは削除しません。再利用にはRecovery Phraseまたは旧端末からの移行が必要です。",
+    resetDeviceInstruction: "確認のため「初期化」と入力してください。",
+    resetDevicePlaceholder: "初期化 と入力",
+    resetDeviceConfirm: "端末データを初期化",
+    resettingDevice: "端末データを初期化中…",
+    resetDeviceError: "端末データの初期化に失敗しました。もう一度お試しください。",
   },
   en: {
     title: "Profile",
@@ -125,21 +133,30 @@ const COPY = {
     deviceKeyBUnavailable: "Key-B is not available on this device. Re-authenticate and register this device again.",
     deviceKeyBRevealError: "Key-B could not be displayed. Re-authenticate with Passkey and try again.",
     deviceInfoLoading: "Loading device information…",
-    regenerateRecoveryKey: "Regenerate Recovery Key",
-    recoveryDescription: "If you lost the key or already used it, you can replace it here. Your existing data-encryption key stays unchanged.",
+    regenerateRecoveryKey: "Regenerate Recovery Phrase",
+    recoveryDescription: "If you lost the phrase or already used it, you can replace it here. Your existing data-encryption key stays unchanged.",
     recoveryStageReauthenticating: "Confirming your identity with Passkey…",
     recoveryStageKeyA: "Checking this device's encryption key…",
     recoveryStageEnvelope: "Checking the server's key envelope…",
-    recoveryStageGenerating: "Generating a new Recovery Key…",
-    recoveryStageSaving: "Registering the new Recovery Key…",
-    recoveryError: "Recovery Key regeneration failed. Re-authenticate with Passkey and try again.",
+    recoveryStageGenerating: "Generating a new Recovery Phrase…",
+    recoveryStageSaving: "Registering the new Recovery Phrase…",
+    recoveryError: "Recovery Phrase regeneration failed. Re-authenticate with Passkey and try again.",
+    resetDeviceData: "Reset this device",
+    resetDeviceTitle: "Reset this device?",
+    resetDeviceWarning: "This removes the encryption keys, device ID, Recovery Phrase, login data, and locally stored profile data from this device.",
+    resetDeviceScope: "Your server account, encrypted photos, and messages are not deleted. You need the Recovery Phrase or an old-device transfer to use this account again.",
+    resetDeviceInstruction: "Type RESET to confirm.",
+    resetDevicePlaceholder: "Type RESET",
+    resetDeviceConfirm: "Reset device data",
+    resettingDevice: "Resetting device data…",
+    resetDeviceError: "Device data could not be reset. Please try again.",
   },
 } as const;
 
 export default function ProfileScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { continuePasskey, deleteAccount, error, getCurrentSession, logout, refresh, session, status } = useAuth();
+  const { continuePasskey, deleteAccount, error, getCurrentSession, logout, session, status } = useAuth();
   const [language, setLanguage] = useState<AppLanguage>("ja");
   const [profile, setProfile] = useState<LocalProfile | null>(null);
   const [profileLoaded, setProfileLoaded] = useState(false);
@@ -148,6 +165,10 @@ export default function ProfileScreen() {
   const [deleteConfirmation, setDeleteConfirmation] = useState("");
   const [deleting, setDeleting] = useState(false);
   const [deleteFailed, setDeleteFailed] = useState(false);
+  const [showDeviceReset, setShowDeviceReset] = useState(false);
+  const [deviceResetConfirmation, setDeviceResetConfirmation] = useState("");
+  const [resettingDevice, setResettingDevice] = useState(false);
+  const [deviceResetFailed, setDeviceResetFailed] = useState(false);
   const [deviceKeyMaterial, setDeviceKeyMaterial] = useState<DeviceKeyMaterial | null>(null);
   const [deviceInfoLoading, setDeviceInfoLoading] = useState(true);
   const [showDeviceKeyB, setShowDeviceKeyB] = useState(false);
@@ -164,6 +185,7 @@ export default function ProfileScreen() {
   const recoveryOperationRef = useRef(0);
   const copy = COPY[language];
   const expectedDeleteConfirmation = copy.deleteConfirmation;
+  const expectedDeviceResetConfirmation = language === "ja" ? "初期化" : "RESET";
 
   useEffect(() => {
     const activeSession = sessionRef.current;
@@ -240,7 +262,6 @@ export default function ProfileScreen() {
     setRecoveryStage("reauthenticating");
     setRecoveryError(null);
     try {
-      await refresh();
       const reauthenticated = await continuePasskey(language);
       if (!reauthenticated) throw new Error(copy.recoveryError);
 
@@ -273,7 +294,6 @@ export default function ProfileScreen() {
     setDeleting(true);
     setDeleteFailed(false);
     try {
-      await refresh();
       const reauthenticated = await continuePasskey(language);
       if (!reauthenticated) {
         throw new Error(copy.deleteError);
@@ -298,7 +318,6 @@ export default function ProfileScreen() {
     setDeviceKeyBusy(true);
     setDeviceInfoError(null);
     try {
-      await refresh();
       const reauthenticated = await continuePasskey(language);
       if (!reauthenticated) throw new Error(copy.deviceKeyBRevealError);
       setShowDeviceKeyB(true);
@@ -306,6 +325,33 @@ export default function ProfileScreen() {
       setDeviceInfoError(copy.deviceKeyBRevealError);
     } finally {
       setDeviceKeyBusy(false);
+    }
+  };
+
+  const handleResetDevice = async () => {
+    if (!session || resettingDevice || deviceResetConfirmation.trim().toUpperCase() !== expectedDeviceResetConfirmation) return;
+	setResettingDevice(true);
+	setDeviceResetFailed(false);
+	try {
+		// Revoke the server session first while the access/refresh material is
+		// still available. Local deletion must still run if the network is down.
+		const userID = session.user_id;
+		try {
+			await logout();
+		} finally {
+			await resetDeviceLocalData(userID);
+		}
+		setDeviceKeyMaterial(null);
+		setShowDeviceKeyB(false);
+		setShowDeviceReset(false);
+      setDeviceResetConfirmation("");
+      // Keep the server account and ciphertext. The next start must go
+      // through Recovery Phrase or old-device transfer before data access.
+		router.replace("/");
+    } catch {
+      setDeviceResetFailed(true);
+    } finally {
+      setResettingDevice(false);
     }
   };
 
@@ -507,6 +553,23 @@ export default function ProfileScreen() {
             <Text style={styles.errorText}>{deviceInfoError ?? copy.deviceKeyBUnavailable}</Text>
           )}
           {deviceInfoError && deviceKeyMaterial ? <Text style={styles.errorText}>{deviceInfoError}</Text> : null}
+          <Pressable
+            accessibilityLabel={copy.resetDeviceData}
+            accessibilityRole="button"
+            disabled={loggingOut || deleting || recoveryPreparing || resettingDevice}
+            onPress={() => {
+              setDeviceResetConfirmation("");
+              setDeviceResetFailed(false);
+              setShowDeviceReset(true);
+            }}
+            style={({ pressed }) => [
+              styles.resetDeviceButton,
+              pressed && !resettingDevice && styles.pressed,
+              (loggingOut || deleting || recoveryPreparing || resettingDevice) && styles.disabledButton,
+            ]}
+          >
+            <Text style={styles.resetDeviceButtonText}>{copy.resetDeviceData}</Text>
+          </Pressable>
         </View>
 
         {error && <Text style={styles.errorText}>{copy.authError}</Text>}
@@ -555,9 +618,11 @@ export default function ProfileScreen() {
           transparent
           visible={showDeleteConfirmation}
         >
-          <KeyboardAvoidingView
-            behavior={Platform.OS === "ios" ? "padding" : undefined}
-            style={styles.modalBackdrop}
+          <ScrollView
+            automaticallyAdjustKeyboardInsets
+            contentContainerStyle={styles.modalBackdrop}
+            keyboardShouldPersistTaps="handled"
+            style={styles.modalScrollView}
           >
             <View style={styles.deletePanel}>
               <Text style={styles.deleteTitle}>{copy.deleteTitle}</Text>
@@ -610,7 +675,71 @@ export default function ProfileScreen() {
                 </Pressable>
               </View>
             </View>
-          </KeyboardAvoidingView>
+          </ScrollView>
+        </Modal>
+
+        <Modal
+          animationType="fade"
+          onRequestClose={() => {
+            if (!resettingDevice) setShowDeviceReset(false);
+          }}
+          transparent
+          visible={showDeviceReset}
+        >
+          <ScrollView
+            automaticallyAdjustKeyboardInsets
+            contentContainerStyle={styles.modalBackdrop}
+            keyboardShouldPersistTaps="handled"
+            style={styles.modalScrollView}
+          >
+            <View style={styles.resetDevicePanel}>
+              <Text style={styles.resetDeviceTitle}>{copy.resetDeviceTitle}</Text>
+              <Text style={styles.resetDeviceDescription}>{copy.resetDeviceWarning}</Text>
+              <Text style={styles.resetDeviceScope}>{copy.resetDeviceScope}</Text>
+              <Text style={styles.resetDeviceInstruction}>{copy.resetDeviceInstruction}</Text>
+              <TextInput
+                autoCapitalize="characters"
+                autoCorrect={false}
+                editable={!resettingDevice}
+                onChangeText={(value) => {
+                  setDeviceResetConfirmation(value);
+                  setDeviceResetFailed(false);
+                }}
+                placeholder={copy.resetDevicePlaceholder}
+                placeholderTextColor="#7a5a00"
+                style={styles.resetDeviceInput}
+                value={deviceResetConfirmation}
+              />
+              {deviceResetFailed ? <Text style={styles.errorText}>{copy.resetDeviceError}</Text> : null}
+              <View style={styles.deleteActions}>
+                <Pressable
+                  accessibilityLabel={copy.cancel}
+                  accessibilityRole="button"
+                  disabled={resettingDevice}
+                  onPress={() => {
+                    setDeviceResetConfirmation("");
+                    setShowDeviceReset(false);
+                  }}
+                  style={({ pressed }) => [styles.cancelButton, pressed && styles.pressed]}
+                >
+                  <Text style={styles.cancelText}>{copy.cancel}</Text>
+                </Pressable>
+                <Pressable
+                  accessibilityLabel={copy.resetDeviceConfirm}
+                  accessibilityRole="button"
+                  disabled={resettingDevice || deviceResetConfirmation.trim().toUpperCase() !== expectedDeviceResetConfirmation}
+                  onPress={() => void handleResetDevice()}
+                  style={({ pressed }) => [
+                    styles.resetDeviceConfirmButton,
+                    (resettingDevice || deviceResetConfirmation.trim().toUpperCase() !== expectedDeviceResetConfirmation) && styles.disabledButton,
+                    pressed && !resettingDevice && styles.pressed,
+                  ]}
+                >
+                  {resettingDevice ? <ActivityIndicator color="#ffffff" /> : <Text style={styles.resetDeviceConfirmText}>{copy.resetDeviceConfirm}</Text>}
+                </Pressable>
+              </View>
+            </View>
+          </ScrollView>
         </Modal>
       </ScrollView>
     </View>
@@ -889,6 +1018,21 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "700",
   },
+  resetDeviceButton: {
+    minHeight: 44,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 4,
+    borderWidth: 1,
+    borderColor: YELLOW,
+    borderRadius: 22,
+    backgroundColor: "#fffaf0",
+  },
+  resetDeviceButtonText: {
+    color: "#7a5a00",
+    fontSize: 14,
+    fontWeight: "700",
+  },
   rowLabel: {
     marginBottom: 5,
     color: MUTED_GRAY,
@@ -945,12 +1089,25 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     backgroundColor: "#fff5f4",
   },
+  resetDevicePanel: {
+    gap: 12,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: "#f0d28b",
+    borderRadius: 16,
+    backgroundColor: "#fffaf0",
+  },
   modalBackdrop: {
-    flex: 1,
+    flexGrow: 1,
+    width: "100%",
     alignItems: "center",
     justifyContent: "center",
     padding: 24,
     backgroundColor: "rgba(0, 0, 0, 0.45)",
+  },
+  modalScrollView: {
+    flex: 1,
+    width: "100%",
   },
   deleteTitle: {
     color: "#7a271a",
@@ -985,6 +1142,39 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     letterSpacing: 1,
   },
+  resetDeviceTitle: {
+    color: "#7a5a00",
+    fontSize: 17,
+    fontWeight: "700",
+  },
+  resetDeviceDescription: {
+    color: "#7a5a00",
+    fontSize: 14,
+    lineHeight: 21,
+  },
+  resetDeviceScope: {
+    color: "#7a5a00",
+    fontSize: 13,
+    lineHeight: 19,
+    fontWeight: "600",
+  },
+  resetDeviceInstruction: {
+    color: "#7a5a00",
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  resetDeviceInput: {
+    minHeight: 48,
+    paddingHorizontal: 14,
+    borderWidth: 1,
+    borderColor: "#d8b462",
+    borderRadius: 10,
+    color: "#7a5a00",
+    backgroundColor: "#ffffff",
+    fontSize: 16,
+    fontWeight: "700",
+    letterSpacing: 1,
+  },
   deleteActions: {
     gap: 10,
   },
@@ -1011,6 +1201,20 @@ const styles = StyleSheet.create({
     backgroundColor: "#d92d20",
   },
   confirmDeleteText: {
+    color: "#ffffff",
+    fontSize: 14,
+    fontWeight: "700",
+    textAlign: "center",
+  },
+  resetDeviceConfirmButton: {
+    minHeight: 48,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 14,
+    borderRadius: 24,
+    backgroundColor: YELLOW,
+  },
+  resetDeviceConfirmText: {
     color: "#ffffff",
     fontSize: 14,
     fontWeight: "700",

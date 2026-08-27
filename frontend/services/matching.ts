@@ -1,53 +1,365 @@
-import { API_BASE_URL } from "./api-config";
 import type { Session } from "./auth-contract";
+import { requestAPI } from "./api-client";
+import type { MatchCardData, MatchCategory } from "../types/match";
+
+export type RecruitmentStatus =
+  | "draft"
+  | "open"
+  | "matched"
+  | "closed"
+  | "expired"
+  | "completed";
+
+export type MatchStatus =
+  | "pending"
+  | "accepted"
+  | "rejected"
+  | "blocked"
+  | "expired"
+  | "completed";
+
+export type Recruitment = {
+  id: string;
+  category: MatchCategory;
+  author_name: string;
+  nationality_code: string;
+  rating: number;
+  available_date: string;
+  start_time: string;
+  end_time: string;
+  timezone: string;
+  duration_hours: number;
+  keywords: string[];
+  description: string;
+  visibility_radius_km: 1 | 3 | 5;
+  distance_band?: string;
+  status: RecruitmentStatus;
+  expires_at: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type RecruitmentCreateRequest = {
+  category: MatchCategory;
+  available_date: string;
+  start_time: string;
+  end_time: string;
+  timezone: string;
+  keywords: string[];
+  description: string;
+  visibility_radius_km: 1 | 3 | 5;
+  latitude?: number;
+  longitude?: number;
+  location_accuracy_m?: number;
+  status: Extract<RecruitmentStatus, "draft" | "open" | "closed">;
+};
+
+export type RecruitmentSearchParams = {
+  keywords?: string[];
+  availableDate?: string;
+  startTime?: string;
+  endTime?: string;
+  radiusKm?: 1 | 3 | 5;
+  verifiedOnly?: boolean;
+  latitude?: number;
+  longitude?: number;
+  limit?: number;
+};
 
 export type RecruitmentInterest = {
-  id?: string;
-  recruitment_id?: string;
-  status?: "pending" | "accepted" | "rejected" | "blocked" | "expired";
+  id: string;
+  recruitment_id: string;
+  status: MatchStatus;
+  matched_at?: string;
+  created_at: string;
+  updated_at: string;
 };
 
-type InterestResponse = {
-  data?: RecruitmentInterest;
+export type MatchParticipant = {
+  id: string;
+  name: string;
+  nationality_code: string;
+  bio: string;
+  identity_status: string;
+  likes_count: number;
 };
 
-function buildRequestError(status: number, body: unknown): Error {
-  const error =
-    body && typeof body === "object" && "error" in body
-      ? String(body.error)
-      : "request failed";
+export type MatchView = RecruitmentInterest & {
+  other_user: MatchParticipant;
+  recruitment: Recruitment;
+};
 
-  return new Error(`${status}: ${error}`);
+export type MatchListParams = {
+  role?: "all" | "owner" | "requester";
+  status?: MatchStatus;
+  limit?: number;
+};
+
+export type Coordinates = {
+  latitude: number;
+  longitude: number;
+  accuracy_m: number;
+  captured_at?: string;
+};
+
+type DataResponse<T> = { data?: T };
+
+function appendQueryPart(parts: string[], key: string, value: string | number | boolean) {
+  parts.push(`${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`);
+}
+
+function recruitmentQuery(params: RecruitmentSearchParams): string {
+  const parts: string[] = [];
+  for (const keyword of params.keywords ?? []) {
+    const normalizedKeyword = keyword.trim();
+    if (normalizedKeyword) appendQueryPart(parts, "keyword", normalizedKeyword);
+  }
+  if (params.availableDate) appendQueryPart(parts, "available_date", params.availableDate);
+  if (params.startTime) appendQueryPart(parts, "start_time", params.startTime);
+  if (params.endTime) appendQueryPart(parts, "end_time", params.endTime);
+  if (params.radiusKm !== undefined) appendQueryPart(parts, "radius_km", params.radiusKm);
+  if (params.verifiedOnly !== undefined) appendQueryPart(parts, "verified_only", params.verifiedOnly);
+  if (params.latitude !== undefined) appendQueryPart(parts, "latitude", params.latitude);
+  if (params.longitude !== undefined) appendQueryPart(parts, "longitude", params.longitude);
+  if (params.limit !== undefined) appendQueryPart(parts, "limit", params.limit);
+  return parts.length > 0 ? `?${parts.join("&")}` : "";
+}
+
+function matchQuery(params: MatchListParams): string {
+  const parts: string[] = [];
+  if (params.role) appendQueryPart(parts, "role", params.role);
+  if (params.status) appendQueryPart(parts, "status", params.status);
+  if (params.limit !== undefined) appendQueryPart(parts, "limit", params.limit);
+  return parts.length > 0 ? `?${parts.join("&")}` : "";
+}
+
+export async function searchRecruitments(
+  session: Session,
+  params: RecruitmentSearchParams = {},
+  signal?: AbortSignal,
+): Promise<Recruitment[]> {
+  const response = await requestAPI<DataResponse<Recruitment[]>>(
+    `/recruitments${recruitmentQuery(params)}`,
+    session,
+    { method: "GET", signal },
+  );
+  return Array.isArray(response.data) ? response.data : [];
+}
+
+export async function createRecruitment(
+  session: Session,
+  input: RecruitmentCreateRequest,
+  signal?: AbortSignal,
+): Promise<Recruitment> {
+  const response = await requestAPI<DataResponse<Recruitment>>(
+    "/recruitments",
+    session,
+    { method: "POST", body: JSON.stringify(input), signal },
+  );
+  if (!response.data) throw new Error("recruitment response is empty");
+  return response.data;
+}
+
+export async function getRecruitment(
+  recruitmentId: string,
+  session: Session,
+  signal?: AbortSignal,
+): Promise<Recruitment> {
+  const response = await requestAPI<DataResponse<Recruitment>>(
+    `/recruitments/${encodeURIComponent(recruitmentId)}`,
+    session,
+    { method: "GET", signal },
+  );
+  if (!response.data) throw new Error("recruitment response is empty");
+  return response.data;
 }
 
 export async function sendRecruitmentInterest(
   recruitmentId: string,
-  session: Pick<Session, "access_token">,
+  session: Session,
   signal?: AbortSignal,
 ): Promise<RecruitmentInterest | null> {
-  const response = await fetch(
-    `${API_BASE_URL}/recruitments/${encodeURIComponent(recruitmentId)}/interest`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${session.access_token}`,
-        "Content-Type": "application/json",
-      },
-      signal,
-    },
+  const response = await requestAPI<DataResponse<RecruitmentInterest>>(
+    `/recruitments/${encodeURIComponent(recruitmentId)}/interest`,
+    session,
+    { method: "POST", signal },
   );
-  const text = await response.text();
-  let body: InterestResponse | { error?: string } | null = null;
+  return response.data ?? null;
+}
 
-  try {
-    body = text ? (JSON.parse(text) as InterestResponse | { error?: string }) : null;
-  } catch {
-    body = null;
-  }
+export async function listMatches(
+  session: Session,
+  params: MatchListParams = {},
+  signal?: AbortSignal,
+): Promise<MatchView[]> {
+  const response = await requestAPI<DataResponse<MatchView[]>>(
+    `/matches${matchQuery(params)}`,
+    session,
+    { method: "GET", signal },
+  );
+  return Array.isArray(response.data) ? response.data : [];
+}
 
-  if (!response.ok) {
-    throw buildRequestError(response.status, body);
-  }
+export async function getMatch(
+  matchId: string,
+  session: Session,
+  signal?: AbortSignal,
+): Promise<MatchView> {
+  const response = await requestAPI<DataResponse<MatchView>>(
+    `/matches/${encodeURIComponent(matchId)}`,
+    session,
+    { method: "GET", signal },
+  );
+  if (!response.data) throw new Error("match response is empty");
+  return response.data;
+}
 
-  return body && "data" in body ? body.data ?? null : null;
+async function updateMatch(
+  matchId: string,
+  action: "accept" | "reject" | "complete",
+  session: Session,
+  signal?: AbortSignal,
+): Promise<RecruitmentInterest> {
+  const response = await requestAPI<DataResponse<RecruitmentInterest>>(
+    `/matches/${encodeURIComponent(matchId)}/${action}`,
+    session,
+    { method: "POST", signal },
+  );
+  if (!response.data) throw new Error("match response is empty");
+  return response.data;
+}
+
+export function acceptMatch(
+  matchId: string,
+  session: Session,
+  signal?: AbortSignal,
+): Promise<RecruitmentInterest> {
+  return updateMatch(matchId, "accept", session, signal);
+}
+
+export function rejectMatch(
+  matchId: string,
+  session: Session,
+  signal?: AbortSignal,
+): Promise<RecruitmentInterest> {
+  return updateMatch(matchId, "reject", session, signal);
+}
+
+export function completeMatch(
+  matchId: string,
+  session: Session,
+  signal?: AbortSignal,
+): Promise<RecruitmentInterest> {
+  return updateMatch(matchId, "complete", session, signal);
+}
+
+export async function updateCurrentLocation(
+  coordinates: Coordinates,
+  session: Session,
+  signal?: AbortSignal,
+): Promise<void> {
+  await requestAPI<null>("/me/location", session, {
+    method: "POST",
+    body: JSON.stringify(coordinates),
+    signal,
+  });
+}
+
+const COUNTRY_NAMES: Record<string, string> = {
+  AU: "Australia",
+  BR: "Brazil",
+  CA: "Canada",
+  CN: "China",
+  DE: "Germany",
+  ES: "Spain",
+  FR: "France",
+  GB: "United Kingdom",
+  HK: "Hong Kong",
+  ID: "Indonesia",
+  IN: "India",
+  IT: "Italy",
+  JP: "Japan",
+  KR: "South Korea",
+  MX: "Mexico",
+  MY: "Malaysia",
+  PH: "Philippines",
+  SG: "Singapore",
+  TH: "Thailand",
+  TW: "Taiwan",
+  US: "United States",
+  VN: "Vietnam",
+};
+
+function countryCodeToFlag(countryCode: string): string {
+  const normalizedCode = countryCode.trim().toUpperCase();
+  if (!/^[A-Z]{2}$/.test(normalizedCode)) return "";
+  return String.fromCodePoint(
+    ...[...normalizedCode].map((character) => character.charCodeAt(0) + 127397),
+  );
+}
+
+function parseDateOnly(value: string): Date | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+  return parsed.getUTCFullYear() === year &&
+      parsed.getUTCMonth() === month - 1 &&
+      parsed.getUTCDate() === day
+    ? parsed
+    : null;
+}
+
+function formatRecruitmentDate(value: string): { card: string; detail: string } {
+  const parsed = parseDateOnly(value);
+  if (!parsed) return { card: value, detail: value };
+  const month = parsed.toLocaleDateString("en-US", { month: "long", timeZone: "UTC" });
+  const shortMonth = parsed.toLocaleDateString("en-US", { month: "short", timeZone: "UTC" });
+  const weekday = parsed.toLocaleDateString("en-US", { weekday: "short", timeZone: "UTC" });
+  const day = parsed.getUTCDate();
+  const year = parsed.getUTCFullYear();
+  return {
+    card: `${month},${day} ${year}`,
+    detail: `${shortMonth} ${day}, ${year} (${weekday})`,
+  };
+}
+
+function formatExpiry(value: string): string {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return `${parsed.getUTCFullYear()}/${String(parsed.getUTCMonth() + 1).padStart(2, "0")}/${String(parsed.getUTCDate()).padStart(2, "0")}`;
+}
+
+function uniqueTags(recruitment: Recruitment): string[] {
+  const tags = [
+    ...recruitment.keywords.map((keyword) => keyword.trim()).filter(Boolean),
+  ];
+  if (tags.length === 0) tags.push(recruitment.category);
+  return [...new Set(tags)].slice(0, 3);
+}
+
+export function recruitmentToMatchCard(recruitment: Recruitment): MatchCardData {
+  const dates = formatRecruitmentDate(recruitment.available_date);
+  const tags = uniqueTags(recruitment);
+  const detailTags = [...new Set([...tags, recruitment.category])].slice(0, 5);
+  const countryCode = recruitment.nationality_code.trim().toUpperCase();
+
+  return {
+    id: recruitment.id,
+    category: recruitment.category,
+    authorName: recruitment.author_name || "Samurai Meet user",
+    countryFlag: countryCodeToFlag(countryCode),
+    countryName: COUNTRY_NAMES[countryCode] ?? countryCode,
+    rating: recruitment.rating,
+    date: dates.card,
+    detailDate: dates.detail,
+    startTime: recruitment.start_time,
+    durationHours: recruitment.duration_hours,
+    tags,
+    detailTags,
+    expiresAt: formatExpiry(recruitment.expires_at),
+    description: recruitment.description,
+  };
 }

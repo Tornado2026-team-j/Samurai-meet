@@ -1,13 +1,22 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
-import { StatusBar } from "expo-status-bar";
 import {
-  findMockGuideApplicationById,
-  MOCK_GUIDE_APPLICATIONS,
-} from "../../../mocks/applications";
-import type { GuideApplicationStatus } from "../../../types/application";
+  ActivityIndicator,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
+import { StatusBar } from "expo-status-bar";
+import { useAuth } from "../../../hooks/useAuth";
+import {
+  acceptMatch,
+  getMatch,
+  rejectMatch,
+  type MatchView,
+} from "../../../services/matching";
 
 const BLUE = "#5ec5f5";
 const YELLOW = "#e7b454";
@@ -18,21 +27,99 @@ const SOFT_BLUE = "#eff8ff";
 
 export default function ForeignerApplicationDetailScreen() {
   const router = useRouter();
+  const { getCurrentSession, session, status } = useAuth();
   const { id } = useLocalSearchParams<{ id?: string | string[] }>();
   const applicationId = Array.isArray(id) ? id[0] : id;
-  const application =
-    findMockGuideApplicationById(applicationId) ?? MOCK_GUIDE_APPLICATIONS[0];
-  const [decision, setDecision] = useState<GuideApplicationStatus>(
-    application?.status ?? "pending",
-  );
+  const [application, setApplication] = useState<MatchView | null>(null);
+  const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading");
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [actionState, setActionState] = useState<"idle" | "accepting" | "rejecting">("idle");
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let cancelled = false;
+
+    const load = async () => {
+      const activeSession = getCurrentSession() ?? session;
+      if (!applicationId || status !== "signed_in" || !activeSession) {
+        if (!cancelled) {
+          setLoadState("error");
+          setLoadError("ログイン後に応募を表示できます。");
+        }
+        return;
+      }
+
+      setLoadState("loading");
+      setLoadError(null);
+      try {
+        const result = await getMatch(applicationId, activeSession, controller.signal);
+        if (!cancelled) {
+          setApplication(result);
+          setLoadState("ready");
+        }
+      } catch (error) {
+        if (error instanceof Error && error.name === "AbortError") return;
+        if (!cancelled) {
+          setLoadState("error");
+          setLoadError("応募を読み込めませんでした。すでに処理済みの可能性があります。");
+        }
+      }
+    };
+
+    void load();
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [applicationId, getCurrentSession, session, status]);
 
   if (!application) {
-    return null;
+    return (
+      <View style={styles.loadingScreen}>
+        <StatusBar style="light" />
+        {loadState === "loading" ? <ActivityIndicator color={BLUE} /> : null}
+        <Text accessibilityRole={loadState === "error" ? "alert" : undefined} style={styles.loadingText}>
+          {loadState === "loading" ? "応募を読み込み中..." : loadError}
+        </Text>
+        <Pressable
+          accessibilityLabel="Back"
+          accessibilityRole="button"
+          onPress={() => router.back()}
+          style={({ pressed }) => [styles.loadingBackButton, pressed && styles.pressed]}
+        >
+          <Text style={styles.loadingBackButtonText}>Back</Text>
+        </Pressable>
+      </View>
+    );
   }
 
-  const choseGuide = decision === "accepted";
-  const declined = decision === "declined";
-  const decided = choseGuide || declined;
+  const choseGuide = application.status === "accepted" || application.status === "completed";
+  const declined = application.status === "rejected";
+  const unavailable = application.status === "expired" || application.status === "blocked";
+  const decided = choseGuide || declined || unavailable;
+
+  const decide = async (action: "accept" | "reject") => {
+    if (decided || actionState !== "idle") return;
+    const activeSession = getCurrentSession() ?? session;
+    if (status !== "signed_in" || !activeSession) {
+      setActionError("ログイン後にもう一度お試しください。");
+      return;
+    }
+
+    setActionState(action === "accept" ? "accepting" : "rejecting");
+    setActionError(null);
+    try {
+      const result = action === "accept"
+        ? await acceptMatch(application.id, activeSession)
+        : await rejectMatch(application.id, activeSession);
+      setApplication((current) => current ? { ...current, status: result.status, updated_at: result.updated_at, matched_at: result.matched_at } : current);
+    } catch {
+      setActionError("応募の処理に失敗しました。最新状態を確認して再試行してください。");
+    } finally {
+      setActionState("idle");
+    }
+  };
 
   return (
     <View style={styles.screen}>
@@ -62,14 +149,14 @@ export default function ForeignerApplicationDetailScreen() {
           </View>
 
           <Text numberOfLines={1} style={styles.name}>
-            {application.applicantName}
+            {application.other_user.name}
           </Text>
-          <Text style={styles.country}>{application.applicantCountry}</Text>
+          <Text style={styles.country}>{application.other_user.nationality_code}</Text>
 
           <View style={styles.divider} />
 
           <Text style={styles.sectionLabel}>About this guide</Text>
-          <Text style={styles.bio}>{application.bio}</Text>
+          <Text style={styles.bio}>{application.other_user.bio || "No introduction provided."}</Text>
         </View>
       </ScrollView>
 
@@ -90,7 +177,13 @@ export default function ForeignerApplicationDetailScreen() {
                 declined && styles.resultTextDeclined,
               ]}
             >
-              {choseGuide ? "Guide chosen" : "Application declined"}
+              {choseGuide
+                ? "Guide chosen"
+                : unavailable && application.status === "expired"
+                  ? "Application expired"
+                  : unavailable
+                    ? "Application unavailable"
+                    : "Application declined"}
             </Text>
           </View>
         ) : null}
@@ -99,7 +192,7 @@ export default function ForeignerApplicationDetailScreen() {
           accessibilityRole="button"
           accessibilityState={{ disabled: decided }}
           disabled={decided}
-          onPress={() => setDecision("accepted")}
+          onPress={() => void decide("accept")}
           style={({ pressed }) => [
             styles.primaryButton,
             decided && styles.disabledButton,
@@ -113,7 +206,7 @@ export default function ForeignerApplicationDetailScreen() {
           accessibilityRole="button"
           accessibilityState={{ disabled: decided }}
           disabled={decided}
-          onPress={() => setDecision("declined")}
+          onPress={() => void decide("reject")}
           style={({ pressed }) => [
             styles.secondaryButton,
             decided && styles.disabledSecondaryButton,
@@ -126,9 +219,15 @@ export default function ForeignerApplicationDetailScreen() {
               decided && styles.disabledSecondaryButtonText,
             ]}
           >
-            Decline
+            {actionState === "rejecting" ? "Declining..." : "Decline"}
           </Text>
         </Pressable>
+        {actionState === "accepting" ? (
+          <Text style={styles.actionStatus}>Choosing guide...</Text>
+        ) : null}
+        {actionError ? (
+          <Text accessibilityRole="alert" style={styles.actionError}>{actionError}</Text>
+        ) : null}
       </View>
     </View>
   );
@@ -138,6 +237,35 @@ const styles = StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: "#ffffff",
+  },
+  loadingScreen: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 32,
+    gap: 14,
+    backgroundColor: "#ffffff",
+  },
+  loadingText: {
+    color: TEXT_GRAY,
+    fontSize: 14,
+    fontWeight: "700",
+    lineHeight: 20,
+    textAlign: "center",
+  },
+  loadingBackButton: {
+    minWidth: 84,
+    minHeight: 36,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 16,
+    borderRadius: 18,
+    backgroundColor: YELLOW,
+  },
+  loadingBackButtonText: {
+    color: "#ffffff",
+    fontSize: 13,
+    fontWeight: "800",
   },
   header: {
     position: "relative",
@@ -324,6 +452,21 @@ const styles = StyleSheet.create({
   },
   disabledSecondaryButtonText: {
     color: MUTED_GRAY,
+  },
+  actionStatus: {
+    marginTop: 10,
+    color: BLUE,
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  actionError: {
+    maxWidth: 326,
+    marginTop: 10,
+    color: "#b42318",
+    fontSize: 12,
+    fontWeight: "700",
+    lineHeight: 17,
+    textAlign: "center",
   },
   pressed: {
     opacity: 0.72,
