@@ -20,7 +20,8 @@
         {
           "locationWhenInUsePermission": "Samurai Meet uses your location to find nearby recruitments."
         }
-      ]
+      ],
+      "@react-native-community/datetimepicker"
     ]
   }
 }
