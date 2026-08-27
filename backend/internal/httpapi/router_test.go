@@ -3,6 +3,7 @@ package httpapi
 import (
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -100,6 +101,21 @@ func TestDevelopmentCORSAllowsOnlyDevClientOrigin(t *testing.T) {
 		t.Fatalf("Access-Control-Allow-Origin = %q", got)
 	}
 }
+
+func TestDevelopmentCORSAllowsExpoWeb8081(t *testing.T) {
+	handler := NewRouterWithOptions(RouterOptions{Environment: "development"})
+	req := httptest.NewRequest(http.MethodOptions, APIV1Prefix+"/auth/google/exchange", nil)
+	req.Header.Set("Origin", "http://localhost:8081")
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", res.Code, http.StatusNoContent)
+	}
+	if got := res.Header().Get("Access-Control-Allow-Origin"); got != "http://localhost:8081" {
+		t.Fatalf("Access-Control-Allow-Origin = %q", got)
+	}
+}
+
 func TestProductionCORSAllowsOnlyPublicOrigin(t *testing.T) {
 	handler := NewRouterWithOptions(RouterOptions{Environment: "production", ClientOrigin: "https://samurai-meet.disnana.com"})
 	req := httptest.NewRequest(http.MethodOptions, APIV1Prefix+"/healthz", nil)
@@ -248,11 +264,18 @@ func TestProtectedHandlersRejectMissingAccessToken(t *testing.T) {
 		"upload photo":      uploadPhoto(nil, nil, nil),
 		"owned photo":       ownedPhoto(nil, nil, nil),
 		"delete account":    deleteAccount(account.NewService(nil, nil), nil),
+		"profile":           getProfile(nil, nil),
+		"profile patch":     patchProfile(nil, nil),
+		"recruitments":      recruitmentCollection(nil, nil),
+		"recruitment item":  recruitmentItem(nil, nil),
+		"matches":           matchCollection(nil, nil),
+		"match action":      matchAction(nil, nil),
+		"location":          updateLocation(nil, nil),
 	}
 	for name, handler := range tests {
 		t.Run(name, func(t *testing.T) {
 			method := http.MethodGet
-			if name == "logout all" || name == "handoff start" || name == "register verify" || name == "reauth verify" || name == "upload photo" || name == "delete account" {
+			if name == "logout all" || name == "handoff start" || name == "register verify" || name == "reauth verify" || name == "upload photo" || name == "delete account" || name == "profile patch" || name == "recruitments" || name == "match action" || name == "location" {
 				method = http.MethodPost
 			}
 			if name == "delete account" {
@@ -275,5 +298,55 @@ func TestRouterDoesNotServeBrowserAssets(t *testing.T) {
 	handler.ServeHTTP(res, req)
 	if res.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want %d", res.Code, http.StatusNotFound)
+	}
+}
+
+func TestSecurityHeadersAreAppliedToAPIResponses(t *testing.T) {
+	handler := NewRouter()
+	req := httptest.NewRequest(http.MethodGet, APIV1Prefix+"/healthz", nil)
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	for header, want := range map[string]string{
+		"X-Content-Type-Options":     "nosniff",
+		"X-Frame-Options":            "DENY",
+		"Referrer-Policy":            "no-referrer",
+		"Cross-Origin-Opener-Policy": "same-origin",
+		"Cache-Control":              "no-store",
+	} {
+		if got := res.Header().Get(header); got != want {
+			t.Fatalf("%s = %q, want %q", header, got, want)
+		}
+	}
+	if got := res.Header().Get("Content-Security-Policy"); !strings.Contains(got, "default-src 'none'") {
+		t.Fatalf("Content-Security-Policy = %q", got)
+	}
+}
+
+func TestCredentialRateLimitIsEnforcedWithoutTrustingForwardedHeaders(t *testing.T) {
+	called := 0
+	handler := withSecurityHeadersAndRateLimit(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		called++
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	for index := 0; index < 15; index++ {
+		req := httptest.NewRequest(http.MethodPost, APIV1Prefix+"/auth/passkey/login/options", nil)
+		req.RemoteAddr = "192.0.2.10:1234"
+		req.Header.Set("X-Forwarded-For", "198.51.100."+strconv.Itoa(index))
+		res := httptest.NewRecorder()
+		handler.ServeHTTP(res, req)
+		if res.Code != http.StatusNoContent {
+			t.Fatalf("request %d status = %d, want %d", index+1, res.Code, http.StatusNoContent)
+		}
+	}
+	req := httptest.NewRequest(http.MethodPost, APIV1Prefix+"/auth/passkey/login/options", nil)
+	req.RemoteAddr = "192.0.2.10:1234"
+	req.Header.Set("X-Forwarded-For", "203.0.113.1")
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusTooManyRequests || res.Header().Get("Retry-After") == "" {
+		t.Fatalf("rate-limited response = %d, Retry-After=%q", res.Code, res.Header().Get("Retry-After"))
+	}
+	if called != 15 {
+		t.Fatalf("downstream handler calls = %d, want 15", called)
 	}
 }

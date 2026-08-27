@@ -15,22 +15,25 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import IdentityVerificationPrompt from "../components/IdentityVerificationPrompt";
 import ProfileForm from "../components/ProfileForm";
-import { RecoveryCompletion, RecoveryKeyDisplay, RecoveryKeyInput, SupportAccountID } from "../components/RecoveryFlow";
+import { RecoveryAccountDeleteAction, RecoveryCompletion, RecoveryKDFFallbackNotice, RecoveryKeyDisplay, RecoveryKeyInput, SupportAccountID } from "../components/RecoveryFlow";
 import { useAuth } from "../hooks/useAuth";
 import {
   completeInitialKeySetup,
   completeRecoveryKeyRotation,
   createInitialKeyMaterial,
-  ensureDeviceKeyB,
+  ensureDeviceAgreementKey,
   isRecoveryKeyRotationPending,
   listKeyEnvelopes,
   loadStoredKeyA,
   loadPendingRecoveryKeyRotation,
+  loadInitialKeyMaterialDraft,
   recoverWithSession,
+  saveInitialKeyMaterialDraft,
   savePendingRecoveryKeyRotation,
   type GeneratedKeyMaterial,
 } from "../services/key-management";
-import { createRecoveryKeyMaterial, deriveDataKey, type KeyEnvelope } from "../services/crypto";
+import { createRecoveryMaterial, deriveAccountDataKey, getRecoveryKDFImplementation, type KeyEnvelope, type RecoveryKDFImplementation } from "../services/crypto";
+import { updateMyProfile } from "../services/profile";
 import {
   clearLanguage,
   loadIdentityVerificationChoice,
@@ -39,6 +42,7 @@ import {
   saveIdentityVerificationChoice,
   saveLanguage,
   saveLocalProfile,
+  serializeMonsterSeedForLegacyBio,
   type AppLanguage,
   type IdentityVerificationChoice,
   type LocalProfile,
@@ -54,6 +58,29 @@ const YELLOW = "#e7b454";
 const TEXT_GRAY = "#535353";
 const MUTED_GRAY = "#7d7d7d";
 const BORDER_GRAY = "#d4d4d4";
+const KEY_SETUP_TIMEOUT_MS = 45_000;
+const KEY_SETUP_TIMEOUT_MESSAGE = "暗号鍵の準備に時間がかかっています。通信または端末の状態を確認して、もう一度お試しください。";
+
+function withTimeout<T>(promise: Promise<T>, timeoutMS: number, timeoutMessage: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const timeoutID = setTimeout(() => {
+      settled = true;
+      reject(new Error(timeoutMessage));
+    }, timeoutMS);
+    promise.then((value) => {
+      if (settled) return;
+      clearTimeout(timeoutID);
+      settled = true;
+      resolve(value);
+    }, (reason) => {
+      if (settled) return;
+      clearTimeout(timeoutID);
+      settled = true;
+      reject(reason);
+    });
+  });
+}
 
 type ProgressProps = {
   activeStep: 1 | 2 | 3;
@@ -224,7 +251,7 @@ type AuthStepProps = {
 };
 
 function AuthStep({ language, onAuthenticated, onBack }: AuthStepProps) {
-  const { busy, continuePasskey, error, login, logout, preAuth, recoverWithRecoveryKey, recoveryVerified, status } = useAuth();
+  const { busy, continuePasskey, deleteAccount, error, login, logout, preAuth, recoverWithRecoveryKey, recoveryVerified, status } = useAuth();
   const [showRecovery, setShowRecovery] = useState(false);
   const passkeyReady = status === "pre_auth" && preAuth !== null;
   const signedIn = status === "signed_in";
@@ -246,6 +273,10 @@ function AuthStep({ language, onAuthenticated, onBack }: AuthStepProps) {
       // useAuth exposes the handled error through its error state.
     }
   };
+  const deleteRecoveredAccount = async () => {
+    if (await deleteAccount()) return;
+    throw new Error(language === "ja" ? "アカウント削除に失敗しました。" : "Account deletion failed.");
+  };
   const copy = language === "ja"
     ? {
         title: signedIn
@@ -258,16 +289,16 @@ function AuthStep({ language, onAuthenticated, onBack }: AuthStepProps) {
           : passkeyReady
             ? recoveryVerified
               ? (preAuth?.passkey_registered
-                ? "Recovery Keyを確認しました。続けてPasskeyで本人確認します。"
-                : "Recovery Keyを確認しました。続けてこの端末のPasskeyを登録します。")
+                ? "Recovery Phraseを確認しました。続けてPasskeyで本人確認します。"
+                : "Recovery Phraseを確認しました。続けてこの端末のPasskeyを登録します。")
               : "Google認証が完了しました。続けてこの端末を保護します。"
           : "Googleアカウントで安全に登録・ログインできます。",
         continue: "次へ",
         google: "Googleで続ける",
         passkey: preAuth?.passkey_registered ? "Passkeyで本人確認" : "Passkeyを登録",
-        recovery: "Recovery Keyで復旧",
+        recovery: "Recovery Phraseで復旧",
         logout: "ログアウト",
-        verificationDone: recoveryVerified ? "Recovery Key確認済み" : "Google認証済み",
+        verificationDone: recoveryVerified ? "Recovery Phrase確認済み" : "Google認証済み",
         privacy: "メールアドレスは本人確認のためにのみ使用します",
         passkeyNote: "Passkeyはパスワードを保存せず、この端末の画面ロックで本人確認します",
       }
@@ -281,17 +312,17 @@ function AuthStep({ language, onAuthenticated, onBack }: AuthStepProps) {
           ? "Your Google account is verified. Next, review identity verification."
           : passkeyReady
             ? recoveryVerified
-              ? (preAuth?.passkey_registered
-                ? "Your Recovery Key was verified. Continue with Passkey verification."
-                : "Your Recovery Key was verified. Continue by creating a Passkey for this device.")
+                ? (preAuth?.passkey_registered
+                ? "Your Recovery Phrase was verified. Continue with Passkey verification."
+                : "Your Recovery Phrase was verified. Continue by creating a Passkey for this device.")
               : "Google verification is complete. Now protect this device."
           : "Sign up or sign in securely with your Google account.",
         continue: "Continue",
         google: "Continue with Google",
         passkey: preAuth?.passkey_registered ? "Verify with passkey" : "Create a passkey",
-        recovery: "Recover with Recovery Key",
+        recovery: "Recover with Recovery Phrase",
         logout: "Log out",
-        verificationDone: recoveryVerified ? "Recovery Key verified" : "Google verified",
+        verificationDone: recoveryVerified ? "Recovery Phrase verified" : "Google verified",
         privacy: "Your email is used only to verify your account",
         passkeyNote: "Passkeys use your device screen lock, so there is no password to store",
       };
@@ -400,6 +431,14 @@ function AuthStep({ language, onAuthenticated, onBack }: AuthStepProps) {
               </Text>
             ) : null}
 
+            {recoveryVerified ? (
+              <RecoveryAccountDeleteAction
+                busy={busy}
+                language={language}
+                onDelete={deleteRecoveredAccount}
+              />
+            ) : null}
+
             {passkeyReady ? (
               <Pressable
                 accessibilityRole="button"
@@ -440,6 +479,37 @@ type KeySetupState =
   | { status: "complete"; mode: "initial" | "recovery" }
   | { status: "ready" }
   | { status: "error"; message: string };
+
+type KeySetupStage = "loading_local" | "loading_envelopes" | "generating";
+
+function keyEnvelopeMatches(left: KeyEnvelope, right: KeyEnvelope): boolean {
+  return left.key_version === right.key_version
+    && left.encrypted_key_a === right.encrypted_key_a
+    && left.nonce === right.nonce
+    && left.kdf_params.algorithm === right.kdf_params.algorithm
+    && left.kdf_params.salt === right.kdf_params.salt
+    && left.kdf_params.info === right.kdf_params.info
+    && left.kdf_params.data_salt === right.kdf_params.data_salt
+    && left.kdf_params.argon2id.memory_kib === right.kdf_params.argon2id.memory_kib
+    && left.kdf_params.argon2id.iterations === right.kdf_params.argon2id.iterations
+    && left.kdf_params.argon2id.parallelism === right.kdf_params.argon2id.parallelism
+    && left.recovery_public_key === right.recovery_public_key;
+}
+
+function describeKeySetupError(reason: unknown, language: AppLanguage): string {
+  const raw = reason instanceof Error ? reason.message : "";
+  if (raw === "403: recent_passkey_authentication_required") {
+    return language === "ja"
+      ? "暗号鍵を扱うにはPasskeyでの再認証が必要です。再認証して続けてください。"
+      : "Re-authenticate with your Passkey to access the encryption keys, then continue.";
+  }
+  if (raw === "401: missing_or_invalid_access_token" || /^4\d\d:/.test(raw)) {
+    return language === "ja"
+      ? "認証情報を更新できませんでした。Passkeyで再認証して続けてください。"
+      : "The sign-in session could not be refreshed. Re-authenticate with your Passkey and continue.";
+  }
+  return raw || (language === "ja" ? "暗号鍵の準備に失敗しました。" : "The encryption keys could not be prepared.");
+}
 
 function KeySetupError({
   accountID,
@@ -626,6 +696,7 @@ export default function OnboardingScreen() {
   const {
     continuePasskey,
     deleteAccount,
+    getCurrentSession,
     logout,
     refresh,
     session,
@@ -644,8 +715,12 @@ export default function OnboardingScreen() {
   const [keySetupActionBusy, setKeySetupActionBusy] = useState(false);
   const [keySetupActionError, setKeySetupActionError] = useState<string | null>(null);
   const [keySetupState, setKeySetupState] = useState<KeySetupState>({ status: "loading" });
+  const [keySetupStage, setKeySetupStage] = useState<KeySetupStage>("loading_local");
+  const [keyKDFImplementation, setKeyKDFImplementation] = useState<RecoveryKDFImplementation | null>(null);
   const sessionRef = useRef(session);
   sessionRef.current = session;
+  const languageRef = useRef(language);
+  languageRef.current = language;
   const [identityVerificationChoiceLoadedFor, setIdentityVerificationChoiceLoadedFor] =
     useState<string | null>(null);
 
@@ -654,7 +729,6 @@ export default function OnboardingScreen() {
     setKeySetupActionBusy(true);
     setKeySetupActionError(null);
     try {
-      await refresh();
       const reauthenticated = await continuePasskey(language ?? "ja");
       if (!reauthenticated) {
         throw new Error(language === "ja"
@@ -676,7 +750,6 @@ export default function OnboardingScreen() {
     setKeySetupActionBusy(true);
     setKeySetupActionError(null);
     try {
-      await refresh();
       const reauthenticated = await continuePasskey(language ?? "ja");
       if (!reauthenticated) {
         throw new Error(language === "ja"
@@ -765,68 +838,111 @@ export default function OnboardingScreen() {
     if (!activeSession?.user_id) {
       setKeySetupFor(null);
       setKeySetupState({ status: "loading" });
+      setKeySetupStage("loading_local");
+      setKeyKDFImplementation(null);
       return;
     }
+    // Wait until the persisted language lookup has completed. Starting the
+    // Argon2id setup before that state update would clean up this effect and
+    // start a second expensive KDF when the language state changes.
+    if (!languageLoaded) return;
 
     let active = true;
     const userID = activeSession.user_id;
     setKeySetupFor(null);
     setKeySetupBusy(false);
     setKeySetupState({ status: "loading" });
+    setKeySetupStage("loading_local");
+    setKeyKDFImplementation(null);
     void (async () => {
       try {
-        const pendingRotation = await loadPendingRecoveryKeyRotation(userID);
-        const localKeyA = await loadStoredKeyA(userID) ?? pendingRotation?.keyA ?? null;
-        if (!active) return;
-        if (localKeyA) {
-          const envelopes = await listKeyEnvelopes(activeSession);
-          const envelope = envelopes.find((item) => item.recovery_public_key.length > 0)
-            ?? envelopes.find((item) => item.kdf_params.data_salt.length > 0);
-          if (!envelope) {
-            throw new Error("このアカウントの暗号鍵情報を確認できません。Recovery Keyで復旧してください。");
-          }
-          const keyB = await ensureDeviceKeyB(activeSession);
-          deriveDataKey(localKeyA, keyB.keyB, envelope.kdf_params.data_salt);
+        await withTimeout((async () => {
+          const [pendingRotation, initialDraft, storedKeyA] = await Promise.all([
+            loadPendingRecoveryKeyRotation(userID),
+            loadInitialKeyMaterialDraft(userID),
+            loadStoredKeyA(userID),
+          ]);
+          const localKeyA = storedKeyA ?? pendingRotation?.keyA ?? null;
           if (!active) return;
-          if (pendingRotation || await isRecoveryKeyRotationPending(userID)) {
+          if (localKeyA) {
+            setKeySetupStage("loading_envelopes");
+            const envelopes = await listKeyEnvelopes(activeSession);
+            const envelope = envelopes.find((item) => item.recovery_public_key.length > 0)
+              ?? envelopes.find((item) => item.kdf_params.data_salt.length > 0);
+            if (!envelope) {
+              throw new Error("このアカウントの暗号鍵情報を確認できません。Recovery Phraseで復旧してください。");
+            }
+            const kdfImplementation = await getRecoveryKDFImplementation(envelope.kdf_params.argon2id);
             if (!active) return;
-            const usePendingRotation = pendingRotation !== null
-              && pendingRotation.envelope.key_version === envelope.key_version
-              && pendingRotation.envelope.encrypted_key_a === envelope.encrypted_key_a
-              && pendingRotation.envelope.nonce === envelope.nonce
-              && pendingRotation.envelope.kdf_params.algorithm === envelope.kdf_params.algorithm
-              && pendingRotation.envelope.kdf_params.salt === envelope.kdf_params.salt
-              && pendingRotation.envelope.kdf_params.info === envelope.kdf_params.info
-              && pendingRotation.envelope.kdf_params.data_salt === envelope.kdf_params.data_salt
-              && pendingRotation.envelope.recovery_public_key === envelope.recovery_public_key;
-            const material = usePendingRotation && pendingRotation
-              ? pendingRotation
-              : await createRecoveryKeyMaterial(localKeyA, envelope);
-            if (!usePendingRotation) await savePendingRecoveryKeyRotation(userID, material);
+            setKeyKDFImplementation(kdfImplementation);
+            // Device registration is needed for protected photo requests, but
+            // it is not needed to verify the local root key or open onboarding.
+            // Do not make the whole app wait for this network round-trip.
+            deriveAccountDataKey(localKeyA, envelope.kdf_params.data_salt);
             if (!active) return;
-            setKeySetupState({ status: "rotate", material });
+            if (pendingRotation || await isRecoveryKeyRotationPending(userID)) {
+              if (!active) return;
+              setKeySetupStage("generating");
+              const usePendingRotation = pendingRotation !== null
+                && pendingRotation.envelope.key_version === envelope.key_version
+                && pendingRotation.envelope.encrypted_key_a === envelope.encrypted_key_a
+                && pendingRotation.envelope.nonce === envelope.nonce
+                && pendingRotation.envelope.kdf_params.algorithm === envelope.kdf_params.algorithm
+                && pendingRotation.envelope.kdf_params.salt === envelope.kdf_params.salt
+                && pendingRotation.envelope.kdf_params.info === envelope.kdf_params.info
+                && pendingRotation.envelope.kdf_params.data_salt === envelope.kdf_params.data_salt
+                && pendingRotation.envelope.recovery_public_key === envelope.recovery_public_key;
+              const material = usePendingRotation && pendingRotation
+                ? pendingRotation
+                : await createRecoveryMaterial(localKeyA, envelope);
+              if (!usePendingRotation) await savePendingRecoveryKeyRotation(userID, material);
+              if (!active) return;
+              setKeySetupState({ status: "rotate", material });
+              setKeySetupFor(userID);
+              return;
+            }
+            setKeySetupState({ status: "ready" });
             setKeySetupFor(userID);
+            // Warm the device registration in the background. It is required
+            // by protected photo APIs, but must not block account onboarding.
+            void ensureDeviceAgreementKey(activeSession).catch(() => undefined);
             return;
           }
-          setKeySetupState({ status: "ready" });
-          setKeySetupFor(userID);
-          return;
-        }
 
-        const envelopes = await listKeyEnvelopes(activeSession);
-        if (!active) return;
-        const recoverableEnvelope = envelopes.find((envelope) => envelope.recovery_public_key.length > 0);
-        if (recoverableEnvelope) {
-          setKeySetupState({ status: "recover", envelope: recoverableEnvelope });
-        } else {
-          setKeySetupState({ status: "create", material: await createInitialKeyMaterial() });
-        }
-        setKeySetupFor(userID);
+          setKeySetupStage("loading_envelopes");
+          const envelopes = await listKeyEnvelopes(activeSession);
+          if (!active) return;
+          const recoverableEnvelope = envelopes.find((envelope) => envelope.recovery_public_key.length > 0);
+          if (recoverableEnvelope) {
+            const kdfImplementation = await getRecoveryKDFImplementation(recoverableEnvelope.kdf_params.argon2id);
+            if (!active) return;
+            setKeyKDFImplementation(kdfImplementation);
+            if (initialDraft && keyEnvelopeMatches(initialDraft.envelope, recoverableEnvelope)) {
+              setKeySetupState({ status: "create", material: initialDraft });
+            } else {
+              setKeySetupState({ status: "recover", envelope: recoverableEnvelope });
+            }
+          } else {
+            setKeySetupStage("generating");
+            const material = initialDraft ?? await (async () => {
+              const kdfImplementation = await getRecoveryKDFImplementation();
+              if (!active) return null;
+              setKeyKDFImplementation(kdfImplementation);
+              return createInitialKeyMaterial();
+            })();
+            if (!material || !active) return;
+            if (!initialDraft) await saveInitialKeyMaterialDraft(userID, material);
+            if (!active) return;
+            setKeySetupState({ status: "create", material });
+          }
+          setKeySetupFor(userID);
+        })(), KEY_SETUP_TIMEOUT_MS, KEY_SETUP_TIMEOUT_MESSAGE);
       } catch (reason) {
         if (!active) return;
+        active = false;
         setKeySetupState({
           status: "error",
-          message: reason instanceof Error ? reason.message : "key setup failed",
+          message: describeKeySetupError(reason, languageRef.current ?? "ja"),
         });
         setKeySetupFor(userID);
       }
@@ -835,7 +951,7 @@ export default function OnboardingScreen() {
     return () => {
       active = false;
     };
-  }, [keySetupAttempt, session?.session_id, session?.user_id]);
+  }, [keySetupAttempt, languageLoaded, session?.session_id, session?.user_id]);
 
   if (!languageLoaded || status === "loading") {
     return (
@@ -873,13 +989,32 @@ export default function OnboardingScreen() {
   }
 
   if (keySetupFor !== session.user_id || keySetupState.status === "loading") {
+    const loadingText = language === "ja"
+      ? keySetupStage === "loading_local"
+        ? "端末の暗号鍵を確認しています…"
+        : keySetupStage === "loading_envelopes"
+          ? "サーバーの暗号鍵情報を確認しています…"
+          : "暗号鍵を生成しています…"
+      : keySetupStage === "loading_local"
+        ? "Checking local encryption keys…"
+        : keySetupStage === "loading_envelopes"
+          ? "Checking server key information…"
+          : "Generating encryption keys…";
     return (
       <View style={styles.loadingScreen}>
         <StatusBar style="dark" />
         <ActivityIndicator color={BLUE} size="large" />
         <Text style={styles.loadingText}>
-          {language === "ja" ? "暗号鍵を確認しています…" : "Checking encryption keys…"}
+          {loadingText}
         </Text>
+        {keySetupStage === "generating" ? (
+          <>
+            <Text style={styles.loadingHint}>
+              {language === "ja" ? "端末によっては少し時間がかかります。" : "This may take a little longer on some devices."}
+            </Text>
+            {keyKDFImplementation === "javascript" ? <RecoveryKDFFallbackNotice language={language} /> : null}
+          </>
+        ) : null}
       </View>
     );
   }
@@ -922,8 +1057,8 @@ export default function OnboardingScreen() {
         onConfirm={async () => {
           setKeySetupBusy(true);
           try {
-            const keyB = await ensureDeviceKeyB(session);
-            deriveDataKey(keySetupState.material.keyA, keyB.keyB, keySetupState.material.envelope.kdf_params.data_salt);
+            await ensureDeviceAgreementKey(session);
+            deriveAccountDataKey(keySetupState.material.keyA, keySetupState.material.envelope.kdf_params.data_salt);
             await completeInitialKeySetup(session, keySetupState.material);
             setKeySetupState({ status: "complete", mode: "initial" });
           } catch (reason) {
@@ -947,6 +1082,7 @@ export default function OnboardingScreen() {
         accountID={session.user_id}
         busy={keySetupBusy || keySetupActionBusy}
         error={keySetupState.error ?? null}
+        kdfImplementation={keyKDFImplementation ?? undefined}
         language={language}
         onBack={() => void logout()}
         onSubmit={async (recoveryKey) => {
@@ -956,14 +1092,13 @@ export default function OnboardingScreen() {
             await recoverWithSession(session, recoveryKey);
             const keyA = await loadStoredKeyA(session.user_id);
             if (!keyA) throw new Error("Recovered Key-A was not saved");
-            const keyB = await ensureDeviceKeyB(session);
-            deriveDataKey(keyA, keyB.keyB, keySetupState.envelope.kdf_params.data_salt);
-            const material = await createRecoveryKeyMaterial(keyA, keySetupState.envelope);
+            deriveAccountDataKey(keyA, keySetupState.envelope.kdf_params.data_salt);
+            const material = await createRecoveryMaterial(keyA, keySetupState.envelope);
             await savePendingRecoveryKeyRotation(session.user_id, material);
             setKeySetupState({ status: "rotate", material });
           } catch (reason) {
             setKeySetupState((current) => current.status === "recover"
-              ? { ...current, error: reason instanceof Error ? reason.message : "Recovery Keyの確認に失敗しました。" }
+              ? { ...current, error: reason instanceof Error ? reason.message : "Recovery Phraseの確認に失敗しました。" }
               : current);
           } finally {
             setKeySetupBusy(false);
@@ -987,11 +1122,12 @@ export default function OnboardingScreen() {
           setKeySetupBusy(true);
           setKeySetupState((current) => current.status === "rotate" ? { ...current, error: undefined } : current);
           try {
+            await ensureDeviceAgreementKey(session);
             await completeRecoveryKeyRotation(session, keySetupState.material);
             setKeySetupState({ status: "complete", mode: "recovery" });
           } catch (reason) {
             setKeySetupState((current) => current.status === "rotate"
-              ? { ...current, error: reason instanceof Error ? reason.message : "Recovery Keyの更新に失敗しました。" }
+              ? { ...current, error: reason instanceof Error ? reason.message : "Recovery Phraseの更新に失敗しました。" }
               : current);
           } finally {
             setKeySetupBusy(false);
@@ -1069,8 +1205,18 @@ export default function OnboardingScreen() {
           ...nextProfile,
           identityVerificationChoice,
         };
+        await refresh();
+        const activeSession = getCurrentSession();
+        if (!activeSession) {
+          throw new Error("ログイン状態を確認できません。もう一度お試しください。");
+        }
+        await updateMyProfile(activeSession, {
+          name: profileWithIdentityVerificationChoice.name,
+          nationality_code: profileWithIdentityVerificationChoice.nationalityCode,
+          bio: serializeMonsterSeedForLegacyBio(profileWithIdentityVerificationChoice),
+        });
         await saveLocalProfile(
-          session.user_id,
+          activeSession.user_id,
           profileWithIdentityVerificationChoice,
         );
         setProfile(profileWithIdentityVerificationChoice);
@@ -1094,6 +1240,11 @@ const styles = StyleSheet.create({
     marginTop: 12,
     color: MUTED_GRAY,
     fontSize: 14,
+  },
+  loadingHint: {
+    marginTop: 6,
+    color: MUTED_GRAY,
+    fontSize: 12,
   },
   keySetupErrorScreen: {
     flex: 1,
@@ -1358,10 +1509,10 @@ const styles = StyleSheet.create({
   },
   keySetupModalBackdrop: {
     flexGrow: 1,
+    width: "100%",
     alignItems: "center",
     justifyContent: "center",
     padding: 24,
-    width: "100%",
     backgroundColor: "rgba(0, 0, 0, 0.45)",
   },
   keySetupModalScrollView: {

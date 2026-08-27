@@ -13,4 +13,4 @@
 
 ## CORSと開発Web
 
-`CLIENT_ORIGIN` があればそれだけを許可し、空の場合に限り `development` で `DEV_CLIENT_ORIGIN` を許可する。Web Passkey UIはバックエンドの `/passkey` から同一Originで配信する。OAuth callbackの`/auth/complete`許可は、正式Web Passkey UIを配信するOriginのための設定である。
+本番は`CLIENT_ORIGIN`だけ、開発・testは`DEV_CLIENT_ORIGIN`と固定したローカルWeb開発Origin（標準の`http://localhost:8081`／`http://127.0.0.1:8081`を含む）の完全一致だけを許可する。ワイルドカードや任意Origin反射は行わない。Web Passkey UIはバックエンドの `/passkey` から同一Originで配信する。OAuth callbackの`/auth/complete`許可も同じOrigin判定を使う。

@@ -64,6 +64,12 @@ export function parseLocalProfile(value: string | null): LocalProfile | null {
   }
 }
 
+export function serializeMonsterSeedForLegacyBio(profile: LocalProfile): string {
+  return JSON.stringify({
+    monsterSeed: profile.monsterSeed,
+  });
+}
+
 function parseTagList(value: unknown): string[] | null {
   if (!Array.isArray(value)) return null;
   if (!value.every((tag) => typeof tag === "string")) return null;

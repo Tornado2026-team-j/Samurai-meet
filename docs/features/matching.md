@@ -1,8 +1,10 @@
 # 機能仕様：募集カード・マッチング
 
+最終更新: 2026-08-26
+
 ## 1. 対象
 
-ユーザーが日時、時間帯、キーワード、公開半径を指定した募集カードを公開し、双方の関心が一致したときだけチャットを開放します。
+ユーザーが日時、時間帯、キーワード、公開半径を指定した募集カードを公開し、閲覧者の関心をカード所有者が承認したときだけマッチを成立させます。承認後はチャットと会合セッションを別APIで開放します。
 
 対応要件：FR-007、FR-009、C-001、C-003、C-004、C-005
 
@@ -21,14 +23,16 @@
 ## 3. カード状態
 
 ```text
-draft -> open -> matched -> completed
-          ├-> closed
-          └-> expired
+card:  draft -> open -> matched
+                  ├-> closed
+                  └-> expired
+
+match: pending -> accepted -> completed
 ```
 
 - `draft`：未公開。作成者だけが閲覧可能。
 - `open`：公開中。公開半径と検索条件を満たすユーザーへ表示。
-- `matched`：少なくとも 1 件のマッチが成立。新規関心を受け付けるかは要確認。
+- `matched`：少なくとも 1 件のマッチが成立。カードを閉じるか期限切れになるまで、追加の関心を受け付ける。カード自体は今回のAPIでは`completed`へ遷移しない。
 - `closed`：作成者が停止。
 - `expired`：日時または有効期限を過ぎた状態。
 
@@ -48,20 +52,30 @@ draft -> open -> matched -> completed
 | カード入力・プレビュー・状態表示 | TypeScript / TSX |
 | 入力値の一次検証・フォーム状態 | TypeScript |
 | 状態遷移、重複、期限、権限 | Go |
-| 距離・公開条件 | Go + SQL / PostGIS |
+| 距離・公開条件 | GoのHaversine + PostgreSQL |
 | 永続化 | PostgreSQL / SQL |
 
 ## 6. API / DB
 
-- `GET /recruitments`
-- `POST /recruitments`
-- `GET /recruitments/{id}`
-- `PATCH /recruitments/{id}`
-- `DELETE /recruitments/{id}`
-- `POST /recruitments/{id}/interest`
-- `POST /matches/{id}/accept`
-- `POST /matches/{id}/complete`
+- `GET /api/v1/recruitments`
+- `POST /api/v1/recruitments`
+- `GET /api/v1/recruitments/{id}`
+- `PATCH /api/v1/recruitments/{id}`
+- `DELETE /api/v1/recruitments/{id}`（物理削除ではなくclosed化）
+- `POST /api/v1/recruitments/{id}/interest`
+- `GET /api/v1/matches?role=owner&status=pending&limit=50`
+- `GET /api/v1/matches/{id}`
+- `POST /api/v1/matches/{id}/accept`
+- `POST /api/v1/matches/{id}/reject`
+- `POST /api/v1/matches/{id}/complete`
+- `POST /api/v1/matches/{id}/meeting`
 - テーブル：`recruitment_cards`、`matches`、`blocks`
+
+募集カードの公開には名前・国コードが揃ったプロフィールが必要です。作成・更新の成功レスポンスは `{ "data": { ...card } }`、検索は `{ "data": [ ...card ] }` です。カードのレスポンスには正確な緯度・経度を含めず、現在地を使った場合だけ `distance_band`（`within_1_km` / `within_3_km` / `within_5_km`）を返します。
+
+検索条件は `keyword`（複数可）、`available_date`、`start_time`、`end_time`、`radius_km`（1/3/5）、`verified_only`、`latitude`、`longitude`、`limit`（最大50）です。緯度経度を省略した場合は、期限内の `user_locations` を使います。位置がない場合はキーワード・日時検索として扱い、位置による絞り込みは行いません。
+
+現行のPostgreSQLイメージにはPostGISを追加していないため、距離計算はGoのHaversine計算です。座標はDB内だけで扱い、PostGISへの置換は性能改善タスクとして残します。
 
 ## 7. 受け入れ条件
 
@@ -69,14 +83,17 @@ draft -> open -> matched -> completed
 - 公開半径は 1 km / 3 km / 5 km のいずれかに限定される。
 - 作成者以外がカードを編集・削除できない。
 - 同じユーザーが同じカードへ重複して関心を送れない。
-- 相互承認前にチャットが開かない。
+- 相互承認前にチャットが開かない。承認後のチャットは`chat_threads`を遅延作成する。
 - 期限切れカードへ新たな関心を送れない。
 - ブロック関係があるユーザーへカードが表示されない。
+- 同じカードへの関心はユーザーごとに一度だけで、重複時は `409 interest_already_sent`。
+- カード所有者以外の承認・更新・削除は拒否する。
+- フロントエンドは募集公開、募集検索・詳細、関心送信、応募一覧、承認・辞退を上記APIへ接続する。
+- `accepted`前のチャットAPIは存在しない。承認後はRESTの暗号化メッセージ、既読、短命transport tokenを利用できる。
 
 ## 8. 要確認
 
-- カード所有者が承認する方式か、双方の「いいね」で自動成立する方式か。
-- 1 枚のカードに許可するマッチ数。
-- マッチ成立後にカードを非公開にするか。
+- 通知一覧APIと未読管理。
 - 具体的な待ち合わせ場所をいつ・誰に表示するか。
 - 時間帯の変更をマッチ成立後に許可するか。
+- WebSocketによるリアルタイム配送と、会合セッション／距離補助のフロント接続。

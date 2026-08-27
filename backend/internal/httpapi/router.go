@@ -7,8 +7,12 @@ import (
 
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/account"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/auth"
+	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/chat"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/image"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/keys"
+	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/matching"
+	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/meeting"
+	profileuser "github.com/Tornado2026-team-j/Samurai-meet/backend/internal/user"
 )
 
 const APIV1Prefix = "/api/v1"
@@ -27,8 +31,13 @@ type RouterOptions struct {
 	Passkeys            *auth.PasskeyService
 	KeyEnvelopes        *keys.Service
 	Devices             *keys.DeviceService
+	DeviceTransfers     *keys.DeviceTransferService
 	Images              *image.Service
 	Accounts            *account.Service
+	Profiles            *profileuser.Service
+	Matching            *matching.Service
+	Chats               *chat.Service
+	Meetings            *meeting.Service
 }
 
 func NewRouter() http.Handler { return NewRouterWithOptions(RouterOptions{}) }
@@ -69,7 +78,7 @@ func NewRouterWithOptions(o RouterOptions) http.Handler {
 	}
 	if o.Passkeys != nil && o.PasskeyBootstraps != nil && o.Sessions != nil && o.SessionHandoffs != nil {
 		m.HandleFunc(APIV1Prefix+"/auth/passkey/web/options", passkeyWebOptions(o.Passkeys, o.PasskeyBootstraps))
-		m.HandleFunc(APIV1Prefix+"/auth/passkey/web/verify", passkeyWebVerify(o.Passkeys, o.PasskeyBootstraps, o.PreAuth, o.Sessions, o.SessionHandoffs))
+		m.HandleFunc(APIV1Prefix+"/auth/passkey/web/verify", passkeyWebVerify(o.Passkeys, o.PasskeyBootstraps, o.PreAuth, o.Sessions, o.SessionHandoffs, o.Environment))
 	}
 	if o.Passkeys != nil && o.Sessions != nil {
 		m.HandleFunc(APIV1Prefix+"/auth/passkey/register/options", passkeyRegisterOptions(o.Passkeys, o.Sessions, o.PreAuth))
@@ -88,6 +97,10 @@ func NewRouterWithOptions(o RouterOptions) http.Handler {
 	if o.Sessions != nil {
 		m.HandleFunc(devicePath, deviceRegistrations(o.Devices, o.Sessions))
 	}
+	if o.Sessions != nil {
+		m.HandleFunc(deviceTransferPath, deviceTransferCollection(o.DeviceTransfers, o.Sessions, o.Devices))
+		m.HandleFunc(deviceTransferPath+"/", deviceTransferItem(o.DeviceTransfers, o.Sessions, o.Devices))
+	}
 	if o.Images != nil {
 		m.HandleFunc(APIV1Prefix+"/keys/profile-image", profileWrappingKey(o.Images))
 		m.HandleFunc(APIV1Prefix+"/profile-photos/", publicProfilePhoto(o.Images))
@@ -96,31 +109,87 @@ func NewRouterWithOptions(o RouterOptions) http.Handler {
 		m.HandleFunc(APIV1Prefix+"/me/photos", uploadPhoto(o.Images, o.Sessions, o.Devices))
 		m.HandleFunc(APIV1Prefix+"/me/photos/", ownedPhoto(o.Images, o.Sessions, o.Devices))
 	}
-	if o.Sessions != nil && o.Accounts != nil {
-		m.HandleFunc(APIV1Prefix+"/me", deleteAccount(o.Accounts, o.Sessions))
+	if o.Sessions != nil && (o.Accounts != nil || o.Profiles != nil) {
+		m.HandleFunc(APIV1Prefix+"/me", meHandler(o.Profiles, o.Accounts, o.Sessions, o.PreAuth))
 	}
-	return withCORS(withJSONContentType(m), o)
+	if o.Sessions != nil && o.Profiles != nil {
+		m.HandleFunc(APIV1Prefix+"/me/profile", patchProfile(o.Profiles, o.Sessions))
+	}
+	if o.Sessions != nil && o.Matching != nil {
+		m.HandleFunc(recruitmentPath, recruitmentCollection(o.Matching, o.Sessions))
+		m.HandleFunc(recruitmentPath+"/", recruitmentItem(o.Matching, o.Sessions))
+		m.HandleFunc(APIV1Prefix+"/matches", matchCollection(o.Matching, o.Sessions))
+		m.HandleFunc(APIV1Prefix+"/matches/", matchAction(o.Matching, o.Sessions, o.Meetings))
+		m.HandleFunc(APIV1Prefix+"/me/location", updateLocation(o.Matching, o.Sessions))
+	} else if o.Sessions != nil && o.Meetings != nil {
+		m.HandleFunc(APIV1Prefix+"/matches/", matchAction(nil, o.Sessions, o.Meetings))
+	}
+	if o.Sessions != nil && o.Chats != nil {
+		m.HandleFunc(chatPath, chatCollection(o.Chats, o.Sessions))
+		m.HandleFunc(chatPath+"/", chatItem(o.Chats, o.Sessions))
+	}
+	if o.Sessions != nil && o.Meetings != nil {
+		m.HandleFunc(meetingPath+"/", meetingItem(o.Meetings, o.Sessions))
+	}
+	return withSecurityHeadersAndRateLimit(withCORS(withJSONContentType(m), o))
 }
 
 func withCORS(next http.Handler, o RouterOptions) http.Handler {
-	allowed := o.ClientOrigin
-	if allowed == "" && o.Environment == "development" {
-		allowed = o.DevClientOrigin
-	}
+	allowedOrigins := clientOrigins(o.Environment, o.ClientOrigin, o.DevClientOrigin)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if allowed != "" && r.Header.Get("Origin") == allowed {
-			w.Header().Set("Access-Control-Allow-Origin", allowed)
+		origin := r.Header.Get("Origin")
+		if containsExactOrigin(allowedOrigins, origin) {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Vary", "Origin")
-			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Passkey-Ceremony-Token, X-Web-Passkey-Token, X-Photo-Visibility, X-Photo-Content-Type, X-Photo-Nonce, X-Photo-Algorithm, X-Photo-Key-Version, X-Photo-Device-ID, X-Photo-Wrapped-Key, X-Photo-Account-Wrapped-Key, X-Photo-Server-Wrapped-Key, X-Photo-Wrapping-Algorithm")
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Passkey-Ceremony-Token, X-Web-Passkey-Token, X-Photo-Visibility, X-Photo-Content-Type, X-Photo-Nonce, X-Photo-Algorithm, X-Photo-Key-Version, X-Photo-Device-ID, X-Photo-Wrapped-Key, X-Photo-Account-Wrapped-Key, X-Photo-Server-Wrapped-Key, X-Photo-Wrapping-Algorithm, X-Device-Timestamp, X-Device-Nonce, X-Device-Body-SHA256, X-Device-Signature")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 			w.Header().Set("Access-Control-Expose-Headers", "X-Photo-Nonce, X-Photo-Algorithm, X-Photo-Key-Version, X-Photo-Device-ID, X-Photo-Wrapped-Key, X-Photo-Account-Wrapped-Key, X-Photo-Wrapping-Algorithm")
 			if r.Method == http.MethodOptions {
 				w.WriteHeader(http.StatusNoContent)
 				return
 			}
 		}
+		if r.Header.Get("Authorization") != "" {
+			w.Header().Set("Cache-Control", "no-store")
+		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+var developmentClientOriginDefaults = []string{
+	"http://localhost:8081",
+	"http://127.0.0.1:8081",
+	// Keep the previous Expo Web defaults valid for existing local checkouts.
+	"http://localhost:5173",
+	"http://127.0.0.1:5173",
+}
+
+func clientOrigins(environment, clientOrigin, devClientOrigin string) []string {
+	origins := make([]string, 0, 1+len(developmentClientOriginDefaults))
+	appendOrigin := func(value string) {
+		value = strings.TrimRight(strings.TrimSpace(value), "/")
+		if value == "" || containsExactOrigin(origins, value) {
+			return
+		}
+		origins = append(origins, value)
+	}
+	appendOrigin(clientOrigin)
+	if environment == "development" || environment == "test" {
+		appendOrigin(devClientOrigin)
+		for _, origin := range developmentClientOriginDefaults {
+			appendOrigin(origin)
+		}
+	}
+	return origins
+}
+
+func containsExactOrigin(origins []string, target string) bool {
+	for _, origin := range origins {
+		if target == origin {
+			return true
+		}
+	}
+	return false
 }
 
 func healthz(w http.ResponseWriter, _ *http.Request) {

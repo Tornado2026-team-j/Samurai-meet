@@ -13,6 +13,7 @@ export {
   parseIdentityVerificationChoice,
   parseLanguage,
   parseLocalProfile,
+  serializeMonsterSeedForLegacyBio,
 } from "./onboarding-contract";
 export type {
   AppLanguage,
@@ -95,4 +96,12 @@ export async function saveLocalProfile(
   profile: LocalProfile,
 ): Promise<void> {
   await setItem(profileKey(userID), JSON.stringify(profile));
+}
+
+export async function clearLocalProfile(userID: string): Promise<void> {
+  await deleteItem(profileKey(userID));
+}
+
+export async function clearIdentityVerificationChoice(userID: string): Promise<void> {
+  await deleteItem(identityVerificationChoiceKey(userID));
 }

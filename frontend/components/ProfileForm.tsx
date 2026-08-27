@@ -276,6 +276,7 @@ export default function ProfileForm({
         close: "閉じる",
         tagLimit: "各カテゴリ最大5個まで選択できます",
         required: "表示名・国籍・タグを合計3つ以上入力してください",
+        submitError: "プロフィールを保存できませんでした。時間をおいて再試行してください。",
       }
     : {
         name: "Display name",
@@ -295,6 +296,7 @@ export default function ProfileForm({
         close: "Close",
         tagLimit: "Choose up to 5 in each category",
         required: "Enter a display name, nationality, and at least 3 tags",
+        submitError: "Could not save your profile. Please try again.",
       };
   const [name, setName] = useState(initialProfile?.name ?? "");
   const [nationalityCode, setNationalityCode] = useState(
@@ -307,6 +309,7 @@ export default function ProfileForm({
   const [countryQuery, setCountryQuery] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [showValidation, setShowValidation] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const countries = useMemo(() => createCountryOptions(language), [language]);
   const selectedCountry = useMemo(
     () => countries.find((country) => country.code === nationalityCode),
@@ -333,6 +336,7 @@ export default function ProfileForm({
     }
 
     setSubmitting(true);
+    setSubmitError(null);
     try {
       await onSubmit({
         name: name.trim(),
@@ -346,6 +350,8 @@ export default function ProfileForm({
         identityVerificationChoice:
           initialProfile?.identityVerificationChoice ?? null,
       });
+    } catch {
+      setSubmitError(copy.submitError);
     } finally {
       setSubmitting(false);
     }
@@ -432,6 +438,12 @@ export default function ProfileForm({
       {showValidation && !valid ? (
         <Text accessibilityRole="alert" style={styles.validation}>
           {copy.required}
+      </Text>
+      ) : null}
+
+      {submitError ? (
+        <Text accessibilityRole="alert" style={styles.validation}>
+          {submitError}
         </Text>
       ) : null}
 

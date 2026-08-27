@@ -1,7 +1,8 @@
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { MaterialIcons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import {
+  ActivityIndicator,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -10,7 +11,8 @@ import {
   View,
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
-import { MOCK_GUIDE_APPLICATIONS } from "../../mocks/applications";
+import { useAuth } from "../../hooks/useAuth";
+import { listMatches, type MatchView } from "../../services/matching";
 
 const BLUE = "#5ec5f5";
 const YELLOW = "#e7b454";
@@ -21,15 +23,58 @@ const SOFT_BLUE = "#eff8ff";
 
 export default function ForeignerHomeScreen() {
   const router = useRouter();
+  const { getCurrentSession, session, status } = useAuth();
   const [query, setQuery] = useState("");
+  const [applications, setApplications] = useState<MatchView[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const searchInputRef = useRef<TextInput>(null);
   const pendingApplications = useMemo(
-    () =>
-      MOCK_GUIDE_APPLICATIONS.filter(
-        (application) => application.status === "pending",
-      ),
-    [],
+    () => applications.filter((application) => application.status === "pending"),
+    [applications],
   );
+
+  const loadApplications = useCallback(() => {
+    const controller = new AbortController();
+    let cancelled = false;
+
+    const load = async () => {
+      const activeSession = getCurrentSession() ?? session;
+      if (status !== "signed_in" || !activeSession) {
+        if (!cancelled) {
+          setLoading(false);
+          setLoadError("ログイン後に応募を表示できます。");
+        }
+        return;
+      }
+
+      setLoading(true);
+      setLoadError(null);
+      try {
+        const result = await listMatches(
+          activeSession,
+          { role: "owner", status: "pending", limit: 50 },
+          controller.signal,
+        );
+        if (!cancelled) setApplications(result);
+      } catch (error) {
+        if (error instanceof Error && error.name === "AbortError") return;
+        if (!cancelled) {
+          setLoadError("応募を読み込めませんでした。時間をおいて再試行してください。");
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    void load();
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [getCurrentSession, session, status]);
+
+  useFocusEffect(loadApplications);
 
   const openSearchPreferences = () => {
     searchInputRef.current?.blur();
@@ -127,12 +172,28 @@ export default function ForeignerHomeScreen() {
           </View>
         </View>
 
-        {pendingApplications.length > 0 ? (
+        {loading ? (
+          <View style={styles.emptyPanel}>
+            <ActivityIndicator color={BLUE} size="small" />
+            <Text style={styles.emptyTitle}>応募を読み込み中...</Text>
+          </View>
+        ) : loadError ? (
+          <View style={styles.emptyPanel}>
+            <Text accessibilityRole="alert" style={styles.emptyTitle}>{loadError}</Text>
+            <Pressable
+              accessibilityRole="button"
+              onPress={loadApplications}
+              style={({ pressed }) => [styles.retryButton, pressed && styles.pressed]}
+            >
+              <Text style={styles.retryButtonText}>Retry</Text>
+            </Pressable>
+          </View>
+        ) : pendingApplications.length > 0 ? (
           <View style={styles.applicationList}>
             {pendingApplications.map((application) => (
               <Pressable
                 key={application.id}
-                accessibilityLabel={`Review application from ${application.applicantName}`}
+                accessibilityLabel={`Review application from ${application.other_user.name}`}
                 accessibilityRole="button"
                 onPress={() => openApplication(application.id)}
                 style={({ pressed }) => [
@@ -146,10 +207,10 @@ export default function ForeignerHomeScreen() {
 
                 <View style={styles.applicationText}>
                   <Text numberOfLines={1} style={styles.applicantName}>
-                    {application.applicantName}
+                    {application.other_user.name}
                   </Text>
                   <Text numberOfLines={2} style={styles.applicationBio}>
-                    {application.bio}
+                    {application.other_user.bio || "No introduction provided."}
                   </Text>
                 </View>
 
@@ -388,6 +449,21 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     letterSpacing: 0,
     lineHeight: 17,
+  },
+  retryButton: {
+    minWidth: 72,
+    minHeight: 30,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 12,
+    paddingHorizontal: 14,
+    borderRadius: 15,
+    backgroundColor: YELLOW,
+  },
+  retryButtonText: {
+    color: "#ffffff",
+    fontSize: 12,
+    fontWeight: "800",
   },
   pressed: {
     opacity: 0.72,

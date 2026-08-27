@@ -13,6 +13,7 @@ import { MaterialIcons } from "@expo/vector-icons";
 import * as Clipboard from "expo-clipboard";
 import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { canonicalizeRecoveryPhrase, recoveryPhraseMatches, type RecoveryKDFImplementation } from "../services/crypto";
 import type { AppLanguage } from "../services/onboarding";
 
 const BLUE = "#5ec5f5";
@@ -35,11 +36,15 @@ type RecoveryCopy = {
   rotateDescription: string;
   rotateWarning: string;
   rotateComplete: string;
-  copyRecoveryKey: string;
+  copyRecoveryPhrase: string;
   copied: string;
   copyFailed: string;
   supportAccountID: string;
   copyAccountID: string;
+  confirmPhraseTitle: string;
+  confirmPhraseDescription: string;
+  confirmPhrasePlaceholder: string;
+  confirmPhraseMismatch: string;
   saved: string;
   complete: string;
   completing: string;
@@ -61,30 +66,34 @@ const COPY: Record<AppLanguage, RecoveryCopy> = {
   ja: {
     back: "戻る",
     title: "アカウント復旧",
-    inputTitle: "Recovery Keyを入力",
-    inputDescription: "保存しておいたRecovery Keyを入力してください。鍵は端末上でのみ使われ、サーバーへ送信されません。",
-    inputPlaceholder: "Recovery Key（Base64URL）",
+    inputTitle: "Recovery Phraseを入力",
+    inputDescription: "保存しておいた24語のRecovery Phraseを入力してください。Phraseは端末上でのみ使われ、サーバーへ送信されません。",
+    inputPlaceholder: "24語のRecovery Phrase",
     submit: "復旧してPasskeyを設定",
     submitting: "復旧を確認中…",
-    displayTitle: "Recovery Keyを保存",
-    displayDescription: "この鍵は新しい端末で暗号鍵を復旧するために必要です。画面を閉じる前にパスワード管理アプリなどへ保存してください。",
-    displayWarning: "Recovery Keyを失うと、暗号化データを復号できなくなります。サーバーには保存されません。",
-    rotateTitle: "新しいRecovery Keyを保存",
-    rotateDescription: "現在の暗号鍵を変えずに、新しいRecovery Keyへ更新します。画面を閉じる前に安全な場所へ保存してください。",
-    rotateWarning: "更新して続けると、以前のRecovery Keyは無効になります。サーバーにはRecovery Key自体は保存されません。",
-    rotateComplete: "新しいKeyを保存して更新",
-    copyRecoveryKey: "Recovery Keyをコピー",
+    displayTitle: "Recovery Phraseを保存",
+    displayDescription: "この24語は新しい端末で暗号鍵を復旧するために必要です。画面を閉じる前にパスワード管理アプリなどへ保存してください。",
+    displayWarning: "Recovery Phraseを失うと、暗号化データを復号できなくなります。サーバーには保存されません。",
+    rotateTitle: "新しいRecovery Phraseを保存",
+    rotateDescription: "現在の暗号鍵を変えずに、新しいRecovery Phraseへ更新します。画面を閉じる前に安全な場所へ保存してください。",
+    rotateWarning: "更新して続けると、以前のRecovery Phraseは無効になります。サーバーにはRecovery Phrase自体は保存されません。",
+    rotateComplete: "新しいPhraseを保存して更新",
+    copyRecoveryPhrase: "Recovery Phraseをコピー",
     copied: "コピーしました",
     copyFailed: "コピーに失敗しました。キーを選択して手動で保存してください。",
     supportAccountID: "問い合わせ用アカウントID",
     copyAccountID: "IDをコピー",
+    confirmPhraseTitle: "保存確認のため24語を貼り付け",
+    confirmPhraseDescription: "保存したRecovery Phraseをここへ貼り付けてください。入力内容は端末内で照合するだけで、サーバーへ送信されません。",
+    confirmPhrasePlaceholder: "保存した24語を貼り付け",
+    confirmPhraseMismatch: "表示されたRecovery Phraseと一致していません。コピーし直して貼り付けてください。",
     saved: "安全な場所に保存しました",
     complete: "保存して続ける",
     completing: "鍵を登録中…",
-    genericError: "Recovery Keyの確認に失敗しました。もう一度お試しください。",
+    genericError: "Recovery Phraseの確認に失敗しました。もう一度お試しください。",
     deleteAccount: "このアカウントを削除",
     deleteTitle: "アカウントを削除しますか？",
-    deleteWarning: "Recovery Keyを登録せずに削除すると、アカウントと保存データは復元できません。",
+    deleteWarning: "Recovery Phraseを保存せずに削除すると、アカウントと保存データは復元できません。",
     deleteScope: "削除対象: アカウント、全セッション、端末鍵、暗号化データ",
     deleteConfirmation: "削除",
     confirmDeleteInstruction: "確認のため「削除」と入力してください。",
@@ -97,30 +106,34 @@ const COPY: Record<AppLanguage, RecoveryCopy> = {
   en: {
     back: "Back",
     title: "Account recovery",
-    inputTitle: "Enter your Recovery Key",
-    inputDescription: "Enter the Recovery Key you saved. It is used only on this device and is never sent to the server.",
-    inputPlaceholder: "Recovery Key (Base64URL)",
+    inputTitle: "Enter your Recovery Phrase",
+    inputDescription: "Enter the 24-word Recovery Phrase you saved. It is used only on this device and is never sent to the server.",
+    inputPlaceholder: "24-word Recovery Phrase",
     submit: "Recover and set up a passkey",
     submitting: "Verifying recovery…",
-    displayTitle: "Save your Recovery Key",
-    displayDescription: "You need this key to recover your encryption key on a new device. Save it in a password manager before leaving this screen.",
-    displayWarning: "If you lose the Recovery Key, encrypted data cannot be decrypted. The server never stores it.",
-    rotateTitle: "Save your new Recovery Key",
-    rotateDescription: "Your encryption key stays the same while the Recovery Key is replaced. Save this key somewhere secure before leaving.",
-    rotateWarning: "After continuing, the previous Recovery Key will no longer work. The server never stores the Recovery Key itself.",
-    rotateComplete: "Save the new key and update",
-    copyRecoveryKey: "Copy Recovery Key",
+    displayTitle: "Save your Recovery Phrase",
+    displayDescription: "You need these 24 words to recover your encryption key on a new device. Save them in a password manager before leaving this screen.",
+    displayWarning: "If you lose the Recovery Phrase, encrypted data cannot be decrypted. The server never stores it.",
+    rotateTitle: "Save your new Recovery Phrase",
+    rotateDescription: "Your encryption key stays the same while the Recovery Phrase is replaced. Save it somewhere secure before leaving.",
+    rotateWarning: "After continuing, the previous Recovery Phrase will no longer work. The server never stores the phrase itself.",
+    rotateComplete: "Save the new phrase and update",
+    copyRecoveryPhrase: "Copy Recovery Phrase",
     copied: "Copied",
     copyFailed: "Copy failed. Select the key and save it manually.",
     supportAccountID: "Account ID for support",
     copyAccountID: "Copy ID",
+    confirmPhraseTitle: "Paste the 24 words to confirm",
+    confirmPhraseDescription: "Paste the Recovery Phrase you saved here. It is compared only on this device and is never sent to the server.",
+    confirmPhrasePlaceholder: "Paste the saved 24 words",
+    confirmPhraseMismatch: "The pasted Recovery Phrase does not match. Copy it again and paste all 24 words.",
     saved: "I saved it in a secure place",
     complete: "Save and continue",
     completing: "Registering keys…",
-    genericError: "Recovery Key could not be verified. Please try again.",
+    genericError: "Recovery Phrase could not be verified. Please try again.",
     deleteAccount: "Delete this account",
     deleteTitle: "Delete this account?",
-    deleteWarning: "If you delete without registering a Recovery Key, your account and stored data cannot be recovered.",
+    deleteWarning: "If you delete without saving a Recovery Phrase, your account and stored data cannot be recovered.",
     deleteScope: "This deletes your account, all sessions, device keys, and encrypted data.",
     deleteConfirmation: "DELETE",
     confirmDeleteInstruction: "Type DELETE to confirm.",
@@ -137,12 +150,13 @@ type RecoveryKeyInputProps = {
   language: AppLanguage;
   busy: boolean;
   error: string | null;
+  kdfImplementation?: RecoveryKDFImplementation;
   onBack: () => void;
   onSubmit: (recoveryKey: string) => Promise<void>;
   onDeleteAccount?: () => Promise<void>;
 };
 
-export function RecoveryKeyInput({ accountID, language, busy, error, onBack, onSubmit, onDeleteAccount }: RecoveryKeyInputProps) {
+export function RecoveryKeyInput({ accountID, language, busy, error, kdfImplementation, onBack, onSubmit, onDeleteAccount }: RecoveryKeyInputProps) {
   const insets = useSafeAreaInsets();
   const copy = COPY[language];
   const [recoveryKey, setRecoveryKey] = useState("");
@@ -152,7 +166,7 @@ export function RecoveryKeyInput({ accountID, language, busy, error, onBack, onS
     if (busy || recoveryKey.trim().length === 0) return;
     setSubmitError(null);
     try {
-      await onSubmit(recoveryKey.replace(/\s+/g, ""));
+      await onSubmit(recoveryKey.trim());
     } catch {
       // The parent owns the authenticated error state. Keep unexpected
       // promise failures from becoming an Expo unhandled rejection.
@@ -200,6 +214,7 @@ export function RecoveryKeyInput({ accountID, language, busy, error, onBack, onS
           value={recoveryKey}
         />
         {error || submitError ? <Text style={styles.errorText}>{error ?? submitError}</Text> : null}
+        {kdfImplementation === "javascript" ? <RecoveryKDFFallbackNotice language={language} /> : null}
         <Pressable
           accessibilityRole="button"
           disabled={busy || recoveryKey.trim().length === 0}
@@ -236,17 +251,19 @@ export function RecoveryKeyDisplay({ accountID, language, mode = "initial", reco
   const [saved, setSaved] = useState(false);
   const [copied, setCopied] = useState(false);
   const [copyError, setCopyError] = useState(false);
+  const [confirmation, setConfirmation] = useState("");
   const rotating = mode === "rotate";
 
   useEffect(() => {
     setSaved(false);
     setCopied(false);
     setCopyError(false);
+    setConfirmation("");
   }, [recoveryKey]);
 
-  const copyRecoveryKey = async () => {
+  const copyRecoveryPhrase = async () => {
     try {
-      await Clipboard.setStringAsync(recoveryKey.replace(/\s+/g, ""));
+      await Clipboard.setStringAsync(canonicalizeRecoveryPhrase(recoveryKey));
       setCopied(true);
       setCopyError(false);
     } catch {
@@ -271,26 +288,51 @@ export function RecoveryKeyDisplay({ accountID, language, mode = "initial", reco
         <Text style={styles.headerTitle}>{copy.title}</Text>
       </View>
 
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView
+        automaticallyAdjustKeyboardInsets
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
+      >
         <MaterialIcons color={YELLOW} name="key" size={58} />
         <Text style={styles.title}>{rotating ? copy.rotateTitle : copy.displayTitle}</Text>
         <Text style={styles.description}>{rotating ? copy.rotateDescription : copy.displayDescription}</Text>
         {accountID ? <SupportAccountID accountID={accountID} language={language} /> : null}
         <View style={styles.recoveryKeyBox}>
-          <Text selectable style={styles.recoveryKey}>{formatRecoveryKey(recoveryKey)}</Text>
+          <Text selectable style={styles.recoveryKey}>{formatRecoveryPhrase(recoveryKey)}</Text>
           <Pressable
-            accessibilityLabel={copied ? copy.copied : copy.copyRecoveryKey}
+            accessibilityLabel={copied ? copy.copied : copy.copyRecoveryPhrase}
             accessibilityRole="button"
             disabled={busy}
-            onPress={() => void copyRecoveryKey()}
+            onPress={() => void copyRecoveryPhrase()}
             style={({ pressed }) => [styles.copyButton, busy && styles.disabled, pressed && styles.pressed]}
           >
             <MaterialIcons color={YELLOW} name={copied ? "check" : "content-copy"} size={20} />
-            <Text style={styles.copyButtonText}>{copied ? copy.copied : copy.copyRecoveryKey}</Text>
+            <Text style={styles.copyButtonText}>{copied ? copy.copied : copy.copyRecoveryPhrase}</Text>
           </Pressable>
         </View>
         {copyError ? <Text style={styles.errorText}>{copy.copyFailed}</Text> : null}
         <Text style={styles.warning}>{rotating ? copy.rotateWarning : copy.displayWarning}</Text>
+
+        <View style={styles.confirmPhraseSection}>
+          <Text style={styles.confirmPhraseTitle}>{copy.confirmPhraseTitle}</Text>
+          <Text style={styles.confirmPhraseDescription}>{copy.confirmPhraseDescription}</Text>
+          <TextInput
+            autoCapitalize="none"
+            autoCorrect={false}
+            editable={!busy}
+            multiline
+            numberOfLines={3}
+            onChangeText={setConfirmation}
+            placeholder={copy.confirmPhrasePlaceholder}
+            placeholderTextColor="#a0a0a0"
+            style={[styles.input, styles.confirmPhraseInput]}
+            textAlignVertical="top"
+            value={confirmation}
+          />
+          {confirmation.length > 0 && !recoveryPhraseMatches(recoveryKey, confirmation) ? (
+            <Text style={styles.errorText}>{copy.confirmPhraseMismatch}</Text>
+          ) : null}
+        </View>
 
         <Pressable
           accessibilityRole="checkbox"
@@ -308,11 +350,11 @@ export function RecoveryKeyDisplay({ accountID, language, mode = "initial", reco
         {error ? <Text style={styles.errorText}>{error}</Text> : null}
         <Pressable
           accessibilityRole="button"
-          disabled={busy || !saved}
+          disabled={busy || !saved || !recoveryPhraseMatches(recoveryKey, confirmation)}
           onPress={() => void onConfirm()}
           style={({ pressed }) => [
             styles.primaryButton,
-            (busy || !saved) && styles.disabled,
+            (busy || !saved || !recoveryPhraseMatches(recoveryKey, confirmation)) && styles.disabled,
             pressed && styles.pressed,
           ]}
         >
@@ -429,7 +471,54 @@ function AccountDeleteAction({
   );
 }
 
-function formatRecoveryKey(value: string): string {
+/** Emergency deletion action shown after Recovery Phrase verification but
+ * before the replacement Passkey has been registered. */
+export function RecoveryAccountDeleteAction({
+  busy,
+  language,
+  onDelete,
+}: {
+  busy: boolean;
+  language: AppLanguage;
+  onDelete: () => Promise<void>;
+}) {
+  const copy = COPY[language];
+  return (
+    <AccountDeleteAction
+      busy={busy}
+      copy={{
+        ...copy,
+        deleteConfirm: language === "ja"
+          ? "Recovery Phrase確認済みで削除"
+          : "Delete after Recovery Phrase verification",
+      }}
+      onDelete={onDelete}
+    />
+  );
+}
+
+export function RecoveryKDFFallbackNotice({ language }: { language: AppLanguage }) {
+  return (
+    <View accessibilityRole="text" style={styles.kdfFallbackNotice}>
+      <MaterialIcons color="#946200" name="info-outline" size={18} />
+      <Text style={styles.kdfFallbackText}>
+        {language === "ja"
+          ? "JavaScript実装（互換モード）で暗号鍵を準備しています。暗号化方式と安全性の設定は変わりませんが、Development Buildより時間がかかる場合があります。"
+          : "Encryption keys are being prepared with the JavaScript compatibility implementation. The encryption scheme and security settings are unchanged, but this may take longer than a development build."}
+      </Text>
+    </View>
+  );
+}
+
+function formatRecoveryPhrase(value: string): string {
+  const words = value.trim().split(/\s+/u);
+  if (words.length === 24) {
+    return words.reduce<string[]>((groups, word, index) => {
+      const groupIndex = Math.floor(index / 4);
+      groups[groupIndex] = groups[groupIndex] ? `${groups[groupIndex]} ${word}` : word;
+      return groups;
+    }, []).join("\n");
+  }
   return value.match(/.{1,8}/g)?.join(" ") ?? value;
 }
 
@@ -478,17 +567,17 @@ export function RecoveryCompletion({
   const insets = useSafeAreaInsets();
   const copy = language === "ja"
     ? {
-        title: mode === "initial" ? "暗号鍵の登録が完了しました" : "Recovery Keyを再生成しました",
+        title: mode === "initial" ? "暗号鍵の登録が完了しました" : "復旧情報を更新しました",
         description: mode === "initial"
-          ? "Recovery Keyを保存し、端末の暗号鍵を登録しました。"
-          : "新しいRecovery Keyを登録し、この端末の暗号鍵を引き継ぎました。",
+          ? "Recovery Phraseを保存し、端末の暗号鍵を登録しました。"
+          : "新しいRecovery Phraseを登録し、この端末の暗号鍵を引き継ぎました。",
         continue: "続ける",
       }
     : {
-        title: mode === "initial" ? "Encryption keys are ready" : "Recovery Key regenerated",
+        title: mode === "initial" ? "Encryption keys are ready" : "Recovery information updated",
         description: mode === "initial"
-          ? "Your Recovery Key and device encryption key have been registered."
-          : "A new Recovery Key was registered, and this device's encryption key was restored.",
+          ? "Your Recovery Phrase and device encryption key have been registered."
+          : "A new Recovery Phrase was registered, and this device's encryption key was restored.",
         continue: "Continue",
       };
 
@@ -591,6 +680,27 @@ const styles = StyleSheet.create({
     fontSize: 15,
     letterSpacing: 0.4,
   },
+  confirmPhraseSection: { gap: 8 },
+  confirmPhraseTitle: { color: TEXT_GRAY, fontSize: 16, fontWeight: "700" },
+  confirmPhraseDescription: { color: MUTED_GRAY, fontSize: 13, lineHeight: 20 },
+  confirmPhraseInput: {
+    minHeight: 104,
+    paddingTop: 13,
+    paddingBottom: 13,
+    lineHeight: 22,
+  },
+  kdfFallbackNotice: {
+    width: "100%",
+    padding: 12,
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+    borderWidth: 1,
+    borderColor: "#efd596",
+    borderRadius: 10,
+    backgroundColor: "#fffaf0",
+  },
+  kdfFallbackText: { flex: 1, color: "#765000", fontSize: 12, lineHeight: 18 },
   recoveryKey: {
     padding: 18,
     borderRadius: 12,
@@ -650,10 +760,10 @@ const styles = StyleSheet.create({
   },
   modalBackdrop: {
     flexGrow: 1,
+    width: "100%",
     alignItems: "center",
     justifyContent: "center",
     padding: 24,
-    width: "100%",
     backgroundColor: "rgba(0, 0, 0, 0.45)",
   },
   modalScrollView: {

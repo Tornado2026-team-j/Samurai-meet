@@ -26,6 +26,7 @@ flowchart TD
 | P0 | Proton式client-owned root key v2 | `docs/ai/security/proton-style-key-management` | v1互換のまま24語Recovery Phrase、旧端末承認、新端末X25519 envelope、server zero-knowledge境界を実機E2Eで確認 |
 | P0 | 端末移行のbulk画像DEK再包み | client-owned root key v2 / image API | 進捗・再試行・中断再開・旧端末失効を持ち、全画像の新端末envelope確認後だけ完了扱い |
 | P0 | Native hardware posture | iOS Secure Enclave / Android Keystore | Expo Goと本番nativeを区別し、hardware-backed/attestation可否を画面と監査へ反映 |
+| P1 | Go admin panel | 認証・監査・運用権限設計 | 公開APIと別listenerまたは別serviceで、管理者認証、監査ログ、危険操作の再認証、運用分離を実機・障害時も検証 |
 | P1 | Recovery Codes | client-owned root key v2 | 8個程度のone-time auth recovery codeをhashのみ保存し、phrase復号能力と分離 |
 | P1 | Chat transport | 業務API | Access/Refreshと別audience、0-RTT変更禁止、heartbeat失効 |
 

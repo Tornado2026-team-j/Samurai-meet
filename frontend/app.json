@@ -13,7 +13,14 @@
       "expo-router",
       "expo-secure-store",
       "expo-web-browser",
-      "expo-font"
+      "expo-font",
+      "react-native-libsodium",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Samurai Meet uses your location to find nearby recruitments."
+        }
+      ]
     ]
   }
 }

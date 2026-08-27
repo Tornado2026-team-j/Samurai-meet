@@ -17,10 +17,11 @@
 - `0018_device_image_keys.sql` は端末公開鍵、端末proof nonce、画像の端末別Key-B envelope、Key-A由来の画像鍵wrapperを追加する。Key-B平文は保存しない。
 - `0019_profiles_matching.sql` はプロフィール、最新位置、募集カード、ブロック、マッチ状態を追加する。位置の正確な値はAPIレスポンスへ返さない。
 - `0020_chat_meetings.sql` はacceptedマッチ用のチャット、暗号化メッセージ、既読状態、会合セッション、短期の距離補助値を追加する。平文本文やBLE識別子は保存しない。
-- 現在の簡易runnerはファイル名順にSQLを再実行する。`IF NOT EXISTS` / `IF NOT EXISTS`相当で再実行可能にしているが、適用履歴テーブルはまだ導入していない。
-- 本番でmigration履歴テーブルを導入する場合は、既存DBの適用状態を確認してからrunnerを変更する。
+- runnerは`schema_migrations`へファイル名と正規化SQLのSHA-256を記録し、適用済みSQLを再実行しない。起動が同時になった場合もPostgreSQL advisory lockで直列化する。適用済みファイルの内容が変わった場合はchecksum mismatchで停止する。
+- 既存DBへ導入する初回起動では、ファイル名順に現行schemaを確認しながら未登録migrationを一度だけ適用する。適用済み状態を手作業で捏造・削除せず、バックアップと監査ログを残してから運用する。
 
 ローカル開発・CI・運用環境は PostgreSQL を利用します。
 
 - `0021_client_root_key_transfer.sql` はv2のX25519端末合意公開鍵と、旧端末が新端末へMaster Keyを移行するためのopaque transfer行を追加する。秘密鍵、Master Key、Recovery Phrase、verification code平文は保存しない。
 - `0022_disable_legacy_root_keys.sql` はリリース前のv2-only cutoverで、旧v1 root envelope、Recovery challenge、旧Key-B materialを削除し、`key_envelopes`へv2-only制約を追加する。旧開発アカウントのv1 Recovery Keyは復旧できないため、v2の鍵登録をやり直す。
+- `0023_storage_cleanup_jobs.sql` はアカウント削除後の暗号化画像削除を再試行可能にする。ユーザー行への外部キーは持たず、DB削除コミット後もストレージ削除が完了するまでジョブを保持する。

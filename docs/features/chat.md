@@ -17,8 +17,8 @@
 | WebSocket クライアント | `frontend/services/websocket.ts` | TypeScript |
 | QUIC / WebTransport クライアント | `frontend/services/quic.ts`（追加推奨） | TypeScript + native module |
 | API・履歴 | `frontend/services/api.ts` | TypeScript |
-| 接続認証・配送・順序確定 | `backend/internal/chat/websocket.go` | Go |
-| 保存・取得・既読 | `backend/internal/chat/handler.go` | Go |
+| 接続認証・配送・順序確定 | `backend/internal/chat/websocket.go` | Go（WebSocket配送は予定） |
+| 保存・取得・既読 | `backend/internal/chat/service.go` / `backend/internal/httpapi/chat.go` | Go（REST実装済み） |
 
 ## 3. 利用条件
 
@@ -28,7 +28,7 @@
 - QUIC / WebTransport を使う場合は、`aud = samurai-meet-chat` の Chat Token だけを利用する。
 - Refresh Token を WebSocket / QUIC 上へ送信しない。
 
-## 4. WebSocket イベント
+## 4. WebSocket イベント（予定）
 
 ### クライアント → サーバー
 
@@ -68,15 +68,20 @@
 - `GET /chats`
 - `GET /chats/{id}/messages`
 - `POST /chats/{id}/messages`
+- `POST /chats/{id}/read`
 - `POST /chats/{id}/transport-token`
+- `POST /matches/{id}/meeting`
+- `GET|POST /meetings/{id}/proximity`
 - WebSocket：`wss://samurai-meet.disnana.com/api/v1/ws/chats/{chat_id}`
 - QUIC / WebTransport：採用方式決定後に endpoint を確定
-- テーブル：`matches`、`messages`、`photos`
+- テーブル：`matches`、`chat_threads`、`messages`、`chat_read_states`、`photos`
+
+RESTのメッセージ送信は`accepted`マッチの参加者だけが利用でき、本文ではなくBase64URLのAES-256-GCM暗号文を保存します。`client_message_id`で再送を冪等化し、WebSocket配送が未接続の間は`sequence` cursorでポーリングします。サーバーは暗号文を復号しません。
 
 ## 8. 受け入れ条件
 
 - マッチ成立後だけチャット画面へ入れる。
-- 接続中の相手へメッセージがリアルタイム配送される。
+- WebSocket配送を追加した後、接続中の相手へメッセージがリアルタイム配送される。
 - WebSocket 切断後に再接続すると未同期メッセージを取得できる。
 - 同じ送信操作を再試行しても二重メッセージにならない。
 - 既読状態が相手へ反映される。
@@ -88,3 +93,4 @@
 - E2EE の採用範囲と通報時の検査方法。
 - 既読を相手へ必ず通知するか。
 - タイピング表示、通知、オフライン送信の MVP 対象可否。
+- WebSocketサーバー実装とExpo実機での再接続負荷・失効確認。

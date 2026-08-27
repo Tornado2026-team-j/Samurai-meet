@@ -14,7 +14,19 @@ import {
   View,
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
-import { createRecruitmentPreview } from "../../services/recruitment";
+import { useAuth } from "../../hooks/useAuth";
+import { APIError } from "../../services/api-client";
+import { getCurrentCoordinates } from "../../services/location";
+import {
+  loadLocalProfile,
+  serializeMonsterSeedForLegacyBio,
+} from "../../services/onboarding";
+import { updateMyProfile } from "../../services/profile";
+import {
+  createRecruitmentPreview,
+  defaultRecruitmentDate,
+  publishRecruitment,
+} from "../../services/recruitment";
 import type {
   RecruitmentDistanceKm,
   RecruitmentDraft,
@@ -33,6 +45,7 @@ const CONFIRMATION_HEADER_HEIGHT = 542;
 const EXPANSION_DURATION = 360;
 
 type PreviewStatus = "idle" | "loading" | "success" | "error";
+type PublishStatus = "idle" | "publishing";
 
 function countryCodeToFlag(countryCode: string): string {
   const normalizedCode = countryCode.trim().toUpperCase();
@@ -92,6 +105,7 @@ function Stepper({
 
 export default function SearchPreferencesScreen() {
   const router = useRouter();
+  const { getCurrentSession, refresh, session, status } = useAuth();
   const { query } = useLocalSearchParams<{ query?: string | string[] }>();
   const initialQuery = Array.isArray(query) ? query[0] : query;
   const [description, setDescription] = useState(initialQuery ?? "");
@@ -107,6 +121,8 @@ export default function SearchPreferencesScreen() {
   const [preview, setPreview] = useState<RecruitmentPreview | null>(null);
   const [previewStatus, setPreviewStatus] = useState<PreviewStatus>("idle");
   const [previewError, setPreviewError] = useState<string | null>(null);
+  const [publishStatus, setPublishStatus] = useState<PublishStatus>("idle");
+  const [publishError, setPublishError] = useState<string | null>(null);
   const dateInputRef = useRef<TextInput>(null);
   const previewRequestRef = useRef<AbortController | null>(null);
   const panelHeight = useMemo(
@@ -119,6 +135,7 @@ export default function SearchPreferencesScreen() {
   const contentTranslateY = useMemo(() => new Animated.Value(14), []);
   const confirmationOpacity = useMemo(() => new Animated.Value(0), []);
   const confirmationTranslateY = useMemo(() => new Animated.Value(14), []);
+  const suggestedDate = useMemo(() => defaultRecruitmentDate(), []);
 
   useEffect(() => {
     const animation = Animated.parallel([
@@ -197,7 +214,7 @@ export default function SearchPreferencesScreen() {
     activity: description.trim() || "Explore Osaka with a local",
     location: location.trim() || "Osaka,Umeda",
     useCurrentLocation,
-    date: date.trim() || "August,25 2026",
+    date: date.trim() || suggestedDate,
     startTime: `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`,
     durationHours: duration,
     distanceKm: distance,
@@ -209,13 +226,30 @@ export default function SearchPreferencesScreen() {
     previewRequestRef.current = controller;
     setPreview(null);
     setPreviewError(null);
+    setPublishError(null);
     setPreviewStatus("loading");
 
     try {
-      const result = await createRecruitmentPreview(createDraft(), controller.signal);
+      const draft = createDraft();
+      const result = await createRecruitmentPreview(draft, controller.signal);
+      const activeSession = getCurrentSession() ?? session;
+      const localProfile = activeSession
+        ? await loadLocalProfile(activeSession.user_id)
+        : null;
+      const personalizedResult = localProfile
+        ? {
+            ...result,
+            author: {
+              ...result.author,
+              id: activeSession?.user_id ?? result.author.id,
+              displayName: localProfile.name,
+              countryCode: localProfile.nationalityCode,
+            },
+          }
+        : result;
 
       if (previewRequestRef.current === controller) {
-        setPreview(result);
+        setPreview(personalizedResult);
         setPreviewStatus("success");
       }
     } catch (error) {
@@ -231,6 +265,73 @@ export default function SearchPreferencesScreen() {
       if (previewRequestRef.current === controller) {
         previewRequestRef.current = null;
       }
+    }
+  };
+
+  const publish = async () => {
+    if (publishStatus === "publishing" || previewStatus !== "success" || !preview) {
+      return;
+    }
+
+    Keyboard.dismiss();
+    setPublishStatus("publishing");
+    setPublishError(null);
+
+    try {
+      if (status !== "signed_in") {
+        throw new Error("not_signed_in");
+      }
+      await refresh();
+      const activeSession = getCurrentSession() ?? session;
+      if (!activeSession) {
+        throw new Error("not_signed_in");
+      }
+
+      const localProfile = await loadLocalProfile(activeSession.user_id);
+      if (localProfile?.completed) {
+        await updateMyProfile(activeSession, {
+          name: localProfile.name,
+          nationality_code: localProfile.nationalityCode,
+          bio: serializeMonsterSeedForLegacyBio(localProfile),
+        });
+      }
+
+      let coordinates = null;
+      if (useCurrentLocation) {
+        try {
+          coordinates = await getCurrentCoordinates();
+        } catch {
+          coordinates = null;
+        }
+      }
+
+      await publishRecruitment(createDraft(), preview, activeSession, coordinates);
+      router.replace("/foreigner");
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        return;
+      }
+      if (error instanceof APIError) {
+        if (error.code === "profile_incomplete") {
+          setPublishError("プロフィールを完成させてから公開してください。");
+        } else if (error.code === "recruitment_expired") {
+          setPublishError("募集日時が過ぎています。日時を確認してください。");
+        } else if (error.code === "invalid_matching_request") {
+          setPublishError("入力内容を確認してください。");
+        } else {
+          setPublishError("募集を公開できませんでした。時間をおいて再試行してください。");
+        }
+      } else if (error instanceof Error && error.message === "not_signed_in") {
+        setPublishError("ログイン後にもう一度お試しください。");
+      } else if (error instanceof Error && error.message === "recruitment_date_in_past") {
+        setPublishError("募集日時は現在より後に設定してください。");
+      } else if (error instanceof Error && error.message === "recruitment_must_end_same_day") {
+        setPublishError("終了時刻が日付をまたがないようにしてください。");
+      } else {
+        setPublishError("募集を公開できませんでした。時間をおいて再試行してください。");
+      }
+    } finally {
+      setPublishStatus("idle");
     }
   };
 
@@ -319,7 +420,9 @@ export default function SearchPreferencesScreen() {
         setIsConfirmationVisible(false);
         setPreview(null);
         setPreviewError(null);
+        setPublishError(null);
         setPreviewStatus("idle");
+        setPublishStatus("idle");
       }
     });
   };
@@ -405,7 +508,7 @@ export default function SearchPreferencesScreen() {
                   ref={dateInputRef}
                   accessibilityLabel="Date"
                   onChangeText={setDate}
-                  placeholder="August,25 2026"
+                  placeholder={suggestedDate}
                   placeholderTextColor={PLACEHOLDER_GRAY}
                   style={[styles.input, styles.dateInput]}
                   value={date}
@@ -602,18 +705,29 @@ export default function SearchPreferencesScreen() {
             </View>
 
             <Pressable
-              accessibilityState={{ disabled: previewStatus !== "success" }}
+              accessibilityState={{
+                disabled: previewStatus !== "success" || publishStatus === "publishing",
+              }}
               accessibilityRole="button"
-              disabled={previewStatus !== "success"}
-              onPress={Keyboard.dismiss}
+              disabled={previewStatus !== "success" || publishStatus === "publishing"}
+              onPress={() => void publish()}
               style={({ pressed }) => [
                 styles.goButton,
-                previewStatus !== "success" && styles.buttonDisabled,
+                (previewStatus !== "success" || publishStatus === "publishing") &&
+                  styles.buttonDisabled,
                 pressed && styles.pressed,
               ]}
             >
-              <Text style={styles.goButtonText}>GO!</Text>
+              <Text style={styles.goButtonText}>
+                {publishStatus === "publishing" ? "公開中..." : "GO!"}
+              </Text>
             </Pressable>
+
+            {publishError ? (
+              <Text accessibilityRole="alert" style={styles.publishError}>
+                {publishError}
+              </Text>
+            ) : null}
 
             <Pressable
               accessibilityLabel="Back to search filters"
@@ -917,6 +1031,17 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     letterSpacing: 0,
     lineHeight: 18,
+  },
+  publishError: {
+    position: "absolute",
+    top: 393,
+    right: 28,
+    left: 28,
+    color: "#ffffff",
+    fontSize: 12,
+    fontWeight: "700",
+    lineHeight: 16,
+    textAlign: "center",
   },
   backButton: {
     position: "absolute",

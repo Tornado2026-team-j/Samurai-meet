@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -89,7 +90,7 @@ func passkeyWebReset(bootstraps *auth.PasskeyBootstrapService) http.HandlerFunc 
 	}
 }
 
-func passkeyWebVerify(passkeys *auth.PasskeyService, bootstraps *auth.PasskeyBootstrapService, preauth *auth.PreAuthService, sessions *auth.SessionService, handoffs *auth.SessionHandoffService) http.HandlerFunc {
+func passkeyWebVerify(passkeys *auth.PasskeyService, bootstraps *auth.PasskeyBootstrapService, preauth *auth.PreAuthService, sessions *auth.SessionService, handoffs *auth.SessionHandoffService, environments ...string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		prepareWebPasskeyResponse(w)
 		if r.Method != http.MethodPost {
@@ -115,6 +116,11 @@ func passkeyWebVerify(passkeys *auth.PasskeyService, bootstraps *auth.PasskeyBoo
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid_passkey_bootstrap"})
 			return
 		}
+		if r.Body == nil || r.ContentLength > 128<<10 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_passkey_response"})
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 128<<10)
 
 		var sessionID string
 		nowAt := time.Now()
@@ -123,11 +129,14 @@ func passkeyWebVerify(passkeys *auth.PasskeyService, bootstraps *auth.PasskeyBoo
 			var tokens auth.SessionTokens
 			if bootstrap.SourcePreAuthHash != "" {
 				tokens, err = passkeys.FinishRegistrationWithPreAuthHash(r.Context(), bootstrap.UserID, ceremonyToken, r, nowAt, bootstrap.SourcePreAuthHash)
+				if err == nil {
+					sessionID = tokens.SessionID
+				}
 			} else {
-				tokens, err = sessions.CreatePasskeySession(r.Context(), bootstrap.UserID, nowAt)
-			}
-			if err == nil {
-				sessionID = tokens.SessionID
+				err = passkeys.FinishRegistrationForSession(r.Context(), bootstrap.UserID, bootstrap.SessionID, ceremonyToken, r, nowAt)
+				if err == nil {
+					sessionID = bootstrap.SessionID
+				}
 			}
 		case auth.PasskeyBootstrapLogin:
 			var tokens auth.SessionTokens
@@ -146,15 +155,30 @@ func passkeyWebVerify(passkeys *auth.PasskeyService, bootstraps *auth.PasskeyBoo
 			err = auth.ErrPasskeyBootstrap
 		}
 		if err != nil || sessionID == "" {
+			if err != nil && len(environments) > 0 && strings.EqualFold(strings.TrimSpace(environments[0]), "development") {
+				// Keep the client response generic. This local-only diagnostic
+				// contains no token, credential, or key material.
+				log.Printf("passkey web verification failed: scope=%s reason=%v", bootstrap.Scope, err)
+			}
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "passkey_verification_failed"})
 			return
 		}
+		// ConsumeWithSourceSession validates the session that originally issued
+		// the bootstrap. A pre-auth bootstrap deliberately has no source session;
+		// the sessionID above is the newly-created result and is only used for the
+		// handoff below.
 		if err = bootstraps.ConsumeWithSourceSession(r.Context(), bootstrapToken, bootstrap.Scope, bootstrap.UserID, bootstrap.SessionID, ceremonyToken, time.Now()); err != nil {
+			if bootstrap.SourcePreAuthHash != "" && sessionID != "" {
+				_ = sessions.RevokeOwnedSession(r.Context(), bootstrap.UserID, sessionID, "passkey_bootstrap_failed", time.Now())
+			}
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid_passkey_bootstrap"})
 			return
 		}
 		handoff, err := handoffs.Create(r.Context(), bootstrap.UserID, sessionID, bootstrap.AppRedirectURI, bootstrap.HandoffChallenge, time.Now())
 		if err != nil {
+			if bootstrap.SourcePreAuthHash != "" && sessionID != "" {
+				_ = sessions.RevokeOwnedSession(r.Context(), bootstrap.UserID, sessionID, "passkey_handoff_failed", time.Now())
+			}
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "session_handoff_failed"})
 			return
 		}

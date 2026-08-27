@@ -5,11 +5,15 @@ import (
 	"crypto/rsa"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/account"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/auth"
+	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/chat"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/config"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/db"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/httpapi"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/image"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/keys"
+	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/matching"
+	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/meeting"
+	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/user"
 	"log"
 	"net/http"
 	"strings"
@@ -18,6 +22,9 @@ import (
 
 func main() {
 	cfg := config.Load()
+	if err := cfg.ValidateForEnvironment(); err != nil {
+		log.Fatalf("configuration validation failed: %v", err)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	database, err := db.Open(ctx, cfg.Database)
@@ -89,10 +96,29 @@ func main() {
 	}
 	cache := image.NewCiphertextCache(cfg.ImageStorage.CiphertextCacheMaxBytes, time.Duration(cfg.ImageStorage.CiphertextCacheTTLSeconds)*time.Second)
 	images := image.NewService(database, store, cache, privateKey, cfg.ImageStorage.ProfileWrappingKeyVersion, int64(cfg.ImageStorage.MaxUploadBytes))
+	cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	if e = images.ProcessPendingUserFileCleanup(cleanupCtx, 100, time.Now()); e != nil {
+		cleanupCancel()
+		log.Fatalf("pending encrypted image cleanup failed: %v", e)
+	}
+	cleanupCancel()
 	envelopes := keys.NewService(database)
 	devices := keys.NewDeviceService(database)
+	deviceTransfers := keys.NewDeviceTransferService(database)
 	accounts := account.NewService(database, images)
-	server := &http.Server{Addr: cfg.HTTPAddr, ReadHeaderTimeout: 10 * time.Second, Handler: httpapi.NewRouterWithOptions(httpapi.RouterOptions{Environment: cfg.Environment, AllowExpoGoRedirect: cfg.AllowExpoGoRedirect, DevClientOrigin: cfg.DevClientOrigin, ClientOrigin: cfg.ClientOrigin, OAuthLogin: oauthLogin, PreAuth: preauth, Sessions: sessions, SessionHandoffs: handoffs, PasskeyBootstraps: bootstraps, Recovery: recovery, Passkeys: passkeys, KeyEnvelopes: envelopes, Devices: devices, Images: images, Accounts: accounts})}
+	profiles := user.NewService(database)
+	matchingService := matching.NewService(database)
+	chatService := chat.NewService(database, signer)
+	meetingService := meeting.NewService(database)
+	server := &http.Server{
+		Addr:              cfg.HTTPAddr,
+		ReadTimeout:       2 * time.Minute,
+		ReadHeaderTimeout: 10 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    32 * 1024,
+		Handler:           httpapi.NewRouterWithOptions(httpapi.RouterOptions{Environment: cfg.Environment, AllowExpoGoRedirect: cfg.AllowExpoGoRedirect, DevClientOrigin: cfg.DevClientOrigin, ClientOrigin: cfg.ClientOrigin, OAuthLogin: oauthLogin, PreAuth: preauth, Sessions: sessions, SessionHandoffs: handoffs, PasskeyBootstraps: bootstraps, Recovery: recovery, Passkeys: passkeys, KeyEnvelopes: envelopes, Devices: devices, DeviceTransfers: deviceTransfers, Images: images, Accounts: accounts, Profiles: profiles, Matching: matchingService, Chats: chatService, Meetings: meetingService}),
+	}
 	log.Printf("backend server listening on %s (environment=%s)", cfg.HTTPAddr, cfg.Environment)
 	if e := server.ListenAndServe(); e != nil && e != http.ErrServerClosed {
 		log.Fatal(e)

@@ -1,5 +1,5 @@
-import { API_BASE_URL } from './api-config';
 import type { Session } from './auth-contract';
+import { fetchWithAutoRefresh } from './authenticated-fetch';
 import {
   decryptPhotoBytes,
   encryptPhotoBytes,
@@ -17,6 +17,7 @@ import {
 const PHOTO_REQUEST_TIMEOUT_MS = 30_000;
 const PHOTO_KEY_VERSION = 'v1';
 const DEVICE_IMAGE_KEY_AAD_PREFIX = 'samurai-meet:image-key-wrap/v1\ndevice\n';
+const DEVICE_IMAGE_WRAPPING_ALGORITHM = 'KEY-B-AES-GCM';
 
 export type PhotoMetadata = {
   id: string;
@@ -51,25 +52,14 @@ export type DownloadedPhoto = {
   wrappingAlgorithm: string;
 };
 
-async function request(path: string, init: RequestInit, token: string): Promise<Response> {
-  const controller = new AbortController();
-  const timeoutID = setTimeout(() => controller.abort(), PHOTO_REQUEST_TIMEOUT_MS);
+async function request(path: string, init: RequestInit, session: Session): Promise<Response> {
   try {
-    return await fetch(`${API_BASE_URL}${path}`, {
-      ...init,
-      headers: {
-        ...(init.headers ?? {}),
-        Authorization: `Bearer ${token}`,
-      },
-      signal: controller.signal,
-    });
+    return await fetchWithAutoRefresh(path, session, init, PHOTO_REQUEST_TIMEOUT_MS);
   } catch (reason) {
-    if (reason instanceof Error && reason.name === 'AbortError') {
+    if (reason instanceof Error && reason.name === 'AbortError' && !init.signal?.aborted) {
       throw new Error('画像通信がタイムアウトしました。接続を確認して再試行してください。');
     }
     throw reason;
-  } finally {
-    clearTimeout(timeoutID);
   }
 }
 
@@ -109,7 +99,7 @@ export async function uploadEncryptedPhoto(
     'X-Photo-Wrapping-Algorithm': encrypted.wrappingAlgorithm,
   };
   if (options.serverWrappedKey) headers['X-Photo-Server-Wrapped-Key'] = options.serverWrappedKey;
-  const response = await request('/me/photos', { method: 'POST', headers, body: encrypted.ciphertext as unknown as BodyInit }, session.access_token);
+  const response = await request('/me/photos', { method: 'POST', headers, body: encrypted.ciphertext as unknown as BodyInit }, session);
   await assertResponse(response);
   const body = await response.json() as { data?: PhotoMetadata };
   if (!body.data?.id) throw new Error('画像アップロード応答が不正です。');
@@ -124,7 +114,7 @@ export async function downloadEncryptedPhoto(session: Session, photoID: string):
   const response = await request(`/me/photos/${encodeURIComponent(photoID)}`, {
     method: 'GET',
     headers: { ...proofHeaders, 'X-Photo-Device-ID': device.deviceID },
-  }, session.access_token);
+  }, session);
   await assertResponse(response);
   const ciphertext = new Uint8Array(await response.arrayBuffer());
   const nonce = response.headers.get('X-Photo-Nonce');
@@ -159,7 +149,10 @@ export async function downloadAndDecryptPhoto(
   } else {
     imageKey = unwrapPhotoKeyWithAccount(downloaded.photo.accountWrappedImageKey, keyA, dataSalt);
     const deviceWrappedImageKey = await wrapPhotoKeyForDevice(imageKey, downloaded.device.keyB, downloaded.device.deviceID);
-    await savePhotoDeviceEnvelope(session, photoID, downloaded.device, deviceWrappedImageKey, downloaded.photo.wrappingAlgorithm);
+    // The photo's overall wrapping algorithm may also describe the account
+    // envelope or the public-profile RSA envelope. A newly persisted device
+    // envelope always has its own fixed algorithm contract.
+    await savePhotoDeviceEnvelope(session, photoID, downloaded.device, deviceWrappedImageKey, DEVICE_IMAGE_WRAPPING_ALGORITHM);
   }
   return decryptPhotoBytes(downloaded.photo.ciphertext, downloaded.photo.nonce, imageKey);
 }
@@ -186,6 +179,6 @@ export async function savePhotoDeviceEnvelope(
       'X-Photo-Device-ID': device.deviceID,
     },
     body,
-  }, session.access_token);
+  }, session);
   await assertResponse(response);
 }

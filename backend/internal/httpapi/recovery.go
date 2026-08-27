@@ -59,7 +59,12 @@ func recoveryVerify(service *keys.RecoveryService, sessions *auth.SessionService
 			return
 		}
 		var input keys.RecoveryProof
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16*1024)).Decode(&input); err != nil || strings.TrimSpace(input.ChallengeID) == "" || strings.TrimSpace(input.Challenge) == "" || strings.TrimSpace(input.KeyVersion) == "" || strings.TrimSpace(input.Signature) == "" {
+		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16*1024))
+		if err := decoder.Decode(&input); err != nil || strings.TrimSpace(input.ChallengeID) == "" || strings.TrimSpace(input.Challenge) == "" || strings.TrimSpace(input.KeyVersion) == "" || strings.TrimSpace(input.Signature) == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_recovery_proof"})
+			return
+		}
+		if err := ensureJSONBodyConsumed(decoder); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_recovery_proof"})
 			return
 		}
