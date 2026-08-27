@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import {
+  getNotificationNavigation,
   isNotificationRecord,
   listNotifications,
   markNotificationRead,
@@ -71,6 +72,7 @@ describe("通知APIクライアント", () => {
       unread: true,
       period: "today",
       targetId: "match-1",
+      recruitmentId: "recruitment-1",
     });
     expect(toNotificationView(record, "ja", now)).toMatchObject({
       title: "新しい応募",
@@ -83,5 +85,37 @@ describe("通知APIクライアント", () => {
     expect(isNotificationRecord(record)).toBe(true);
     expect(isNotificationRecord({ ...record, target_id: "" })).toBe(false);
     expect(isNotificationRecord({ ...record, destination: "unknown" })).toBe(false);
+  });
+
+  it("新しい応募は表示言語に関係なく構造化IDから承認画面へ遷移する", () => {
+    const english = getNotificationNavigation(toNotificationView(record, "en"));
+    const japanese = getNotificationNavigation(toNotificationView(record, "ja"));
+
+    expect(english).toEqual({
+      pathname: "/foreigner/applications/[id]",
+      params: { id: "match-1", recruitmentId: "recruitment-1" },
+    });
+    expect(japanese).toEqual(english);
+  });
+
+  it("応募結果は表示文言を使わずmatch_idで応募状態画面へ遷移する", () => {
+    const english = getNotificationNavigation(toNotificationView({
+      ...record,
+      type: "match_confirmed",
+      target_id: "match-accepted",
+      destination: "guide_detail",
+    }, "en"));
+    const japanese = getNotificationNavigation(toNotificationView({
+      ...record,
+      type: "match_confirmed",
+      target_id: "match-accepted",
+      destination: "guide_detail",
+    }, "ja"));
+
+    expect(english).toEqual({
+      pathname: "/japanese/guide-requested",
+      params: { matchId: "match-accepted" },
+    });
+    expect(japanese).toEqual(english);
   });
 });

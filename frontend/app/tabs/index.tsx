@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { MaterialIcons } from "@expo/vector-icons";
+import DateTimePicker, {
+  type DateTimePickerEvent,
+} from "@react-native-community/datetimepicker";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import {
   ActivityIndicator,
@@ -7,6 +10,8 @@ import {
   Easing,
   Image,
   Keyboard,
+  Modal,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -22,15 +27,23 @@ import { loadLocalProfile } from "../../services/onboarding";
 import { updateMyProfile } from "../../services/profile";
 import {
   createRecruitmentPreview,
-  defaultRecruitmentDate,
+  defaultRecruitmentSchedule,
+  formatRecruitmentDateInput,
+  formatRecruitmentISODate,
+  getRecruitmentScheduleIssue,
+  parseRecruitmentDateInput,
   publishRecruitment,
+  recruitmentDateTimeToInstant,
+  shiftRecruitmentDate,
+  JST_TIME_ZONE,
+  type RecruitmentScheduleIssue,
 } from "../../services/recruitment";
 import type {
   RecruitmentDistanceKm,
   RecruitmentDraft,
   RecruitmentPreview,
 } from "../../types/recruitment";
-import { formatTimeRange, shiftTime } from "../../utils/time";
+import { formatTimeRange } from "../../utils/time";
 
 const BLUE = "#5ec5f5";
 const YELLOW = "#e7b454";
@@ -44,17 +57,131 @@ const EXPANSION_DURATION = 360;
 
 type PreviewStatus = "idle" | "loading" | "success" | "error";
 type PublishStatus = "idle" | "publishing";
+type ScheduleWarning = {
+  issue: RecruitmentScheduleIssue;
+  suggestedDate: string;
+  suggestedStartTime: string;
+  fromConfirmation: boolean;
+};
+
+const DURATION_OPTIONS = [1, 2, 3, 4, 5, 6, 7, 8] as const;
 
 function isSessionRefreshFailure(error: unknown): boolean {
   return error instanceof Error && /^(401|409):/u.test(error.message);
 }
 
-function isRecruitmentInputFailure(error: unknown): boolean {
-  return error instanceof Error && [
-    "invalid_recruitment_date",
-    "invalid_recruitment_duration",
-    "invalid_recruitment_time",
-  ].includes(error.message);
+function recruitmentInputMessage(error: unknown): string | null {
+  if (!(error instanceof Error)) {
+    return null;
+  }
+
+  switch (error.message) {
+    case "invalid_recruitment_date":
+      return "Choose a valid recruitment date.";
+    case "invalid_recruitment_time":
+      return "Choose a valid start time.";
+    case "invalid_recruitment_duration":
+      return "Choose a duration from 1 to 8 hours.";
+    case "recruitment_date_in_past":
+      return "The selected start time has already passed. Choose another time.";
+    case "recruitment_must_end_same_day":
+      return "The selected duration crosses midnight. Choose an earlier time or shorter duration.";
+    default:
+      return null;
+  }
+}
+
+function safeParseRecruitmentDate(value: string, fallback: Date): Date {
+  try {
+    return parseRecruitmentDateInput(value);
+  } catch {
+    return fallback;
+  }
+}
+
+function safeCurrentJSTPickerDate(): Date {
+  try {
+    return parseRecruitmentDateInput(formatRecruitmentISODate(new Date()));
+  } catch {
+    return new Date(0);
+  }
+}
+
+function formatRecruitmentDateForDisplay(value: string): string {
+  try {
+    return formatRecruitmentDateInput(parseRecruitmentDateInput(value));
+  } catch {
+    return "—";
+  }
+}
+
+function getJSTTimeParts(value: Date): { hour: number; minute: number } {
+  if (Number.isNaN(value.getTime())) {
+    return { hour: 0, minute: 0 };
+  }
+
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      hour: "2-digit",
+      hourCycle: "h23",
+      minute: "2-digit",
+      timeZone: JST_TIME_ZONE,
+    })
+      .formatToParts(value)
+      .reduce<Record<string, string>>((result, part) => {
+        if (part.type !== "literal") result[part.type] = part.value;
+        return result;
+      }, {});
+    const hour = Number(parts.hour);
+    const minute = Number(parts.minute);
+
+    if (
+      Number.isInteger(hour) &&
+      hour >= 0 &&
+      hour <= 23 &&
+      Number.isInteger(minute) &&
+      minute >= 0 &&
+      minute <= 59
+    ) {
+      return { hour, minute };
+    }
+  } catch {
+    // Keep the picker renderable even if the platform formatter is unavailable.
+  }
+
+  return { hour: 0, minute: 0 };
+}
+
+function makeTimePickerValue(
+  date: string,
+  hour: number,
+  minute: number,
+): Date {
+  const safeHour = Number.isInteger(hour) && hour >= 0 && hour <= 23 ? hour : 0;
+  const safeMinute =
+    Number.isInteger(minute) && minute >= 0 && minute <= 59 ? minute : 0;
+
+  try {
+    return recruitmentDateTimeToInstant(
+      date,
+      `${String(safeHour).padStart(2, "0")}:${String(safeMinute).padStart(2, "0")}`,
+    );
+  } catch {
+    return new Date(0);
+  }
+}
+
+function roundPickerTime(value: Date): { hour: number; minute: number } {
+  const jstTime = getJSTTimeParts(value);
+  let hour = jstTime.hour;
+  let minute = Math.round(jstTime.minute / 5) * 5;
+
+  if (minute === 60) {
+    hour = (hour + 1) % 24;
+    minute = 0;
+  }
+
+  return { hour, minute };
 }
 
 function countryCodeToFlag(countryCode: string): string {
@@ -69,64 +196,37 @@ function countryCodeToFlag(countryCode: string): string {
   );
 }
 
-type StepperProps = {
-  decreaseLabel: string;
-  increaseLabel: string;
-  onDecrease: () => void;
-  onIncrease: () => void;
-  value: string;
-  width: number;
-};
-
-function Stepper({
-  decreaseLabel,
-  increaseLabel,
-  onDecrease,
-  onIncrease,
-  value,
-  width,
-}: StepperProps) {
-  return (
-    <View style={[styles.stepper, { width }]}>
-      <Pressable
-        accessibilityLabel={decreaseLabel}
-        accessibilityRole="button"
-        hitSlop={4}
-        onPress={onDecrease}
-        style={({ pressed }) => [styles.stepperAction, pressed && styles.pressed]}
-      >
-        <MaterialIcons color={YELLOW} name="remove" size={18} />
-      </Pressable>
-
-      <Text style={styles.stepperValue}>{value}</Text>
-
-      <Pressable
-        accessibilityLabel={increaseLabel}
-        accessibilityRole="button"
-        hitSlop={4}
-        onPress={onIncrease}
-        style={({ pressed }) => [styles.stepperAction, pressed && styles.pressed]}
-      >
-        <MaterialIcons color={YELLOW} name="add" size={18} />
-      </Pressable>
-    </View>
-  );
-}
-
 export default function SearchPreferencesScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { getCurrentSession, refresh, session, status } = useAuth();
   const { query } = useLocalSearchParams<{ query?: string | string[] }>();
   const initialQuery = Array.isArray(query) ? query[0] : query;
+  const suggestedSchedule = useMemo(() => defaultRecruitmentSchedule(), []);
+  const suggestedDate = suggestedSchedule.date;
   const [description, setDescription] = useState(initialQuery ?? "");
   const [location, setLocation] = useState("");
-  const [date, setDate] = useState("");
+  const [date, setDate] = useState(suggestedDate);
   const [useCurrentLocation, setUseCurrentLocation] = useState(true);
-  const [hour, setHour] = useState(14);
-  const [minute, setMinute] = useState(30);
-  const [duration, setDuration] = useState(1);
+  const [hour, setHour] = useState(() => Number(suggestedSchedule.startTime.slice(0, 2)));
+  const [minute, setMinute] = useState(() => Number(suggestedSchedule.startTime.slice(3, 5)));
+  const [duration, setDuration] = useState(suggestedSchedule.durationHours);
   const [distance, setDistance] = useState<RecruitmentDistanceKm>(3);
+  const [datePickerVisible, setDatePickerVisible] = useState(false);
+  const [timePickerVisible, setTimePickerVisible] = useState(false);
+  const [durationPickerVisible, setDurationPickerVisible] = useState(false);
+  const [pickerDate, setPickerDate] = useState(() =>
+    safeParseRecruitmentDate(suggestedDate, safeCurrentJSTPickerDate()),
+  );
+  const [pickerTime, setPickerTime] = useState(() => {
+    return makeTimePickerValue(
+      suggestedDate,
+      Number(suggestedSchedule.startTime.slice(0, 2)),
+      Number(suggestedSchedule.startTime.slice(3, 5)),
+    );
+  });
+  const [scheduleWarning, setScheduleWarning] = useState<ScheduleWarning | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
   const [isCompactHeaderVisible, setIsCompactHeaderVisible] = useState(true);
   const [isConfirmationVisible, setIsConfirmationVisible] = useState(false);
   const [preview, setPreview] = useState<RecruitmentPreview | null>(null);
@@ -134,7 +234,6 @@ export default function SearchPreferencesScreen() {
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [publishStatus, setPublishStatus] = useState<PublishStatus>("idle");
   const [publishError, setPublishError] = useState<string | null>(null);
-  const dateInputRef = useRef<TextInput>(null);
   const previewRequestRef = useRef<AbortController | null>(null);
   const panelHeight = useMemo(
     () => new Animated.Value(COLLAPSED_HEADER_HEIGHT),
@@ -146,7 +245,14 @@ export default function SearchPreferencesScreen() {
   const contentTranslateY = useMemo(() => new Animated.Value(14), []);
   const confirmationOpacity = useMemo(() => new Animated.Value(0), []);
   const confirmationTranslateY = useMemo(() => new Animated.Value(14), []);
-  const suggestedDate = useMemo(() => defaultRecruitmentDate(), []);
+  const minimumDate = useMemo(() => {
+    try {
+      const today = formatRecruitmentISODate(new Date());
+      return recruitmentDateTimeToInstant(today, "00:00");
+    } catch {
+      return safeCurrentJSTPickerDate();
+    }
+  }, []);
 
   useEffect(() => {
     const animation = Animated.parallel([
@@ -209,18 +315,6 @@ export default function SearchPreferencesScreen() {
     [],
   );
 
-  const updateMinute = (amount: number) => {
-    const nextTime = shiftTime(
-      `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`,
-      amount,
-    );
-    const nextHour = Number(nextTime.slice(0, 2));
-    const nextMinute = Number(nextTime.slice(3, 5));
-
-    setHour(nextHour);
-    setMinute(nextMinute);
-  };
-
   const createDraft = (): RecruitmentDraft => ({
     activity: description.trim() || "Explore Osaka with a local",
     location: location.trim() || "Osaka,Umeda",
@@ -231,7 +325,195 @@ export default function SearchPreferencesScreen() {
     distanceKm: distance,
   });
 
-  const loadPreview = async () => {
+  const clearScheduleMessages = () => {
+    setFormError(null);
+    setPublishError(null);
+  };
+
+  const commitDate = (value: Date) => {
+    try {
+      const nextDate = formatRecruitmentISODate(value);
+      setPickerDate(safeParseRecruitmentDate(nextDate, minimumDate));
+      setDate(nextDate);
+    } catch {
+      setFormError("Choose a valid recruitment date.");
+      return;
+    }
+    setDatePickerVisible(false);
+    clearScheduleMessages();
+  };
+
+  const commitTime = (value: Date) => {
+    const nextTime = roundPickerTime(value);
+    setPickerTime(makeTimePickerValue(date, nextTime.hour, nextTime.minute));
+    setHour(nextTime.hour);
+    setMinute(nextTime.minute);
+    setTimePickerVisible(false);
+    clearScheduleMessages();
+  };
+
+  const openDatePicker = () => {
+    Keyboard.dismiss();
+    setPickerDate(safeParseRecruitmentDate(date, minimumDate));
+    setDatePickerVisible(true);
+  };
+
+  const openTimePicker = () => {
+    Keyboard.dismiss();
+    setPickerTime(makeTimePickerValue(date, hour, minute));
+    setTimePickerVisible(true);
+  };
+
+  const handleDatePickerChange = (event: DateTimePickerEvent, value?: Date) => {
+    if (Platform.OS === "android") {
+      setDatePickerVisible(false);
+      if (event.type === "set" && value) {
+        commitDate(value);
+      }
+      return;
+    }
+
+    if (event.type === "set" && value) {
+      try {
+        const nextDate = formatRecruitmentISODate(value);
+        setPickerDate(safeParseRecruitmentDate(nextDate, minimumDate));
+      } catch {
+        // Ignore an invalid native event and keep the last valid picker value.
+      }
+    }
+  };
+
+  const handleTimePickerChange = (event: DateTimePickerEvent, value?: Date) => {
+    if (Platform.OS === "android") {
+      setTimePickerVisible(false);
+      if (event.type === "set" && value) {
+        commitTime(value);
+      }
+      return;
+    }
+
+    if (event.type === "set" && value) {
+      setPickerTime(value);
+    }
+  };
+
+  const selectDuration = (value: number) => {
+    setDuration(value);
+    setDurationPickerVisible(false);
+    clearScheduleMessages();
+  };
+
+  const openScheduleWarning = (
+    draft: RecruitmentDraft,
+    issue: RecruitmentScheduleIssue,
+    fromConfirmation = false,
+  ) => {
+    const suggestedDate = shiftRecruitmentDate(draft.date, 1);
+    const suggestedStartTime =
+      issue === "recruitment_must_end_same_day" ? "09:00" : draft.startTime;
+
+    setScheduleWarning({
+      issue,
+      suggestedDate,
+      suggestedStartTime,
+      fromConfirmation,
+    });
+  };
+
+  const showConfirmation = (draft = createDraft()) => {
+    if (previewStatus === "loading") {
+      return;
+    }
+
+    try {
+      const issue = getRecruitmentScheduleIssue(draft);
+      if (issue) {
+        openScheduleWarning(draft, issue);
+        return;
+      }
+    } catch (error) {
+      setFormError(recruitmentInputMessage(error) ?? "Check the recruitment details.");
+      return;
+    }
+
+    Keyboard.dismiss();
+    void loadPreview(draft);
+    confirmationOpacity.setValue(0);
+    confirmationTranslateY.setValue(14);
+    setIsConfirmationVisible(true);
+
+    requestAnimationFrame(() => {
+      Animated.parallel([
+        Animated.timing(panelHeight, {
+          duration: 300,
+          easing: Easing.out(Easing.cubic),
+          toValue: CONFIRMATION_HEADER_HEIGHT,
+          useNativeDriver: false,
+        }),
+        Animated.timing(contentOpacity, {
+          duration: 140,
+          toValue: 0,
+          useNativeDriver: false,
+        }),
+        Animated.timing(contentTranslateY, {
+          duration: 180,
+          easing: Easing.out(Easing.quad),
+          toValue: -12,
+          useNativeDriver: false,
+        }),
+        Animated.timing(confirmationOpacity, {
+          delay: 80,
+          duration: 220,
+          toValue: 1,
+          useNativeDriver: false,
+        }),
+        Animated.timing(confirmationTranslateY, {
+          delay: 80,
+          duration: 220,
+          easing: Easing.out(Easing.cubic),
+          toValue: 0,
+          useNativeDriver: false,
+        }),
+      ]).start();
+    });
+  };
+
+  const applyScheduleSuggestion = () => {
+    if (!scheduleWarning) {
+      return;
+    }
+
+    const currentDraft = createDraft();
+    const nextDraft: RecruitmentDraft = {
+      ...currentDraft,
+      date: scheduleWarning.suggestedDate,
+      startTime: scheduleWarning.suggestedStartTime,
+    };
+    const [nextHourValue = "0", nextMinuteValue = "0"] =
+      scheduleWarning.suggestedStartTime.split(":");
+    const nextHour = Number(nextHourValue);
+    const nextMinute = Number(nextMinuteValue);
+
+    setDate(nextDraft.date);
+    setPickerDate(safeParseRecruitmentDate(nextDraft.date, minimumDate));
+    setHour(nextHour);
+    setMinute(nextMinute);
+    setPickerTime(makeTimePickerValue(nextDraft.date, nextHour, nextMinute));
+    setFormError(null);
+    setPublishError(null);
+    setScheduleWarning(null);
+    showConfirmation(nextDraft);
+  };
+
+  const editSchedule = () => {
+    const returnToConfirmation = scheduleWarning?.fromConfirmation ?? false;
+    setScheduleWarning(null);
+    if (returnToConfirmation) {
+      showFilters();
+    }
+  };
+
+  const loadPreview = async (draft = createDraft()) => {
     previewRequestRef.current?.abort();
     const controller = new AbortController();
     previewRequestRef.current = controller;
@@ -241,7 +523,6 @@ export default function SearchPreferencesScreen() {
     setPreviewStatus("loading");
 
     try {
-      const draft = createDraft();
       const result = await createRecruitmentPreview(draft, controller.signal);
       const activeSession = getCurrentSession() ?? session;
       const localProfile = activeSession
@@ -287,8 +568,15 @@ export default function SearchPreferencesScreen() {
     Keyboard.dismiss();
     setPublishStatus("publishing");
     setPublishError(null);
+    const draft = createDraft();
 
     try {
+      const scheduleIssue = getRecruitmentScheduleIssue(draft);
+      if (scheduleIssue) {
+        openScheduleWarning(draft, scheduleIssue, true);
+        return;
+      }
+
       if (status !== "signed_in") {
         throw new Error("not_signed_in");
       }
@@ -316,9 +604,10 @@ export default function SearchPreferencesScreen() {
         }
       }
 
-      await publishRecruitment(createDraft(), preview, activeSession, coordinates);
+      await publishRecruitment(draft, preview, activeSession, coordinates);
       router.replace("/foreigner");
     } catch (error) {
+      const localMessage = recruitmentInputMessage(error);
       if (error instanceof Error && error.name === "AbortError") {
         setPublishError("The server request timed out. Check your connection and try again.");
         return;
@@ -335,24 +624,20 @@ export default function SearchPreferencesScreen() {
             setPublishError("Your profile could not be synchronized. Check your name and nationality.");
             break;
           case "recruitment_expired":
-            setPublishError("The recruitment time has passed. Check the date and time.");
+            setPublishError("The recruitment time has passed. Choose a new date and time.");
             break;
           case "invalid_matching_request":
-            setPublishError("Check the date, time, location, and other recruitment details.");
+            setPublishError("Review the entire recruitment details and try again.");
             break;
           default:
             setPublishError("The server could not publish this recruitment. Try again shortly.");
         }
       } else if (isSessionRefreshFailure(error)) {
         setPublishError("Your session expired. Sign in again before publishing.");
-      } else if (isRecruitmentInputFailure(error)) {
-        setPublishError("Check the recruitment date, time, and duration.");
+      } else if (localMessage) {
+        setPublishError(localMessage);
       } else if (error instanceof Error && error.message === "not_signed_in") {
         setPublishError("Please sign in again before publishing.");
-      } else if (error instanceof Error && error.message === "recruitment_date_in_past") {
-        setPublishError("Set the recruitment time in the future.");
-      } else if (error instanceof Error && error.message === "recruitment_must_end_same_day") {
-        setPublishError("The recruitment must end on the same day.");
       } else {
         setPublishError("The server could not be reached. Check your iPhone network connection and try again.");
       }
@@ -361,55 +646,10 @@ export default function SearchPreferencesScreen() {
     }
   };
 
-  const showConfirmation = () => {
-    if (previewStatus === "loading") {
-      return;
-    }
-
-    Keyboard.dismiss();
-    void loadPreview();
-    confirmationOpacity.setValue(0);
-    confirmationTranslateY.setValue(14);
-    setIsConfirmationVisible(true);
-
-    requestAnimationFrame(() => {
-      Animated.parallel([
-        Animated.timing(panelHeight, {
-          duration: 300,
-          easing: Easing.out(Easing.cubic),
-          toValue: CONFIRMATION_HEADER_HEIGHT,
-          useNativeDriver: false,
-        }),
-        Animated.timing(contentOpacity, {
-          duration: 140,
-          toValue: 0,
-          useNativeDriver: false,
-        }),
-        Animated.timing(contentTranslateY, {
-          duration: 180,
-          easing: Easing.out(Easing.quad),
-          toValue: -12,
-          useNativeDriver: false,
-        }),
-        Animated.timing(confirmationOpacity, {
-          delay: 80,
-          duration: 220,
-          toValue: 1,
-          useNativeDriver: false,
-        }),
-        Animated.timing(confirmationTranslateY, {
-          delay: 80,
-          duration: 220,
-          easing: Easing.out(Easing.cubic),
-          toValue: 0,
-          useNativeDriver: false,
-        }),
-      ]).start();
-    });
-  };
-
   const showFilters = () => {
     previewRequestRef.current?.abort();
+    setScheduleWarning(null);
+    setFormError(null);
     Animated.parallel([
       Animated.timing(panelHeight, {
         duration: 300,
@@ -447,6 +687,7 @@ export default function SearchPreferencesScreen() {
         setPreview(null);
         setPreviewError(null);
         setPublishError(null);
+        setFormError(null);
         setPreviewStatus("idle");
         setPublishStatus("idle");
       }
@@ -554,22 +795,22 @@ export default function SearchPreferencesScreen() {
             <View style={styles.dateGroup}>
               <Text style={styles.label}>Date</Text>
               <View style={styles.dateRow}>
-                <TextInput
-                  ref={dateInputRef}
-                  accessibilityLabel="Date"
-                  blurOnSubmit
-                  onChangeText={setDate}
-                  onSubmitEditing={() => Keyboard.dismiss()}
-                  placeholder={suggestedDate}
-                  placeholderTextColor={PLACEHOLDER_GRAY}
-                  style={[styles.input, styles.dateInput]}
-                  value={date}
-                />
                 <Pressable
-                  accessibilityLabel="Open date input"
+                  accessibilityLabel="Date"
+                  accessibilityHint="Opens the date picker"
+                  accessibilityRole="button"
+                  onPress={openDatePicker}
+                  style={[styles.input, styles.dateInput]}
+                >
+                  <Text numberOfLines={1} style={styles.pickerValue}>
+                    {formatRecruitmentDateForDisplay(date)}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  accessibilityLabel="Choose recruitment date"
                   accessibilityRole="button"
                   hitSlop={5}
-                  onPress={() => dateInputRef.current?.focus()}
+                  onPress={openDatePicker}
                   style={({ pressed }) => [
                     styles.calendarButton,
                     pressed && styles.pressed,
@@ -583,37 +824,44 @@ export default function SearchPreferencesScreen() {
             <View style={styles.startTimeGroup}>
               <Text style={styles.label}>Start Time</Text>
               <View style={styles.timeRow}>
-                <Stepper
-                  decreaseLabel="Decrease start hour"
-                  increaseLabel="Increase start hour"
-                  onDecrease={() => setHour((current) => (current + 23) % 24)}
-                  onIncrease={() => setHour((current) => (current + 1) % 24)}
-                  value={String(hour).padStart(2, "0")}
-                  width={92}
-                />
-                <Text style={styles.timeSeparator}>:</Text>
-                <Stepper
-                  decreaseLabel="Decrease start minute"
-                  increaseLabel="Increase start minute"
-                  onDecrease={() => updateMinute(-5)}
-                  onIncrease={() => updateMinute(5)}
-                  value={String(minute).padStart(2, "0")}
-                  width={94}
-                />
+                <Pressable
+                  accessibilityLabel="Start time"
+                  accessibilityHint="Opens the time picker. Times can be selected in five-minute intervals."
+                  accessibilityRole="button"
+                  onPress={openTimePicker}
+                  style={({ pressed }) => [
+                    styles.timePickerButton,
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <MaterialIcons color={YELLOW} name="access-time" size={18} />
+                  <Text style={styles.pickerValue}>
+                    {`${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`}
+                  </Text>
+                  <MaterialIcons color={YELLOW} name="expand-more" size={20} />
+                </Pressable>
               </View>
             </View>
 
             <View style={styles.durationGroup}>
               <Text style={styles.label}>Duration</Text>
               <View style={styles.durationStepper}>
-                <Stepper
-                  decreaseLabel="Decrease duration"
-                  increaseLabel="Increase duration"
-                  onDecrease={() => setDuration((current) => Math.max(1, current - 1))}
-                  onIncrease={() => setDuration((current) => Math.min(8, current + 1))}
-                  value={`${duration}hr`}
-                  width={152}
-                />
+                <Pressable
+                  accessibilityLabel="Duration"
+                  accessibilityHint="Opens a menu with durations from one to eight hours."
+                  accessibilityRole="button"
+                  onPress={() => {
+                    Keyboard.dismiss();
+                    setDurationPickerVisible(true);
+                  }}
+                  style={({ pressed }) => [
+                    styles.durationPickerButton,
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <Text style={styles.pickerValue}>{`${duration} hr`}</Text>
+                  <MaterialIcons color={YELLOW} name="expand-more" size={20} />
+                </Pressable>
               </View>
             </View>
 
@@ -652,7 +900,7 @@ export default function SearchPreferencesScreen() {
             <Pressable
               accessibilityRole="button"
               disabled={previewStatus === "loading"}
-              onPress={showConfirmation}
+              onPress={() => showConfirmation()}
               style={({ pressed }) => [
                 styles.nextButton,
                 pressed && styles.pressed,
@@ -660,6 +908,12 @@ export default function SearchPreferencesScreen() {
             >
               <Text style={styles.nextText}>NEXT</Text>
             </Pressable>
+
+            {formError ? (
+              <Text accessibilityRole="alert" style={styles.formError}>
+                {formError}
+              </Text>
+            ) : null}
           </View>
         </Animated.View>
 
@@ -675,7 +929,7 @@ export default function SearchPreferencesScreen() {
           >
             <Text style={styles.confirmationTitle}>Is everything correct?</Text>
             <Text style={styles.confirmationExpiry}>
-              This post will be visible until {preview?.expiresAt ?? "..."}
+              Visible until the event ends: {preview?.expiresAt ?? "..."}
             </Text>
 
             <View style={styles.summaryCard}>
@@ -729,7 +983,7 @@ export default function SearchPreferencesScreen() {
                     style={[styles.summaryLine, styles.summaryDate]}
                   >
                     <Text style={styles.summaryLabel}>Date</Text>
-                    {`   ${preview.conditions.date}`}
+                    {`   ${formatRecruitmentDateForDisplay(preview.conditions.date)}`}
                   </Text>
                   <Text style={[styles.summaryLine, styles.summaryTime]}>
                     <Text style={styles.summaryLabel}>Time</Text>
@@ -805,7 +1059,16 @@ export default function SearchPreferencesScreen() {
               },
             ]}
           >
-            <View style={[styles.compactActionRow, { top: Math.max(insets.top + 4, 45) }]}>
+            <View
+              style={[
+                styles.compactActionRow,
+                {
+                  top: Math.max(insets.top + 4, 45),
+                  left: Math.max(insets.left + 16, 16),
+                  right: Math.max(insets.right + 16, 16),
+                },
+              ]}
+            >
               <View style={styles.compactSearchField}>
                 <MaterialIcons
                   color={PLACEHOLDER_GRAY}
@@ -813,7 +1076,11 @@ export default function SearchPreferencesScreen() {
                   size={22}
                   style={styles.compactSearchIcon}
                 />
-                <Text style={styles.compactSearchPlaceholder}>
+                <Text
+                  ellipsizeMode="tail"
+                  numberOfLines={1}
+                  style={styles.compactSearchPlaceholder}
+                >
                   What would you like to do?
                 </Text>
               </View>
@@ -837,6 +1104,243 @@ export default function SearchPreferencesScreen() {
           </Animated.View>
         )}
       </Animated.View>
+
+      {Platform.OS !== "ios" && datePickerVisible ? (
+        <DateTimePicker
+          display="default"
+          minimumDate={minimumDate}
+          mode="date"
+          onChange={handleDatePickerChange}
+          timeZoneName={JST_TIME_ZONE}
+          value={pickerDate}
+        />
+      ) : null}
+
+      {Platform.OS !== "ios" && timePickerVisible ? (
+        <DateTimePicker
+          display="default"
+          is24Hour
+          minuteInterval={5}
+          mode="time"
+          onChange={handleTimePickerChange}
+          timeZoneName={JST_TIME_ZONE}
+          value={pickerTime}
+        />
+      ) : null}
+
+      {Platform.OS === "ios" ? (
+        <Modal
+          animationType="slide"
+          onRequestClose={() => setDatePickerVisible(false)}
+          transparent
+          visible={datePickerVisible}
+        >
+          <View style={styles.modalBackdrop}>
+            <Pressable
+              accessibilityLabel="Close date picker"
+              onPress={() => setDatePickerVisible(false)}
+              style={StyleSheet.absoluteFillObject}
+            />
+            <View
+              style={[
+                styles.pickerSheet,
+                { paddingBottom: Math.max(insets.bottom, 16) },
+              ]}
+            >
+              <View style={styles.pickerHeader}>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => setDatePickerVisible(false)}
+                  style={styles.pickerHeaderButton}
+                >
+                  <Text style={styles.pickerCancelText}>Cancel</Text>
+                </Pressable>
+                <Text style={styles.pickerTitle}>Choose date</Text>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => commitDate(pickerDate)}
+                  style={styles.pickerHeaderButton}
+                >
+                  <Text style={styles.pickerDoneText}>Done</Text>
+                </Pressable>
+              </View>
+              <DateTimePicker
+                accentColor={BLUE}
+                display="spinner"
+                locale="en-US"
+                minimumDate={minimumDate}
+                mode="date"
+                onChange={handleDatePickerChange}
+                style={styles.nativePicker}
+                themeVariant="light"
+                timeZoneName={JST_TIME_ZONE}
+                value={pickerDate}
+              />
+            </View>
+          </View>
+        </Modal>
+      ) : null}
+
+      {Platform.OS === "ios" ? (
+        <Modal
+          animationType="slide"
+          onRequestClose={() => setTimePickerVisible(false)}
+          transparent
+          visible={timePickerVisible}
+        >
+          <View style={styles.modalBackdrop}>
+            <Pressable
+              accessibilityLabel="Close time picker"
+              onPress={() => setTimePickerVisible(false)}
+              style={StyleSheet.absoluteFillObject}
+            />
+            <View
+              style={[
+                styles.pickerSheet,
+                { paddingBottom: Math.max(insets.bottom, 16) },
+              ]}
+            >
+              <View style={styles.pickerHeader}>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => setTimePickerVisible(false)}
+                  style={styles.pickerHeaderButton}
+                >
+                  <Text style={styles.pickerCancelText}>Cancel</Text>
+                </Pressable>
+                <Text style={styles.pickerTitle}>Choose start time</Text>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => commitTime(pickerTime)}
+                  style={styles.pickerHeaderButton}
+                >
+                  <Text style={styles.pickerDoneText}>Done</Text>
+                </Pressable>
+              </View>
+              <DateTimePicker
+                accentColor={BLUE}
+                display="spinner"
+                is24Hour
+                minuteInterval={5}
+                mode="time"
+                onChange={handleTimePickerChange}
+                style={styles.nativePicker}
+                themeVariant="light"
+                timeZoneName={JST_TIME_ZONE}
+                value={pickerTime}
+              />
+            </View>
+          </View>
+        </Modal>
+      ) : null}
+
+      <Modal
+        animationType="fade"
+        onRequestClose={() => setDurationPickerVisible(false)}
+        transparent
+        visible={durationPickerVisible}
+      >
+        <View style={styles.modalBackdrop}>
+          <Pressable
+            accessibilityLabel="Close duration menu"
+            onPress={() => setDurationPickerVisible(false)}
+            style={StyleSheet.absoluteFillObject}
+          />
+          <View
+            style={[
+              styles.selectionSheet,
+              { paddingBottom: Math.max(insets.bottom, 18) },
+            ]}
+          >
+            <Text style={styles.selectionTitle}>Duration</Text>
+            <Text style={styles.selectionSubtitle}>How long would you like to meet?</Text>
+            <View style={styles.durationOptions}>
+              {DURATION_OPTIONS.map((option) => {
+                const selected = option === duration;
+
+                return (
+                  <Pressable
+                    key={option}
+                    accessibilityRole="radio"
+                    accessibilityState={{ selected }}
+                    onPress={() => selectDuration(option)}
+                    style={({ pressed }) => [
+                      styles.durationOption,
+                      selected && styles.durationOptionSelected,
+                      pressed && styles.pressed,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.durationOptionText,
+                        selected && styles.durationOptionTextSelected,
+                      ]}
+                    >
+                      {option} hr
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setDurationPickerVisible(false)}
+              style={({ pressed }) => [styles.modalCancelButton, pressed && styles.pressed]}
+            >
+              <Text style={styles.modalCancelText}>Cancel</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        animationType="fade"
+        onRequestClose={editSchedule}
+        transparent
+        visible={scheduleWarning !== null}
+      >
+        <View style={styles.modalBackdrop}>
+          <Pressable
+            accessibilityLabel="Close schedule warning"
+            onPress={editSchedule}
+            style={StyleSheet.absoluteFillObject}
+          />
+          {scheduleWarning ? (
+            <View style={styles.warningSheet}>
+              <Text style={styles.selectionTitle}>
+                {scheduleWarning.issue === "recruitment_date_in_past"
+                  ? "This start time has passed."
+                  : "This duration crosses midnight."}
+              </Text>
+              <Text style={styles.warningMessage}>
+                {scheduleWarning.issue === "recruitment_date_in_past"
+                  ? "Change it to tomorrow?"
+                  : "Change it to tomorrow at 09:00?"}
+              </Text>
+              <View style={styles.warningSuggestion}>
+                <Text style={styles.warningSuggestionLabel}>Suggested schedule</Text>
+                <Text style={styles.warningSuggestionValue}>
+                  {`${formatRecruitmentDateForDisplay(scheduleWarning.suggestedDate)} at ${scheduleWarning.suggestedStartTime}`}
+                </Text>
+              </View>
+              <Pressable
+                accessibilityRole="button"
+                onPress={applyScheduleSuggestion}
+                style={({ pressed }) => [styles.warningPrimaryButton, pressed && styles.pressed]}
+              >
+                <Text style={styles.warningPrimaryText}>YES, USE THIS</Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                onPress={editSchedule}
+                style={({ pressed }) => [styles.warningSecondaryButton, pressed && styles.pressed]}
+              >
+                <Text style={styles.warningSecondaryText}>NO, EDIT</Text>
+              </Pressable>
+            </View>
+          ) : null}
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -881,7 +1385,7 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     left: 0,
-    pointerEvents: "none",
+    pointerEvents: "box-none",
   },
   compactActionRow: {
     position: "absolute",
@@ -891,12 +1395,14 @@ const styles = StyleSheet.create({
     height: 30,
     flexDirection: "row",
     alignItems: "center",
-    gap: 19,
+    gap: 8,
   },
   compactSearchField: {
     flex: 1,
+    minWidth: 0,
     height: 30,
     justifyContent: "center",
+    overflow: "hidden",
     borderRadius: 20,
     backgroundColor: "#ffffff",
   },
@@ -905,6 +1411,7 @@ const styles = StyleSheet.create({
     left: 14.2,
   },
   compactSearchPlaceholder: {
+    paddingRight: 8,
     paddingLeft: 45.34,
     color: PLACEHOLDER_GRAY,
     fontSize: 12,
@@ -913,18 +1420,20 @@ const styles = StyleSheet.create({
     lineHeight: 15,
   },
   compactNotificationIcon: {
-    width: 21,
-    height: 25,
+    flexShrink: 0,
+    width: 34,
+    height: 34,
     alignItems: "center",
     justifyContent: "center",
-    overflow: "hidden",
+    overflow: "visible",
   },
   compactProfileIcon: {
-    width: 24.56,
-    height: 25,
+    flexShrink: 0,
+    width: 34,
+    height: 34,
     alignItems: "center",
     justifyContent: "center",
-    overflow: "hidden",
+    overflow: "visible",
   },
   compactTitle: {
     position: "absolute",
@@ -1172,6 +1681,12 @@ const styles = StyleSheet.create({
     letterSpacing: 0,
     boxShadow: "0 4px 4px rgba(0, 0, 0, 0.25)",
   },
+  pickerValue: {
+    color: TEXT_GRAY,
+    fontSize: 13,
+    fontWeight: "700",
+    lineHeight: 17,
+  },
   descriptionGroup: {
     position: "absolute",
     top: 0,
@@ -1253,6 +1768,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   dateInput: {
+    alignItems: "flex-start",
+    justifyContent: "center",
     width: 259,
     height: 35,
     paddingTop: 0,
@@ -1281,44 +1798,21 @@ const styles = StyleSheet.create({
     alignSelf: "center",
     width: 234,
     height: 30,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  timePickerButton: {
+    width: 190,
+    height: 34,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-  },
-  timeSeparator: {
-    width: 48,
-    color: "#ffffff",
-    fontSize: 32,
-    fontWeight: "900",
-    letterSpacing: 0,
-    lineHeight: 32,
-    textAlign: "center",
-  },
-  stepper: {
-    height: 29,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    overflow: "hidden",
+    paddingHorizontal: 18,
     borderWidth: 1,
     borderColor: BORDER_GRAY,
     borderRadius: 20,
     backgroundColor: "#ffffff",
     boxShadow: "0 4px 4px rgba(0, 0, 0, 0.25)",
-  },
-  stepperAction: {
-    width: 28,
-    height: 29,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  stepperValue: {
-    color: TEXT_GRAY,
-    fontSize: 15,
-    fontWeight: "900",
-    letterSpacing: 0,
-    lineHeight: 18,
-    textAlign: "center",
   },
   durationGroup: {
     position: "absolute",
@@ -1331,6 +1825,19 @@ const styles = StyleSheet.create({
     position: "absolute",
     top: 22,
     alignSelf: "center",
+  },
+  durationPickerButton: {
+    width: 152,
+    height: 34,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 18,
+    borderWidth: 1,
+    borderColor: BORDER_GRAY,
+    borderRadius: 20,
+    backgroundColor: "#ffffff",
+    boxShadow: "0 4px 4px rgba(0, 0, 0, 0.25)",
   },
   distanceGroup: {
     position: "absolute",
@@ -1393,6 +1900,202 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     letterSpacing: 0,
     lineHeight: 18,
+  },
+  formError: {
+    position: "absolute",
+    top: 520,
+    right: 14,
+    left: 14,
+    color: "#ffffff",
+    fontSize: 11,
+    fontWeight: "700",
+    lineHeight: 14,
+    textAlign: "center",
+  },
+  modalBackdrop: {
+    flex: 1,
+    justifyContent: "flex-end",
+    backgroundColor: "rgba(0, 0, 0, 0.28)",
+  },
+  pickerSheet: {
+    minHeight: 286,
+    paddingTop: 8,
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    backgroundColor: "#ffffff",
+  },
+  pickerHeader: {
+    height: 48,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+  },
+  pickerHeaderButton: {
+    minWidth: 72,
+    height: 40,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  pickerTitle: {
+    flex: 1,
+    color: TEXT_GRAY,
+    fontSize: 16,
+    fontWeight: "900",
+    textAlign: "center",
+  },
+  pickerCancelText: {
+    color: TEXT_GRAY,
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  pickerDoneText: {
+    color: BLUE,
+    fontSize: 14,
+    fontWeight: "900",
+  },
+  nativePicker: {
+    alignSelf: "center",
+    width: "100%",
+    height: 216,
+  },
+  selectionSheet: {
+    width: "100%",
+    paddingTop: 24,
+    paddingRight: 22,
+    paddingBottom: 18,
+    paddingLeft: 22,
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    backgroundColor: "#ffffff",
+  },
+  selectionTitle: {
+    color: TEXT_GRAY,
+    fontSize: 18,
+    fontWeight: "900",
+    lineHeight: 23,
+    textAlign: "center",
+  },
+  selectionSubtitle: {
+    marginTop: 5,
+    color: PLACEHOLDER_GRAY,
+    fontSize: 13,
+    fontWeight: "600",
+    lineHeight: 17,
+    textAlign: "center",
+  },
+  durationOptions: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "center",
+    gap: 10,
+    marginTop: 20,
+  },
+  durationOption: {
+    width: 68,
+    height: 44,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: BORDER_GRAY,
+    borderRadius: 14,
+    backgroundColor: "#ffffff",
+  },
+  durationOptionSelected: {
+    borderColor: YELLOW,
+    backgroundColor: YELLOW,
+  },
+  durationOptionText: {
+    color: TEXT_GRAY,
+    fontSize: 14,
+    fontWeight: "900",
+  },
+  durationOptionTextSelected: {
+    color: "#ffffff",
+  },
+  modalCancelButton: {
+    alignSelf: "center",
+    width: 132,
+    height: 38,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 18,
+    borderWidth: 1,
+    borderColor: BORDER_GRAY,
+    borderRadius: 19,
+    backgroundColor: "#ffffff",
+  },
+  modalCancelText: {
+    color: TEXT_GRAY,
+    fontSize: 14,
+    fontWeight: "800",
+  },
+  warningSheet: {
+    width: "90%",
+    alignSelf: "center",
+    padding: 24,
+    borderRadius: 24,
+    backgroundColor: "#ffffff",
+  },
+  warningMessage: {
+    marginTop: 8,
+    color: TEXT_GRAY,
+    fontSize: 15,
+    fontWeight: "700",
+    lineHeight: 20,
+    textAlign: "center",
+  },
+  warningSuggestion: {
+    width: "100%",
+    marginTop: 18,
+    padding: 14,
+    borderRadius: 16,
+    backgroundColor: "#eff8ff",
+  },
+  warningSuggestionLabel: {
+    color: PLACEHOLDER_GRAY,
+    fontSize: 12,
+    fontWeight: "700",
+    lineHeight: 15,
+    textAlign: "center",
+  },
+  warningSuggestionValue: {
+    marginTop: 4,
+    color: TEXT_GRAY,
+    fontSize: 15,
+    fontWeight: "900",
+    lineHeight: 20,
+    textAlign: "center",
+  },
+  warningPrimaryButton: {
+    width: "100%",
+    height: 42,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 18,
+    borderRadius: 21,
+    backgroundColor: YELLOW,
+  },
+  warningPrimaryText: {
+    color: "#ffffff",
+    fontSize: 14,
+    fontWeight: "900",
+  },
+  warningSecondaryButton: {
+    width: "100%",
+    height: 42,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: BORDER_GRAY,
+    borderRadius: 21,
+    backgroundColor: "#ffffff",
+  },
+  warningSecondaryText: {
+    color: TEXT_GRAY,
+    fontSize: 14,
+    fontWeight: "900",
   },
   pressed: {
     opacity: 0.72,

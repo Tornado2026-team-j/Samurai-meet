@@ -559,7 +559,7 @@ flowchart LR
 | `timezone` | text | IANA タイムゾーン |
 | `keywords` | text[] または別テーブル | 検索対象。GIN インデックスを検討 |
 | `visibility_radius_km` | smallint | CHECK (`1`, `3`, `5`) |
-| `location` | geography(Point, 4326) | 距離計算用。API では丸めて扱う |
+| `location` | geography(Point, 4326)（目標例） | 距離計算用。現行は緯度・経度列とGo Haversineで、APIでは丸めて扱う |
 | `status` | enum | `draft / open / matched / closed / expired` |
 | `expires_at` | timestamptz | 自動非表示日時 |
 | `created_at` / `updated_at` | timestamptz | 監査用 |
@@ -572,7 +572,7 @@ flowchart LR
 | `card_id` | uuid | `recruitment_cards.id` への FK |
 | `requester_user_id` | uuid | 関心を送ったユーザー |
 | `owner_user_id` | uuid | カード所有者 |
-| `status` | enum | `pending / accepted / rejected / blocked / expired / completed` |
+| `status` | enum | `pending / accepted / rejected / cancelled / blocked / expired / completed` |
 | `matched_at` | timestamptz | 相互承認日時 |
 | `created_at` / `updated_at` | timestamptz | 監査用 |
 
@@ -660,11 +660,13 @@ flowchart LR
 | `POST` | `/v1/me/verification` | 本人確認申請 |
 | `GET` | `/v1/recruitments` | 募集カード検索 |
 | `POST` | `/v1/recruitments` | 募集カード作成 |
+| `GET` | `/v1/recruitments/mine` | 自分の募集カード一覧 |
 | `GET` | `/v1/recruitments/{id}` | 募集カード詳細 |
 | `PATCH` | `/v1/recruitments/{id}` | 募集カード更新 |
 | `DELETE` | `/v1/recruitments/{id}` | 募集カード削除・非公開 |
 | `POST` | `/v1/recruitments/{id}/interest` | 関心を送る |
 | `POST` | `/v1/matches/{id}/accept` | 関心を承認 |
+| `POST` | `/v1/matches/{id}/withdraw` | 応募を取り下げ |
 | `GET` | `/v1/chats` | チャット一覧 |
 | `GET` | `/v1/chats/{id}/messages` | メッセージ履歴取得 |
 | `POST` | `/v1/photos` | 写真アップロード |

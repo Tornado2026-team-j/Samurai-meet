@@ -31,6 +31,12 @@ func TestNormalizeRecruitmentInput(t *testing.T) {
 	if normalized.Status != "open" || expiresAt == "" {
 		t.Fatalf("normalized status/expiresAt = %q/%q", normalized.Status, expiresAt)
 	}
+	if normalized.Timezone != recruitmentTimezone {
+		t.Fatalf("normalized timezone = %q, want %q", normalized.Timezone, recruitmentTimezone)
+	}
+	if want := "2026-08-27T11:00:00Z"; expiresAt != want {
+		t.Fatalf("expiresAt = %q, want %q", expiresAt, want)
+	}
 
 	invalid := input
 	invalid.VisibilityRadiusKM = 2
@@ -42,6 +48,76 @@ func TestNormalizeRecruitmentInput(t *testing.T) {
 	invalid.EndTime = "17:00"
 	if _, _, err := normalizeRecruitmentInput(invalid, now); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("invalid time error = %v, want ErrInvalidInput", err)
+	}
+}
+
+func TestNormalizeRecruitmentInputDefaultsToJSTAndRejectsOtherTimezones(t *testing.T) {
+	now := time.Date(2026, time.August, 26, 8, 0, 0, 0, time.UTC)
+	base := RecruitmentInput{
+		Category:           "Food",
+		AvailableDate:      "2026-08-27",
+		StartTime:          "18:00",
+		EndTime:            "20:00",
+		Keywords:           []string{"食事"},
+		Description:        "駅の近くで交流しましょう",
+		VisibilityRadiusKM: 3,
+	}
+
+	withoutTimezone := base
+	normalized, _, err := normalizeRecruitmentInput(withoutTimezone, now)
+	if err != nil {
+		t.Fatalf("empty timezone error = %v", err)
+	}
+	if normalized.Timezone != recruitmentTimezone {
+		t.Fatalf("empty timezone normalized to %q, want %q", normalized.Timezone, recruitmentTimezone)
+	}
+
+	for _, test := range []struct {
+		status   string
+		timezone string
+	}{
+		{status: "open", timezone: "UTC"},
+		{status: "draft", timezone: "UTC"},
+		{status: "closed", timezone: "UTC"},
+		{status: "open", timezone: "America/Los_Angeles"},
+	} {
+		invalid := base
+		invalid.Status = test.status
+		invalid.Timezone = test.timezone
+		if _, _, err := normalizeRecruitmentInput(invalid, now); !errors.Is(err, ErrInvalidInput) {
+			t.Errorf("timezone %q with status %q error = %v, want ErrInvalidInput", test.timezone, test.status, err)
+		}
+	}
+}
+
+func TestRecruitmentExpiryUsesJSTAbsoluteTimeWithUTCNow(t *testing.T) {
+	input := RecruitmentInput{
+		Category:           "Food",
+		AvailableDate:      "2026-08-27",
+		StartTime:          "18:00",
+		EndTime:            "20:00",
+		Timezone:           recruitmentTimezone,
+		Keywords:           []string{"食事"},
+		Description:        "駅の近くで交流しましょう",
+		VisibilityRadiusKM: 3,
+		Status:             "open",
+	}
+
+	justBeforeEnd := time.Date(2026, time.August, 27, 10, 59, 59, 0, time.UTC)
+	_, expiresAt, err := normalizeRecruitmentInput(input, justBeforeEnd)
+	if err != nil {
+		t.Fatalf("just before JST end error = %v", err)
+	}
+	if !beforeExpiry(expiresAt, justBeforeEnd) {
+		t.Fatalf("beforeExpiry(%q, %s) = false, want true", expiresAt, justBeforeEnd.Format(time.RFC3339))
+	}
+
+	atEnd := time.Date(2026, time.August, 27, 11, 0, 0, 0, time.UTC)
+	if beforeExpiry(expiresAt, atEnd) {
+		t.Fatalf("beforeExpiry(%q, %s) = true, want false", expiresAt, atEnd.Format(time.RFC3339))
+	}
+	if _, _, err := normalizeRecruitmentInput(input, atEnd); !errors.Is(err, ErrRecruitmentExpired) {
+		t.Fatalf("at JST end error = %v, want ErrRecruitmentExpired", err)
 	}
 }
 
@@ -72,6 +148,9 @@ func TestNormalizeMatchListParams(t *testing.T) {
 	}
 	if params.Role != "owner" || params.Status != "pending" || params.Limit != defaultSearchLimit {
 		t.Fatalf("normalized match params = %#v", params)
+	}
+	if _, err := normalizeMatchListParams(MatchListParams{Role: "requester", Status: "cancelled"}); err != nil {
+		t.Fatalf("cancelled status error = %v", err)
 	}
 
 	for _, invalid := range []MatchListParams{

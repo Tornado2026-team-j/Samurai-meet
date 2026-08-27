@@ -1,11 +1,16 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import {
+  closeRecruitment,
   createRecruitment,
   listMatches,
+  listMyRecruitments,
   recruitmentToMatchCard,
   searchRecruitments,
+  sendRecruitmentInterest,
+  updateRecruitment,
+  withdrawRecruitmentInterest,
 } from "../services/matching";
-import type { Recruitment } from "../services/matching";
+import type { Recruitment, RecruitmentInterest } from "../services/matching";
 
 const originalFetch = globalThis.fetch;
 const session = {
@@ -97,16 +102,75 @@ describe("募集APIクライアント", () => {
 
   it("外国人側のマッチ一覧は保留中以外の状態も取得する", async () => {
     let requestedURL = "";
-    globalThis.fetch = (async (input) => {
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
       requestedURL = String(input);
       return new Response(JSON.stringify({ data: [] }), { status: 200 });
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     await listMatches(session, { role: "owner", limit: 50 });
 
     expect(requestedURL).toContain("role=owner");
     expect(requestedURL).toContain("limit=50");
     expect(requestedURL).not.toContain("status=pending");
+  });
+
+  it("自分の募集管理APIと応募取り下げAPIの契約を組み立てる", async () => {
+    const requests: { url: string; method?: string; body?: string }[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      requests.push({ url, method: init?.method, body: init?.body as string | undefined });
+      if (url.includes("/recruitments/mine")) {
+        return new Response(JSON.stringify({ data: [recruitment] }), { status: 200 });
+      }
+      if (init?.method === "PATCH") {
+        return new Response(JSON.stringify({ data: recruitment }), { status: 200 });
+      }
+      if (url.includes("/withdraw")) {
+        return new Response(JSON.stringify({
+          data: {
+            id: "match-1",
+            recruitment_id: recruitment.id,
+            status: "cancelled",
+            created_at: recruitment.created_at,
+            updated_at: recruitment.updated_at,
+          },
+        }), { status: 200 });
+      }
+      return new Response(null, { status: 204 });
+    }) as unknown as typeof fetch;
+
+    await expect(listMyRecruitments(session)).resolves.toHaveLength(1);
+    await expect(updateRecruitment(recruitment.id, session, {
+      description: "Updated description",
+      timezone: "Asia/Tokyo",
+    })).resolves.toMatchObject({ id: recruitment.id });
+    await expect(closeRecruitment(recruitment.id, session)).resolves.toBeUndefined();
+    await expect(withdrawRecruitmentInterest("match-1", session)).resolves.toMatchObject({ status: "cancelled" });
+
+    expect(requests[0]?.url).toContain("/recruitments/mine");
+    expect(requests[1]?.method).toBe("PATCH");
+    expect(JSON.parse(requests[1]?.body ?? "{}")).toMatchObject({
+      description: "Updated description",
+      timezone: "Asia/Tokyo",
+    });
+    expect(requests[2]?.method).toBe("DELETE");
+    expect(requests[3]?.url).toContain("/matches/match-1/withdraw");
+  });
+
+  it("既存応募の409 dataを既存matchとして返す", async () => {
+    const existing: RecruitmentInterest = {
+      id: "match-1",
+      recruitment_id: recruitment.id,
+      status: "pending",
+      created_at: recruitment.created_at,
+      updated_at: recruitment.updated_at,
+    };
+    globalThis.fetch = (async () => new Response(JSON.stringify({
+      error: "interest_already_sent",
+      data: existing,
+    }), { status: 409 })) as unknown as typeof fetch;
+
+    await expect(sendRecruitmentInterest(recruitment.id, session)).resolves.toEqual(existing);
   });
 
   it("バックエンド募集を既存カード表示へ変換する", () => {

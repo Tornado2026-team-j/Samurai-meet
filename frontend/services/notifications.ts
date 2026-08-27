@@ -90,6 +90,47 @@ type NotificationCopy = {
   message: (actor: string) => string;
 };
 
+export type NotificationNavigation =
+  | {
+      pathname: "/foreigner/applications/[id]";
+      params: { id: string; recruitmentId?: string };
+    }
+  | {
+      pathname: "/japanese/guide-requested";
+      params: { matchId: string };
+    };
+
+// Navigation is determined from the server's stable notification contract.
+// Localized title/message text must never affect the destination.
+export function getNotificationNavigation(
+  notification: Pick<NotificationView, "type" | "targetId" | "recruitmentId">,
+): NotificationNavigation | null {
+  const targetID = notification.targetId.trim();
+  if (!targetID) return null;
+
+  switch (notification.type) {
+    case "new_application":
+    case "application_withdrawn":
+      return {
+        pathname: "/foreigner/applications/[id]",
+        params: {
+          id: targetID,
+          ...(notification.recruitmentId?.trim()
+            ? { recruitmentId: notification.recruitmentId.trim() }
+            : {}),
+        },
+      };
+    case "match_confirmed":
+    case "application_rejected":
+      return {
+        pathname: "/japanese/guide-requested",
+        params: { matchId: targetID },
+      };
+    default:
+      return null;
+  }
+}
+
 const ENGLISH_COPY: Record<NotificationType, NotificationCopy> = {
   new_application: {
     title: "New application",
@@ -224,5 +265,6 @@ export function toNotificationView(
     period: isSameLocalDate(validCreatedAt, now) ? "today" : "past_7_days",
     destination: record.destination,
     targetId: record.target_id,
+    recruitmentId: record.recruitment_id,
   };
 }

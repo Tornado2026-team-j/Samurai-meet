@@ -50,6 +50,10 @@ const COPY = {
     nationality: "国籍",
     bio: "自己紹介",
     notSet: "未設定",
+    myRecruitments: "自分の募集を管理",
+    myRecruitmentsDescription: "公開中・下書き・終了した募集と応募者を確認できます。",
+    myApplications: "応募履歴",
+    myApplicationsDescription: "自分が送った応募と結果を確認できます。",
     logout: "ログアウト",
     loggingOut: "ログアウト中…",
     authError: "ログアウトに失敗しました。もう一度お試しください。",
@@ -104,6 +108,10 @@ const COPY = {
     nationality: "Nationality",
     bio: "Bio",
     notSet: "Not set",
+    myRecruitments: "Manage my recruitments",
+    myRecruitmentsDescription: "Review your open, draft, and closed recruitments and applicants.",
+    myApplications: "Application history",
+    myApplicationsDescription: "Review the applications you sent and their results.",
     logout: "Log out",
     loggingOut: "Logging out…",
     authError: "Log out failed. Please try again.",
@@ -468,6 +476,40 @@ export default function ProfileScreen() {
           value={displayedProfile.bio || copy.notSet}
           multiline
         />
+
+        <View style={styles.managementSection}>
+          <Text style={styles.managementTitle}>{copy.myRecruitments}</Text>
+          <Text style={styles.managementDescription}>{copy.myRecruitmentsDescription}</Text>
+          <Pressable
+            accessibilityLabel={copy.myRecruitments}
+            accessibilityRole="button"
+            disabled={loggingOut || deleting || recoveryPreparing}
+            onPress={() => router.push("/recruitments/mine")}
+            style={({ pressed }) => [
+              styles.managementButton,
+              pressed && !loggingOut && !deleting && !recoveryPreparing && styles.pressed,
+              (loggingOut || deleting || recoveryPreparing) && styles.disabledButton,
+            ]}
+          >
+            <Text style={styles.managementButtonText}>{copy.myRecruitments}</Text>
+            <MaterialIcons color={BLUE} name="chevron-right" size={21} />
+          </Pressable>
+          <Text style={styles.managementDescription}>{copy.myApplicationsDescription}</Text>
+          <Pressable
+            accessibilityLabel={copy.myApplications}
+            accessibilityRole="button"
+            disabled={loggingOut || deleting || recoveryPreparing}
+            onPress={() => router.push("/japanese/applications")}
+            style={({ pressed }) => [
+              styles.managementButton,
+              pressed && !loggingOut && !deleting && !recoveryPreparing && styles.pressed,
+              (loggingOut || deleting || recoveryPreparing) && styles.disabledButton,
+            ]}
+          >
+            <Text style={styles.managementButtonText}>{copy.myApplications}</Text>
+            <MaterialIcons color={BLUE} name="chevron-right" size={21} />
+          </Pressable>
+        </View>
 
         <View style={styles.recoverySection}>
           <Text style={styles.recoverySectionTitle}>{copy.regenerateRecoveryKey}</Text>
@@ -889,6 +931,41 @@ const styles = StyleSheet.create({
     borderColor: "#f0d28b",
     borderRadius: 16,
     backgroundColor: "#fffaf0",
+  },
+  managementSection: {
+    gap: 10,
+    marginTop: 8,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: "#cfe9f7",
+    borderRadius: 16,
+    backgroundColor: "#f5fbff",
+  },
+  managementTitle: {
+    color: TEXT_GRAY,
+    fontSize: 17,
+    fontWeight: "700",
+  },
+  managementDescription: {
+    color: MUTED_GRAY,
+    fontSize: 14,
+    lineHeight: 21,
+  },
+  managementButton: {
+    minHeight: 46,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 14,
+    borderWidth: 1,
+    borderColor: "#b8dff1",
+    borderRadius: 23,
+    backgroundColor: "#ffffff",
+  },
+  managementButtonText: {
+    color: BLUE,
+    fontSize: 15,
+    fontWeight: "700",
   },
   recoverySectionTitle: {
     color: TEXT_GRAY,

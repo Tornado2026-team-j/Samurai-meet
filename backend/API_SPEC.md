@@ -1,6 +1,6 @@
 # バックエンド API 仕様（実装基準）
 
-最終更新: 2026-08-26
+最終更新: 2026-08-27
 
 この文書は、現在のGo実装とExpoテストクライアントの契約です。状態は次の記号で表します。
 
@@ -11,11 +11,11 @@
 ## 1. 共通
 
 - 本番 Base URL: `https://samurai-meet.disnana.com/api/v1`
-- ローカル Base URL: `http://127.0.0.1:8080/api/v1`
+- ローカル Base URL: `http://127.0.0.1:8080/api/v1`。ネイティブアプリは本番Base URLを通常値とし、ローカル／LANを使う場合だけ環境変数で明示する。自動切替はしない。
 - すべての業務APIはGo APIを経由する。SQLiteは使用しない。
 - `APP_ENV=production` では `CLIENT_ORIGIN` とWebAuthn Origin/RP IDを公開Originに揃える。単一ホスト構成でPostgreSQLが同一ホストのloopback（`127.0.0.1`、`::1`、`localhost`）に限定される場合だけ、TLSなしの`DB_SSLMODE=disable`を許可する。外部DBは`require`、`verify-ca`、`verify-full`のいずれかを必須とする。
 - Content-Type: `application/json; charset=utf-8`
-- 時刻: UTCのRFC3339文字列
+- 募集の利用日・開始／終了時刻は国内利用向けに`Asia/Tokyo`固定の壁時計として解釈する。`timezone`を省略または空にした入力は`Asia/Tokyo`へ正規化し、他のtimezoneは拒否する。`created_at`、`expires_at`、`captured_at`などの絶対時刻はUTCのRFC3339で表す。
 - サービス内部ID:現在は暗号学的乱数から作るopaque `TEXT`。クライアントは形式を仮定しない。
 - 保護API: `Authorization: Bearer <access_token>`
 
@@ -417,7 +417,7 @@ Request body:
 
 `PATCH /api/v1/me` も互換入口として受け付けますが、新しいクライアントは`/me/profile`を使用します。
 
-### 6.6 募集・検索・マッチ（実装済み。フロント接続済み）
+### 6.6 募集・検索・マッチ（バックエンド実装済み。フロント接続コードあり・iOS実機E2E未確認）
 
 #### 募集カード
 
@@ -442,9 +442,11 @@ Request body:
 }
 ```
 
-`category`は`Food` / `Places` / `Activity` / `Other`、`status`は`draft` / `open` / `closed`、公開半径は1 / 3 / 5だけを受け付けます。日時はカードのtimezoneで解釈し、期限は`end_time`です。公開するカードには完成プロフィールが必要です。成功時は201で`{ "data": { ...card } }`を返します。
+`category`は`Food` / `Places` / `Activity` / `Other`、`status`は`draft` / `open` / `closed`、公開半径は1 / 3 / 5だけを受け付けます。日時は`Asia/Tokyo`固定の壁時計として解釈し、期限は`end_time`から計算します。公開するカードには完成プロフィールが必要です。成功時は201で`{ "data": { ...card } }`を返します。募集画面のフロント接続コードはありますが、iOS初期表示の`invalid_recruitment_date`報告があるため、実機での公開成功は未確認です。
 
 `GET /api/v1/recruitments/{id}`は所有者には自身のカードを返し、他ユーザーには期限内の`open` / `matched`だけを返します。`PATCH`は所有者だけが実行でき、`matched`後の内容変更は拒否します。`DELETE`は物理削除ではなく`closed`へ遷移させ、204を返します。
+
+`GET /api/v1/recruitments/mine`は、認証ユーザーが所有する募集カードの一覧を返します。公開検索用の`GET /api/v1/recruitments`とは別の所有者向け一覧です。
 
 #### 検索と現在地
 
@@ -457,10 +459,11 @@ Request body:
 #### 関心・承認・完了
 
 - `POST /api/v1/recruitments/{id}/interest`: 他ユーザーが関心を1回送る。成功201、重複は409 `interest_already_sent`。
-- `GET /api/v1/matches?role=owner&status=pending&limit=50`: 自分の募集カードへ届いた応募一覧を返す。`role`は`all` / `owner` / `requester`、`status`は`pending` / `accepted` / `rejected` / `blocked` / `expired` / `completed`です。
+- `GET /api/v1/matches?role=owner&status=pending&limit=50`: 自分の募集カードへ届いた応募一覧を返す。`role`は`all` / `owner` / `requester`、`status`は`pending` / `accepted` / `rejected` / `cancelled` / `blocked` / `expired` / `completed`です。
 - `GET /api/v1/matches/{id}`: マッチ参加者だけが、相手の公開プロフィールと募集カードを取得できます。
 - `POST /api/v1/matches/{id}/accept`: カード所有者だけが`pending`を`accepted`へ遷移させる。期限切れ・ブロック・不正状態は拒否する。
 - `POST /api/v1/matches/{id}/reject`: カード所有者だけが`pending`を`rejected`へ遷移させる。
+- `POST /api/v1/matches/{id}/withdraw`: 応募者だけが`pending`を`cancelled`へ遷移させる。取り下げ後も履歴上のmatch行は保持する。
 - `POST /api/v1/matches/{id}/complete`: マッチ参加者が`accepted`を`completed`へ遷移させる。
 
 応募一覧・マッチ詳細の成功レスポンスは`{ "data": [ ... ] }` / `{ "data": { ... } }`です。各マッチには`other_user`（認証ユーザーから見た相手の公開プロフィール）と`recruitment`（募集カード）が含まれます。正確な位置情報はどの応答にも含めません。
@@ -477,7 +480,7 @@ Request body:
 | GET | `/api/v1/chats/{id}/messages?after=0&limit=50` | Access Token | 暗号化メッセージ履歴。最大100件 |
 | POST | `/api/v1/chats/{id}/messages` | Access Token | 暗号化メッセージ送信 |
 | POST | `/api/v1/chats/{id}/read` | Access Token | `last_message_sequence`まで既読 |
-| POST | `/api/v1/chats/{id}/transport-token` | Access Token | WebSocket/WebTransport用短命Chat Token発行 |
+| POST | `/api/v1/chats/{id}/transport-token` | Access Token | チャットtransport用短命Chat Token発行（配送実装は未完了） |
 
 送信bodyは次の形式です。
 
@@ -493,7 +496,9 @@ Request body:
 
 サーバーは`ciphertext`を復号せず、平文本文・検索用プレビュー・暗号鍵を受け付けません。`client_message_id`は送信者とチャット単位で一意で、同じIDの再送は元のメッセージを返します。暗号文は復号前128KiBまでです。履歴は`sequence`をcursorにして再接続時に補完します。
 
-transport tokenはAccess Token・Refresh Tokenと別audience（`samurai-meet-chat`）で、対象chat・session・transportだけに束縛した2分のJWSです。Refresh TokenをWebSocket、WebTransport、URL queryへ送ってはいけません。現時点ではRESTポーリングを実装し、WebSocket配送は次の作業で追加します。
+transport tokenはAccess Token・Refresh Tokenと別audience（`samurai-meet-chat`）で、対象chat・session・transportだけに束縛した2分のJWSです。現行サービスが受け付ける`transport`は`websocket`または`webtransport`ですが、HTTP handlerの既定値は`auth.ChatTransportQUIC`（`quic`）で一致していません。この不整合をコードで解消するまで、transport-tokenの既定経路を動作済みとみなしません。現行のチャット配送はRESTの履歴取得・送信・既読とし、QUIC / WebTransport / WebSocketのリアルタイム配送、TLS接続、heartbeatは未実装です。実装時はQUIC / TLS 1.3が通信路の暗号化・完全性を担い、JWSがアプリケーション層の認証・認可・接続管理を担います。Refresh Tokenを将来のtransportのURLやメッセージへ送ってはいけません。
+
+QUICのパケット損失時の再送はtransport層が行います。アプリケーション層で送信結果が不明な場合は、同じ`client_message_id`で期限・回数を制限した指数バックオフ再送を行い、サーバーの一意制約・冪等処理で二重登録を防ぎます。入力不正、認証失効、認可拒否などの4xxでは自動再送しません。0-RTTではメッセージ送信・既読更新などの状態変更を受け付けません。
 
 ### 6.8 会合セッション・Bluetooth／位置推測の補助（バックエンド実装済み。実測はクライアント）
 
@@ -531,11 +536,11 @@ DBには会合中の参加者ごと・方式ごとに最新1件だけを保持�
 | GET | `/api/v1/notifications?unread_only=false&limit=50` | Access Token | 直近7日間の通知一覧 |
 | POST | `/api/v1/notifications/{id}/read` | Access Token | 自分の通知を既読にする（冪等） |
 
-通知は応募、承認・辞退、暗号化チャットメッセージの作成と同じDBトランザクションで保存します。`event_key`で冪等化し、一覧はユーザー本人の通知だけを返します。通知本文はクライアントが言語別に生成し、チャットの平文・暗号文・鍵は通知へ保存しません。現在のクライアントはExpo画面からこの一覧と既読APIを利用します。
+通知は応募、承認・辞退、暗号化チャットメッセージの作成と同じDBトランザクションで保存します。`event_key`で冪等化し、一覧はユーザー本人の通知だけを返します。通知本文はクライアントが言語別に生成し、チャットの平文・暗号文・鍵は通知へ保存しません。現在のクライアントはExpo画面からこの一覧と既読APIを利用します。これはアプリ内通知であり、`expo-notifications`等によるOSプッシュ通知は未実装です。
 
 ### 6.10 未実装業務API
 
-本人確認（Stripe Identity等）、評価、ブロック・通報登録、WebSocketリアルタイム配送、チャット内写真送信は引き続き予定です。Stripe Identityを採用する場合も、Stripe Webhookの署名検証・イベント冪等性・対象ユーザー紐付けが成功するまで`identity_status=verified`へ遷移させません。画像平文、Key-A、Key-B、Recovery Key、Refresh TokenをAPIログへ出さない不変条件は全機能に適用します。
+本人確認（Stripe Identity等）、評価、ブロック・通報登録、QUICリアルタイム配送、チャット内写真送信は引き続き予定です。Stripe Identityを採用する場合も、Stripe Webhookの署名検証・イベント冪等性・対象ユーザー紐付けが成功するまで`identity_status=verified`へ遷移させません。画像平文、Key-A、Key-B、Recovery Key、Refresh TokenをAPIログへ出さない不変条件は全機能に適用します。
 
 ## 7. クライアント更新手順
 
@@ -543,7 +548,7 @@ DBには会合中の参加者ごと・方式ごとに最新1件だけを保持�
 2. 残り30秒以下ならクライアント内single-flightでRefreshを一つだけ実行する。
 3. 通信結果が不明なら同じ`request_id`で30秒以内に一度だけ再送する。
 4. 409 `refresh_reuse_detected`、Refresh失敗、handoff失敗時はAccess/Refreshと一時verifierを削除してログイン画面へ戻す。
-5. Refresh TokenはWebSocket・QUICのURLやメッセージへ送らない。Chat TokenはRESTで別発行する。
+5. Refresh TokenはQUICのURLやメッセージへ送らない。Chat TokenはRESTで別発行する。
 
 ## 8. 実装追加時の必須更新
 

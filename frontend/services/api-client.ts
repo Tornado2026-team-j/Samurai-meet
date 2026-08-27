@@ -4,12 +4,14 @@ import type { Session } from "./auth-contract";
 export class APIError extends Error {
   readonly status: number;
   readonly code: string;
+  readonly data: unknown;
 
-  constructor(status: number, code: string) {
+  constructor(status: number, code: string, data: unknown = null) {
     super(`${status}: ${code}`);
     this.name = "APIError";
     this.status = status;
     this.code = code;
+    this.data = data;
   }
 }
 
@@ -38,7 +40,10 @@ export async function requestAPI<T>(
   }
 
   if (!response.ok) {
-    throw new APIError(response.status, responseErrorCode(body));
+    const data = body && typeof body === "object" && "data" in body
+      ? (body as { data?: unknown }).data
+      : undefined;
+    throw new APIError(response.status, responseErrorCode(body), data);
   }
 
   return body as T;

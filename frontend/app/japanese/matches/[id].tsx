@@ -11,6 +11,7 @@ import {
   View,
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "../../../hooks/useAuth";
 import {
   getRecruitment,
@@ -39,6 +40,7 @@ const CATEGORY_IMAGES = {
 
 export default function JapaneseMatchDetailScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const { session, status } = useAuth();
   const { id } = useLocalSearchParams<{ id?: string | string[] }>();
   const matchId = Array.isArray(id) ? id[0] : id;
@@ -137,10 +139,13 @@ export default function JapaneseMatchDetailScreen() {
       <StatusBar style="light" />
 
       <ScrollView
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[
+          styles.scrollContent,
+          { paddingBottom: insets.bottom + 24 },
+        ]}
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.canvas}>
+        <View style={[styles.canvas, { height: 844 + insets.bottom + 24 }]}>
           <View style={styles.header}>
             <Image
               accessibilityLabel={`${match.category}カテゴリのイラスト`}
@@ -156,13 +161,19 @@ export default function JapaneseMatchDetailScreen() {
               onPress={() => router.back()}
               style={({ pressed }) => [
                 styles.backButton,
+                { top: Math.max(insets.top + 8, 49) },
                 pressed && styles.pressed,
               ]}
             >
               <MaterialIcons color="#ffffff" name="chevron-left" size={30} />
             </Pressable>
 
-            <View style={styles.categoryBadge}>
+            <View
+              style={[
+                styles.categoryBadge,
+                { top: Math.max(insets.top + 8, 46) },
+              ]}
+            >
               <MaterialIcons
                 color={YELLOW}
                 name={CATEGORY_ICONS[match.category]}
@@ -242,6 +253,7 @@ export default function JapaneseMatchDetailScreen() {
             onPress={() => void sendInterest()}
             style={({ pressed }) => [
               styles.guideButton,
+              { top: 772 - insets.bottom },
               requestState === "sending" && styles.guideButtonDisabled,
               pressed && styles.pressed,
             ]}
@@ -252,7 +264,10 @@ export default function JapaneseMatchDetailScreen() {
           </Pressable>
 
           {requestError ? (
-            <Text accessibilityRole="alert" style={styles.requestError}>
+            <Text
+              accessibilityRole="alert"
+              style={[styles.requestError, { top: 811 - insets.bottom }]}
+            >
               {requestError}
             </Text>
           ) : null}
@@ -299,6 +314,7 @@ const styles = StyleSheet.create({
   scrollContent: {
     minHeight: 844,
     alignItems: "center",
+    flexGrow: 1,
   },
   canvas: {
     position: "relative",

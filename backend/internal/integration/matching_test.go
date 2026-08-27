@@ -2,6 +2,7 @@ package integration
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -83,6 +84,31 @@ func TestRecruitmentMatchingLifecycle(t *testing.T) {
 	if interest.Status != "pending" {
 		t.Fatalf("interest = %+v", interest)
 	}
+	duplicate, err := service.SendInterest(ctx, guideID, card.ID, now.Add(time.Second))
+	if !errors.Is(err, matching.ErrDuplicateInterest) || duplicate.ID != interest.ID || duplicate.Status != interest.Status {
+		t.Fatalf("duplicate interest = %+v, err=%v", duplicate, err)
+	}
+	owned, err := service.ListOwnedRecruitments(ctx, travelerID, now)
+	if err != nil {
+		t.Fatalf("ListOwnedRecruitments() error = %v", err)
+	}
+	if len(owned) != 1 || owned[0].ID != card.ID {
+		t.Fatalf("owned recruitments = %+v", owned)
+	}
+	guideOwned, err := service.ListOwnedRecruitments(ctx, guideID, now)
+	if err != nil {
+		t.Fatalf("other user's recruitments error = %v", err)
+	}
+	if len(guideOwned) != 0 {
+		t.Fatalf("other user's recruitments = %+v", guideOwned)
+	}
+	changedDescription := "The owner cannot be changed by an applicant."
+	if _, err := service.UpdateRecruitment(ctx, guideID, card.ID, matching.RecruitmentPatch{Description: &changedDescription}, now); !errors.Is(err, matching.ErrForbidden) {
+		t.Fatalf("other user's update error = %v, want ErrForbidden", err)
+	}
+	if err := service.CloseRecruitment(ctx, guideID, card.ID, now); !errors.Is(err, matching.ErrRecruitmentNotFound) {
+		t.Fatalf("other user's close error = %v, want ErrRecruitmentNotFound", err)
+	}
 	ownerNotifications, err := notifications.List(ctx, travelerID, notification.ListParams{Limit: 10}, now)
 	if err != nil {
 		t.Fatalf("owner notifications = %v", err)
@@ -160,6 +186,80 @@ func TestRecruitmentMatchingLifecycle(t *testing.T) {
 	}
 	if !hasNotification(guideNotifications, notification.TypeApplicationRejected, secondInterest.ID) {
 		t.Fatalf("application rejected notification = %+v", guideNotifications)
+	}
+
+	updatedDescription := "Lunch with a local host."
+	updatedCard, err := service.UpdateRecruitment(ctx, travelerID, secondCard.ID, matching.RecruitmentPatch{Description: &updatedDescription}, now)
+	if err != nil {
+		t.Fatalf("owner UpdateRecruitment() error = %v", err)
+	}
+	if updatedCard.Description != updatedDescription {
+		t.Fatalf("updated card description = %q", updatedCard.Description)
+	}
+	if err := service.CloseRecruitment(ctx, travelerID, secondCard.ID, now); err != nil {
+		t.Fatalf("owner CloseRecruitment() error = %v", err)
+	}
+	if _, err := service.UpdateRecruitment(ctx, travelerID, secondCard.ID, matching.RecruitmentPatch{Description: &updatedDescription}, now); !errors.Is(err, matching.ErrInvalidState) {
+		t.Fatalf("closed recruitment update error = %v, want ErrInvalidState", err)
+	}
+	closedCards, err := service.ListOwnedRecruitments(ctx, travelerID, now)
+	if err != nil {
+		t.Fatalf("ListOwnedRecruitments() after close error = %v", err)
+	}
+	var foundClosed bool
+	for _, item := range closedCards {
+		if item.ID == secondCard.ID && item.Status == "closed" {
+			foundClosed = true
+		}
+	}
+	if !foundClosed {
+		t.Fatalf("closed recruitment was not retained: %+v", closedCards)
+	}
+
+	withdrawCard, err := service.CreateRecruitment(ctx, travelerID, matching.RecruitmentInput{
+		Category:           "Other",
+		AvailableDate:      "2026-08-29",
+		StartTime:          "12:00",
+		EndTime:            "13:00",
+		Timezone:           "Asia/Tokyo",
+		Keywords:           []string{"walk"},
+		Description:        "A short walk.",
+		VisibilityRadiusKM: 1,
+		Status:             "open",
+	}, now)
+	if err != nil {
+		t.Fatalf("withdraw card create error = %v", err)
+	}
+	withdrawInterest, err := service.SendInterest(ctx, guideID, withdrawCard.ID, now)
+	if err != nil {
+		t.Fatalf("withdraw interest create error = %v", err)
+	}
+	withdrawn, err := service.WithdrawInterest(ctx, guideID, withdrawInterest.ID, now.Add(time.Minute))
+	if err != nil || withdrawn.Status != "cancelled" {
+		t.Fatalf("withdrawn interest = %+v, err=%v", withdrawn, err)
+	}
+	if _, err := service.WithdrawInterest(ctx, travelerID, withdrawInterest.ID, now.Add(2*time.Minute)); !errors.Is(err, matching.ErrForbidden) {
+		t.Fatalf("owner withdrawal error = %v, want ErrForbidden", err)
+	}
+	requesterHistory, err := service.ListMatches(ctx, guideID, matching.MatchListParams{Role: "requester"}, now.Add(2*time.Minute))
+	if err != nil {
+		t.Fatalf("requester history error = %v", err)
+	}
+	var foundWithdrawn bool
+	for _, item := range requesterHistory {
+		if item.ID == withdrawInterest.ID && item.Status == "cancelled" && item.OtherUser.Name == "Alex" {
+			foundWithdrawn = true
+		}
+	}
+	if !foundWithdrawn {
+		t.Fatalf("withdrawn application missing from requester history: %+v", requesterHistory)
+	}
+	withdrawNotifications, err := notifications.List(ctx, travelerID, notification.ListParams{Limit: 20}, now.Add(2*time.Minute))
+	if err != nil {
+		t.Fatalf("withdraw notifications error = %v", err)
+	}
+	if !hasNotification(withdrawNotifications, notification.TypeApplicationWithdrawn, withdrawInterest.ID) {
+		t.Fatalf("withdraw notification missing: %+v", withdrawNotifications)
 	}
 }
 

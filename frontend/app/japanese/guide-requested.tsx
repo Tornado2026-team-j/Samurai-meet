@@ -50,6 +50,7 @@ export default function JapaneseGuideRequestedScreen() {
 
   const matched = match?.status === "accepted" || match?.status === "completed";
   const unavailable = match?.status === "rejected"
+    || match?.status === "cancelled"
     || match?.status === "expired"
     || match?.status === "blocked";
 
@@ -62,6 +63,8 @@ export default function JapaneseGuideRequestedScreen() {
           <Text style={styles.headerTitle}>
             {matched
               ? "マッチングしました！"
+              : match?.status === "cancelled"
+                ? "応募を取り下げました"
               : unavailable
                 ? "今回はマッチングできませんでした"
                 : "旅行者が応募を確認するまでお待ちください"}
@@ -82,13 +85,12 @@ export default function JapaneseGuideRequestedScreen() {
 
             {currentMatchID ? (
               <View style={styles.matchStatusBlock}>
-                {matchLoadState === "loading" ? (
-                  <ActivityIndicator color={HEADER_BLUE} size="small" />
-                ) : null}
                 <Text accessibilityRole={matchLoadError ? "alert" : undefined} style={styles.matchStatusText}>
                   {matchLoadError
                     ?? (matched
                       ? "旅行者があなたを案内役として選びました。"
+                      : match?.status === "cancelled"
+                        ? "応募を取り下げました。"
                       : unavailable
                         ? "この応募は終了または利用できません。"
                         : match
@@ -96,7 +98,9 @@ export default function JapaneseGuideRequestedScreen() {
                           : "マッチング状態を確認中です。")}
                 </Text>
                 <Pressable
+                  accessibilityLabel={matchLoadState === "loading" ? "状態を更新中" : "状態を更新"}
                   accessibilityRole="button"
+                  accessibilityState={{ disabled: matchLoadState === "loading" }}
                   disabled={matchLoadState === "loading"}
                   onPress={() => void loadMatch()}
                   style={({ pressed }) => [
@@ -105,7 +109,14 @@ export default function JapaneseGuideRequestedScreen() {
                     pressed && styles.pressed,
                   ]}
                 >
-                  <Text style={styles.refreshButtonText}>状態を更新</Text>
+                  {matchLoadState === "loading" ? (
+                    <View style={styles.refreshButtonContent}>
+                      <ActivityIndicator color="#ffffff" size="small" />
+                      <Text style={styles.refreshButtonText}>更新中…</Text>
+                    </View>
+                  ) : (
+                    <Text style={styles.refreshButtonText}>状態を更新</Text>
+                  )}
                 </Pressable>
               </View>
             ) : null}
@@ -233,6 +244,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     borderRadius: 15,
     backgroundColor: HEADER_BLUE,
+  },
+  refreshButtonContent: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
   },
   refreshButtonText: {
     color: "#ffffff",

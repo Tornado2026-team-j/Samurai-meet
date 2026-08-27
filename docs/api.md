@@ -1,14 +1,14 @@
 # API仕様書
 
-最終更新: 2026-08-26
+最終更新: 2026-08-27
 
 現在のGo実装との厳密な契約は [backend/API_SPEC.md](../backend/API_SPEC.md) を正とする。この文書では、フロントエンドが使う公開APIを、実装済みと予定に分けて一覧化する。
 
 ## 1. 共通
 
 - 本番Base URL: `https://samurai-meet.disnana.com/api/v1`
-- ローカルBase URL: `http://127.0.0.1:8080/api/v1`
-- JSON / UTF-8、時刻はUTC RFC3339
+- ローカルBase URL: `http://127.0.0.1:8080/api/v1`。ネイティブアプリは本番Base URLを通常値とし、ローカル／LANを使う場合だけ環境変数で明示する。自動切替はしない。
+- JSON / UTF-8。募集の利用日・開始／終了時刻は`Asia/Tokyo`固定の壁時計、`created_at`や`expires_at`等の絶対時刻はUTC RFC3339。
 - 現行サービスIDはopaque `TEXT`。UUID文字列であると仮定しない。
 - 保護APIは`Authorization: Bearer <access_token>`。
 - エラーは現行実装では`{ "error": "code" }`。将来、messageやfieldを含む共通形式へ移行する。
@@ -130,7 +130,7 @@ Refresh request:
 
 互換のため`refresh_request_id`も受理する。Access TokenはHS256 JWS-JWTで1分、sessionは絶対90日・アイドル30日。Refresh Tokenは32byte乱数で、DBにはhashだけを保存する。更新ごとにrotationし、同じrequest IDだけ30秒再送可能。別request IDの使用済みtokenはreuseとしてsession family全体を失効し、409を返す。
 
-### プロフィール（バックエンド実装済み・オンボーディング同期済み）
+### プロフィール（バックエンド実装済み・編集UIの完全同期は未完了）
 
 | Method | Path | 用途 |
 | --- | --- | --- |
@@ -139,12 +139,13 @@ Refresh request:
 
 `PATCH`の入力は`name`、`nationality_code`、`bio`です。名前は最大64、bioは最大1000 Unicode code points、国コードは大文字2文字です。指定しない項目は既存値を維持しますが、完成プロフィールでは名前と国コードが必須です。名前は次回以降のPasskey登録表示名にも同期しますが、既存PasskeyのOS表示名は変更されません。本人確認状態・いいね数・アイコン参照はこのAPIから更新できません。成功時は`{ "data": { ... } }`、不正値は`400 invalid_profile`です。
 
-### 募集・検索・マッチ（バックエンド・募集フローのフロント接続済み）
+### 募集・検索・マッチ（バックエンド実装済み。フロント接続コードあり・iOS実機E2E未確認）
 
 | Method | Path | 用途 |
 | --- | --- | --- |
 | POST | `/api/v1/recruitments` | 募集作成 |
 | GET | `/api/v1/recruitments` | 現在地・日時・keywordで検索 |
+| GET | `/api/v1/recruitments/mine` | 自分が作成した募集一覧 |
 | GET | `/api/v1/recruitments/{id}` | 募集詳細 |
 | PATCH | `/api/v1/recruitments/{id}` | 募集更新 |
 | DELETE | `/api/v1/recruitments/{id}` | 募集をclosed化 |
@@ -153,13 +154,14 @@ Refresh request:
 | GET | `/api/v1/matches/{id}` | 参加者向けマッチ詳細 |
 | POST | `/api/v1/matches/{id}/accept` | カード所有者が承認 |
 | POST | `/api/v1/matches/{id}/reject` | カード所有者が辞退 |
+| POST | `/api/v1/matches/{id}/withdraw` | 応募者がpendingの関心を取り下げ |
 | POST | `/api/v1/matches/{id}/complete` | 参加者が完了 |
 | POST | `/api/v1/matches/{id}/meeting` | 承認済みマッチの会合セッション作成 |
 | POST | `/api/v1/me/location` | 現在地を1時間保存 |
 
-募集は`Food` / `Places` / `Activity` / `Other`、公開半径は1/3/5kmに限定します。検索結果とカード詳細に正確な緯度・経度は含めず、位置が利用できる場合だけ`distance_band`を返します。現行はGoのHaversine計算で、PostGISは未導入です。重複関心は`409 interest_already_sent`、期限切れは`409 recruitment_expired`、ブロック関係は404相当で返します。
+募集は`Food` / `Places` / `Activity` / `Other`、公開半径は1/3/5kmに限定します。利用日・開始／終了時刻は`Asia/Tokyo`固定で扱い、timezoneを省略または空にした入力はJSTへ正規化し、他のtimezoneは拒否します。検索結果とカード詳細に正確な緯度・経度は含めず、位置が利用できる場合だけ`distance_band`を返します。現行はGoのHaversine計算で、PostGISは未導入です。募集フローの接続コードはありますが、iOS初期表示の`invalid_recruitment_date`報告があるため、実機での公開成功は未確認です。重複関心は`409 interest_already_sent`、期限切れは`409 recruitment_expired`、ブロック関係は404相当で返します。
 
-## 3. 未実装API
+## 3. 追加・未完了API
 
 ### プロフィール・本人確認
 
@@ -183,7 +185,7 @@ Refresh request:
 | GET | `/api/v1/notifications?unread_only=false&limit=50` | 直近7日間の自分の通知一覧 |
 | POST | `/api/v1/notifications/{id}/read` | 通知を既読にする |
 
-応募、承認・辞退、暗号化チャットメッセージ送信時にサーバーで通知を作成します。通知画面の表示文はクライアント側で日本語／英語に変換し、チャット本文は保存・表示しません。
+応募、承認・辞退、暗号化チャットメッセージ送信時にサーバーで通知を作成します。通知画面の表示文はクライアント側で日本語／英語に変換し、チャット本文は保存・表示しません。現状はアプリ内REST通知であり、OSプッシュ通知は未実装です。
 
 ### チャット・会合（バックエンドREST実装済み・フロント未接続）
 
@@ -200,7 +202,7 @@ Refresh request:
 | GET | `/api/v1/meetings/{id}/proximity` | 直近の距離補助値 |
 | POST | `/api/v1/meetings/{id}/proximity` | Bluetooth／位置推測の補助値送信 |
 
-チャット送信は`accepted`マッチの参加者だけが行え、平文ではなくBase64URLのAES-256-GCM暗号文だけを保存します。同じ`client_message_id`の再送は冪等です。現時点はRESTの履歴取得・送信・既読と短命transport tokenまでで、WebSocketのリアルタイム配送は未実装です。距離補助値はクライアント推定であり、本人確認や安全判定には使いません。
+チャット送信は`accepted`マッチの参加者だけが行え、平文ではなくBase64URLのAES-256-GCM暗号文だけを保存します。同じ`client_message_id`の再送は冪等です。現時点はRESTの履歴取得・送信・既読と短命transport tokenまでで、QUICのリアルタイム配送は未実装です。QUICが一時的に利用できない場合はRESTのポーリングへフォールバックし、WebSocketへの切替はチーム合意なしには行いません。距離補助値はクライアント推定であり、本人確認や安全判定には使いません。
 
 ### 画像・鍵（実装済み）
 
@@ -223,7 +225,7 @@ Refresh request:
 
 画像平文、画像鍵、Master Key、Key-B、Recovery PhraseはAPIログへ出さない。Key-Bは端末ごとにSecure Storageへ生成・保存し、サーバーへは公開鍵と`device_id`だけを登録する。private画像の各リクエストは端末Key-B由来の署名、時刻、ワンタイムnonce、body hashを要求し、サーバー単独で画像を復号できない。`KEY_B_WRAP_KEY`やサーバーからのKey-B取得APIは使用しない。Key-Bは画像鍵の包みと端末proofに、Master Keyはアカウントrootの包みに、Recovery Phraseはv2 root envelopeの包みに用途を分離する。Recovery challengeはhashのみをDBに保存し、TTL・最大5回の検証試行・1時間あたり10回の発行制限を設ける。profile画像はサーバー公開鍵で画像鍵をwrapして互換配信し、private画像は端末側鍵を使う。画像uploadの正確な`X-Photo-*`ヘッダーは [backend/API_SPEC.md](../backend/API_SPEC.md) を参照する。
 
-Chat TokenはAccess TokenやRefresh Tokenと別audienceで発行し、Refresh Tokenを通信路へ送らない。正確なbody形式、TTL、暗号文サイズは [backend/API_SPEC.md](../backend/API_SPEC.md) のチャット節を参照する。
+Chat Tokenの発行部品はAccess TokenやRefresh Tokenと別audienceのJWSで対象chat・sessionに束縛しますが、現行のリアルタイム配送は未実装です。HTTP handlerの既定`quic`とチャットサービスの受理値`websocket`／`webtransport`が不一致のため、既定経路もコード整合まで動作済みとみなしません。現時点はRESTで、Refresh Tokenをtransportへ送らない契約、同じ`client_message_id`による冪等再送を維持します。正確なbody形式、TTL、暗号文サイズは [backend/API_SPEC.md](../backend/API_SPEC.md) のチャット節を参照する。
 
 ## 4. Token更新タイミング
 
