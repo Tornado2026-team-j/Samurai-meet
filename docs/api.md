@@ -61,7 +61,7 @@ https://samurai-meet.disnana.com/auth/callback
 
 `recovery_available`はv2 Master Key envelopeにRecovery公開鍵がある場合だけ`true`です。`false`の場合はRecovery Phrase復旧ではなく、Passkey成功後に新しいv2 Recovery Phraseを登録します。移行後に旧envelopeしかない、または未設定のアカウントへのRecovery challengeは`409 recovery_not_configured`を返します。
 
-Google交換時点では通常sessionを発行しない。`pre_auth_token`はExpo Goがbootstrap発行にBearerで使う短命の内部資格情報で、Web URLへ渡してはいけません。アプリURIの許可値は、本番`samuraimeet://auth`、開発用Expo Goの`samuraimeettest://auth`または`exp://<host>/--/auth`です。ブラウザ開発クライアントは、設定済みOriginの`/auth/complete`だけを完全一致で許可します。Expo Goの`exp://`は`ALLOW_EXPO_GO_REDIRECT=true`を設定した開発確認時だけ許可する。
+Google交換時点では通常sessionを発行しない。`pre_auth_token`はExpo Goがbootstrap発行にBearerで使う短命の内部資格情報で、Web URLへ渡してはいけません。アプリURIの許可値は、本番`samuraimeet://auth`、開発用Expo Goの`samuraimeettest://auth`または`exp://<host>/--/auth`です。ブラウザ開発クライアントは、開発時の固定Origin（標準は`http://localhost:8081/auth/complete`または`http://127.0.0.1:8081/auth/complete`）と設定済みOriginの`/auth/complete`だけを完全一致で許可します。CF Tunnelなどでproduction設定のバックエンドをExpo Goから使う場合は、`ALLOW_EXPO_GO_REDIRECT=true`を明示したときだけ`exp://<host>/--/auth`を許可します。APIのoriginとアプリの戻り先は別の値です。
 
 OAuth handoff codeは10分で失効し、一回使用後に消費する。同じverifierで期限内に再送した場合だけ、サーバーが保存した暗号化レスポンスを返す。アプリがOAuth途中で落ちても、Secure Storageのverifierを保持すれば再開できる。Web Passkey後のsession handoffは別APIで、同じverifierに加えて同じ`request_id`を30秒以内に送る場合だけ再送できます。
 
@@ -219,12 +219,12 @@ Chat TokenはAccess TokenやRefresh Tokenと別audienceで発行し、Refresh To
 
 ## 4. Token更新タイミング
 
-1. アプリ起動、フォアグラウンド復帰、API呼び出し前にAccess Tokenの残りを確認する。
-2. 残り30秒以下ならsingle-flightでRefreshを一つだけ実行する。
+1. アプリ起動時とフォアグラウンド復帰時はsingle-flightでRefreshし、保存済みRefresh Tokenからメモリ上のAccess Tokenを復元する。
+2. 通常の保護APIが`401 missing_or_invalid_access_token`を返した場合も、同じsingle-flight Refreshを一度だけ実行して元のリクエストを一度だけ再試行する。401以外や403の再認証要求はRefreshで迂回しない。
 3. 通信結果が不明なら同じ`request_id`で30秒以内に再送する。
-4. 新tokenのSecure Storage保存後に旧tokenを置き換える。
+4. 新tokenのSecure Storage保存後に旧tokenを置き換える。更新中のAPI呼び出しは同じ更新Promiseを共有する。
 5. Refresh失敗、409 reuse、session失効時はAccess/Refreshを削除し、GoogleまたはPasskeyへ戻る。
-6. バックグラウンド中に定期Refreshしない。
+6. バックグラウンド中に定期Refreshしない。Passkeyブラウザからの復帰時はhandoff交換の完了後にだけフォアグラウンドRefreshを行う。
 
 端末登録、root-key envelope、Recoveryのsession経路、退会はRefreshだけでは許可せず、直近Passkey再認証を要求する。Recoveryの新端末経路はGoogle後の短命pre-authに限定し、challenge開始とverifyで同じpre-auth hash・scope・userを再検証する。端末画像APIはAccess Tokenだけで完結させず、端末Key-Bのproofも要求する。
 
