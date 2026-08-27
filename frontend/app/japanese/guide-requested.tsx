@@ -1,13 +1,57 @@
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
-import { useRouter } from "expo-router";
-import { Image, Pressable, StyleSheet, Text, View } from "react-native";
+import { useCallback, useEffect, useState } from "react";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { ActivityIndicator, Image, Pressable, StyleSheet, Text, View } from "react-native";
 import { StatusBar } from "expo-status-bar";
+import { useAuth } from "../../hooks/useAuth";
+import { getMatch, type MatchView } from "../../services/matching";
 
 const HEADER_BLUE = "#5ec5f5";
 const YELLOW = "#e7b454";
 
 export default function JapaneseGuideRequestedScreen() {
   const router = useRouter();
+  const { getCurrentSession, session, status } = useAuth();
+  const { matchId } = useLocalSearchParams<{ matchId?: string | string[] }>();
+  const currentMatchID = Array.isArray(matchId) ? matchId[0] : matchId;
+  const [match, setMatch] = useState<MatchView | null>(null);
+  const [matchLoadState, setMatchLoadState] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [matchLoadError, setMatchLoadError] = useState<string | null>(null);
+
+  const loadMatch = useCallback(async (signal?: AbortSignal) => {
+    if (!currentMatchID) return;
+
+    const activeSession = getCurrentSession() ?? session;
+    if (status !== "signed_in" || !activeSession) {
+      setMatchLoadState("error");
+      setMatchLoadError("ログイン後にマッチング状態を確認できます。");
+      return;
+    }
+
+    setMatchLoadState("loading");
+    setMatchLoadError(null);
+    try {
+      const result = await getMatch(currentMatchID, activeSession, signal);
+      setMatch(result);
+      setMatchLoadState("ready");
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") return;
+      setMatchLoadState("error");
+      setMatchLoadError("マッチング状態を取得できませんでした。時間をおいて再試行してください。");
+    }
+  }, [currentMatchID, getCurrentSession, session, status]);
+
+  useEffect(() => {
+    if (!currentMatchID) return;
+    const controller = new AbortController();
+    void loadMatch(controller.signal);
+    return () => controller.abort();
+  }, [currentMatchID, loadMatch]);
+
+  const matched = match?.status === "accepted" || match?.status === "completed";
+  const unavailable = match?.status === "rejected"
+    || match?.status === "expired"
+    || match?.status === "blocked";
 
   return (
     <View style={styles.screen}>
@@ -16,7 +60,11 @@ export default function JapaneseGuideRequestedScreen() {
       <View style={styles.canvas}>
         <View style={styles.header}>
           <Text style={styles.headerTitle}>
-            旅行者が応募を確認するまでお待ちください
+            {matched
+              ? "マッチングしました！"
+              : unavailable
+                ? "今回はマッチングできませんでした"
+                : "旅行者が応募を確認するまでお待ちください"}
           </Text>
         </View>
 
@@ -31,6 +79,36 @@ export default function JapaneseGuideRequestedScreen() {
                 style={styles.letterImage}
               />
             </View>
+
+            {currentMatchID ? (
+              <View style={styles.matchStatusBlock}>
+                {matchLoadState === "loading" ? (
+                  <ActivityIndicator color={HEADER_BLUE} size="small" />
+                ) : null}
+                <Text accessibilityRole={matchLoadError ? "alert" : undefined} style={styles.matchStatusText}>
+                  {matchLoadError
+                    ?? (matched
+                      ? "旅行者があなたを案内役として選びました。"
+                      : unavailable
+                        ? "この応募は終了または利用できません。"
+                        : match
+                          ? "応募は送信済みです。旅行者の確認をお待ちください。"
+                          : "マッチング状態を確認中です。")}
+                </Text>
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={matchLoadState === "loading"}
+                  onPress={() => void loadMatch()}
+                  style={({ pressed }) => [
+                    styles.refreshButton,
+                    matchLoadState === "loading" && styles.disabledButton,
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <Text style={styles.refreshButtonText}>状態を更新</Text>
+                </Pressable>
+              </View>
+            ) : null}
 
             <Pressable
               accessibilityRole="button"
@@ -125,6 +203,44 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     letterSpacing: 0,
     lineHeight: 18,
+  },
+  matchStatusBlock: {
+    width: 258,
+    minHeight: 90,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 22,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: "#d4d4d4",
+    borderRadius: 12,
+    backgroundColor: "#f7fbfd",
+    gap: 8,
+  },
+  matchStatusText: {
+    color: "#535353",
+    fontSize: 12,
+    fontWeight: "700",
+    lineHeight: 17,
+    textAlign: "center",
+  },
+  refreshButton: {
+    minWidth: 100,
+    minHeight: 30,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 14,
+    borderRadius: 15,
+    backgroundColor: HEADER_BLUE,
+  },
+  refreshButtonText: {
+    color: "#ffffff",
+    fontSize: 12,
+    fontWeight: "800",
+  },
+  disabledButton: {
+    opacity: 0.55,
   },
   pressed: {
     opacity: 0.72,

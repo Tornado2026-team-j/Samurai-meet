@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import {
   createRecruitment,
+  listMatches,
   recruitmentToMatchCard,
   searchRecruitments,
 } from "../services/matching";
@@ -92,6 +93,20 @@ describe("募集APIクライアント", () => {
       status: "open",
       latitude: 35.68,
     });
+  });
+
+  it("外国人側のマッチ一覧は保留中以外の状態も取得する", async () => {
+    let requestedURL = "";
+    globalThis.fetch = (async (input) => {
+      requestedURL = String(input);
+      return new Response(JSON.stringify({ data: [] }), { status: 200 });
+    }) as typeof fetch;
+
+    await listMatches(session, { role: "owner", limit: 50 });
+
+    expect(requestedURL).toContain("role=owner");
+    expect(requestedURL).toContain("limit=50");
+    expect(requestedURL).not.toContain("status=pending");
   });
 
   it("バックエンド募集を既存カード表示へ変換する", () => {

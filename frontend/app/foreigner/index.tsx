@@ -12,6 +12,7 @@ import {
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { useAuth } from "../../hooks/useAuth";
+import { APIError } from "../../services/api-client";
 import { listMatches, type MatchView } from "../../services/matching";
 
 const BLUE = "#5ec5f5";
@@ -23,7 +24,7 @@ const SOFT_BLUE = "#eff8ff";
 
 export default function ForeignerHomeScreen() {
   const router = useRouter();
-  const { getCurrentSession, session, status } = useAuth();
+  const { getCurrentSession, refresh, session, status } = useAuth();
   const [query, setQuery] = useState("");
   const [applications, setApplications] = useState<MatchView[]>([]);
   const [loading, setLoading] = useState(true);
@@ -31,6 +32,12 @@ export default function ForeignerHomeScreen() {
   const searchInputRef = useRef<TextInput>(null);
   const pendingApplications = useMemo(
     () => applications.filter((application) => application.status === "pending"),
+    [applications],
+  );
+  const matchedApplications = useMemo(
+    () => applications.filter(
+      (application) => application.status === "accepted" || application.status === "completed",
+    ),
     [applications],
   );
 
@@ -51,11 +58,24 @@ export default function ForeignerHomeScreen() {
       setLoading(true);
       setLoadError(null);
       try {
-        const result = await listMatches(
-          activeSession,
-          { role: "owner", status: "pending", limit: 50 },
-          controller.signal,
-        );
+        let result;
+        try {
+          result = await listMatches(
+            activeSession,
+            { role: "owner", limit: 50 },
+            controller.signal,
+          );
+        } catch (error) {
+          if (!(error instanceof APIError) || error.status !== 401) throw error;
+          await refresh();
+          const refreshedSession = getCurrentSession();
+          if (!refreshedSession) throw error;
+          result = await listMatches(
+            refreshedSession,
+            { role: "owner", limit: 50 },
+            controller.signal,
+          );
+        }
         if (!cancelled) setApplications(result);
       } catch (error) {
         if (error instanceof Error && error.name === "AbortError") return;
@@ -72,7 +92,7 @@ export default function ForeignerHomeScreen() {
       cancelled = true;
       controller.abort();
     };
-  }, [getCurrentSession, session, status]);
+  }, [getCurrentSession, refresh, session, status]);
 
   useFocusEffect(loadApplications);
 
@@ -188,38 +208,84 @@ export default function ForeignerHomeScreen() {
               <Text style={styles.retryButtonText}>Retry</Text>
             </Pressable>
           </View>
-        ) : pendingApplications.length > 0 ? (
-          <View style={styles.applicationList}>
-            {pendingApplications.map((application) => (
-              <Pressable
-                key={application.id}
-                accessibilityLabel={`Review application from ${application.other_user.name}`}
-                accessibilityRole="button"
-                onPress={() => openApplication(application.id)}
-                style={({ pressed }) => [
-                  styles.applicationCard,
-                  pressed && styles.pressed,
-                ]}
-              >
-                <View style={styles.avatarCircle}>
-                  <MaterialIcons color="#d4d4d4" name="account-circle" size={52} />
-                </View>
+        ) : pendingApplications.length > 0 || matchedApplications.length > 0 ? (
+          <>
+            {pendingApplications.length > 0 ? (
+              <View style={styles.applicationSection}>
+                <Text style={styles.sectionTitle}>Review applications</Text>
+                <View style={styles.applicationList}>
+                  {pendingApplications.map((application) => (
+                    <Pressable
+                      key={application.id}
+                      accessibilityLabel={`Review application from ${application.other_user.name}`}
+                      accessibilityRole="button"
+                      onPress={() => openApplication(application.id)}
+                      style={({ pressed }) => [
+                        styles.applicationCard,
+                        pressed && styles.pressed,
+                      ]}
+                    >
+                      <View style={styles.avatarCircle}>
+                        <MaterialIcons color="#d4d4d4" name="account-circle" size={52} />
+                      </View>
 
-                <View style={styles.applicationText}>
-                  <Text numberOfLines={1} style={styles.applicantName}>
-                    {application.other_user.name}
-                  </Text>
-                  <Text numberOfLines={2} style={styles.applicationBio}>
-                    {application.other_user.bio || "No introduction provided."}
-                  </Text>
-                </View>
+                      <View style={styles.applicationText}>
+                        <Text numberOfLines={1} style={styles.applicantName}>
+                          {application.other_user.name}
+                        </Text>
+                        <Text numberOfLines={2} style={styles.applicationBio}>
+                          {application.other_user.bio || "No introduction provided."}
+                        </Text>
+                      </View>
 
-                <View style={styles.reviewButton}>
-                  <Text style={styles.reviewButtonText}>Review</Text>
+                      <View style={styles.reviewButton}>
+                        <Text style={styles.reviewButtonText}>Review</Text>
+                      </View>
+                    </Pressable>
+                  ))}
                 </View>
-              </Pressable>
-            ))}
-          </View>
+              </View>
+            ) : null}
+
+            {matchedApplications.length > 0 ? (
+              <View style={styles.applicationSection}>
+                <Text style={styles.sectionTitle}>Your matches</Text>
+                <View style={styles.applicationList}>
+                  {matchedApplications.map((application) => (
+                    <Pressable
+                      key={application.id}
+                      accessibilityLabel={`Open match with ${application.other_user.name}`}
+                      accessibilityRole="button"
+                      onPress={() => openApplication(application.id)}
+                      style={({ pressed }) => [
+                        styles.applicationCard,
+                        pressed && styles.pressed,
+                      ]}
+                    >
+                      <View style={styles.avatarCircle}>
+                        <MaterialIcons color={BLUE} name="account-circle" size={52} />
+                      </View>
+
+                      <View style={styles.applicationText}>
+                        <Text numberOfLines={1} style={styles.applicantName}>
+                          {application.other_user.name}
+                        </Text>
+                        <Text numberOfLines={2} style={styles.applicationBio}>
+                          {application.recruitment.description}
+                        </Text>
+                      </View>
+
+                      <View style={[styles.reviewButton, styles.matchedButton]}>
+                        <Text style={styles.reviewButtonText}>
+                          {application.status === "completed" ? "Completed" : "Matched"}
+                        </Text>
+                      </View>
+                    </Pressable>
+                  ))}
+                </View>
+              </View>
+            ) : null}
+          </>
         ) : (
           <View style={styles.emptyPanel}>
             <MaterialIcons color={BLUE} name="check-circle-outline" size={34} />
@@ -373,6 +439,19 @@ const styles = StyleSheet.create({
     marginTop: 20,
     gap: 14,
   },
+  applicationSection: {
+    width: "100%",
+    maxWidth: 342,
+    marginTop: 20,
+  },
+  sectionTitle: {
+    marginBottom: 10,
+    color: TEXT_GRAY,
+    fontSize: 14,
+    fontWeight: "900",
+    letterSpacing: 0,
+    lineHeight: 18,
+  },
   applicationCard: {
     minHeight: 112,
     flexDirection: "row",
@@ -429,6 +508,9 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     letterSpacing: 0,
     lineHeight: 15,
+  },
+  matchedButton: {
+    backgroundColor: BLUE,
   },
   emptyPanel: {
     width: "100%",

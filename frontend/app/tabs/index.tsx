@@ -14,6 +14,7 @@ import {
   View,
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "../../hooks/useAuth";
 import { APIError } from "../../services/api-client";
 import { getCurrentCoordinates } from "../../services/location";
@@ -102,6 +103,7 @@ function Stepper({
 
 export default function SearchPreferencesScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const { getCurrentSession, refresh, session, status } = useAuth();
   const { query } = useLocalSearchParams<{ query?: string | string[] }>();
   const initialQuery = Array.isArray(query) ? query[0] : query;
@@ -279,7 +281,7 @@ export default function SearchPreferencesScreen() {
         throw new Error("not_signed_in");
       }
       await refresh();
-      const activeSession = getCurrentSession() ?? session;
+      const activeSession = getCurrentSession();
       if (!activeSession) {
         throw new Error("not_signed_in");
       }
@@ -306,26 +308,37 @@ export default function SearchPreferencesScreen() {
       router.replace("/foreigner");
     } catch (error) {
       if (error instanceof Error && error.name === "AbortError") {
+        setPublishError("The local API did not respond. Check that the Go server is running and try again.");
         return;
       }
       if (error instanceof APIError) {
-        if (error.code === "profile_incomplete") {
-          setPublishError("プロフィールを完成させてから公開してください。");
-        } else if (error.code === "recruitment_expired") {
-          setPublishError("募集日時が過ぎています。日時を確認してください。");
-        } else if (error.code === "invalid_matching_request") {
-          setPublishError("入力内容を確認してください。");
-        } else {
-          setPublishError("募集を公開できませんでした。時間をおいて再試行してください。");
+        switch (error.code) {
+          case "missing_or_invalid_access_token":
+            setPublishError("Your session expired. Sign in again on this API environment.");
+            break;
+          case "profile_incomplete":
+            setPublishError("Complete your profile before publishing.");
+            break;
+          case "invalid_profile":
+            setPublishError("Your profile could not be synchronized. Check your name and nationality.");
+            break;
+          case "recruitment_expired":
+            setPublishError("The recruitment time has passed. Check the date and time.");
+            break;
+          case "invalid_matching_request":
+            setPublishError("Check the date, time, location, and other recruitment details.");
+            break;
+          default:
+            setPublishError("The server could not publish this recruitment. Try again shortly.");
         }
       } else if (error instanceof Error && error.message === "not_signed_in") {
-        setPublishError("ログイン後にもう一度お試しください。");
+        setPublishError("Please sign in again before publishing.");
       } else if (error instanceof Error && error.message === "recruitment_date_in_past") {
-        setPublishError("募集日時は現在より後に設定してください。");
+        setPublishError("Set the recruitment time in the future.");
       } else if (error instanceof Error && error.message === "recruitment_must_end_same_day") {
-        setPublishError("終了時刻が日付をまたがないようにしてください。");
+        setPublishError("The recruitment must end on the same day.");
       } else {
-        setPublishError("募集を公開できませんでした。時間をおいて再試行してください。");
+        setPublishError("The local API could not be reached. Check the Go server and your iPhone network connection.");
       }
     } finally {
       setPublishStatus("idle");
@@ -428,7 +441,27 @@ export default function SearchPreferencesScreen() {
     <View style={styles.screen}>
       <StatusBar style="light" />
 
-      <Animated.View style={[styles.panel, { height: panelHeight }]}>
+      <Animated.View
+        style={[styles.panel, { height: panelHeight }]}
+      >
+        {!isConfirmationVisible ? (
+          <Pressable
+            accessibilityLabel="Back to home"
+            accessibilityRole="button"
+            onPress={() => {
+              Keyboard.dismiss();
+              router.back();
+            }}
+            style={({ pressed }) => [
+              styles.menuBackButton,
+              { top: Math.max(insets.top, 16) },
+              pressed && styles.pressed,
+            ]}
+          >
+            <MaterialIcons color="#ffffff" name="arrow-back" size={16} />
+            <Text style={styles.menuBackButtonText}>BACK</Text>
+          </Pressable>
+        ) : null}
         <Animated.View
           accessibilityElementsHidden={isConfirmationVisible}
           importantForAccessibility={
@@ -797,6 +830,28 @@ const styles = StyleSheet.create({
     backgroundColor: BLUE,
     borderBottomLeftRadius: 50,
     borderBottomRightRadius: 50,
+  },
+  menuBackButton: {
+    position: "absolute",
+    left: 18,
+    zIndex: 2,
+    width: 76,
+    height: 30,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 5,
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.82)",
+    borderRadius: 15,
+    backgroundColor: "rgba(0, 0, 0, 0.08)",
+  },
+  menuBackButtonText: {
+    color: "#ffffff",
+    fontSize: 11,
+    fontWeight: "900",
+    letterSpacing: 0.4,
+    lineHeight: 14,
   },
   compactContent: {
     position: "absolute",
