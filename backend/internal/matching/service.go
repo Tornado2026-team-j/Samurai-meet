@@ -270,7 +270,14 @@ func (s *Service) SearchRecruitments(ctx context.Context, userID string, params 
 	}
 	defer rows.Close()
 
-	items := make([]searchItem, 0, params.Limit)
+	itemCap := params.Limit
+	if itemCap < 0 {
+		itemCap = 0
+	}
+	if itemCap > maxSearchLimit {
+		itemCap = maxSearchLimit
+	}
+	items := make([]searchItem, 0, itemCap)
 	for rows.Next() {
 		var record cardRecord
 		if err = rows.Scan(
