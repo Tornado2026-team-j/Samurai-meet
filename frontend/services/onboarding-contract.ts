@@ -1,10 +1,16 @@
 export type AppLanguage = "ja" | "en";
 export type IdentityVerificationChoice = "proceed" | "later" | null;
 
+export type MonsterSeedProfile = {
+  skillTags: string[];
+  interestTags: string[];
+  freeText: string;
+};
+
 export type LocalProfile = {
   name: string;
   nationalityCode: string;
-  bio: string;
+  monsterSeed: MonsterSeedProfile;
   completed: boolean;
   identityVerificationChoice: IdentityVerificationChoice;
 };
@@ -30,10 +36,16 @@ export function parseLocalProfile(value: string | null): LocalProfile | null {
     const identityVerificationChoice = parseIdentityVerificationChoice(
       candidate.identityVerificationChoice ?? null,
     );
+    const monsterSeedCandidate = (candidate as {
+      monsterSeed?: Partial<MonsterSeedProfile>;
+      bio?: unknown;
+    }).monsterSeed;
+    const legacyBio = (candidate as { bio?: unknown }).bio;
+    const monsterSeed = parseMonsterSeedProfile(monsterSeedCandidate, legacyBio);
     if (
       typeof candidate.name !== "string" ||
       typeof candidate.nationalityCode !== "string" ||
-      typeof candidate.bio !== "string" ||
+      !monsterSeed ||
       typeof candidate.completed !== "boolean" ||
       ![null, "proceed", "later"].includes(identityVerificationChoice)
     ) {
@@ -43,11 +55,47 @@ export function parseLocalProfile(value: string | null): LocalProfile | null {
     return {
       name: candidate.name,
       nationalityCode: candidate.nationalityCode,
-      bio: candidate.bio,
+      monsterSeed,
       completed: candidate.completed,
       identityVerificationChoice,
     };
   } catch {
     return null;
   }
+}
+
+function parseTagList(value: unknown): string[] | null {
+  if (!Array.isArray(value)) return null;
+  if (!value.every((tag) => typeof tag === "string")) return null;
+  return [...new Set(value.map((tag) => tag.trim()).filter(Boolean))].slice(0, 5);
+}
+
+function parseMonsterSeedProfile(
+  value: Partial<MonsterSeedProfile> | undefined,
+  legacyBio: unknown,
+): MonsterSeedProfile | null {
+  if (!value || typeof value !== "object") {
+    if (typeof legacyBio !== "string") return null;
+    return {
+      skillTags: [],
+      interestTags: [],
+      freeText: legacyBio.slice(0, 150),
+    };
+  }
+
+  const skillTags = parseTagList(value.skillTags);
+  const interestTags = parseTagList(value.interestTags);
+  if (
+    !skillTags ||
+    !interestTags ||
+    typeof value.freeText !== "string"
+  ) {
+    return null;
+  }
+
+  return {
+    skillTags,
+    interestTags,
+    freeText: value.freeText.trim().slice(0, 150),
+  };
 }

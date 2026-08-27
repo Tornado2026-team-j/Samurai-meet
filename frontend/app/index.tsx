@@ -1247,9 +1247,11 @@ const styles = StyleSheet.create({
     letterSpacing: 0,
   },
   progress: {
+    width: "100%",
     height: 14,
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "center",
     gap: 10,
   },
   progressDot: {
