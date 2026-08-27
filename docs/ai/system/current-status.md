@@ -1,16 +1,40 @@
 # 実装状態の境界
 
-## 実装済み（backend）
+最終確認: 2026-08-27
 
-- OAuth/pre-auth/session/refresh/Passkey/再認証、暗号文画像エンドポイント、Key-A envelope、端末固有Key-Bの公開鍵proof、退会API。
-- `POST /auth/passkey/reauth/options` と `/verify` は実装済み。詳細は `backend/API_SPEC.md` とコードを確認すること。
+この文書は現行コードを正とする。仕様書に「予定」と書かれたものは、コードとテストで確認できるまで実装済みとして扱わない。詳細なHTTP契約は [backend/API_SPEC.md](../../../backend/API_SPEC.md) を参照する。
 
-## 未実装・本番承認不可
+## 現在実装されている範囲
 
-- `frontend/` はネイティブクライアントを担当する。Web Passkey UIはGoバックエンドの `/passkey` から配信し、bootstrap→options/verify→アプリdeep linkを実装する。実機E2E確認は継続して必要。
-- `frontend/services/auth-contract.ts` のURL fragmentは`bootstrap_token`だけ。Access Token、Refresh Token、pre-auth tokenはWeb URLへ渡さない。
-- 端末画像の画面統合、共通監査基盤、画像quarantine、削除reconciler、legacy画像移行は未実装。Key-Bはサーバー取得方式ではない。
+- Google OAuth、pre-auth、Passkey、session/refresh、Web Passkey handoff、v2 client-owned root-key envelope、端末Key-B proof、暗号文画像API、退会API。
+- Go APIのプロフィール取得・更新、募集カードの作成・検索・更新・終了、関心・承認・辞退・完了、位置保存、acceptedマッチ向けRESTチャット部品、会合・距離補助API。
+- 募集・マッチングの外国人／日本人画面からAPIを呼ぶ実装は存在する。ただし、iOS実機で初期表示時に `invalid_recruitment_date` が発生した報告があり、募集作成の実機E2Eは未確認である。
+- 通知のDB永続化、一覧・既読API、応募／承認／辞退／暗号化チャット送信に伴う通知生成、外国人／日本人の通知画面・未読バッジ。
+- 通知は現時点でアプリ内REST通知であり、`expo-notifications`等によるOSプッシュ通知は未実装。
+- チャットは暗号文のREST送信・履歴取得・既読更新・短命transport token発行の部品まで。QUIC、WebTransport、WebSocketによるリアルタイム配送とチャット画面は未実装。
+- 募集の利用日・壁時計は現在 `Asia/Tokyo` 固定で正規化する方針。DB/APIの絶対時刻はUTCとして扱う。
 
-## CORSと開発Web
+## 未完了・本番承認不可
 
-本番は`CLIENT_ORIGIN`だけ、開発・testは`DEV_CLIENT_ORIGIN`と固定したローカルWeb開発Origin（標準の`http://localhost:8081`／`http://127.0.0.1:8081`を含む）の完全一致だけを許可する。ワイルドカードや任意Origin反射は行わない。Web Passkey UIはバックエンドの `/passkey` から同一Originで配信する。OAuth callbackの`/auth/complete`許可も同じOrigin判定を使う。
+- iOS募集画面の初期日時エラーの原因特定、修正後の実機E2E、過去時刻・日跨ぎ確認を完了していない。
+- native Passkey、Secure Enclave／Android Keystore、端末移行、画像画面統合、削除reconciler、legacy画像移行、プロフィール編集UIとの完全同期、チャット／会合画面を完了していない。
+- QUIC／WebTransportのPoC、サーバー配送、0-RTT禁止、heartbeat失効、再接続・負荷試験を完了していない。
+- OSプッシュ通知、本人確認、評価、通報、監査ログ、レート制限、PostGIS化は未実装または未確定である。
+
+## 既知の実装不整合
+
+`POST /api/v1/chats/{id}/transport-token` は、HTTP handlerが既定値として `quic` を渡す一方、現行のチャットサービスが受け付ける値は `websocket` または `webtransport` である。したがって、現状の既定経路はコードを整合させるまで動作確認済みとみなさない。ドキュメント上もQUIC配送を実装済みとは扱わない。
+
+## 接続先・Expo実行環境
+
+- ネイティブアプリの通常のAPI Base URLは `https://samurai-meet.disnana.com/api/v1`。LANの `127.0.0.1:8080` や開発ホストへ自動切替はしない。別環境を使う場合だけ `EXPO_PUBLIC_API_BASE_URL` 等を明示する。
+- Expo Goではnative Passkey、hardware-backed storage、その他native moduleを含む本番相当の確認はできない。Expo Goで動くJSフォールバックと、Development Build／ストアビルドでのみ動くnative経路を分けて検証する。
+
+## Migration
+
+起動時runnerは `backend/migrations/*.sql` を順に正規化してSHA-256 checksumを `schema_migrations` に記録し、PostgreSQL advisory lockで直列化する。適用済みSQLを編集してchecksum mismatchを回避してはいけない。変更は新しい番号のmigrationとして追加する。
+
+## 認証・URL境界
+
+- Web PasskeyのURL fragmentへ渡すのは短命の `bootstrap_token` だけで、Access Token、Refresh Token、pre-auth tokenは渡さない。
+- CORS、OAuth callback、WebAuthn Origin／RP IDは環境設定された完全一致のOriginを使う。秘密値・token・Recovery Phraseをログやドキュメント例へ記載しない。

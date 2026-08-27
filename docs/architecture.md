@@ -14,7 +14,7 @@ flowchart LR
     DB[(PostgreSQL)]
     Storage[(Private Image Storage)]
     KMS[KMS / Secret Manager]
-    Admin[運営管理 API / UI]
+    Admin[予定: 運営管理 API / UI]
 
     App --> API
     App -. 予定 .-> QUIC
@@ -24,7 +24,7 @@ flowchart LR
     API --> Storage
     API --> KMS
     QUIC -. 予定 .-> DB
-    Admin --> API
+    Admin -. 予定 .-> API
 ```
 
 ## 2. レイヤー責務

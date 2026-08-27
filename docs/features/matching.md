@@ -30,6 +30,7 @@ card:  draft -> open -> matched
                   └-> expired
 
 match: pending -> accepted -> completed
+       └-> cancelled（応募者が取り下げ）
 ```
 
 - `draft`：未公開。作成者だけが閲覧可能。
@@ -60,6 +61,7 @@ match: pending -> accepted -> completed
 ## 6. API / DB
 
 - `GET /api/v1/recruitments`
+- `GET /api/v1/recruitments/mine`
 - `POST /api/v1/recruitments`
 - `GET /api/v1/recruitments/{id}`
 - `PATCH /api/v1/recruitments/{id}`
@@ -69,6 +71,7 @@ match: pending -> accepted -> completed
 - `GET /api/v1/matches/{id}`
 - `POST /api/v1/matches/{id}/accept`
 - `POST /api/v1/matches/{id}/reject`
+- `POST /api/v1/matches/{id}/withdraw`
 - `POST /api/v1/matches/{id}/complete`
 - `POST /api/v1/matches/{id}/meeting`
 - テーブル：`recruitment_cards`、`matches`、`blocks`
@@ -80,6 +83,8 @@ match: pending -> accepted -> completed
 現行のPostgreSQLイメージにはPostGISを追加していないため、距離計算はGoのHaversine計算です。座標はDB内だけで扱い、PostGISへの置換は性能改善タスクとして残します。
 
 `timezone`を省略または空にした募集入力は`Asia/Tokyo`へ正規化し、他のtimezoneは拒否します。`created_at`や`expires_at`などの絶対時刻はUTCで扱います。過去時刻・日跨ぎ・端末日時pickerの実機確認は未完了です。
+
+応募者は`pending`中に関心を取り下げられ、matchの状態は`cancelled`になります。取り下げ後の行は履歴と通知の冪等性のため保持します。
 
 ## 7. 受け入れ条件
 

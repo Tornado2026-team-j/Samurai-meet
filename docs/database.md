@@ -1,6 +1,6 @@
 # DB仕様書（PostgreSQL）
 
-最終更新: 2026-08-26
+最終更新: 2026-08-27
 
 ## 1. 採用方針
 
@@ -9,6 +9,7 @@
 - クライアントからDBへ直接接続させず、Go APIの認証・認可を通す。
 - 現在のmigrationはサービスIDをopaque `TEXT`で保存する。将来UUIDへ変更する場合は全API、ファイルパス、migrationを同時に更新する。
 - migrationは`backend/migrations/*.sql`をファイル名順に適用する。アプリ起動時に同じDDLを再実行できる形にしている。
+- 募集の利用日・開始／終了時刻は`Asia/Tokyo`固定の壁時計として扱う。`created_at`、`expires_at`、`captured_at`などの絶対時刻はUTCで保存・返却する。
 
 ## 2. 現在のmigration
 
@@ -34,8 +35,16 @@
 | `0018_device_image_keys.sql` | 端末公開鍵、画像鍵の端末別envelope、端末proof nonce、画像のKey-A由来wrapper |
 | `0019_profiles_matching.sql` | プロフィール、最新位置、募集カード、ブロック、マッチ状態 |
 | `0020_chat_meetings.sql` | チャット、暗号化メッセージ、既読状態、会合セッション、短期距離補助値 |
+| `0021_client_root_key_transfer.sql` | v2端末間root-key transferのX25519公開鍵とopaque移行行 |
+| `0022_disable_legacy_root_keys.sql` | v1 root envelope、Recovery challenge、旧Key-B materialの削除とv2-only制約 |
+| `0023_storage_cleanup_jobs.sql` | 退会後の暗号化画像ストレージ削除を再試行するジョブ |
+| `0024_recovery_delete_capability.sql` | Recovery後の削除capabilityと関連する安全な退会境界 |
+| `0025_notifications.sql` | 通知、既読時刻、応募・承認／辞退・暗号化チャット送信イベント |
+| `0026_match_withdrawal.sql` | 作業ツリーにある未コミット・未適用の変更。応募取り下げによる`matches.status = cancelled`を追加 |
 
-注意: 現行の簡易migration runnerはSQLファイルを順番に実行する。migration履歴テーブルによる本番適用管理を導入する場合は、既存環境の適用済み状態を確認してから切り替える。
+注意: 現行のmigration runnerはSQLファイルを順番に正規化して実行し、`schema_migrations`へファイル名と正規化SQLのSHA-256 checksum、適用時刻を記録する。同じchecksumの適用済みmigrationはスキップし、PostgreSQL advisory lockで同時起動を直列化する。適用済みファイルの内容が変わった場合はchecksum mismatchで起動を停止する。適用済みmigrationを編集・置換してはいけない。DDL変更は新しい番号のSQLを追加する。
+
+`0026_match_withdrawal.sql`はこの文書更新時点で未追跡の作業中ファイルであり、本コミットには含めない。適用済みmigration一覧や本番DBの状態へ反映するのは、対応するGoコード・テストと一緒に正式コミットしてからとする。
 
 ## 3. 認証テーブル
 
