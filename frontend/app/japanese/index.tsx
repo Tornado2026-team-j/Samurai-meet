@@ -213,7 +213,7 @@ export default function JapaneseHomeScreen() {
           <Pressable
             accessibilityLabel="通知"
             accessibilityRole="button"
-            hitSlop={8}
+            hitSlop={12}
             onPress={() => router.push("/japanese/notifications")}
             style={({ pressed }) => [
               styles.headerIconButton,
@@ -228,7 +228,7 @@ export default function JapaneseHomeScreen() {
           <Pressable
             accessibilityLabel="プロフィール"
             accessibilityRole="button"
-            hitSlop={8}
+            hitSlop={12}
             onPress={() => router.push("/profile")}
             style={({ pressed }) => [
               styles.headerIconButton,
@@ -345,13 +345,13 @@ const styles = StyleSheet.create({
     letterSpacing: 0,
   },
   headerIconButton: {
-    height: 25,
+    height: 32,
     alignItems: "center",
     justifyContent: "center",
-    overflow: "hidden",
+    overflow: "visible",
   },
   notificationButton: {
-    width: 21,
+    width: 32,
   },
   notificationBadge: {
     position: "absolute",
@@ -365,7 +365,7 @@ const styles = StyleSheet.create({
     backgroundColor: YELLOW,
   },
   profileButton: {
-    width: 24.56,
+    width: 32,
   },
   categoryList: {
     position: "absolute",

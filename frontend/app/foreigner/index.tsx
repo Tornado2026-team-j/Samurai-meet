@@ -154,7 +154,7 @@ export default function ForeignerHomeScreen() {
           <Pressable
             accessibilityLabel="Notifications"
             accessibilityRole="button"
-            hitSlop={8}
+            hitSlop={12}
             onPress={() => router.push("/foreigner/notifications")}
             style={({ pressed }) => [
               styles.notificationButton,
@@ -172,7 +172,7 @@ export default function ForeignerHomeScreen() {
           <Pressable
             accessibilityLabel="Profile"
             accessibilityRole="button"
-            hitSlop={8}
+            hitSlop={12}
             onPress={() => router.push("/profile")}
             style={styles.profileButton}
           >
@@ -364,11 +364,11 @@ const styles = StyleSheet.create({
     letterSpacing: 0,
   },
   notificationButton: {
-    width: 21,
-    height: 25,
+    width: 32,
+    height: 32,
     alignItems: "center",
     justifyContent: "center",
-    overflow: "hidden",
+    overflow: "visible",
   },
   notificationBadge: {
     position: "absolute",
@@ -382,11 +382,11 @@ const styles = StyleSheet.create({
     backgroundColor: YELLOW,
   },
   profileButton: {
-    width: 24.56,
-    height: 25,
+    width: 32,
+    height: 32,
     alignItems: "center",
     justifyContent: "center",
-    overflow: "hidden",
+    overflow: "visible",
   },
   title: {
     position: "absolute",
