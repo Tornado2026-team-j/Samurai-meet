@@ -371,7 +371,7 @@ SVG、GIF、HTMLなどブラウザで解釈され得る未許可MIMEは拒否し
 
 ### 6.5 未実装業務API
 
-プロフィール、本人確認、キーワード検索、評価、チャット（REST/WebSocket）、チャットQUIC用短命Chat Tokenは引き続き予定です。募集カード・マッチングは7章の範囲だけ実装済みです。画像平文、Key-A、Key-B、Recovery Key、Refresh TokenをAPIログへ出さない不変条件は全機能に適用します。
+プロフィール、本人確認、キーワード検索、評価は引き続き予定です。募集カード・マッチングは7章、チャットのREST部分は8章の範囲だけ実装済みです。チャットのWebSocket、チャットQUIC用短命Chat Tokenは未実装です。画像平文、Key-A、Key-B、Recovery Key、Refresh TokenをAPIログへ出さない不変条件は全機能に適用します。
 
 ## 7. 募集カード・マッチング（一部実装）
 
@@ -414,7 +414,39 @@ SVG、GIF、HTMLなどブラウザで解釈され得る未許可MIMEは拒否し
 
 通報（`reports`）、運営キュー、監査ログは未実装です（[docs/features/safety.md](../docs/features/safety.md)）。
 
-## 8. クライアント更新手順
+## 8. チャット（REST部分のみ実装。WebSocket・Chat Tokenは未実装）
+
+[機能仕様：チャット](../docs/features/chat.md)のうち、履歴取得と送信のREST APIだけを実装しています。リアルタイム配信（WebSocket）、`POST /chats/{id}/transport-token`によるChat Token発行はまだ実装していません。DB設計・現状の暗号化方針は[docs/database.md](../docs/database.md) 7章を参照してください。
+
+全エンドポイントは`Authorization: Bearer <access_token>`が必須です。`{id}`は`matches.id`（募集カード・マッチングで作成したマッチのID）です。アクセスできるのは、そのマッチの参加者（カード所有者・関心を送った側のどちらか）で、`matches.status="accepted"`、かつ参加者間にブロックが無い場合だけです。条件を満たさない場合は`403 not_a_participant`または`403 chat_not_available`を返します。
+
+### 8.1 チャット一覧
+
+`GET /api/v1/chats`：呼び出しユーザーが参加する`accepted`チャットの一覧。各要素は`match_id`、相手の`other_user_id`、直近メッセージのプレビュー（`last_message`）、相手からの未読件数（`unread_count`）を持ちます。
+
+### 8.2 履歴取得・送信
+
+`GET /api/v1/chats/{id}/messages?after=<server_message_id>&limit=<n>`：`server_message_id`が`after`より大きいメッセージを昇順で返します（再接続時の未同期メッセージ取得を想定）。`after`省略時は先頭から、`limit`省略時は50件、最大200件です。
+
+`POST /api/v1/chats/{id}/messages`
+
+```json
+{
+  "body": "こんにちは！",
+  "client_message_id": "端末が生成する冪等キー"
+}
+```
+
+同じ`client_message_id`で同じ送信者・同じチャットへ再送しても、新規メッセージは作られず最初に保存したメッセージがそのまま返ります（二重送信対策）。本文は現時点では平文で保存します（暗号化方針は未確定。`docs/database.md` 7章参照）。レスポンスは`{ "data": <message> }`で、`message`は`id`、`match_id`、`sender_user_id`、`body`、`client_message_id`、`server_message_id`、`created_at`、`read_at`(既読時刻。既読を付けるAPIはまだ無いため常に`null`)を持ちます。
+
+### 8.3 未実装
+
+- WebSocketによるリアルタイム配信（`message.send` / `message.created` / `message.read` / `typing.*`）
+- `POST /chats/{id}/transport-token`（Chat Token発行、`aud=samurai-meet-chat`）
+- 既読を付けるAPI、メッセージ削除API
+- E2EE（暗号化payload送信）
+
+## 9. クライアント更新手順
 
 1. 起動、フォアグラウンド復帰、API呼び出し前にAccess Tokenの残り時間を確認する。
 2. 残り30秒以下ならクライアント内single-flightでRefreshを一つだけ実行する。
@@ -422,7 +454,7 @@ SVG、GIF、HTMLなどブラウザで解釈され得る未許可MIMEは拒否し
 4. 409 `refresh_reuse_detected`、Refresh失敗、handoff失敗時はAccess/Refreshと一時verifierを削除してログイン画面へ戻す。
 5. Refresh TokenはWebSocket・QUICのURLやメッセージへ送らない。Chat TokenはRESTで別発行する。
 
-## 9. 実装追加時の必須更新
+## 10. 実装追加時の必須更新
 
 実装を追加したら、同じ変更で次を更新します。
 

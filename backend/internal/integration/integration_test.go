@@ -23,6 +23,7 @@ import (
 
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/account"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/auth"
+	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/chat"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/config"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/db"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/image"
@@ -402,6 +403,120 @@ func TestMatchingLifecycle(t *testing.T) {
 	}
 	if len(interestedMatches) != 1 || interestedMatches[0].ID != match.ID {
 		t.Fatalf("ListAcceptedMatches(interested) = %+v, want a single entry for %s", interestedMatches, match.ID)
+	}
+}
+
+func TestChatMessagingLifecycle(t *testing.T) {
+	database := openIsolatedDatabase(t)
+	now := time.Date(2026, time.August, 27, 12, 0, 0, 0, time.UTC)
+	owner := randomID(t)
+	interested := randomID(t)
+	outsider := randomID(t)
+	for _, userID := range []string{owner, interested, outsider} {
+		if _, err := database.Exec(`INSERT INTO users (id,google_subject_id,status,created_at,updated_at) VALUES ($1,$2,'active',$3,$3)`, userID, "chat-google-"+userID, now.Format(time.RFC3339Nano)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	matchingService := matching.NewService(database)
+	chatService := chat.NewService(database, matchingService)
+	ctx := context.Background()
+
+	card, err := matchingService.CreateCard(ctx, owner, "Takoyaki tour", "Osaka", "2026-08-30", "14:30", 2, 3, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	match, err := matchingService.SendInterest(ctx, card.ID, interested, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := matchingService.AcceptMatch(ctx, match.ID, owner, now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := chatService.SendMessage(ctx, match.ID, outsider, "outsider-1", "hi", now.Add(2*time.Minute)); !errors.Is(err, chat.ErrNotParticipant) {
+		t.Fatalf("send from non-participant error = %v, want ErrNotParticipant", err)
+	}
+
+	first, err := chatService.SendMessage(ctx, match.ID, interested, "client-1", "Hi, I'm interested!", now.Add(2*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.SenderUserID != interested || first.Body != "Hi, I'm interested!" || first.ServerMessageID == 0 {
+		t.Fatalf("first message = %+v", first)
+	}
+
+	retry, err := chatService.SendMessage(ctx, match.ID, interested, "client-1", "a different body should be ignored", now.Add(3*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retry.ID != first.ID || retry.Body != first.Body || retry.ServerMessageID != first.ServerMessageID {
+		t.Fatalf("retried send with the same client_message_id = %+v, want the original message %+v", retry, first)
+	}
+
+	second, err := chatService.SendMessage(ctx, match.ID, owner, "client-2", "Sounds great, let's meet!", now.Add(4*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var messageCount int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM messages WHERE match_id=$1`, match.ID).Scan(&messageCount); err != nil {
+		t.Fatal(err)
+	}
+	if messageCount != 2 {
+		t.Fatalf("stored message count = %d, want 2 (retry must not duplicate)", messageCount)
+	}
+
+	all, err := chatService.ListMessages(ctx, match.ID, owner, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 2 || all[0].ID != first.ID || all[1].ID != second.ID {
+		t.Fatalf("ListMessages(after=0) = %+v, want [first, second] in order", all)
+	}
+
+	sinceFirst, err := chatService.ListMessages(ctx, match.ID, interested, first.ServerMessageID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sinceFirst) != 1 || sinceFirst[0].ID != second.ID {
+		t.Fatalf("ListMessages(after=first) = %+v, want [second]", sinceFirst)
+	}
+
+	if _, err := chatService.ListMessages(ctx, match.ID, outsider, 0, 0); !errors.Is(err, chat.ErrNotParticipant) {
+		t.Fatalf("list messages as non-participant error = %v, want ErrNotParticipant", err)
+	}
+
+	ownerChats, err := chatService.ListChats(ctx, owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ownerChats) != 1 || ownerChats[0].MatchID != match.ID || ownerChats[0].OtherUserID != interested {
+		t.Fatalf("owner chats = %+v", ownerChats)
+	}
+	if ownerChats[0].LastMessage == nil || ownerChats[0].LastMessage.ID != second.ID {
+		t.Fatalf("owner chats last message = %+v, want %s", ownerChats[0].LastMessage, second.ID)
+	}
+	if ownerChats[0].UnreadCount != 1 {
+		t.Fatalf("owner unread count = %d, want 1 (interested's message)", ownerChats[0].UnreadCount)
+	}
+
+	interestedChats, err := chatService.ListChats(ctx, interested)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(interestedChats) != 1 || interestedChats[0].UnreadCount != 1 {
+		t.Fatalf("interested chats = %+v, want unread count 1 (owner's message)", interestedChats)
+	}
+
+	if err := matchingService.CreateBlock(ctx, owner, interested, now.Add(5*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := chatService.SendMessage(ctx, match.ID, interested, "client-3", "still there?", now.Add(6*time.Minute)); !errors.Is(err, chat.ErrChatNotAvailable) {
+		t.Fatalf("send after block error = %v, want ErrChatNotAvailable", err)
+	}
+	if _, err := chatService.ListMessages(ctx, match.ID, owner, 0, 0); !errors.Is(err, chat.ErrChatNotAvailable) {
+		t.Fatalf("list messages after block error = %v, want ErrChatNotAvailable", err)
 	}
 }
 

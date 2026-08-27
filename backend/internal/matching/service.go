@@ -224,6 +224,34 @@ func (s *Service) AcceptMatch(ctx context.Context, matchID, callerUserID string,
 	return match, nil
 }
 
+// GetMatch returns a match by ID regardless of status. Callers (such as the
+// chat feature) are responsible for their own participant and status checks.
+func (s *Service) GetMatch(ctx context.Context, matchID string) (Match, error) {
+	if s == nil || s.db == nil || strings.TrimSpace(matchID) == "" {
+		return Match{}, ErrMatchNotFound
+	}
+	var match Match
+	var status, createdAt, updatedAt string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id,recruitment_card_id,owner_user_id,interested_user_id,status,created_at,updated_at
+		FROM matches WHERE id=$1`, matchID,
+	).Scan(&match.ID, &match.RecruitmentCardID, &match.OwnerUserID, &match.InterestedUserID, &status, &createdAt, &updatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Match{}, ErrMatchNotFound
+	}
+	if err != nil {
+		return Match{}, err
+	}
+	match.Status = MatchStatus(status)
+	if match.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt); err != nil {
+		return Match{}, err
+	}
+	if match.UpdatedAt, err = time.Parse(time.RFC3339Nano, updatedAt); err != nil {
+		return Match{}, err
+	}
+	return match, nil
+}
+
 // ListAcceptedMatches returns every accepted match involving userID, on
 // either side of the pairing. The chat feature will use this to gate access
 // and to build the chat list.

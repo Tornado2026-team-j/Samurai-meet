@@ -33,6 +33,7 @@
 | `0017_user_display_name.sql` | Passkey表示名に使うユーザー表示名 |
 | `0018_device_image_keys.sql` | 端末公開鍵、画像鍵の端末別envelope、端末proof nonce、画像のKey-A由来wrapper |
 | `0019_matching.sql` | `recruitment_cards`（最小構成）、`matches`、`blocks`。チャット解放判定に必要な最小のマッチ永続化 |
+| `0020_messages.sql` | `messages`。チャットの本文・送信順・既読状態（現状は平文保存、REST APIのみ） |
 
 注意: 現行の簡易migration runnerはSQLファイルを順番に実行する。migration履歴テーブルによる本番適用管理を導入する場合は、既存環境の適用済み状態を確認してから切り替える。
 
@@ -241,19 +242,47 @@ erDiagram
 
 ### 実装
 
-`backend/internal/matching`がこの3テーブルを操作するService層です。HTTPハンドラは`backend/internal/httpapi/matching.go`（`POST/GET /recruitments`、`GET/POST /recruitments/{id}` と `/interest`、`POST /matches/{id}/accept`、`POST/GET /blocks`、`GET /me/blocks`、`DELETE /blocks/{user_id}`）。チャット機能は`matching.Service.IsMatched` / `ListAcceptedMatches`を使って`matches.status=accepted`を確認する想定です。
+`backend/internal/matching`がこの3テーブルを操作するService層です。HTTPハンドラは`backend/internal/httpapi/matching.go`（`POST/GET /recruitments`、`GET/POST /recruitments/{id}` と `/interest`、`POST /matches/{id}/accept`、`POST/GET /blocks`、`GET /me/blocks`、`DELETE /blocks/{user_id}`）。
 
-## 7. これから追加するテーブル・制約
+## 7. チャット（実装済み: `messages`。WebSocket・Chat Tokenは未実装）
+
+`0020_messages.sql`で`messages`テーブルを追加しました。[機能仕様：チャット](features/chat.md)のうち、履歴取得・送信のREST APIだけを実装しています。WebSocketによるリアルタイム配信、Chat Token（[chat-transport.md](features/chat-transport.md)）は次のフェーズです。
+
+### `messages`
+
+| カラム | 型 | 用途 |
+| --- | --- | --- |
+| `id` | text | PK |
+| `match_id` | text | `matches`へのFK。チャットの単位は`matches.id`と同じ（`chat_id` = `match_id`） |
+| `sender_user_id` | text | 送信者 |
+| `body` | text | 本文。**現時点では平文で保存**（下記「暗号化の扱い」を参照） |
+| `client_message_id` | text | 送信側が生成する冪等キー |
+| `server_message_id` | bigint (`GENERATED ALWAYS AS IDENTITY`) | サーバー確定の表示順（`requirements.md` FR-011の`server_message_id`に対応） |
+| `created_at` | text | UTC RFC3339 |
+| `read_at` | text nullable | 既読時刻。現状はWebSocketの`message.read`実装待ちのため常にNULL |
+| `deleted_at` | text nullable | 論理削除用に列だけ先に用意（削除APIは未実装。FR-011「削除済みメッセージは相手側で再表示できない」への対応は今後の課題） |
+
+`UNIQUE (match_id, sender_user_id, client_message_id)`で同じ送信の再試行を冪等にします（`ON CONFLICT ... DO UPDATE SET id = messages.id`で元のメッセージを返し、二重登録も上書きもしません）。読み書き前に必ず「呼び出しユーザーがこのmatchの参加者か」「`matches.status='accepted'`か」「参加者間にブロックが無いか」を確認します（`backend/internal/chat.Service.authorize`）。ブロックはマッチ承認後に作られる可能性があるため、毎回チェックします。
+
+### 暗号化の扱い（現状の判断）
+
+`chat.md` 6章はE2EE採用時の設計（暗号化payload・nonce・key versionを送り、Go APIは鍵を持たない）を示していますが、9章では採用範囲自体が未決定です。今回のフェーズでは**平文保存を選択**しました（会話でユーザーに明示し、承認を得た判断）。将来E2EEを採用する場合、`body`を`ciphertext` / `nonce` / `key_version`列へ移行するmigrationと、鍵共有方式の設計（Key-A/Key-Bとは別に、マッチ参加者間で共有鍵をどう配送するか）が必要です。現時点ではその鍵共有方式自体が未設計です。
+
+### 実装
+
+`backend/internal/chat`がService層（`SendMessage`、`ListMessages`、`ListChats`）、`backend/internal/httpapi/chat.go`がHTTPハンドラ（`GET /chats`、`GET /chats/{id}/messages`、`POST /chats/{id}/messages`）です。認可は`matching.Service`の`GetMatch` / `IsBlocked`に委譲します。
+
+## 8. これから追加するテーブル・制約
 
 - `profiles`: 名前、国籍、icon photo、本人確認状態、likes、monster
-- `messages`: チャット本文（チャット機能実装時に追加）
 - `reviews`、`user_locations`
 - `identity_verifications`、`reports`、`audit_logs`
 - `recruitment_cards`への緯度経度・PostGIS列、距離検索インデックス
+- チャットのWebSocket接続・Chat Token（`aud=samurai-meet-chat`）用の状態管理
 
 これらはAPI実装時にmigrationを追加し、PostgreSQL integration test、API仕様書、機能仕様書を同じ変更で更新する。
 
-## 8. 削除・保持
+## 9. 削除・保持
 
 退会では次の順序を固定する。
 

@@ -14,25 +14,34 @@
 - キーワード・距離検索、PostGIS、カード編集・削除、`draft`公開ワークフロー、`matches/{id}/complete`、通報（`reports`）は未実装。1枚のカードにつき成立は1件までという暫定判断をしている（`matching.md` 8章の要確認事項）。
 - 実DBでの`TestMatchingLifecycle`（`backend/internal/integration/integration_test.go`）は既存の統合テストと同じく`TEST_POSTGRES=1`環境でのみ実行され、未設定なら自動でスキップされる（Docker必須ではない。既存のPostgreSQLインストールでも、CIのようにGitHub Actionsのサービスコンテナでも可）。この作業をした際は手元にPostgreSQLが無かったので一時的にDockerコンテナで検証し、確認後に削除した。`go build`/`go vet`/`go test ./...`（`TestMatchingLifecycle`含む）は実DB上でPASS済み。
 
-### 未完了タスク（チャット本体、フェーズ1以降）
+### フェーズ1（完了）: `messages`テーブルとチャットREST API
 
-1. **`messages`テーブルとチャットREST API**
-   - migrationで`messages(id, match_id, sender_user_id, body, client_message_id, server_seq, created_at, read_at)`を追加する。
-   - `backend/internal/chat`にService、`backend/internal/httpapi`にハンドラを実装する。`GET /chats`、`GET /chats/{id}/messages`、`POST /chats/{id}/messages`、`POST /chats/{id}/transport-token`。
-   - アクセス制御は`matching.Service.IsMatched` / `ListAcceptedMatches`と`blocks`を使う。
+- `backend/migrations/0020_messages.sql`で`messages`を追加した。列は`id, match_id, sender_user_id, body, client_message_id, server_message_id(IDENTITY), created_at, read_at, deleted_at`。`deleted_at`は削除API未実装のまま列だけ先に用意した（将来の手戻り防止）。
+- `backend/internal/chat`にService（`SendMessage` / `ListMessages` / `ListChats`）、`backend/internal/httpapi/chat.go`にハンドラ（`GET /chats`、`GET /chats/{id}/messages`、`POST /chats/{id}/messages`）を実装した。
+- アクセス制御は`matching.Service.GetMatch` / `IsBlocked`を使い、参加者チェック・`accepted`判定・ブロック判定を送受信のたびに行う（ブロックはマッチ承認後にも作られ得るため）。
+- 本文は**平文保存**を選択した（会話でユーザーに提示し承認を得た判断）。将来E2EEを採用する場合は`body`を`ciphertext`/`nonce`/`key_version`へ移行するmigrationと、マッチ参加者間の鍵共有方式の設計が別途必要（現状未設計）。
+- `POST /chats/{id}/transport-token`（Chat Token発行）は**意図的にフェーズ1のスコープ外にした**。理由：発行だけ作っても検証する側（WebSocket）が無いと動作確認ができないため、消費側と一緒に作るフェーズ2に含める。
+- 実DBでの`TestChatMessagingLifecycle`（`backend/internal/integration/integration_test.go`）を追加し、Docker上のPostgreSQL 16でPASS確認済み（冪等送信、参加者以外の拒否、ブロック後の遮断、`ListChats`の未読数まで検証）。
 
-2. **WebSocketサーバー**
-   - `wss://.../api/v1/ws/chats/{chat_id}`。Chat Token（`aud=samurai-meet-chat`、既存の`auth.Signer`を別audienceでもう1インスタンス生成すれば流用可能）で接続認証する。
-   - `message.send` / `message.read` / `typing.start` / `typing.stop`と`message.created` / `message.ack` / `message.read` / `error`。`client_message_id`で冪等化する。
+### 未完了タスク（フェーズ2以降）
+
+1. **WebSocketサーバー**
+   - `wss://.../api/v1/ws/chats/{chat_id}`。`{chat_id}` = `matches.id`。
+   - Chat Token発行（`POST /chats/{id}/transport-token`、`aud=samurai-meet-chat`）をこのフェーズで一緒に作る。既存の`auth.Signer`は`AccessClaims`固定なので、`chat_id`/`token_seq`/`scope`を持つ新しいclaims構造体・署名メソッドを追加する（鍵material・kidローテーションは共有できるが、`Issue`/`Verify`は新規実装が要る）。
+   - イベント：`message.send` / `message.read` / `typing.start` / `typing.stop`（クライアント→サーバー）、`message.created` / `message.ack` / `message.read` / `typing.*` / `error`（サーバー→クライアント）。`client_message_id`で冪等化（`chat.Service.SendMessage`は既に冪等なのでWS層はそのまま呼べる）。
    - 詳細仕様は`docs/features/chat.md`、`docs/features/chat-transport.md`。
 
+2. **既読・削除API**
+   - REST/WSのどちらで既読を確定させるか（`chat.md` 9章「既読を相手へ必ず通知するか」は未決定）。`messages.read_at`は列があるだけで更新経路が無い。
+   - `messages.deleted_at`を使う削除APIも未実装（FR-011「削除済みメッセージは相手側で再表示できない」への対応）。
+
 3. **フロントエンド接続**
-   - `frontend/services/websocket.ts`、`frontend/hooks/useWebSocket.ts`は空ファイル。チャット画面（`app/chat/[id].tsx`等）も未作成。バックエンドのAPI/WS契約が固まってから着手する。
+   - `frontend/services/websocket.ts`、`frontend/hooks/useWebSocket.ts`は空ファイル。チャット画面（`app/chat/[id].tsx`等）も未作成。バックエンドのWS契約（フェーズ2）が固まってから着手する。REST部分（`GET /chats`等）は既に呼べる状態。
 
 ### 再開時の順序
 
 1. `git status --short --branch` で未コミット差分を確認する。
-2. 可能ならDocker Desktopを起動し、`TEST_POSTGRES=1`で`go test ./...`（`TestMatchingLifecycle`含む）を一度実DBで確認する。
+2. 可能ならDocker Desktopを起動し、`TEST_POSTGRES=1`で`go test ./...`（`TestMatchingLifecycle`、`TestChatMessagingLifecycle`含む）を一度実DBで確認する。
 3. 上記「未完了タスク」の1から順に着手する。実装ごとに`backend/API_SPEC.md`、`backend/STATUS.md`、`backend/TODO.md`、`docs/database.md`、該当する`docs/features/*.md`を同じ変更で更新する。
 
 ## Recovery Key / 端末Key-B 引き継ぎメモ（2026-08-26）

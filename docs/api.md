@@ -180,6 +180,7 @@ Refresh request:
 | --- | --- | --- |
 | GET | `/api/v1/chats` | チャット一覧 |
 | GET | `/api/v1/chats/{id}/messages` | 履歴取得 |
+| POST | `/api/v1/chats/{id}/messages` | メッセージ送信（WebSocket未接続時のフォールバックにも使う） |
 | POST | `/api/v1/chats/{id}/transport-token` | 対象chat専用短命token |
 
 QUIC / WebTransport / WebSocketのChat TokenはAccess TokenやRefresh Tokenと別audienceで発行し、Refresh Tokenを通信路へ送らない。

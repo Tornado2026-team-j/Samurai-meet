@@ -7,6 +7,7 @@ import (
 
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/account"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/auth"
+	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/chat"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/image"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/keys"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/matching"
@@ -31,6 +32,7 @@ type RouterOptions struct {
 	Images              *image.Service
 	Accounts            *account.Service
 	Matching            *matching.Service
+	Chat                *chat.Service
 }
 
 func NewRouter() http.Handler { return NewRouterWithOptions(RouterOptions{}) }
@@ -108,6 +110,10 @@ func NewRouterWithOptions(o RouterOptions) http.Handler {
 		m.HandleFunc(blocksPrefix, blocks(o.Matching, o.Sessions))
 		m.HandleFunc(blocksPrefix+"/", blockItem(o.Matching, o.Sessions))
 		m.HandleFunc(meBlocksPath, blocks(o.Matching, o.Sessions))
+	}
+	if o.Sessions != nil && o.Chat != nil {
+		m.HandleFunc(chatsPrefix, chatList(o.Chat, o.Sessions))
+		m.HandleFunc(chatsPrefix+"/", chatMessages(o.Chat, o.Sessions))
 	}
 	return withCORS(withJSONContentType(m), o)
 }

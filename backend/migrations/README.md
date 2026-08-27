@@ -16,6 +16,7 @@
 - `0017_user_display_name.sql` はPasskeyの表示名に使うユーザー表示名をusersへ追加する。
 - `0018_device_image_keys.sql` は端末公開鍵、端末proof nonce、画像の端末別Key-B envelope、Key-A由来の画像鍵wrapperを追加する。Key-B平文は保存しない。
 - `0019_matching.sql` は`recruitment_cards`（最小構成）、`matches`、`blocks`を追加する。設計方針は[docs/database.md](../../docs/database.md)を参照。
+- `0020_messages.sql` は`messages`（チャット本文、送信順、既読状態）を追加する。現状は平文保存でREST APIのみ、WebSocket・Chat Tokenは未実装。
 - 現在の簡易runnerはファイル名順にSQLを再実行する。`IF NOT EXISTS` / `IF NOT EXISTS`相当で再実行可能にしているが、適用履歴テーブルはまだ導入していない。
 - 本番でmigration履歴テーブルを導入する場合は、既存DBの適用状態を確認してからrunnerを変更する。
 
