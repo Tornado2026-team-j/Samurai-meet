@@ -129,6 +129,7 @@ func NewRouterWithOptions(o RouterOptions) http.Handler {
 	if o.Sessions != nil && o.Chats != nil {
 		m.HandleFunc(chatPath, chatCollection(o.Chats, o.Sessions))
 		m.HandleFunc(chatPath+"/", chatItem(o.Chats, o.Sessions))
+		m.HandleFunc(chatWebSocketPrefix, chatWebSocket(o.Chats, originHostPatterns(clientOrigins(o.Environment, o.ClientOrigin, o.DevClientOrigin))))
 	}
 	if o.Sessions != nil && o.Notifications != nil {
 		m.HandleFunc(notificationPath, notificationCollection(o.Notifications, o.Sessions))

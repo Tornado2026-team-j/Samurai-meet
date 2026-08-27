@@ -2,11 +2,11 @@
 
 - 実装済み: Google OAuth、pre-auth、Passkey、session/refresh、v2 client root-key envelope、端末固有Key-Bの公開鍵登録・proof、暗号文画像API、退会API。
 - 実装済み: プロフィール取得・自己紹介を含む更新API、募集カードの作成・検索・更新・終了、関心・承認・完了、最新位置保存。
-- 実装済み: acceptedマッチ向けRESTチャット（暗号文、既読、冪等再送、短命Chat Token）、会合セッション、短期のBluetooth／位置推測補助値API。
+- 実装済み: acceptedマッチ向けチャット（REST + WebSocketリアルタイム配送。暗号文のみ、既読、冪等再送、短命Chat Token、接続中のセッション/ブロック/マッチheartbeat。単一APIインスタンス前提のプロセス内ハブ）、会合セッション、短期のBluetooth／位置推測補助値API。
 - 実装済み: 通知の永続化・一覧・未読管理、応募／承認／辞退／暗号化チャット送信からの通知生成、通知画面のAPI接続。
-- 未完了: Web Passkeyの実機E2E、端末画像の画面統合、削除reconciler、legacy画像移行、native Passkey実機、プロフィール編集・チャットのフロント接続、WebSocket配送、ネイティブBluetooth測定、評価、Stripe Identity連携。募集公開・検索・応募・承認／辞退のフロント接続は完了。
+- 未完了: Web Passkeyの実機E2E、端末画像の画面統合、削除reconciler、legacy画像移行、native Passkey実機、プロフィール編集・チャットのフロント接続、チャット配送の複数インスタンス対応（`LISTEN/NOTIFY`）とChat Token接続中ローテーション、ネイティブBluetooth測定、評価、Stripe Identity連携。募集公開・検索・応募・承認／辞退のフロント接続は完了。
 
-マッチングの距離判定はPostGISなしのGo Haversineで実装している。件数増加時のPostGIS化、APIレート制限、WebSocket配送はバックログに残す。
+マッチングの距離判定はPostGISなしのGo Haversineで実装している。件数増加時のPostGIS化、APIレート制限、チャット配送の複数インスタンス対応はバックログに残す。
 
 詳細と完了定義は [docs/ai/plans/backlog.md](../docs/ai/plans/backlog.md) を正とします。
 

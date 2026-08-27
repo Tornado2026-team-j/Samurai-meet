@@ -90,7 +90,7 @@ func chatMessages(w http.ResponseWriter, r *http.Request, service *chat.Service,
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_chat_request"})
 			return
 		}
-		message, err := service.SendMessage(r.Context(), userID, chatID, input, time.Now())
+		message, _, err := service.SendMessage(r.Context(), userID, chatID, input, time.Now())
 		if err != nil {
 			writeChatError(w, err)
 			return
