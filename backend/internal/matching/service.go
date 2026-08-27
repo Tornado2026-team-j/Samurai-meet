@@ -35,7 +35,13 @@ const (
 	maxKeywordRunes     = 80
 	maxDescriptionRunes = 2000
 	locationTTL         = time.Hour
+	recruitmentTimezone = "Asia/Tokyo"
 )
+
+// recruitmentLocation is deliberately fixed at Japan Standard Time. The
+// recruitment API is Japan-only, so date and clock fields must not depend on
+// the server's local timezone database or process timezone.
+var recruitmentLocation = time.FixedZone(recruitmentTimezone, 9*60*60)
 
 // Service owns recruitment, interest, and match state transitions. Exact
 // locations stay in the database and are never included in API responses.
@@ -1018,11 +1024,13 @@ func normalizeRecruitmentInput(input RecruitmentInput, now time.Time) (Recruitme
 	input.StartTime = strings.TrimSpace(input.StartTime)
 	input.EndTime = strings.TrimSpace(input.EndTime)
 	input.Timezone = strings.TrimSpace(input.Timezone)
-	location, err := time.LoadLocation(input.Timezone)
-	if err != nil {
+	if input.Timezone == "" {
+		input.Timezone = recruitmentTimezone
+	}
+	if input.Timezone != recruitmentTimezone {
 		return RecruitmentInput{}, "", ErrInvalidInput
 	}
-	date, err := time.ParseInLocation("2006-01-02", input.AvailableDate, location)
+	date, err := time.ParseInLocation("2006-01-02", input.AvailableDate, recruitmentLocation)
 	if err != nil {
 		return RecruitmentInput{}, "", ErrInvalidInput
 	}
@@ -1054,8 +1062,10 @@ func normalizeRecruitmentInput(input RecruitmentInput, now time.Time) (Recruitme
 	input.AvailableDate = date.Format("2006-01-02")
 	input.StartTime = startClock.Format("15:04")
 	input.EndTime = endClock.Format("15:04")
-	expires := time.Date(date.Year(), date.Month(), date.Day(), endClock.Hour(), endClock.Minute(), 0, 0, location).UTC()
-	if input.Status == "open" && !expires.After(now.UTC()) {
+	// Keep the database value as a canonical absolute instant. The wall-clock
+	// fields above are interpreted in JST before this UTC conversion.
+	expires := time.Date(date.Year(), date.Month(), date.Day(), endClock.Hour(), endClock.Minute(), 0, 0, recruitmentLocation).UTC()
+	if input.Status == "open" && !expires.After(now.In(recruitmentLocation)) {
 		return RecruitmentInput{}, "", ErrRecruitmentExpired
 	}
 	return input, expires.Format(time.RFC3339Nano), nil
@@ -1379,7 +1389,7 @@ func durationHours(startValue, endValue string) float64 {
 
 func beforeExpiry(value string, now time.Time) bool {
 	expires, err := time.Parse(time.RFC3339Nano, value)
-	return err == nil && now.UTC().Before(expires)
+	return err == nil && now.In(recruitmentLocation).Before(expires.In(recruitmentLocation))
 }
 
 func nullableFloat(value *float64) any {
