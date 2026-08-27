@@ -18,6 +18,7 @@ import {
   type Session,
 } from '../services/auth';
 import type { AppLanguage } from '../services/onboarding-contract';
+import { clearLanguage } from '../services/onboarding';
 import { deleteAccount as deleteAccountRemote, deleteAccountWithPreAuth, recoverWithPreAuth } from '../services/key-management';
 
 type AuthStatus = 'loading' | 'signed_out' | 'pre_auth' | 'signed_in';
@@ -277,7 +278,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       try {
         await clearAuthStorage();
       } finally {
-        apply({ session: null, preAuth: null });
+        try {
+          await clearLanguage();
+        } finally {
+          apply({ session: null, preAuth: null });
+        }
       }
     }
   }, [apply]);
@@ -291,7 +296,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch (reason) {
       setError(message(reason));
     } finally {
-      apply({ session: null, preAuth: null });
+      try {
+        await clearLanguage();
+      } finally {
+        apply({ session: null, preAuth: null });
+      }
     }
   }, [apply]);
 

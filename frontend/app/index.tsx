@@ -724,6 +724,7 @@ export default function OnboardingScreen() {
   sessionRef.current = session;
   const languageRef = useRef(language);
   languageRef.current = language;
+  const previousStatusRef = useRef(status);
   const [identityVerificationChoiceLoadedFor, setIdentityVerificationChoiceLoadedFor] =
     useState<string | null>(null);
 
@@ -800,6 +801,22 @@ export default function OnboardingScreen() {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    const previousStatus = previousStatusRef.current;
+    previousStatusRef.current = status;
+    if (
+      status !== "signed_out"
+      || (previousStatus !== "signed_in" && previousStatus !== "pre_auth")
+    ) {
+      return;
+    }
+
+    // A completed logout must start from the same language screen as a new
+    // install, including when logout was initiated from key setup on `/`.
+    setLanguage(null);
+    setAccountStepCompleted(false);
+  }, [status]);
 
   useEffect(() => {
     if (!session?.user_id) {
