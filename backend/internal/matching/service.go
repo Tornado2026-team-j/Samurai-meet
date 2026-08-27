@@ -541,7 +541,14 @@ func (s *Service) ListMatches(ctx context.Context, userID string, params MatchLi
 	}
 	defer rows.Close()
 
-	result := make([]MatchView, 0, params.Limit)
+	capacity := params.Limit
+	if capacity < 0 {
+		capacity = 0
+	}
+	if capacity > maxSearchLimit {
+		capacity = maxSearchLimit
+	}
+	result := make([]MatchView, 0, capacity)
 	for rows.Next() {
 		var record matchRecord
 		if err = rows.Scan(
