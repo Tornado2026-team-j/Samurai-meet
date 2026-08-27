@@ -18,6 +18,7 @@ import {
   type Session,
 } from '../services/auth';
 import type { AppLanguage } from '../services/onboarding-contract';
+import { clearLanguage } from '../services/onboarding';
 import { deleteAccount as deleteAccountRemote, deleteAccountWithPreAuth, recoverWithPreAuth } from '../services/key-management';
 
 type AuthStatus = 'loading' | 'signed_out' | 'pre_auth' | 'signed_in';
@@ -30,6 +31,7 @@ type AuthContextValue = AuthSnapshot & {
   login: () => Promise<void>;
   continuePasskey: (language?: AppLanguage) => Promise<boolean>;
   recoverWithRecoveryKey: (recoveryKey: string) => Promise<void>;
+  retryRestore: () => Promise<void>;
   refresh: () => Promise<void>;
   logout: () => Promise<void>;
   logoutAll: () => Promise<void>;
@@ -116,6 +118,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     restoreInFlight.current = pending;
     return pending;
   }, [apply]);
+
+  const retryRestore = useCallback(async () => {
+    await restoreStoredAuth();
+  }, [restoreStoredAuth]);
 
   useEffect(() => {
     return subscribeSessionChanges((next) => {
@@ -272,7 +278,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       try {
         await clearAuthStorage();
       } finally {
-        apply({ session: null, preAuth: null });
+        try {
+          await clearLanguage();
+        } finally {
+          apply({ session: null, preAuth: null });
+        }
       }
     }
   }, [apply]);
@@ -286,7 +296,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch (reason) {
       setError(message(reason));
     } finally {
-      apply({ session: null, preAuth: null });
+      try {
+        await clearLanguage();
+      } finally {
+        apply({ session: null, preAuth: null });
+      }
     }
   }, [apply]);
 
@@ -319,11 +333,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     login,
     continuePasskey,
     recoverWithRecoveryKey,
+    retryRestore,
     refresh,
     logout,
     logoutAll,
     deleteAccount,
-  }), [busy, continuePasskey, deleteAccount, error, getCurrentSession, login, logout, logoutAll, recoverWithRecoveryKey, refresh, snapshot, status]);
+  }), [busy, continuePasskey, deleteAccount, error, getCurrentSession, login, logout, logoutAll, recoverWithRecoveryKey, refresh, retryRestore, snapshot, status]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

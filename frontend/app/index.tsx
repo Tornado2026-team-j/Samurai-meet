@@ -24,6 +24,7 @@ import {
   ensureDeviceAgreementKey,
   isRecoveryKeyRotationPending,
   listKeyEnvelopes,
+  loadStoredKeyEnvelope,
   loadStoredKeyA,
   loadPendingRecoveryKeyRotation,
   loadInitialKeyMaterialDraft,
@@ -695,9 +696,11 @@ export default function OnboardingScreen() {
   const {
     continuePasskey,
     deleteAccount,
+    error: authError,
     getCurrentSession,
     logout,
     refresh,
+    retryRestore,
     session,
     status,
   } = useAuth();
@@ -716,10 +719,12 @@ export default function OnboardingScreen() {
   const [keySetupState, setKeySetupState] = useState<KeySetupState>({ status: "loading" });
   const [keySetupStage, setKeySetupStage] = useState<KeySetupStage>("loading_local");
   const [keyKDFImplementation, setKeyKDFImplementation] = useState<RecoveryKDFImplementation | null>(null);
+  const [restoreRetrying, setRestoreRetrying] = useState(false);
   const sessionRef = useRef(session);
   sessionRef.current = session;
   const languageRef = useRef(language);
   languageRef.current = language;
+  const previousStatusRef = useRef(status);
   const [identityVerificationChoiceLoadedFor, setIdentityVerificationChoiceLoadedFor] =
     useState<string | null>(null);
 
@@ -741,6 +746,16 @@ export default function OnboardingScreen() {
         : "Passkey re-authentication failed.");
     } finally {
       setKeySetupActionBusy(false);
+    }
+  };
+
+  const retryAuthRestore = async () => {
+    if (restoreRetrying) return;
+    setRestoreRetrying(true);
+    try {
+      await retryRestore();
+    } finally {
+      setRestoreRetrying(false);
     }
   };
 
@@ -786,6 +801,22 @@ export default function OnboardingScreen() {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    const previousStatus = previousStatusRef.current;
+    previousStatusRef.current = status;
+    if (
+      status !== "signed_out"
+      || (previousStatus !== "signed_in" && previousStatus !== "pre_auth")
+    ) {
+      return;
+    }
+
+    // A completed logout must start from the same language screen as a new
+    // install, including when logout was initiated from key setup on `/`.
+    setLanguage(null);
+    setAccountStepCompleted(false);
+  }, [status]);
 
   useEffect(() => {
     if (!session?.user_id) {
@@ -856,20 +887,23 @@ export default function OnboardingScreen() {
     void (async () => {
       try {
         await withTimeout((async () => {
-          const [pendingRotation, initialDraft, storedKeyA] = await Promise.all([
+          const [pendingRotation, initialDraft, storedKeyA, storedEnvelope] = await Promise.all([
             loadPendingRecoveryKeyRotation(userID),
             loadInitialKeyMaterialDraft(userID),
             loadStoredKeyA(userID),
+            loadStoredKeyEnvelope(userID),
           ]);
           const localKeyA = storedKeyA ?? pendingRotation?.keyA ?? null;
           if (!active) return;
           if (localKeyA) {
-            setKeySetupStage("loading_envelopes");
-            const envelopes = await listKeyEnvelopes(activeSession);
-            const envelope = envelopes.find((item) => item.recovery_public_key.length > 0)
-              ?? envelopes.find((item) => item.kdf_params.data_salt.length > 0);
+            // A local Key-A means this device has already completed setup.
+            // Use the securely cached envelope for ordinary startup; fetching
+            // the server envelope is a recent-Passkey-gated operation.
+            const envelope = pendingRotation?.envelope ?? storedEnvelope;
             if (!envelope) {
-              throw new Error("このアカウントの暗号鍵情報を確認できません。Recovery Phraseで復旧してください。");
+              setKeySetupState({ status: "ready" });
+              setKeySetupFor(userID);
+              return;
             }
             const kdfImplementation = await getRecoveryKDFImplementation(envelope.kdf_params.argon2id);
             if (!active) return;
@@ -902,9 +936,6 @@ export default function OnboardingScreen() {
             }
             setKeySetupState({ status: "ready" });
             setKeySetupFor(userID);
-            // Warm the device registration in the background. It is required
-            // by protected photo APIs, but must not block account onboarding.
-            void ensureDeviceAgreementKey(activeSession).catch(() => undefined);
             return;
           }
 
@@ -956,7 +987,33 @@ export default function OnboardingScreen() {
     return (
       <View style={styles.loadingScreen}>
         <StatusBar style="dark" />
-        <ActivityIndicator color={BLUE} size="large" />
+        {authError ? (
+          <>
+            <MaterialIcons color={YELLOW} name="cloud-off" size={42} />
+            <Text accessibilityRole="alert" style={styles.loadingText}>{authError}</Text>
+            <Text style={styles.loadingHint}>
+              接続を確認してから再試行してください。 / Check the connection and retry.
+            </Text>
+            <Pressable
+              accessibilityRole="button"
+              disabled={restoreRetrying}
+              onPress={() => void retryAuthRestore()}
+              style={({ pressed }) => [
+                styles.restoreRetryButton,
+                restoreRetrying && styles.disabled,
+                pressed && styles.pressed,
+              ]}
+            >
+              {restoreRetrying ? (
+                <ActivityIndicator color="#ffffff" />
+              ) : (
+                <Text style={styles.restoreRetryButtonText}>再試行 / Retry</Text>
+              )}
+            </Pressable>
+          </>
+        ) : (
+          <ActivityIndicator color={BLUE} size="large" />
+        )}
       </View>
     );
   }
@@ -1244,6 +1301,21 @@ const styles = StyleSheet.create({
     marginTop: 6,
     color: MUTED_GRAY,
     fontSize: 12,
+  },
+  restoreRetryButton: {
+    minWidth: 132,
+    minHeight: 40,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 18,
+    paddingHorizontal: 18,
+    borderRadius: 20,
+    backgroundColor: YELLOW,
+  },
+  restoreRetryButtonText: {
+    color: "#ffffff",
+    fontSize: 13,
+    fontWeight: "800",
   },
   keySetupErrorScreen: {
     flex: 1,

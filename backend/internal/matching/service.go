@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/notification"
 )
 
 var (
@@ -38,7 +40,8 @@ const (
 // Service owns recruitment, interest, and match state transitions. Exact
 // locations stay in the database and are never included in API responses.
 type Service struct {
-	db *sql.DB
+	db            *sql.DB
+	notifications *notification.Service
 }
 
 type Recruitment struct {
@@ -187,8 +190,12 @@ type matchRecord struct {
 	UpdatedAt     string
 }
 
-func NewService(database *sql.DB) *Service {
-	return &Service{db: database}
+func NewService(database *sql.DB, notificationServices ...*notification.Service) *Service {
+	var notifications *notification.Service
+	if len(notificationServices) > 0 {
+		notifications = notificationServices[0]
+	}
+	return &Service{db: database, notifications: notifications}
 }
 
 func (s *Service) CreateRecruitment(ctx context.Context, userID string, input RecruitmentInput, now time.Time) (Recruitment, error) {
@@ -453,10 +460,10 @@ func (s *Service) SendInterest(ctx context.Context, userID, recruitmentID string
 		return Match{}, err
 	}
 	defer tx.Rollback()
-	var ownerID, status, expiresAt string
+	var ownerID, status, expiresAt, description string
 	if err = tx.QueryRowContext(ctx, `
-		SELECT owner_user_id,status,expires_at FROM recruitment_cards
-		WHERE id=$1 FOR UPDATE`, recruitmentID).Scan(&ownerID, &status, &expiresAt); errors.Is(err, sql.ErrNoRows) {
+		SELECT owner_user_id,status,expires_at,description FROM recruitment_cards
+		WHERE id=$1 FOR UPDATE`, recruitmentID).Scan(&ownerID, &status, &expiresAt, &description); errors.Is(err, sql.ErrNoRows) {
 		return Match{}, ErrRecruitmentNotFound
 	} else if err != nil {
 		return Match{}, err
@@ -506,6 +513,24 @@ func (s *Service) SendInterest(ctx context.Context, userID, recruitmentID string
 		INSERT INTO matches (id,card_id,requester_user_id,owner_user_id,status,created_at,updated_at)
 		VALUES ($1,$2,$3,$4,'pending',$5,$5)`, id, recruitmentID, userID, ownerID, created); err != nil {
 		return Match{}, err
+	}
+	if s.notifications != nil {
+		actorName, nameErr := s.notificationActorNameTx(ctx, tx, userID)
+		if nameErr != nil {
+			return Match{}, nameErr
+		}
+		if err = s.notifications.CreateTx(ctx, tx, notification.CreateInput{
+			UserID:        ownerID,
+			EventKey:      "new_application:" + id,
+			Type:          notification.TypeNewApplication,
+			TargetID:      id,
+			RecruitmentID: recruitmentID,
+			Destination:   notification.DestinationApplicants,
+			ActorName:     actorName,
+			Context:       description,
+		}, now); err != nil {
+			return Match{}, err
+		}
 	}
 	if err = tx.Commit(); err != nil {
 		return Match{}, err
@@ -615,15 +640,15 @@ func (s *Service) RejectMatch(ctx context.Context, userID, matchID string, now t
 	defer tx.Rollback()
 
 	var match Match
-	var ownerID, expiresAt, cardStatus string
+	var ownerID, requesterID, expiresAt, cardStatus, description string
 	var matchedAt sql.NullString
 	if err = tx.QueryRowContext(ctx, `
 		SELECT m.id,m.card_id,m.owner_user_id,m.requester_user_id,m.status,
-		       m.matched_at,m.created_at,m.updated_at,r.expires_at,r.status
+		       m.matched_at,m.created_at,m.updated_at,r.expires_at,r.status,r.description
 		FROM matches m JOIN recruitment_cards r ON r.id=m.card_id
 		WHERE m.id=$1 FOR UPDATE`, matchID).Scan(
-		&match.ID, &match.RecruitmentID, &ownerID, new(string), &match.Status,
-		&matchedAt, &match.CreatedAt, &match.UpdatedAt, &expiresAt, &cardStatus); errors.Is(err, sql.ErrNoRows) {
+		&match.ID, &match.RecruitmentID, &ownerID, &requesterID, &match.Status,
+		&matchedAt, &match.CreatedAt, &match.UpdatedAt, &expiresAt, &cardStatus, &description); errors.Is(err, sql.ErrNoRows) {
 		return Match{}, ErrMatchNotFound
 	} else if err != nil {
 		return Match{}, err
@@ -655,6 +680,24 @@ func (s *Service) RejectMatch(ctx context.Context, userID, matchID string, now t
 		UPDATE matches SET status='rejected',updated_at=$1 WHERE id=$2 AND status='pending'`, updated, matchID); err != nil {
 		return Match{}, err
 	}
+	if s.notifications != nil {
+		actorName, nameErr := s.notificationActorNameTx(ctx, tx, ownerID)
+		if nameErr != nil {
+			return Match{}, nameErr
+		}
+		if err = s.notifications.CreateTx(ctx, tx, notification.CreateInput{
+			UserID:        requesterID,
+			EventKey:      "application_rejected:" + matchID,
+			Type:          notification.TypeApplicationRejected,
+			TargetID:      matchID,
+			RecruitmentID: match.RecruitmentID,
+			Destination:   notification.DestinationApplicationDetail,
+			ActorName:     actorName,
+			Context:       description,
+		}, now); err != nil {
+			return Match{}, err
+		}
+	}
 	if err = tx.Commit(); err != nil {
 		return Match{}, err
 	}
@@ -669,15 +712,15 @@ func (s *Service) AcceptMatch(ctx context.Context, userID, matchID string, now t
 	}
 	defer tx.Rollback()
 	var match Match
-	var ownerID, requesterID, expiresAt, cardStatus string
+	var ownerID, requesterID, expiresAt, cardStatus, description string
 	var matchedAt sql.NullString
 	if err = tx.QueryRowContext(ctx, `
 		SELECT m.id,m.card_id,m.owner_user_id,m.requester_user_id,m.status,
-		       m.matched_at,m.created_at,m.updated_at,r.expires_at,r.status
+		       m.matched_at,m.created_at,m.updated_at,r.expires_at,r.status,r.description
 		FROM matches m JOIN recruitment_cards r ON r.id=m.card_id
 		WHERE m.id=$1 FOR UPDATE`, matchID).Scan(
 		&match.ID, &match.RecruitmentID, &ownerID, &requesterID, &match.Status,
-		&matchedAt, &match.CreatedAt, &match.UpdatedAt, &expiresAt, &cardStatus); errors.Is(err, sql.ErrNoRows) {
+		&matchedAt, &match.CreatedAt, &match.UpdatedAt, &expiresAt, &cardStatus, &description); errors.Is(err, sql.ErrNoRows) {
 		return Match{}, ErrMatchNotFound
 	} else if err != nil {
 		return Match{}, err
@@ -725,6 +768,24 @@ func (s *Service) AcceptMatch(ctx context.Context, userID, matchID string, now t
 		UPDATE recruitment_cards SET status='matched',updated_at=$1
 		WHERE id=$2 AND status='open'`, updated, match.RecruitmentID); err != nil {
 		return Match{}, err
+	}
+	if s.notifications != nil {
+		actorName, nameErr := s.notificationActorNameTx(ctx, tx, ownerID)
+		if nameErr != nil {
+			return Match{}, nameErr
+		}
+		if err = s.notifications.CreateTx(ctx, tx, notification.CreateInput{
+			UserID:        requesterID,
+			EventKey:      "match_confirmed:" + matchID,
+			Type:          notification.TypeMatchConfirmed,
+			TargetID:      matchID,
+			RecruitmentID: match.RecruitmentID,
+			Destination:   notification.DestinationGuideDetail,
+			ActorName:     actorName,
+			Context:       description,
+		}, now); err != nil {
+			return Match{}, err
+		}
 	}
 	if err = tx.Commit(); err != nil {
 		return Match{}, err
@@ -967,6 +1028,15 @@ func (s *Service) profileComplete(ctx context.Context, userID string) (bool, err
 			WHERE user_id=$1 AND btrim(name) <> '' AND nationality_code ~ '^[A-Z]{2}$'
 		)`, userID).Scan(&complete)
 	return complete, err
+}
+
+func (s *Service) notificationActorNameTx(ctx context.Context, tx *sql.Tx, userID string) (string, error) {
+	var name string
+	err := tx.QueryRowContext(ctx, `
+		SELECT COALESCE(NULLIF(p.name,''),u.display_name,'')
+		FROM users u LEFT JOIN profiles p ON p.user_id=u.id
+		WHERE u.id=$1 AND u.status='active'`, userID).Scan(&name)
+	return strings.TrimSpace(name), err
 }
 
 func (s *Service) loadCard(ctx context.Context, recruitmentID string) (cardRecord, error) {

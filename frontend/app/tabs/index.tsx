@@ -14,6 +14,7 @@ import {
   View,
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "../../hooks/useAuth";
 import { APIError } from "../../services/api-client";
 import { getCurrentCoordinates } from "../../services/location";
@@ -43,6 +44,18 @@ const EXPANSION_DURATION = 360;
 
 type PreviewStatus = "idle" | "loading" | "success" | "error";
 type PublishStatus = "idle" | "publishing";
+
+function isSessionRefreshFailure(error: unknown): boolean {
+  return error instanceof Error && /^(401|409):/u.test(error.message);
+}
+
+function isRecruitmentInputFailure(error: unknown): boolean {
+  return error instanceof Error && [
+    "invalid_recruitment_date",
+    "invalid_recruitment_duration",
+    "invalid_recruitment_time",
+  ].includes(error.message);
+}
 
 function countryCodeToFlag(countryCode: string): string {
   const normalizedCode = countryCode.trim().toUpperCase();
@@ -102,6 +115,7 @@ function Stepper({
 
 export default function SearchPreferencesScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const { getCurrentSession, refresh, session, status } = useAuth();
   const { query } = useLocalSearchParams<{ query?: string | string[] }>();
   const initialQuery = Array.isArray(query) ? query[0] : query;
@@ -279,7 +293,7 @@ export default function SearchPreferencesScreen() {
         throw new Error("not_signed_in");
       }
       await refresh();
-      const activeSession = getCurrentSession() ?? session;
+      const activeSession = getCurrentSession();
       if (!activeSession) {
         throw new Error("not_signed_in");
       }
@@ -306,26 +320,41 @@ export default function SearchPreferencesScreen() {
       router.replace("/foreigner");
     } catch (error) {
       if (error instanceof Error && error.name === "AbortError") {
+        setPublishError("The server request timed out. Check your connection and try again.");
         return;
       }
       if (error instanceof APIError) {
-        if (error.code === "profile_incomplete") {
-          setPublishError("プロフィールを完成させてから公開してください。");
-        } else if (error.code === "recruitment_expired") {
-          setPublishError("募集日時が過ぎています。日時を確認してください。");
-        } else if (error.code === "invalid_matching_request") {
-          setPublishError("入力内容を確認してください。");
-        } else {
-          setPublishError("募集を公開できませんでした。時間をおいて再試行してください。");
+        switch (error.code) {
+          case "missing_or_invalid_access_token":
+            setPublishError("Your session expired. Sign in again on this API environment.");
+            break;
+          case "profile_incomplete":
+            setPublishError("Complete your profile before publishing.");
+            break;
+          case "invalid_profile":
+            setPublishError("Your profile could not be synchronized. Check your name and nationality.");
+            break;
+          case "recruitment_expired":
+            setPublishError("The recruitment time has passed. Check the date and time.");
+            break;
+          case "invalid_matching_request":
+            setPublishError("Check the date, time, location, and other recruitment details.");
+            break;
+          default:
+            setPublishError("The server could not publish this recruitment. Try again shortly.");
         }
+      } else if (isSessionRefreshFailure(error)) {
+        setPublishError("Your session expired. Sign in again before publishing.");
+      } else if (isRecruitmentInputFailure(error)) {
+        setPublishError("Check the recruitment date, time, and duration.");
       } else if (error instanceof Error && error.message === "not_signed_in") {
-        setPublishError("ログイン後にもう一度お試しください。");
+        setPublishError("Please sign in again before publishing.");
       } else if (error instanceof Error && error.message === "recruitment_date_in_past") {
-        setPublishError("募集日時は現在より後に設定してください。");
+        setPublishError("Set the recruitment time in the future.");
       } else if (error instanceof Error && error.message === "recruitment_must_end_same_day") {
-        setPublishError("終了時刻が日付をまたがないようにしてください。");
+        setPublishError("The recruitment must end on the same day.");
       } else {
-        setPublishError("募集を公開できませんでした。時間をおいて再試行してください。");
+        setPublishError("The server could not be reached. Check your iPhone network connection and try again.");
       }
     } finally {
       setPublishStatus("idle");
@@ -428,7 +457,27 @@ export default function SearchPreferencesScreen() {
     <View style={styles.screen}>
       <StatusBar style="light" />
 
-      <Animated.View style={[styles.panel, { height: panelHeight }]}>
+      <Animated.View
+        style={[styles.panel, { height: panelHeight }]}
+      >
+        {!isConfirmationVisible ? (
+          <Pressable
+            accessibilityLabel="Back to home"
+            accessibilityRole="button"
+            onPress={() => {
+              Keyboard.dismiss();
+              router.back();
+            }}
+            style={({ pressed }) => [
+              styles.menuBackButton,
+              { top: Math.max(insets.top + 4, 16) },
+              pressed && styles.pressed,
+            ]}
+          >
+            <MaterialIcons color="#ffffff" name="arrow-back" size={16} />
+            <Text style={styles.menuBackButtonText}>BACK</Text>
+          </Pressable>
+        ) : null}
         <Animated.View
           accessibilityElementsHidden={isConfirmationVisible}
           importantForAccessibility={
@@ -439,6 +488,7 @@ export default function SearchPreferencesScreen() {
             {
               opacity: contentOpacity,
               pointerEvents: isConfirmationVisible ? "none" : "auto",
+              top: Math.max(insets.top + 10, 41),
               transform: [{ translateY: contentTranslateY }],
             },
           ]}
@@ -448,13 +498,14 @@ export default function SearchPreferencesScreen() {
               <Text style={styles.label}>What would you like to do?</Text>
               <TextInput
                 accessibilityLabel="Activity description"
+                blurOnSubmit
                 maxLength={160}
-                multiline
                 onChangeText={setDescription}
+                onSubmitEditing={() => Keyboard.dismiss()}
                 placeholder="Please tell us more about what you'd like to do or see"
                 placeholderTextColor={PLACEHOLDER_GRAY}
+                returnKeyType="done"
                 style={[styles.input, styles.descriptionInput]}
-                textAlignVertical="top"
                 value={description}
               />
             </View>
@@ -470,7 +521,9 @@ export default function SearchPreferencesScreen() {
                 />
                 <TextInput
                   accessibilityLabel="Location"
+                  blurOnSubmit
                   onChangeText={setLocation}
+                  onSubmitEditing={() => Keyboard.dismiss()}
                   placeholder="Osaka,Umeda"
                   placeholderTextColor={PLACEHOLDER_GRAY}
                   returnKeyType="search"
@@ -504,7 +557,9 @@ export default function SearchPreferencesScreen() {
                 <TextInput
                   ref={dateInputRef}
                   accessibilityLabel="Date"
+                  blurOnSubmit
                   onChangeText={setDate}
+                  onSubmitEditing={() => Keyboard.dismiss()}
                   placeholder={suggestedDate}
                   placeholderTextColor={PLACEHOLDER_GRAY}
                   style={[styles.input, styles.dateInput]}
@@ -750,7 +805,7 @@ export default function SearchPreferencesScreen() {
               },
             ]}
           >
-            <View style={styles.compactActionRow}>
+            <View style={[styles.compactActionRow, { top: Math.max(insets.top + 4, 45) }]}>
               <View style={styles.compactSearchField}>
                 <MaterialIcons
                   color={PLACEHOLDER_GRAY}
@@ -778,7 +833,7 @@ export default function SearchPreferencesScreen() {
                 <MaterialIcons color="#ffffff" name="account-circle" size={30} />
               </Pressable>
             </View>
-            <Text style={styles.compactTitle}>Find Your Japan!</Text>
+            <Text style={[styles.compactTitle, { top: Math.max(insets.top + 64, 108) }]}>Find Your Japan!</Text>
           </Animated.View>
         )}
       </Animated.View>
@@ -797,6 +852,28 @@ const styles = StyleSheet.create({
     backgroundColor: BLUE,
     borderBottomLeftRadius: 50,
     borderBottomRightRadius: 50,
+  },
+  menuBackButton: {
+    position: "absolute",
+    left: 18,
+    zIndex: 2,
+    width: 76,
+    height: 30,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 5,
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.82)",
+    borderRadius: 15,
+    backgroundColor: "rgba(0, 0, 0, 0.08)",
+  },
+  menuBackButtonText: {
+    color: "#ffffff",
+    fontSize: 11,
+    fontWeight: "900",
+    letterSpacing: 0.4,
+    lineHeight: 14,
   },
   compactContent: {
     position: "absolute",
@@ -1104,13 +1181,11 @@ const styles = StyleSheet.create({
   },
   descriptionInput: {
     position: "absolute",
-    top: 23,
+    top: 27,
     width: "100%",
     height: 59,
-    paddingTop: 6,
-    paddingRight: 6,
-    paddingBottom: 6,
-    paddingLeft: 6,
+    paddingHorizontal: 16,
+    paddingVertical: 0,
   },
   whereGroup: {
     position: "absolute",

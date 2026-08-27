@@ -2,8 +2,8 @@ import {
   defaultAPIBaseURL,
   isLocalWebOrigin,
   originFromAPIBaseURL,
+  DEFAULT_WEB_APP_ORIGIN,
 } from "./api-config.shared";
-import { DEFAULT_WEB_APP_ORIGIN } from "./api-config.shared";
 
 export {
   defaultAPIBaseURL,
@@ -16,7 +16,8 @@ const configuredWebAppOrigin = process.env.EXPO_PUBLIC_WEB_APP_ORIGIN?.trim();
 const runtimeLocation = typeof globalThis.location === "undefined" ? undefined : globalThis.location;
 
 export const API_BASE_URL = (
-  configuredApiBaseURL || defaultAPIBaseURL(runtimeLocation, process.env.NODE_ENV)
+  configuredApiBaseURL
+    || defaultAPIBaseURL(runtimeLocation, process.env.NODE_ENV)
 ).replace(/\/+$/, "");
 
 /**

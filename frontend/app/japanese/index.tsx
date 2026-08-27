@@ -11,8 +11,10 @@ import {
   View,
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import MatchCard from "../../components/MatchCard";
 import { useAuth } from "../../hooks/useAuth";
+import { useUnreadNotifications } from "../../hooks/useUnreadNotifications";
 import { APIError } from "../../services/api-client";
 import { getCurrentCoordinates } from "../../services/location";
 import {
@@ -38,7 +40,9 @@ const CATEGORIES = [
 
 export default function JapaneseHomeScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const { getCurrentSession, refresh, session, status } = useAuth();
+  const hasUnreadNotifications = useUnreadNotifications();
   const [query, setQuery] = useState("");
   const [submittedQuery, setSubmittedQuery] = useState("");
   const [matches, setMatches] = useState<MatchCardData[]>([]);
@@ -62,6 +66,10 @@ export default function JapaneseHomeScreen() {
       return matchesCategory && matchesQuery;
     });
   }, [matches, query, selectedCategory]);
+  const actionTop = Math.max(insets.top + 8, 45);
+  const categoryTop = actionTop + 45;
+  const sortTop = categoryTop + 56;
+  const headerHeight = Math.max(193, sortTop + 47);
 
   const loadRecruitments = useCallback(() => {
     const controller = new AbortController();
@@ -149,7 +157,10 @@ export default function JapaneseHomeScreen() {
       <StatusBar style="light" />
 
       <ScrollView
-        contentContainerStyle={styles.matchListContent}
+        contentContainerStyle={[
+          styles.matchListContent,
+          { paddingTop: headerHeight + 28 },
+        ]}
         showsVerticalScrollIndicator={false}
         style={styles.matchList}
       >
@@ -178,8 +189,8 @@ export default function JapaneseHomeScreen() {
         )}
       </ScrollView>
 
-      <View style={styles.header}>
-        <View style={styles.actionRow}>
+      <View style={[styles.header, { height: headerHeight }]}>
+        <View style={[styles.actionRow, { top: actionTop }]}>
           <View style={styles.searchField}>
             <MaterialIcons
               color={PLACEHOLDER_GRAY}
@@ -202,7 +213,7 @@ export default function JapaneseHomeScreen() {
           <Pressable
             accessibilityLabel="通知"
             accessibilityRole="button"
-            hitSlop={8}
+            hitSlop={12}
             onPress={() => router.push("/japanese/notifications")}
             style={({ pressed }) => [
               styles.headerIconButton,
@@ -211,13 +222,13 @@ export default function JapaneseHomeScreen() {
             ]}
           >
             <MaterialIcons color="#ffffff" name="notifications-none" size={30} />
-            <View style={styles.notificationBadge} />
+            {hasUnreadNotifications ? <View style={styles.notificationBadge} /> : null}
           </Pressable>
 
           <Pressable
             accessibilityLabel="プロフィール"
             accessibilityRole="button"
-            hitSlop={8}
+            hitSlop={12}
             onPress={() => router.push("/profile")}
             style={({ pressed }) => [
               styles.headerIconButton,
@@ -233,7 +244,7 @@ export default function JapaneseHomeScreen() {
           contentContainerStyle={styles.categoryContent}
           horizontal
           showsHorizontalScrollIndicator={false}
-          style={styles.categoryList}
+          style={[styles.categoryList, { top: categoryTop }]}
         >
           {CATEGORIES.map((category) => {
             const selected = selectedCategory === category;
@@ -258,7 +269,11 @@ export default function JapaneseHomeScreen() {
         <Pressable
           accessibilityLabel="現在地から近い順"
           accessibilityRole="button"
-          style={({ pressed }) => [styles.sortRow, pressed && styles.pressed]}
+          style={({ pressed }) => [
+            styles.sortRow,
+            { top: sortTop },
+            pressed && styles.pressed,
+          ]}
         >
           <MaterialIcons color={TEXT_GRAY} name="swap-vert" size={20} />
           <Text style={styles.sortText}>現在地から近い順</Text>
@@ -330,13 +345,13 @@ const styles = StyleSheet.create({
     letterSpacing: 0,
   },
   headerIconButton: {
-    height: 25,
+    height: 32,
     alignItems: "center",
     justifyContent: "center",
-    overflow: "hidden",
+    overflow: "visible",
   },
   notificationButton: {
-    width: 21,
+    width: 32,
   },
   notificationBadge: {
     position: "absolute",
@@ -350,7 +365,7 @@ const styles = StyleSheet.create({
     backgroundColor: YELLOW,
   },
   profileButton: {
-    width: 24.56,
+    width: 32,
   },
   categoryList: {
     position: "absolute",

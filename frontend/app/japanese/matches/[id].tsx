@@ -116,8 +116,15 @@ export default function JapaneseMatchDetailScreen() {
     setRequestError(null);
 
     try {
-      await sendRecruitmentInterest(match.id, session);
-      router.push("/japanese/guide-requested");
+      const interest = await sendRecruitmentInterest(match.id, session);
+      if (interest?.id) {
+        router.push({
+          pathname: "/japanese/guide-requested",
+          params: { matchId: interest.id },
+        });
+      } else {
+        router.push("/japanese/guide-requested");
+      }
     } catch {
       setRequestError("応募を送信できませんでした。時間をおいてもう一度お試しください。");
     } finally {

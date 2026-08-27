@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/matching"
+	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/notification"
 )
 
 func TestRecruitmentMatchingLifecycle(t *testing.T) {
@@ -38,7 +39,8 @@ func TestRecruitmentMatchingLifecycle(t *testing.T) {
 		}
 	}
 
-	service := matching.NewService(database)
+	notifications := notification.NewService(database)
+	service := matching.NewService(database, notifications)
 	cardLatitude, cardLongitude := 35.681236, 139.767125
 	card, err := service.CreateRecruitment(ctx, travelerID, matching.RecruitmentInput{
 		Category:           "Places",
@@ -81,6 +83,13 @@ func TestRecruitmentMatchingLifecycle(t *testing.T) {
 	if interest.Status != "pending" {
 		t.Fatalf("interest = %+v", interest)
 	}
+	ownerNotifications, err := notifications.List(ctx, travelerID, notification.ListParams{Limit: 10}, now)
+	if err != nil {
+		t.Fatalf("owner notifications = %v", err)
+	}
+	if !hasNotification(ownerNotifications, notification.TypeNewApplication, interest.ID) {
+		t.Fatalf("new application notification = %+v", ownerNotifications)
+	}
 
 	applications, err := service.ListMatches(ctx, travelerID, matching.MatchListParams{Role: "owner", Status: "pending"}, now)
 	if err != nil {
@@ -103,6 +112,13 @@ func TestRecruitmentMatchingLifecycle(t *testing.T) {
 	}
 	if view.Status != "accepted" || view.OtherUser.Name != "Alex" || view.Recruitment.ID != card.ID {
 		t.Fatalf("match view = %+v", view)
+	}
+	guideNotifications, err := notifications.List(ctx, guideID, notification.ListParams{Limit: 10}, now.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("guide notifications = %v", err)
+	}
+	if !hasNotification(guideNotifications, notification.TypeMatchConfirmed, interest.ID) {
+		t.Fatalf("match confirmed notification = %+v", guideNotifications)
 	}
 
 	completed, err := service.CompleteMatch(ctx, guideID, interest.ID, now.Add(2*time.Hour))
@@ -138,4 +154,20 @@ func TestRecruitmentMatchingLifecycle(t *testing.T) {
 	if rejected.Status != "rejected" {
 		t.Fatalf("rejected = %+v", rejected)
 	}
+	guideNotifications, err = notifications.List(ctx, guideID, notification.ListParams{Limit: 10}, now.Add(2*time.Hour))
+	if err != nil {
+		t.Fatalf("guide notifications after rejection = %v", err)
+	}
+	if !hasNotification(guideNotifications, notification.TypeApplicationRejected, secondInterest.ID) {
+		t.Fatalf("application rejected notification = %+v", guideNotifications)
+	}
+}
+
+func hasNotification(items []notification.Notification, kind notification.Type, targetID string) bool {
+	for _, item := range items {
+		if item.Type == kind && item.TargetID == targetID {
+			return true
+		}
+	}
+	return false
 }

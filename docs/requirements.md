@@ -13,6 +13,8 @@
 
 > 本書は、提示された機能・認証フロー・DB項目・ファイル構成を実装可能な要件に整理したものです。数値目標や本人確認方式など、確定していない内容は「暫定」または「要確認」と記載しています。
 
+> 注意：本書は目標要件の初版ドラフトであり、現行実装の完了表ではありません。現在の実装範囲は [実装状態の境界](ai/system/current-status.md)、HTTP契約は [backend/API_SPEC.md](../backend/API_SPEC.md)、DBとmigrationは [DB仕様書](database.md) を正とします。特にPostGIS、QUICリアルタイム配送、OSプッシュ通知、評価・本人確認・通報は現行未実装または未確定です。
+
 ## 詳細仕様書へのリンク
 
 本書は全体方針を扱います。実装時は、次の詳細仕様書を併せて参照してください。
@@ -39,7 +41,7 @@ Samurai Meet は、近くにいる日本人・外国人同士が、時間・場�
 - クライアント：iOS / Android（Expo、React Native、Expo Router）
 - API サーバー：Go
 - DB：PostgreSQL（開発・CI・運用）
-- リアルタイム通信：WebSocket
+- リアルタイム通信：QUIC（HTTP/3 / WebTransport）を目標とする。現行はRESTチャットのみ
 - 認証：Google OAuth2 / OIDC、Passkey
 - 画像保存：自前サーバーまたはプライベートなオブジェクトストレージ
 
@@ -212,9 +214,9 @@ flowchart LR
 
 - 現在地取得はユーザーの明示的な許可を必要とする。
 - 外国人ユーザーも利用するため、初期 UI は日本語・英語対応を前提とする。
-- DB エンジンは PostgreSQL のみとし、PostGIS 拡張を利用する。
-- 距離検索は PostgreSQL / PostGIS で行う。
-- チャットのリアルタイム性は WebSocket で実現する。
+- DB エンジンは PostgreSQL のみとする。PostGIS は将来の性能改善候補であり、現行の距離判定はGoのHaversineで行う。
+- チャットのリアルタイム配送は将来QUICを標準候補とし、HTTP/3 WebTransportを含むQUIC上の実装で実現する。現行はRESTの履歴・送信・既読であり、QUIC／WebTransport／WebSocket配送は未実装である。WebSocketは標準経路にせず、QUICが技術的に成立しない場合だけ、理由・代替案・運用影響をチームで合意したうえで例外採用を決定する。
+- QUICの採用理由、QUIC/TLS 1.3とJWSの役割、リプレイ攻撃対策、packet再送とアプリ再送の境界は [チャット通信仕様](features/chat-transport.md) を正本とする。
 - 画像は DB にバイナリを直接保存せず、ストレージキーとメタデータを DB に保存する。
 - 個人情報の取扱いは、適用される個人情報保護法・GDPR 等を確認して確定する。法的判断は専門家レビューを受ける。
 
@@ -295,7 +297,7 @@ flowchart LR
 | 項目 | 内容 |
 | --- | --- |
 | 誰の募集か | 作成者の名前、国籍、アイコン、本人確認状態を表示 |
-| 日時 | 交流可能日。タイムゾーンを含めて保存 |
+| 日時 | 交流可能日。国内利用向けに`Asia/Tokyo`固定の壁時計として扱う |
 | 時間帯 | 開始時刻・終了時刻、または定義済み時間帯 |
 | キーワード | 交流目的、話したい言語、興味分野など。複数指定可 |
 | 公開半径 | 1 km / 3 km / 5 km のいずれか |
@@ -310,7 +312,7 @@ flowchart LR
 - 検索結果には、表示理由として「距離」「日時」「一致キーワード」を表示する。
 - 公開半径外のカードは表示しない。
 - 本人確認済みのみ、時間帯、キーワード、距離、カード状態で絞り込めるようにする。
-- 距離計算は DB の地理空間検索で行い、クライアントだけで判定しない。
+- 現行の距離計算はGoのHaversineで行い、クライアントだけでは判定しない。PostGISによる地理空間検索は将来候補とする。
 
 #### FR-009 マッチング
 
@@ -324,7 +326,8 @@ flowchart LR
 
 - マッチ成立後にのみアクセスできる 1 対 1 チャットとする。
 - テキスト、送信時刻、送信者、既読状態を管理する。
-- WebSocket が切断された場合は再接続し、未送信・未受信メッセージを REST API で同期する。
+- 将来QUIC接続を実装した場合は、切断後に再接続し、未送信・未受信メッセージをREST APIで同期する。現行はRESTポーリングである。
+- 通信断・タイムアウト・一時的なサーバーエラーで送信結果が不明な場合は、同じ `client_message_id` を使って期限・回数を制限した自動再送を行う。入力不正、認証失効、認可拒否では再送しない。
 - サーバーはメッセージの順序を `server_message_id` とサーバー時刻で確定する。
 - 削除済みメッセージは相手側で内容を再表示できない状態にする。監査ログの保存方針は要決定。
 
@@ -373,7 +376,7 @@ flowchart LR
 | NFR-P-001 | 通常 API 応答 | p95 1 秒以内（画像アップロードを除く） |
 | NFR-P-002 | 検索結果表示 | 検索実行から p95 2 秒以内 |
 | NFR-P-003 | チャット配送 | 接続中の相手へ p95 2 秒以内に配送 |
-| NFR-P-004 | 同時 WebSocket 接続 | MVP で 1,000 接続を目標。負荷試験後に確定 |
+| NFR-P-004 | 同時 QUIC 接続 | MVP で 1,000 接続を目標。負荷試験後に確定 |
 | NFR-P-005 | 画像アップロード | 進捗表示を行い、タイムアウト時に再試行できる |
 
 ### 7.2 セキュリティ要件
@@ -389,7 +392,7 @@ flowchart LR
 - Access Token は JWS 署名付き JWT とし、`sid` で DB の `sessions` を参照する。
 - API は JWT の署名・有効期限だけで認証を完了させず、DB のセッション失効状態とユーザー状態を確認する。
 - Refresh Token は不透明な乱数とし、DB にはハッシュだけを保存して、使用ごとにローテーションする。
-- リフレッシュは、ログイン直後、Access Token の残り 30 秒以内、アプリ復帰時、401 発生時、WebSocket 再接続時に行う。毎リクエストでは行わない。
+- リフレッシュは、ログイン直後、Access Token の残り 30 秒以内、アプリ復帰時、401 発生時、QUIC 再接続時に行う。毎リクエストでは行わない。
 
 #### Key-A / Key-B / Recovery Key
 
@@ -420,7 +423,7 @@ flowchart LR
 | NFR-O-002 | DB バックアップ | 日次フルバックアップ、ポイントインタイムリカバリを検討 |
 | NFR-O-003 | RPO | 24 時間以内。重要データは短縮を検討 |
 | NFR-O-004 | RTO | 4 時間以内 |
-| NFR-O-005 | 監視 | API エラー率、遅延、DB、ストレージ、WebSocket 接続数を監視 |
+| NFR-O-005 | 監視 | API エラー率、遅延、DB、ストレージ、QUIC 接続数を監視 |
 | NFR-O-006 | 監査 | ログイン、本人確認、通報、利用停止、管理者操作を監査ログに残す |
 | NFR-O-007 | デプロイ | DB migration をバージョン管理し、ロールバック手順を持つ |
 
@@ -438,7 +441,7 @@ flowchart LR
 
 - フロントエンド、API、DB の契約を型または OpenAPI 等で管理する。
 - 認証、位置情報の範囲判定、公開権限、カード期限切れ、復旧フローを自動テストする。
-- WebSocket の再接続、重複送信、順序逆転、オフライン復帰をテストする。
+- QUIC の再接続、パケット損失、リプレイ、重複送信、期限・回数制限付き自動再送、順序逆転、オフライン復帰をテストする。
 - 本人確認・通報・アカウント削除の運用手順をステージング環境で確認する。
 
 ## 8. 成果指標（KPI / KGI）
@@ -472,22 +475,22 @@ flowchart LR
 flowchart LR
     Mobile[Expo / React Native アプリ]
     API[Go REST API]
-    WS[Go WebSocket]
+    QUIC[予定: Go QUIC / HTTP3 WebTransport]
     Auth[Google OAuth2 / OIDC]
     Passkey[Passkey / WebAuthn]
-    DB[(PostgreSQL + PostGIS)]
+    DB[(PostgreSQL)]
     Storage[(非公開画像ストレージ)]
     KMS[鍵管理 / Secret Manager]
     Admin[運営管理機能]
 
     Mobile --> API
-    Mobile --> WS
+    Mobile -. 予定 .-> QUIC
     API --> Auth
     API --> Passkey
     API --> DB
     API -. 開発・テスト .-> LocalDB
     API --> Storage
-    WS --> DB
+    QUIC -. 予定 .-> DB
     API --> KMS
     Admin --> API
 ```
@@ -496,11 +499,11 @@ flowchart LR
 
 | コンポーネント | 責務 |
 | --- | --- |
-| Expo アプリ | 画面、OS 権限、Secure Storage、Key-A、暗号化、REST/WebSocket クライアント |
-| Go API | 認証後のセッション、プロフィール、カード、検索、マッチ、評価、画像認可 |
-| WebSocket | マッチ済みチャットのリアルタイム配送、再接続・認証 |
+| Expo アプリ | 画面、OS 権限、Secure Storage、Key-A、暗号化、現行RESTクライアント。QUICクライアントは予定 |
+| Go API | 認証後のセッション、プロフィール、カード、検索、マッチ、画像認可。評価等は予定 |
+| QUIC（HTTP/3 / WebTransport） | マッチ済みチャットのリアルタイム配送、再接続・認証（予定） |
 | PostgreSQL | ユーザー、プロフィール、カード、マッチ、メッセージ、評価、監査データ |
-| PostGIS | 位置情報の距離検索・公開半径判定 |
+| PostGIS | 位置情報の距離検索・公開半径判定（将来候補。現行はGo Haversine） |
 | 画像ストレージ | 暗号化済みまたはアクセス制御済み画像の保存 |
 | KMS / Secret Manager | DB 接続情報、署名鍵、サーバー側秘密等の保護。端末Key-Bは対象外 |
 
@@ -508,7 +511,7 @@ flowchart LR
 
 ### 10.1 データ設計方針
 
-- サービス内の主キーは推測困難な UUID とする。
+- 現行サービス内の主キーは推測困難なopaque `TEXT`である。UUIDへ変更する場合は、API・ファイルパス・migrationを同時に更新する別計画として扱う。
 - Google の `sub` は外部識別子として保存し、サービス内 ID と分離する。
 - アカウント情報と公開プロフィール情報を分離する。
 - 画像本体は DB に保存せず、ストレージキーだけを保存する。
@@ -517,6 +520,8 @@ flowchart LR
 - 削除・停止・期限切れを論理状態として扱い、必要な監査情報を保持する。
 
 ### 10.2 主要テーブル
+
+以下の型や制約は初版の目標設計例である。現行の実際の型・制約・migrationは [DB仕様書](database.md) と `backend/migrations/*.sql` を正とし、特に現行IDはUUID文字列を前提にしない。
 
 #### `users`：認証・アカウント
 
@@ -632,7 +637,7 @@ flowchart LR
 - `reviews.match_id, reviewer_user_id`：UNIQUE
 - すべての外部キーに削除時の挙動を定義し、意図しない連鎖削除を避ける。
 
-## 11. API / WebSocket 要件
+## 11. API / QUIC 要件
 
 ### 11.1 REST API（案）
 
@@ -669,18 +674,18 @@ flowchart LR
 | `POST` | `/v1/recovery/restore` | Recovery Key による復旧 |
 | `DELETE` | `/v1/me` | アカウント削除 |
 
-### 11.2 WebSocket
+### 11.2 QUIC（HTTP/3 / WebTransport・予定）
 
-- 接続先：`wss://samurai-meet.disnana.com/api/v1/ws/chats/{chat_id}`
+- 接続先：環境ごとに設定する QUIC endpoint（`chat_id` 単位。HTTP/3 WebTransport の場合は HTTPS URL として提供する）
 - 接続時に API セッションを検証する。
 - クライアントイベント例：`message.send`、`message.read`、`typing.start`、`typing.stop`
 - サーバーイベント例：`message.created`、`message.ack`、`message.read`、`error`
 - メッセージ送信にはクライアント側の一意な `client_message_id` を付与し、再送による二重登録を防ぐ。
-- WebSocket が利用できない場合は REST の送信・ポーリングへフォールバックできる設計を検討する。
+- QUIC が一時的に利用できない場合は、REST の送信・ポーリングへフォールバックする。WebSocket への切替は自動で行わず、QUIC が技術的に成立しない場合だけチーム合意で決定する。
 
 ### 11.3 API 共通ルール
 
-- JSON の日時は ISO 8601 / UTC を基本とし、表示時にユーザーのタイムゾーンへ変換する。
+- 募集の利用日・開始／終了時刻は`Asia/Tokyo`固定の壁時計として扱い、`created_at`や`expires_at`等の絶対時刻はISO 8601 / UTCで扱う。
 - エラー形式を統一する。例：`{ "code": "AUTH_REQUIRED", "message": "...", "request_id": "..." }`
 - ページング、並び順、検索条件の上限を定義する。
 - 認証が必要なエンドポイントは `401`、権限不足は `403`、入力不正は `400`、競合は `409` を基本とする。
@@ -752,11 +757,11 @@ frontend/
 ├── hooks/
 │   ├── useAuth.ts              # 認証状態管理
 │   ├── useMatching.ts          # マッチングロジック
-│   └── useWebSocket.ts         # WebSocket接続管理
+│   └── useChatTransport.ts     # 将来のQUIC接続管理
 ├── services/
 │   ├── api.ts                  # REST API通信
 │   ├── storage.ts              # Secure Storage・画像ストレージ連携（DBへ直接接続しない）
-│   └── websocket.ts            # WebSocketクライアント
+│   └── quic.ts                 # 将来のQUICクライアント（未実装）
 ├── types/
 │   └── index.ts                # 型定義
 ├── app.json                    # Expo設定
@@ -784,7 +789,7 @@ backend/
 │   │   └── service.go          # マッチングロジック
 │   ├── chat/
 │   │   ├── handler.go          # チャットAPI
-│   │   ├── websocket.go        # WebSocketハンドリング
+│   │   ├── quic.go             # 将来のQUICハンドリング（未実装）
 │   │   └── model.go            # メッセージモデル
 │   ├── image/
 │   │   ├── handler.go          # 画像アップロードAPI
@@ -826,14 +831,14 @@ backend/
 - Google 認証直後は仮認証権限に限定され、Passkey 成功後に通常のセッションが発行される。
 - Access Token の期限前に Refresh Token をローテーションでき、使用済み token の再利用でセッションを失効できる。
 - Refresh 後も旧 Access Token は `exp` まで利用でき、旧 Refresh Token は同一 `refresh_request_id` の再送以外では利用できない。
-- `sessions` の失効後は、期限内の Access Token も API と WebSocket で利用できない。
+- `sessions` の失効後は、期限内の Access Token も API と QUIC で利用できない。
 - 初回登録時に Passkey、Key-A、Recovery Key を設定できる。
 - プロフィールを作成・編集でき、本人確認状態が表示される。
 - 位置情報許可後、1 km / 3 km / 5 km の公開半径で募集カードを検索できる。
 - 日時、時間帯、キーワード、公開半径を指定して募集カードを公開できる。
 - 条件外のカードが検索結果に表示されない。
 - 相互承認前に個別チャットが開かない。
-- マッチ後、テキストを送信し、WebSocket 切断後も履歴を復元できる。
+- マッチ後、テキストを送信し、QUIC 切断後も履歴を復元できる。
 - 写真のアクセス権限がチャット参加者に限定される。
 - 交流後、双方が一度ずつ評価でき、集計値へ反映される。
 - ユーザーを通報・ブロックできる。
@@ -861,9 +866,9 @@ backend/
 ## 16. 開発の推奨順序
 
 1. 認証、ユーザー、プロフィール、DB migration
-2. 募集カード、現在地、PostGIS 距離検索
+2. 募集カード、現在地、現行Haversine距離検索（PostGIS化は将来）
 3. 関心送信・マッチ状態管理
-4. チャット一覧、WebSocket、メッセージ履歴
+4. チャット一覧、RESTメッセージ履歴、将来のQUIC配送
 5. 写真アップロード、アクセス制御、EXIF 除去
 6. 本人確認、相互評価、いいね集計
 7. 通報・ブロック・管理者運用
