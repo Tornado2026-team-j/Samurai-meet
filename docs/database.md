@@ -34,8 +34,11 @@
 | `0018_device_image_keys.sql` | 端末公開鍵、画像鍵の端末別envelope、端末proof nonce、画像のKey-A由来wrapper |
 | `0019_profiles_matching.sql` | プロフィール、最新位置、募集カード、ブロック、マッチ状態 |
 | `0020_chat_meetings.sql` | チャット、暗号化メッセージ、既読状態、会合セッション、短期距離補助値 |
+| `0021`–`0024` | v2クライアント所有鍵移行、legacy鍵cutover、画像削除ジョブ、Recovery検証時刻 |
+| `0025_notifications.sql` | ユーザー単位の直近7日通知、既読時刻、応募・承認／辞退・チャット送信の冪等イベント |
+| `0026_reports.sql` | 通報の原票`reports`（対象種別・理由・任意コメント・運営ステータス） |
 
-注意: 現行の簡易migration runnerはSQLファイルを順番に実行する。migration履歴テーブルによる本番適用管理を導入する場合は、既存環境の適用済み状態を確認してから切り替える。
+注意: 現行の簡易migration runnerはSQLファイルを順番に実行する。SQLファイル内のコメントや文字列に `;` を含めない（naiveな`;`分割のため）。migration履歴テーブルによる本番適用管理を導入する場合は、既存環境の適用済み状態を確認してから切り替える。
 
 ## 3. 認証テーブル
 
@@ -201,7 +204,11 @@ Recovery Phraseで復号したMaster Keyの所有証明を一時的に受け付�
 
 現行のDBイメージはPostGISなしのため、距離判定はGoのHaversineで行う。正確な位置は検索レスポンスに含めない。
 
-未実装の業務テーブルは`reviews`、`identity_verifications`、`reports`、`audit_logs`であり、API実装時にmigration、PostgreSQL integration test、API仕様書、機能仕様書を同じ変更で更新する。
+`0026_reports.sql`で`reports`を追加した。
+
+- `reports`: `reporter_user_id`、`target_type`（`user` / `recruitment_card` / `message` / `photo`）、`target_id`、`reason`（6種の固定値）、任意`comment`（最大2000）、`status`（`received` / `reviewing` / `actioned` / `dismissed`）。`(reporter_user_id, target_type, target_id)`のうち`status IN ('received','reviewing')`の行を部分一意インデックスで1件に集約する。`blocks`の書き込みAPIも同じ`backend/internal/safety`が担当する（テーブルは`0019`の既存`blocks`）。
+
+未実装の業務テーブルは`reviews`、`identity_verifications`、`audit_logs`であり、API実装時にmigration、PostgreSQL integration test、API仕様書、機能仕様書を同じ変更で更新する。運営キュー用の`GET/PATCH /admin/reports`と`audit_logs`は`reports`の次の作業。
 
 ## 7. 削除・保持
 

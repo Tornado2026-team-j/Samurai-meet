@@ -13,6 +13,7 @@ import (
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/matching"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/meeting"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/notification"
+	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/safety"
 	profileuser "github.com/Tornado2026-team-j/Samurai-meet/backend/internal/user"
 )
 
@@ -40,6 +41,7 @@ type RouterOptions struct {
 	Chats               *chat.Service
 	Meetings            *meeting.Service
 	Notifications       *notification.Service
+	Safety              *safety.Service
 }
 
 func NewRouter() http.Handler { return NewRouterWithOptions(RouterOptions{}) }
@@ -137,6 +139,12 @@ func NewRouterWithOptions(o RouterOptions) http.Handler {
 	}
 	if o.Sessions != nil && o.Meetings != nil {
 		m.HandleFunc(meetingPath+"/", meetingItem(o.Meetings, o.Sessions))
+	}
+	if o.Sessions != nil && o.Safety != nil {
+		m.HandleFunc(reportsPath, createReport(o.Safety, o.Sessions))
+		m.HandleFunc(meBlocksPath, blockCollection(o.Safety, o.Sessions))
+		m.HandleFunc(blocksPath, blockCollection(o.Safety, o.Sessions))
+		m.HandleFunc(blocksPath+"/", blockItem(o.Safety, o.Sessions))
 	}
 	return withSecurityHeadersAndRateLimit(withCORS(withJSONContentType(m), o))
 }

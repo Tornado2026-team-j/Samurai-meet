@@ -536,9 +536,20 @@ DBには会合中の参加者ごと・方式ごとに最新1件だけを保持�
 
 通知は応募、承認・辞退、暗号化チャットメッセージの作成と同じDBトランザクションで保存します。`event_key`で冪等化し、一覧はユーザー本人の通知だけを返します。通知本文はクライアントが言語別に生成し、チャットの平文・暗号文・鍵は通知へ保存しません。現在のクライアントはExpo画面からこの一覧と既読APIを利用します。
 
-### 6.10 未実装業務API
+### 6.10 通報・ブロック（実装済み）
 
-本人確認（Stripe Identity等）、評価、ブロック・通報登録、チャット内写真送信は引き続き予定です。Stripe Identityを採用する場合も、Stripe Webhookの署名検証・イベント冪等性・対象ユーザー紐付けが成功するまで`identity_status=verified`へ遷移させません。画像平文、Key-A、Key-B、Recovery Key、Refresh TokenをAPIログへ出さない不変条件は全機能に適用します。
+| Method | Path | 認証 | 用途 |
+| --- | --- | --- | --- |
+| POST | `/api/v1/reports` | Access Token | 通報の登録 |
+| GET | `/api/v1/me/blocks` | Access Token | 自分がブロックした相手の一覧 |
+| POST | `/api/v1/blocks` | Access Token | ユーザーをブロック（冪等、204） |
+| DELETE | `/api/v1/blocks/{user_id}` | Access Token | ブロック解除（204、未ブロックは404） |
+
+通報bodyは`{"target_type","target_id","reason","comment"}`。`target_type`は`user` / `recruitment_card` / `message` / `photo`、`reason`は`nuisance` / `harassment` / `impersonation` / `inappropriate_photo` / `dangerous` / `other`、`comment`は任意で最大1000 Unicode（サーバー上限2000）。自分自身・存在しないユーザーへの通報は拒否します。同一通報者×同一対象で未処理（`received` / `reviewing`）の通報がある場合は、新規作成せず既存の通報を`data`に入れて201で返します。通報者情報は対象者へ返しません。ブロックは`0019`の`blocks`テーブルを使い、`matching` / `chat` が既にアクセス制御で参照しています。運営キュー（`GET/PATCH /admin/reports`）と`audit_logs`は次の作業です。
+
+### 6.11 未実装業務API
+
+本人確認（Stripe Identity等）、評価、チャット内写真送信、通報の運営キューは引き続き予定です。Stripe Identityを採用する場合も、Stripe Webhookの署名検証・イベント冪等性・対象ユーザー紐付けが成功するまで`identity_status=verified`へ遷移させません。画像平文、Key-A、Key-B、Recovery Key、Refresh TokenをAPIログへ出さない不変条件は全機能に適用します。
 
 ## 7. クライアント更新手順
 

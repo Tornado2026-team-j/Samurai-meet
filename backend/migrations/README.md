@@ -26,3 +26,5 @@
 - `0021_client_root_key_transfer.sql` はv2のX25519端末合意公開鍵と、旧端末が新端末へMaster Keyを移行するためのopaque transfer行を追加する。秘密鍵、Master Key、Recovery Phrase、verification code平文は保存しない。
 - `0022_disable_legacy_root_keys.sql` はリリース前のv2-only cutoverで、旧v1 root envelope、Recovery challenge、旧Key-B materialを削除し、`key_envelopes`へv2-only制約を追加する。旧開発アカウントのv1 Recovery Keyは復旧できないため、v2の鍵登録をやり直す。
 - `0023_storage_cleanup_jobs.sql` はアカウント削除後の暗号化画像削除を再試行可能にする。ユーザー行への外部キーは持たず、DB削除コミット後もストレージ削除が完了するまでジョブを保持する。
+- `0024_recovery_delete_capability.sql` は`pre_auth_tokens`へRecovery検証済み時刻を追加する。
+- `0026_reports.sql` は通報の原票テーブル`reports`（対象種別・理由・任意コメント・運営ステータス）を追加する。運営キュー処理と管理者操作の監査ログは別途。通報者情報は対象者へ返さない。同一通報者×同一対象で未処理の通報は1件に集約する。

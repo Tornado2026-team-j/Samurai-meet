@@ -14,6 +14,7 @@ import (
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/matching"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/meeting"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/notification"
+	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/safety"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/user"
 	"log"
 	"net/http"
@@ -112,6 +113,7 @@ func main() {
 	matchingService := matching.NewService(database, notifications)
 	chatService := chat.NewService(database, signer, notifications)
 	meetingService := meeting.NewService(database)
+	safetyService := safety.NewService(database)
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
 		ReadTimeout:       2 * time.Minute,
@@ -119,7 +121,7 @@ func main() {
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       60 * time.Second,
 		MaxHeaderBytes:    32 * 1024,
-		Handler:           httpapi.NewRouterWithOptions(httpapi.RouterOptions{Environment: cfg.Environment, AllowExpoGoRedirect: cfg.AllowExpoGoRedirect, DevClientOrigin: cfg.DevClientOrigin, ClientOrigin: cfg.ClientOrigin, OAuthLogin: oauthLogin, PreAuth: preauth, Sessions: sessions, SessionHandoffs: handoffs, PasskeyBootstraps: bootstraps, Recovery: recovery, Passkeys: passkeys, KeyEnvelopes: envelopes, Devices: devices, DeviceTransfers: deviceTransfers, Images: images, Accounts: accounts, Profiles: profiles, Matching: matchingService, Chats: chatService, Meetings: meetingService, Notifications: notifications}),
+		Handler:           httpapi.NewRouterWithOptions(httpapi.RouterOptions{Environment: cfg.Environment, AllowExpoGoRedirect: cfg.AllowExpoGoRedirect, DevClientOrigin: cfg.DevClientOrigin, ClientOrigin: cfg.ClientOrigin, OAuthLogin: oauthLogin, PreAuth: preauth, Sessions: sessions, SessionHandoffs: handoffs, PasskeyBootstraps: bootstraps, Recovery: recovery, Passkeys: passkeys, KeyEnvelopes: envelopes, Devices: devices, DeviceTransfers: deviceTransfers, Images: images, Accounts: accounts, Profiles: profiles, Matching: matchingService, Chats: chatService, Meetings: meetingService, Notifications: notifications, Safety: safetyService}),
 	}
 	log.Printf("backend server listening on %s (environment=%s)", cfg.HTTPAddr, cfg.Environment)
 	if e := server.ListenAndServe(); e != nil && e != http.ErrServerClosed {
