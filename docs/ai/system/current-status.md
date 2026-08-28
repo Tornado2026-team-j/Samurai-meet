@@ -8,7 +8,7 @@
 
 - Google OAuth、pre-auth、Passkey、session/refresh、Web Passkey handoff、v2 client-owned root-key envelope、端末Key-B proof、暗号文画像API、退会API。
 - Go APIのプロフィール取得・更新、募集カードの作成・検索・更新・終了、関心・承認・辞退・完了、位置保存、acceptedマッチ向けRESTチャット部品、会合・距離補助API。
-- 募集・マッチングの外国人／日本人画面からAPIを呼ぶ実装は存在する。ただし、iOS実機で初期表示時に `invalid_recruitment_date` が発生した報告があり、募集作成の実機E2Eは未確認である。
+- 募集・マッチングの外国人／日本人画面からAPIを呼ぶ実装、募集管理・応募履歴・応募取り下げ、表示言語に依存しない通知遷移が存在する。日時入力はISO内部値と `Asia/Tokyo` 固定へ更新し、自動テストで確認済み。募集作成から通知遷移までのiOS実機全通しE2Eは未確認である。
 - 通知のDB永続化、一覧・既読API、応募／承認／辞退／暗号化チャット送信に伴う通知生成、外国人／日本人の通知画面・未読バッジ。
 - 通知は現時点でアプリ内REST通知であり、`expo-notifications`等によるOSプッシュ通知は未実装。
 - チャットは暗号文のREST送信・履歴取得・既読更新・短命transport token発行の部品まで。QUIC、WebTransport、WebSocketによるリアルタイム配送とチャット画面は未実装。
@@ -16,7 +16,7 @@
 
 ## 未完了・本番承認不可
 
-- iOS募集画面の初期日時エラーの原因特定、修正後の実機E2E、過去時刻・日跨ぎ確認を完了していない。
+- iOS募集画面の初期日時パース問題はISO内部値／JST固定化で修正し、自動テストを完了した。日時picker、過去時刻、日跨ぎ、公開・応募・通知遷移の実機E2Eは完了していない。
 - native Passkey、Secure Enclave／Android Keystore、端末移行、画像画面統合、削除reconciler、legacy画像移行、プロフィール編集UIとの完全同期、チャット／会合画面を完了していない。
 - QUIC／WebTransportのPoC、サーバー配送、0-RTT禁止、heartbeat失効、再接続・負荷試験を完了していない。
 - OSプッシュ通知、本人確認、評価、通報、監査ログ、レート制限、PostGIS化は未実装または未確定である。

@@ -417,7 +417,7 @@ Request body:
 
 `PATCH /api/v1/me` も互換入口として受け付けますが、新しいクライアントは`/me/profile`を使用します。
 
-### 6.6 募集・検索・マッチ（バックエンド実装済み。フロント接続コードあり・iOS実機E2E未確認）
+### 6.6 募集・検索・マッチ（バックエンド実装済み。フロント接続済み・iOS全通しE2E未確認）
 
 #### 募集カード
 
@@ -442,7 +442,7 @@ Request body:
 }
 ```
 
-`category`は`Food` / `Places` / `Activity` / `Other`、`status`は`draft` / `open` / `closed`、公開半径は1 / 3 / 5だけを受け付けます。日時は`Asia/Tokyo`固定の壁時計として解釈し、期限は`end_time`から計算します。公開するカードには完成プロフィールが必要です。成功時は201で`{ "data": { ...card } }`を返します。募集画面のフロント接続コードはありますが、iOS初期表示の`invalid_recruitment_date`報告があるため、実機での公開成功は未確認です。
+`category`は`Food` / `Places` / `Activity` / `Other`、`status`は`draft` / `open` / `closed`、公開半径は1 / 3 / 5だけを受け付けます。日時は`Asia/Tokyo`固定の壁時計として解釈し、期限は`end_time`から計算します。公開するカードには完成プロフィールが必要です。成功時は201で`{ "data": { ...card } }`を返します。日時入力はISO内部値とJST固定に統一され、自動テストで確認済みです。iOS実機の公開を含む全通しE2Eは未確認です。
 
 `GET /api/v1/recruitments/{id}`は所有者には自身のカードを返し、他ユーザーには期限内の`open` / `matched`だけを返します。`PATCH`は所有者だけが実行でき、`matched`後の内容変更は拒否します。`DELETE`は物理削除ではなく`closed`へ遷移させ、204を返します。
 

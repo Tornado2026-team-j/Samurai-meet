@@ -4,7 +4,7 @@
 - 実装済み: プロフィール取得・自己紹介を含む更新API、募集カードの作成・検索・更新・終了、関心・承認・完了、最新位置保存。
 - 実装済み: acceptedマッチ向けRESTチャット（暗号文、既読、冪等再送、短命Chat Token）、会合セッション、短期のBluetooth／位置推測補助値API。
 - 実装済み: 通知の永続化・一覧・未読管理、応募／承認／辞退／暗号化チャット送信からの通知生成、通知画面のAPI接続。
-- 未完了: Web Passkeyの実機E2E、端末画像の画面統合、削除reconciler、legacy画像移行、native Passkey実機、プロフィール編集・チャットのフロント接続、QUIC配送、ネイティブBluetooth測定、評価、Stripe Identity連携。募集公開・検索・応募・承認／辞退のフロント接続コードはあるが、iOS初期表示で`invalid_recruitment_date`が発生した報告があり、実機E2Eは未確認。通知はアプリ内RESTまででOSプッシュは未実装。
+- 未完了: Web Passkeyの実機E2E、端末画像の画面統合、削除reconciler、legacy画像移行、native Passkey実機、プロフィール編集・チャットのフロント接続、QUIC配送、ネイティブBluetooth測定、評価、Stripe Identity連携。募集公開・検索・応募・承認／辞退、募集管理・応募履歴・応募取り下げ、通知遷移のフロント接続コードと自動テストは実装済み。日時初期パース問題はISO/JST化で解消済みだが、iOS実機の全通しE2Eは未確認。通知はアプリ内RESTまででOSプッシュは未実装。
 
 マッチングの距離判定はPostGISなしのGo Haversineで実装している。募集の利用日・壁時計は`Asia/Tokyo`固定で正規化し、絶対時刻はUTCで扱う。件数増加時のPostGIS化、APIレート制限、QUIC配送はバックログに残す。
 

@@ -45,4 +45,4 @@ Passkey用Web画面は、Goバックエンドの `/passkey` から配信しま�
 
 募集の`available_date`、`start_time`、`end_time`はユーザーの端末設定ではなく`Asia/Tokyo`として入力・解釈します。APIの`timezone`も`Asia/Tokyo`固定で、空の場合はサーバーが同値へ正規化し、その他のタイムゾーンは拒否します。`created_at`や`expires_at`などの絶対時刻はUTC RFC3339で扱います。
 
-現在の作業ブランチでは、募集画面の初期表示時に`invalid_recruitment_date`が発生したiOSログがあり、募集画面の起動から公開までの実機確認は未完了です。
+以前報告された募集画面の初期表示時の`invalid_recruitment_date`は、ISO内部値と`Asia/Tokyo`固定化で解消し、自動テストで確認済みです。募集画面の起動から公開・応募・通知遷移までのiOS実機全通し確認は未完了です。
