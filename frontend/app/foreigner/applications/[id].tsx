@@ -13,6 +13,8 @@ import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "../../../hooks/useAuth";
 import { APIError } from "../../../services/api-client";
+import { loadLanguage } from "../../../services/onboarding";
+import type { AppLanguage } from "../../../services/onboarding-contract";
 import {
   acceptMatch,
   getMatch,
@@ -28,6 +30,85 @@ const MUTED_GRAY = "#949494";
 const BORDER_GRAY = "#e4e4e4";
 const SOFT_BLUE = "#eff8ff";
 
+type LoadErrorKey = "loginRequired" | "failed";
+type ActionErrorKey = "loginRequired" | "failed";
+
+type DetailCopy = {
+  loading: string;
+  loginRequired: string;
+  loadError: string;
+  back: string;
+  title: string;
+  introduction: string;
+  noIntroduction: string;
+  accept: string;
+  accepting: string;
+  reject: string;
+  rejecting: string;
+  processingAccept: string;
+  processingReject: string;
+  actionFailed: string;
+  status: {
+    accepted: string;
+    rejected: string;
+    cancelled: string;
+    recruitmentClosed: string;
+    expired: string;
+    unavailable: string;
+  };
+};
+
+const COPY: Record<AppLanguage, DetailCopy> = {
+  en: {
+    loading: "Loading application...",
+    loginRequired: "Sign in to view this application.",
+    loadError: "Application could not be loaded. It may already have been processed.",
+    back: "Back",
+    title: "Application detail",
+    introduction: "About this guide",
+    noIntroduction: "No introduction provided.",
+    accept: "Choose this guide",
+    accepting: "Choosing guide...",
+    reject: "Decline",
+    rejecting: "Declining...",
+    processingAccept: "Choosing guide...",
+    processingReject: "Declining...",
+    actionFailed: "The application could not be processed. Check the latest status and try again.",
+    status: {
+      accepted: "Guide chosen",
+      rejected: "Application declined",
+      cancelled: "Application withdrawn",
+      recruitmentClosed: "Recruitment closed",
+      expired: "Application expired",
+      unavailable: "Application unavailable",
+    },
+  },
+  ja: {
+    loading: "応募を読み込み中…",
+    loginRequired: "ログインすると応募を確認できます。",
+    loadError: "応募を読み込めませんでした。すでに処理済みの可能性があります。",
+    back: "戻る",
+    title: "応募詳細",
+    introduction: "自己紹介",
+    noIntroduction: "自己紹介はありません。",
+    accept: "この人を案内役に決定",
+    accepting: "案内役を選択中…",
+    reject: "却下する",
+    rejecting: "却下中…",
+    processingAccept: "案内役を選択しています…",
+    processingReject: "応募を却下しています…",
+    actionFailed: "応募を処理できませんでした。最新の状態を確認して、もう一度お試しください。",
+    status: {
+      accepted: "案内役に決定しました",
+      rejected: "応募を却下しました",
+      cancelled: "応募は取り下げ済みです",
+      recruitmentClosed: "募集は終了しています",
+      expired: "応募の期限が切れています",
+      unavailable: "応募は利用できません",
+    },
+  },
+};
+
 export default function ForeignerApplicationDetailScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -40,10 +121,26 @@ export default function ForeignerApplicationDetailScreen() {
   const recruitmentID = Array.isArray(recruitmentId) ? recruitmentId[0] : recruitmentId;
   const [application, setApplication] = useState<MatchView | null>(null);
   const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading");
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<LoadErrorKey | null>(null);
   const [actionState, setActionState] = useState<"idle" | "accepting" | "rejecting">("idle");
-  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<ActionErrorKey | null>(null);
   const [bottomActionsHeight, setBottomActionsHeight] = useState(0);
+  const [language, setLanguage] = useState<AppLanguage>("en");
+  const copy = COPY[language];
+
+  useEffect(() => {
+    let active = true;
+    void loadLanguage()
+      .then((storedLanguage) => {
+        if (active && storedLanguage) setLanguage(storedLanguage);
+      })
+      .catch(() => {
+        // Keep the initial English copy when saved-language storage is unavailable.
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -54,7 +151,7 @@ export default function ForeignerApplicationDetailScreen() {
       if (!applicationId || status !== "signed_in" || !activeSession) {
         if (!cancelled) {
           setLoadState("error");
-          setLoadError("ログイン後に応募を表示できます。");
+          setLoadError("loginRequired");
         }
         return;
       }
@@ -101,7 +198,7 @@ export default function ForeignerApplicationDetailScreen() {
         if (error instanceof Error && error.name === "AbortError") return;
         if (!cancelled) {
           setLoadState("error");
-          setLoadError("応募を読み込めませんでした。すでに処理済みの可能性があります。");
+          setLoadError("failed");
         }
       }
     };
@@ -124,15 +221,15 @@ export default function ForeignerApplicationDetailScreen() {
         <StatusBar style="light" />
         {loadState === "loading" ? <ActivityIndicator color={BLUE} /> : null}
         <Text accessibilityRole={loadState === "error" ? "alert" : undefined} style={styles.loadingText}>
-          {loadState === "loading" ? "応募を読み込み中..." : loadError}
+          {loadState === "loading" ? copy.loading : loadError ? (loadError === "loginRequired" ? copy.loginRequired : copy.loadError) : null}
         </Text>
         <Pressable
-          accessibilityLabel="Back"
+          accessibilityLabel={copy.back}
           accessibilityRole="button"
           onPress={() => router.back()}
           style={({ pressed }) => [styles.loadingBackButton, pressed && styles.pressed]}
         >
-          <Text style={styles.loadingBackButtonText}>Back</Text>
+          <Text style={styles.loadingBackButtonText}>{copy.back}</Text>
         </Pressable>
       </View>
     );
@@ -151,7 +248,7 @@ export default function ForeignerApplicationDetailScreen() {
     if (decided || actionState !== "idle") return;
     const activeSession = getCurrentSession() ?? session;
     if (status !== "signed_in" || !activeSession) {
-      setActionError("ログイン後にもう一度お試しください。");
+      setActionError("loginRequired");
       return;
     }
 
@@ -173,7 +270,7 @@ export default function ForeignerApplicationDetailScreen() {
       }
       setApplication((current) => current ? { ...current, status: result.status, updated_at: result.updated_at, matched_at: result.matched_at } : current);
     } catch {
-      setActionError("応募の処理に失敗しました。最新状態を確認して再試行してください。");
+      setActionError("failed");
     } finally {
       setActionState("idle");
     }
@@ -190,7 +287,7 @@ export default function ForeignerApplicationDetailScreen() {
         ]}
       >
         <Pressable
-          accessibilityLabel="Back"
+          accessibilityLabel={copy.back}
           accessibilityRole="button"
           hitSlop={10}
           onPress={() => router.back()}
@@ -203,7 +300,7 @@ export default function ForeignerApplicationDetailScreen() {
           <MaterialIcons color="#ffffff" name="chevron-left" size={30} />
         </Pressable>
 
-        <Text style={styles.headerTitle}>Application detail</Text>
+        <Text style={styles.headerTitle}>{copy.title}</Text>
       </View>
 
       <ScrollView
@@ -227,8 +324,8 @@ export default function ForeignerApplicationDetailScreen() {
 
           <View style={styles.divider} />
 
-          <Text style={styles.sectionLabel}>About this guide</Text>
-          <Text style={styles.bio}>{application.other_user.bio || "No introduction provided."}</Text>
+          <Text style={styles.sectionLabel}>{copy.introduction}</Text>
+          <Text style={styles.bio}>{application.other_user.bio || copy.noIntroduction}</Text>
         </View>
       </ScrollView>
 
@@ -256,21 +353,22 @@ export default function ForeignerApplicationDetailScreen() {
               ]}
             >
                 {choseGuide
-                  ? "Guide chosen"
+                  ? copy.status.accepted
                   : withdrawn
-                    ? "Application withdrawn"
+                    ? copy.status.cancelled
                     : recruitmentClosed
-                      ? "Recruitment closed"
+                      ? copy.status.recruitmentClosed
                   : unavailable && application.status === "expired"
-                    ? "Application expired"
+                    ? copy.status.expired
                   : unavailable
-                    ? "Application unavailable"
-                    : "Application declined"}
+                    ? copy.status.unavailable
+                    : copy.status.rejected}
             </Text>
           </View>
         ) : null}
 
         <Pressable
+          accessibilityLabel={actionState === "accepting" ? copy.accepting : copy.accept}
           accessibilityRole="button"
           accessibilityState={{ disabled: decided }}
           disabled={decided}
@@ -281,10 +379,11 @@ export default function ForeignerApplicationDetailScreen() {
             pressed && styles.pressed,
           ]}
         >
-          <Text style={styles.primaryButtonText}>Choose this guide</Text>
+          <Text style={styles.primaryButtonText}>{actionState === "accepting" ? copy.accepting : copy.accept}</Text>
         </Pressable>
 
         <Pressable
+          accessibilityLabel={actionState === "rejecting" ? copy.rejecting : copy.reject}
           accessibilityRole="button"
           accessibilityState={{ disabled: decided }}
           disabled={decided}
@@ -301,14 +400,16 @@ export default function ForeignerApplicationDetailScreen() {
               decided && styles.disabledSecondaryButtonText,
             ]}
           >
-            {actionState === "rejecting" ? "Declining..." : "Decline"}
+            {actionState === "rejecting" ? copy.rejecting : copy.reject}
           </Text>
         </Pressable>
         {actionState === "accepting" ? (
-          <Text style={styles.actionStatus}>Choosing guide...</Text>
+          <Text style={styles.actionStatus}>{copy.processingAccept}</Text>
         ) : null}
         {actionError ? (
-          <Text accessibilityRole="alert" style={styles.actionError}>{actionError}</Text>
+          <Text accessibilityRole="alert" style={styles.actionError}>
+            {actionError === "loginRequired" ? copy.loginRequired : copy.actionFailed}
+          </Text>
         ) : null}
       </View>
     </View>
