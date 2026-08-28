@@ -1,7 +1,9 @@
 import { useMemo, useState } from "react";
 import { MaterialIcons } from "@expo/vector-icons";
 import {
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -288,72 +290,83 @@ export default function ProfileForm({
       <Modal
         animationType="slide"
         onRequestClose={() => setCountryPickerVisible(false)}
+        presentationStyle="overFullScreen"
         transparent
         visible={countryPickerVisible}
       >
-        <Pressable
-          accessibilityLabel={copy.close}
-          onPress={() => setCountryPickerVisible(false)}
-          style={styles.modalBackdrop}
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          style={styles.modalKeyboardAvoiding}
         >
-          <Pressable onPress={() => undefined} style={styles.countrySheet}>
-            <View style={styles.sheetHeader}>
-              <Text style={styles.sheetTitle}>{copy.countryTitle}</Text>
-              <Pressable
-                accessibilityLabel={copy.close}
-                accessibilityRole="button"
-                hitSlop={8}
-                onPress={() => setCountryPickerVisible(false)}
-                style={({ pressed }) => [styles.closeButton, pressed && styles.pressed]}
+          <Pressable
+            accessibilityLabel={copy.close}
+            onPress={() => setCountryPickerVisible(false)}
+            style={styles.modalBackdrop}
+          >
+            <Pressable onPress={() => undefined} style={styles.countrySheet}>
+              <View style={styles.sheetHeader}>
+                <Text style={styles.sheetTitle}>{copy.countryTitle}</Text>
+                <Pressable
+                  accessibilityLabel={copy.close}
+                  accessibilityRole="button"
+                  hitSlop={8}
+                  onPress={() => setCountryPickerVisible(false)}
+                  style={({ pressed }) => [styles.closeButton, pressed && styles.pressed]}
+                >
+                  <MaterialIcons color={TEXT_GRAY} name="close" size={24} />
+                </Pressable>
+              </View>
+              <View style={styles.countrySearchField}>
+                <MaterialIcons color={MUTED_GRAY} name="search" size={21} />
+                <TextInput
+                  accessibilityLabel={copy.countrySearch}
+                  autoCapitalize="characters"
+                  onChangeText={setCountryQuery}
+                  placeholder={copy.countrySearch}
+                  placeholderTextColor="#949494"
+                  style={styles.countrySearchInput}
+                  value={countryQuery}
+                />
+              </View>
+              <ScrollView
+                automaticallyAdjustKeyboardInsets
+                keyboardDismissMode="on-drag"
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
               >
-                <MaterialIcons color={TEXT_GRAY} name="close" size={24} />
-              </Pressable>
-            </View>
-            <View style={styles.countrySearchField}>
-              <MaterialIcons color={MUTED_GRAY} name="search" size={21} />
-              <TextInput
-                accessibilityLabel={copy.countrySearch}
-                autoCapitalize="characters"
-                onChangeText={setCountryQuery}
-                placeholder={copy.countrySearch}
-                placeholderTextColor="#949494"
-                style={styles.countrySearchInput}
-                value={countryQuery}
-              />
-            </View>
-            <ScrollView showsVerticalScrollIndicator={false}>
-              {filteredCountries.map((country) => {
-                const selected = country.code === nationalityCode;
-                return (
-                  <Pressable
-                    key={country.code}
-                    accessibilityRole="button"
-                    accessibilityState={{ selected }}
-                    onPress={() => {
-                      setNationalityCode(country.code);
-                      setCountryQuery("");
-                      setCountryPickerVisible(false);
-                    }}
-                    style={({ pressed }) => [
-                      styles.countryOption,
-                      selected && styles.countryOptionSelected,
-                      pressed && styles.pressed,
-                    ]}
-                  >
-                    <Text style={styles.countryName}>{country.name}</Text>
-                    <Text style={styles.countryCode}>{country.code}</Text>
-                    {selected ? (
-                      <MaterialIcons color={YELLOW} name="check-circle" size={22} />
-                    ) : null}
-                  </Pressable>
-                );
-              })}
-              {filteredCountries.length === 0 ? (
-                <Text style={styles.noCountries}>{copy.noCountries}</Text>
-              ) : null}
-            </ScrollView>
+                {filteredCountries.map((country) => {
+                  const selected = country.code === nationalityCode;
+                  return (
+                    <Pressable
+                      key={country.code}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected }}
+                      onPress={() => {
+                        setNationalityCode(country.code);
+                        setCountryQuery("");
+                        setCountryPickerVisible(false);
+                      }}
+                      style={({ pressed }) => [
+                        styles.countryOption,
+                        selected && styles.countryOptionSelected,
+                        pressed && styles.pressed,
+                      ]}
+                    >
+                      <Text style={styles.countryName}>{country.name}</Text>
+                      <Text style={styles.countryCode}>{country.code}</Text>
+                      {selected ? (
+                        <MaterialIcons color={YELLOW} name="check-circle" size={22} />
+                      ) : null}
+                    </Pressable>
+                  );
+                })}
+                {filteredCountries.length === 0 ? (
+                  <Text style={styles.noCountries}>{copy.noCountries}</Text>
+                ) : null}
+              </ScrollView>
+            </Pressable>
           </Pressable>
-        </Pressable>
+        </KeyboardAvoidingView>
       </Modal>
     </View>
   );
@@ -450,6 +463,9 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: "flex-end",
     backgroundColor: "rgba(31, 31, 31, 0.35)",
+  },
+  modalKeyboardAvoiding: {
+    flex: 1,
   },
   countrySheet: {
     width: "100%",
