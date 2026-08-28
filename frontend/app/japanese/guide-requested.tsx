@@ -4,6 +4,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { ActivityIndicator, Image, Pressable, StyleSheet, Text, View } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { useAuth } from "../../hooks/useAuth";
+import { APIError } from "../../services/api-client";
 import { getMatch, type MatchView } from "../../services/matching";
 import { loadLanguage } from "../../services/onboarding";
 import type { AppLanguage } from "../../services/onboarding-contract";
@@ -52,7 +53,7 @@ const COPY = {
 
 export default function JapaneseGuideRequestedScreen() {
   const router = useRouter();
-  const { getCurrentSession, session, status } = useAuth();
+  const { getCurrentSession, refresh, session, status } = useAuth();
   const { matchId } = useLocalSearchParams<{ matchId?: string | string[] }>();
   const currentMatchID = Array.isArray(matchId) ? matchId[0] : matchId;
   const [match, setMatch] = useState<MatchView | null>(null);
@@ -86,7 +87,21 @@ export default function JapaneseGuideRequestedScreen() {
     setMatchLoadState("loading");
     setMatchLoadError(null);
     try {
-      const result = await getMatch(currentMatchID, activeSession, signal);
+      const loadWithSession = (currentSession: typeof activeSession) => getMatch(
+        currentMatchID,
+        currentSession,
+        signal,
+      );
+      let result: MatchView;
+      try {
+        result = await loadWithSession(activeSession);
+      } catch (error) {
+        if (!(error instanceof APIError) || error.status !== 401) throw error;
+        await refresh();
+        const refreshedSession = getCurrentSession();
+        if (!refreshedSession) throw error;
+        result = await loadWithSession(refreshedSession);
+      }
       setMatch(result);
       setMatchLoadState("ready");
     } catch (error) {
@@ -94,7 +109,7 @@ export default function JapaneseGuideRequestedScreen() {
       setMatchLoadState("error");
       setMatchLoadError("failed");
     }
-  }, [currentMatchID, getCurrentSession, session, status]);
+  }, [currentMatchID, getCurrentSession, refresh, session, status]);
 
   useEffect(() => {
     if (!currentMatchID) return;
