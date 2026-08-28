@@ -1,10 +1,11 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
-import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import {
   ActivityIndicator,
   Alert,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -120,11 +121,14 @@ export default function JapaneseApplicationsScreen() {
   const [language, setLanguage] = useState<AppLanguage>(requestedLanguage ?? "ja");
   const [applications, setApplications] = useState<MatchView[]>([]);
   const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading");
+  const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [withdrawingID, setWithdrawingID] = useState<string | null>(null);
+  const initialLoadStarted = useRef(false);
+  const hasLoaded = useRef(false);
   const copy = COPY[language];
 
-  useFocusEffect(useCallback(() => {
+  useEffect(() => {
     let active = true;
     void loadLanguage().then((storedLanguage) => {
       if (active) setLanguage(requestedLanguage ?? storedLanguage ?? "ja");
@@ -134,7 +138,7 @@ export default function JapaneseApplicationsScreen() {
     return () => {
       active = false;
     };
-  }, [requestedLanguage]));
+  }, [requestedLanguage]);
 
   const loadApplications = useCallback(() => {
     const controller = new AbortController();
@@ -145,13 +149,19 @@ export default function JapaneseApplicationsScreen() {
       if (status !== "signed_in" || !activeSession) {
         if (!cancelled) {
           setApplications([]);
+          setRefreshing(false);
           setLoadState("error");
           setLoadError(copy.loginRequired);
         }
         return;
       }
 
-      setLoadState("loading");
+      const initialLoad = !hasLoaded.current;
+      if (initialLoad) {
+        setLoadState("loading");
+      } else {
+        setRefreshing(true);
+      }
       setLoadError(null);
       try {
         const request = (currentSession: typeof activeSession) => listMatches(
@@ -171,14 +181,17 @@ export default function JapaneseApplicationsScreen() {
         }
         if (!cancelled) {
           setApplications(result);
+          hasLoaded.current = true;
           setLoadState("ready");
         }
       } catch (error) {
         if (error instanceof Error && error.name === "AbortError") return;
         if (!cancelled) {
-          setLoadState("error");
+          setLoadState(initialLoad ? "error" : "ready");
           setLoadError(copy.loadError);
         }
+      } finally {
+        if (!cancelled) setRefreshing(false);
       }
     };
 
@@ -189,7 +202,14 @@ export default function JapaneseApplicationsScreen() {
     };
   }, [copy.loadError, copy.loginRequired, getCurrentSession, refresh, session, status]);
 
-  useFocusEffect(loadApplications);
+  const loadApplicationsRef = useRef(loadApplications);
+  loadApplicationsRef.current = loadApplications;
+
+  useEffect(() => {
+    if (initialLoadStarted.current || status === "loading") return;
+    initialLoadStarted.current = true;
+    return loadApplicationsRef.current();
+  }, [status]);
 
   const openApplication = (matchID: string) => {
     router.push({
@@ -260,6 +280,13 @@ export default function JapaneseApplicationsScreen() {
 
       <ScrollView
         contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 32 }]}
+        refreshControl={
+          <RefreshControl
+            onRefresh={() => loadApplications()}
+            refreshing={refreshing}
+            tintColor={BLUE}
+          />
+        }
         showsVerticalScrollIndicator={false}
       >
         <Text style={styles.intro}>{copy.intro}</Text>
@@ -281,70 +308,85 @@ export default function JapaneseApplicationsScreen() {
               <Text style={styles.retryText}>{copy.retry}</Text>
             </Pressable>
           </View>
-        ) : applications.length === 0 ? (
-          <View style={styles.statePanel}>
-            <MaterialIcons color={MUTED_GRAY} name="history" size={36} />
-            <Text style={styles.stateText}>{copy.empty}</Text>
-          </View>
         ) : (
-          applications.map((application) => {
-            const recruitmentCard = recruitmentToMatchCard(application.recruitment);
-            const pending = application.status === "pending";
-            const withdrawing = withdrawingID === application.id;
-            return (
-              <View key={application.id} style={styles.applicationCard}>
+          <>
+            {loadError ? (
+              <View style={styles.inlineError}>
+                <Text accessibilityRole="alert" style={styles.inlineErrorText}>{loadError}</Text>
                 <Pressable
-                  accessibilityLabel={`${application.other_user.name || copy.userFallback}${copy.detailLabelSuffix}`}
+                  accessibilityLabel={copy.retry}
                   accessibilityRole="button"
-                  onPress={() => openApplication(application.id)}
-                  style={({ pressed }) => [styles.cardMain, pressed && styles.pressed]}
+                  onPress={() => loadApplications()}
+                  style={({ pressed }) => [styles.retryButton, pressed && styles.pressed]}
                 >
-                  <View style={styles.cardHeader}>
-                    <View style={styles.avatar}>
-                      <MaterialIcons color="#d4d4d4" name="account-circle" size={38} />
-                    </View>
-                    <View style={styles.recipientBlock}>
-                      <Text numberOfLines={1} style={styles.recipientName}>
-                        {application.other_user.name || copy.userFallback}
-                      </Text>
-                      <Text style={styles.recipientCountry}>
-                        {copy.ownerLabel} · {application.other_user.nationality_code || "—"}
-                      </Text>
-                    </View>
-                    <View style={[styles.statusPill, { borderColor: statusColor(application.status) }]}>
-                      <Text style={[styles.statusText, { color: statusColor(application.status) }]}>
-                        {copy.status[application.status]}
-                      </Text>
-                    </View>
-                  </View>
-
-                  <Text numberOfLines={2} style={styles.description}>
-                    {application.recruitment.description}
-                  </Text>
-                  <Text style={styles.schedule}>
-                    {recruitmentCard.detailDate} · {formatTimeRange(application.recruitment.start_time, application.recruitment.duration_hours)}
-                  </Text>
-                  <Text style={styles.openHint}>{copy.openHint}</Text>
+                  <Text style={styles.retryText}>{copy.retry}</Text>
                 </Pressable>
-
-                {pending ? (
-                  <Pressable
-                    accessibilityLabel={withdrawing ? copy.withdrawingLabel : copy.withdrawLabel}
-                    accessibilityRole="button"
-                    accessibilityState={{ busy: withdrawing, disabled: withdrawing }}
-                    disabled={withdrawing}
-                    onPress={() => withdraw(application)}
-                    style={({ pressed }) => [styles.withdrawButton, withdrawing && styles.disabled, pressed && styles.pressed]}
-                  >
-                    {withdrawing ? <ActivityIndicator color="#b42318" size="small" /> : null}
-                    <Text style={styles.withdrawText}>{withdrawing ? copy.withdrawing : copy.withdraw}</Text>
-                  </Pressable>
-                ) : (
-                  <Text style={styles.resultText}>{copy.resultFixed}</Text>
-                )}
               </View>
-            );
-          })
+            ) : null}
+            {applications.length === 0 ? (
+              <View style={styles.statePanel}>
+                <MaterialIcons color={MUTED_GRAY} name="history" size={36} />
+                <Text style={styles.stateText}>{copy.empty}</Text>
+              </View>
+            ) : applications.map((application) => {
+              const recruitmentCard = recruitmentToMatchCard(application.recruitment);
+              const pending = application.status === "pending";
+              const withdrawing = withdrawingID === application.id;
+              return (
+                <View key={application.id} style={styles.applicationCard}>
+                  <Pressable
+                    accessibilityLabel={`${application.other_user.name || copy.userFallback}${copy.detailLabelSuffix}`}
+                    accessibilityRole="button"
+                    onPress={() => openApplication(application.id)}
+                    style={({ pressed }) => [styles.cardMain, pressed && styles.pressed]}
+                  >
+                    <View style={styles.cardHeader}>
+                      <View style={styles.avatar}>
+                        <MaterialIcons color="#d4d4d4" name="account-circle" size={38} />
+                      </View>
+                      <View style={styles.recipientBlock}>
+                        <Text numberOfLines={1} style={styles.recipientName}>
+                          {application.other_user.name || copy.userFallback}
+                        </Text>
+                        <Text style={styles.recipientCountry}>
+                          {copy.ownerLabel} · {application.other_user.nationality_code || "—"}
+                        </Text>
+                      </View>
+                      <View style={[styles.statusPill, { borderColor: statusColor(application.status) }]}>
+                        <Text style={[styles.statusText, { color: statusColor(application.status) }]}>
+                          {copy.status[application.status]}
+                        </Text>
+                      </View>
+                    </View>
+
+                    <Text numberOfLines={2} style={styles.description}>
+                      {application.recruitment.description}
+                    </Text>
+                    <Text style={styles.schedule}>
+                      {recruitmentCard.detailDate} · {formatTimeRange(application.recruitment.start_time, application.recruitment.duration_hours)}
+                    </Text>
+                    <Text style={styles.openHint}>{copy.openHint}</Text>
+                  </Pressable>
+
+                  {pending ? (
+                    <Pressable
+                      accessibilityLabel={withdrawing ? copy.withdrawingLabel : copy.withdrawLabel}
+                      accessibilityRole="button"
+                      accessibilityState={{ busy: withdrawing, disabled: withdrawing }}
+                      disabled={withdrawing}
+                      onPress={() => withdraw(application)}
+                      style={({ pressed }) => [styles.withdrawButton, withdrawing && styles.disabled, pressed && styles.pressed]}
+                    >
+                      {withdrawing ? <ActivityIndicator color="#b42318" size="small" /> : null}
+                      <Text style={styles.withdrawText}>{withdrawing ? copy.withdrawing : copy.withdraw}</Text>
+                    </Pressable>
+                  ) : (
+                    <Text style={styles.resultText}>{copy.resultFixed}</Text>
+                  )}
+                </View>
+              );
+            })}
+          </>
         )}
       </ScrollView>
     </View>
@@ -391,6 +433,19 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 12,
     paddingHorizontal: 20,
+  },
+  inlineError: {
+    width: "100%",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 20,
+  },
+  inlineErrorText: {
+    color: "#b42318",
+    fontSize: 13,
+    fontWeight: "600",
+    lineHeight: 19,
+    textAlign: "center",
   },
   stateText: { color: MUTED_GRAY, fontSize: 14, fontWeight: "600", lineHeight: 20, textAlign: "center" },
   retryButton: {

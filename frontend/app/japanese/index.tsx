@@ -1,9 +1,10 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MaterialIcons } from "@expo/vector-icons";
-import { useFocusEffect, useRouter } from "expo-router";
+import { useRouter } from "expo-router";
 import {
   ActivityIndicator,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -47,7 +48,10 @@ export default function JapaneseHomeScreen() {
   const [submittedQuery, setSubmittedQuery] = useState("");
   const [matches, setMatches] = useState<MatchCardData[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const initialLoadStarted = useRef(false);
+  const hasLoaded = useRef(false);
   const [selectedCategory, setSelectedCategory] = useState<(typeof CATEGORIES)[number]>(
     "すべて",
   );
@@ -80,12 +84,18 @@ export default function JapaneseHomeScreen() {
       if (status !== "signed_in" || !activeSession) {
         if (!cancelled) {
           setLoading(false);
+          setRefreshing(false);
           setLoadError("ログイン後に募集を表示できます。");
         }
         return;
       }
 
-      setLoading(true);
+      const initialLoad = !hasLoaded.current;
+      if (initialLoad) {
+        setLoading(true);
+      } else {
+        setRefreshing(true);
+      }
       setLoadError(null);
       try {
         let coordinates = null;
@@ -126,14 +136,20 @@ export default function JapaneseHomeScreen() {
             controller.signal,
           );
         }
-        if (!cancelled) setMatches(result.map(recruitmentToMatchCard));
+        if (!cancelled) {
+          setMatches(result.map(recruitmentToMatchCard));
+          hasLoaded.current = true;
+        }
       } catch (error) {
         if (error instanceof Error && error.name === "AbortError") return;
         if (!cancelled) {
           setLoadError("募集を読み込めませんでした。時間をおいて再試行してください。");
         }
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+          setRefreshing(false);
+        }
       }
     };
 
@@ -144,7 +160,15 @@ export default function JapaneseHomeScreen() {
     };
   }, [getCurrentSession, refresh, session, status, submittedQuery]);
 
-  useFocusEffect(loadRecruitments);
+  const loadRecruitmentsRef = useRef(loadRecruitments);
+  loadRecruitmentsRef.current = loadRecruitments;
+
+  useEffect(() => {
+    if (initialLoadStarted.current || status === "loading") return;
+    initialLoadStarted.current = true;
+    return loadRecruitmentsRef.current();
+  }, [status]);
+
   const openMatch = (match: MatchCardData) => {
     router.push({
       pathname: "/japanese/matches/[id]",
@@ -161,6 +185,13 @@ export default function JapaneseHomeScreen() {
           styles.matchListContent,
           { paddingTop: headerHeight + 28 },
         ]}
+        refreshControl={
+          <RefreshControl
+            onRefresh={() => loadRecruitments()}
+            refreshing={refreshing}
+            tintColor={BLUE}
+          />
+        }
         showsVerticalScrollIndicator={false}
         style={styles.matchList}
       >
@@ -169,7 +200,7 @@ export default function JapaneseHomeScreen() {
             <ActivityIndicator color={BLUE} size="small" />
             <Text style={styles.stateText}>募集を読み込み中...</Text>
           </View>
-        ) : loadError ? (
+        ) : loadError && matches.length === 0 ? (
           <View style={styles.statePanel}>
             <Text accessibilityRole="alert" style={styles.stateText}>{loadError}</Text>
             <Pressable
@@ -180,9 +211,25 @@ export default function JapaneseHomeScreen() {
               <Text style={styles.retryButtonText}>再試行</Text>
             </Pressable>
           </View>
-        ) : filteredMatches.map((match) => (
-          <MatchCard key={match.id} match={match} onOpen={openMatch} />
-        ))}
+        ) : (
+          <>
+            {loadError ? (
+              <View style={styles.inlineError}>
+                <Text accessibilityRole="alert" style={styles.inlineErrorText}>{loadError}</Text>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => loadRecruitments()}
+                  style={({ pressed }) => [styles.retryButton, pressed && styles.pressed]}
+                >
+                  <Text style={styles.retryButtonText}>再試行</Text>
+                </Pressable>
+              </View>
+            ) : null}
+            {filteredMatches.map((match) => (
+              <MatchCard key={match.id} match={match} onOpen={openMatch} />
+            ))}
+          </>
+        )}
 
         {!loading && !loadError && filteredMatches.length === 0 && (
           <Text style={styles.emptyText}>該当する募集がありません</Text>
@@ -421,6 +468,19 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingHorizontal: 28,
     gap: 12,
+  },
+  inlineError: {
+    width: "100%",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 24,
+  },
+  inlineErrorText: {
+    color: "#b42318",
+    fontSize: 13,
+    fontWeight: "600",
+    lineHeight: 18,
+    textAlign: "center",
   },
   stateText: {
     color: PLACEHOLDER_GRAY,

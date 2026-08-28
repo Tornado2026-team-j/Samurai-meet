@@ -1,6 +1,6 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
-import { useFocusEffect, useRouter } from "expo-router";
+import { useRouter } from "expo-router";
 import {
   ActivityIndicator,
   Alert,
@@ -8,6 +8,7 @@ import {
   Modal,
   Platform,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -98,12 +99,15 @@ export default function MyRecruitmentsScreen() {
   const [recruitments, setRecruitments] = useState<Recruitment[]>([]);
   const [applications, setApplications] = useState<MatchView[]>([]);
   const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading");
+  const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [operationError, setOperationError] = useState<string | null>(null);
   const [editing, setEditing] = useState<Recruitment | null>(null);
   const [editDraft, setEditDraft] = useState<EditDraft | null>(null);
   const [saving, setSaving] = useState(false);
   const [closingID, setClosingID] = useState<string | null>(null);
+  const initialLoadStarted = useRef(false);
+  const hasLoaded = useRef(false);
 
   const loadManagement = useCallback(() => {
     const controller = new AbortController();
@@ -115,13 +119,19 @@ export default function MyRecruitmentsScreen() {
         if (!cancelled) {
           setRecruitments([]);
           setApplications([]);
+          setRefreshing(false);
           setLoadState("error");
           setLoadError("ログイン後に募集を管理できます。");
         }
         return;
       }
 
-      setLoadState("loading");
+      const initialLoad = !hasLoaded.current;
+      if (initialLoad) {
+        setLoadState("loading");
+      } else {
+        setRefreshing(true);
+      }
       setLoadError(null);
       try {
         const request = async (currentSession: typeof activeSession) => {
@@ -144,14 +154,17 @@ export default function MyRecruitmentsScreen() {
         if (!cancelled) {
           setRecruitments(result.owned);
           setApplications(result.ownedApplications);
+          hasLoaded.current = true;
           setLoadState("ready");
         }
       } catch (error) {
         if (error instanceof Error && error.name === "AbortError") return;
         if (!cancelled) {
-          setLoadState("error");
+          setLoadState(initialLoad ? "error" : "ready");
           setLoadError("募集管理を読み込めませんでした。時間をおいて再試行してください。");
         }
+      } finally {
+        if (!cancelled) setRefreshing(false);
       }
     };
 
@@ -162,7 +175,14 @@ export default function MyRecruitmentsScreen() {
     };
   }, [getCurrentSession, refresh, session, status]);
 
-  useFocusEffect(loadManagement);
+  const loadManagementRef = useRef(loadManagement);
+  loadManagementRef.current = loadManagement;
+
+  useEffect(() => {
+    if (initialLoadStarted.current || status === "loading") return;
+    initialLoadStarted.current = true;
+    return loadManagementRef.current();
+  }, [status]);
 
   const applicationsByRecruitment = useMemo(() => {
     const grouped = new Map<string, MatchView[]>();
@@ -308,6 +328,13 @@ export default function MyRecruitmentsScreen() {
 
       <ScrollView
         contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 32 }]}
+        refreshControl={
+          <RefreshControl
+            onRefresh={() => loadManagement()}
+            refreshing={refreshing}
+            tintColor={BLUE}
+          />
+        }
         showsVerticalScrollIndicator={false}
       >
         <Text style={styles.intro}>公開中・下書き・終了した募集を確認できます。</Text>
@@ -330,12 +357,27 @@ export default function MyRecruitmentsScreen() {
               <Text style={styles.retryText}>再試行</Text>
             </Pressable>
           </View>
-        ) : recruitments.length === 0 ? (
-          <View style={styles.statePanel}>
-            <MaterialIcons color={MUTED_GRAY} name="post-add" size={38} />
-            <Text style={styles.stateText}>自分の募集はまだありません。</Text>
-          </View>
-        ) : recruitments.map((recruitment) => {
+        ) : (
+          <>
+            {loadError ? (
+              <View style={styles.inlineError}>
+                <Text accessibilityRole="alert" style={styles.inlineErrorText}>{loadError}</Text>
+                <Pressable
+                  accessibilityLabel="募集管理を再読み込み"
+                  accessibilityRole="button"
+                  onPress={() => loadManagement()}
+                  style={({ pressed }) => [styles.retryButton, pressed && styles.pressed]}
+                >
+                  <Text style={styles.retryText}>再試行</Text>
+                </Pressable>
+              </View>
+            ) : null}
+            {recruitments.length === 0 ? (
+              <View style={styles.statePanel}>
+                <MaterialIcons color={MUTED_GRAY} name="post-add" size={38} />
+                <Text style={styles.stateText}>自分の募集はまだありません。</Text>
+              </View>
+            ) : recruitments.map((recruitment) => {
           const ownedApplications = applicationsByRecruitment.get(recruitment.id) ?? [];
           const editable = canEdit(recruitment);
           const closable = canClose(recruitment);
@@ -419,7 +461,9 @@ export default function MyRecruitmentsScreen() {
               </View>
             </View>
           );
-        })}
+            })}
+          </>
+        )}
       </ScrollView>
 
       <Modal
@@ -603,6 +647,8 @@ const styles = StyleSheet.create({
   intro: { alignSelf: "stretch", color: MUTED_GRAY, fontSize: 13, lineHeight: 19, textAlign: "center" },
   operationError: { alignSelf: "stretch", color: "#b42318", fontSize: 13, fontWeight: "700", lineHeight: 19, textAlign: "center" },
   statePanel: { minHeight: 180, width: "100%", alignItems: "center", justifyContent: "center", gap: 12, paddingHorizontal: 20 },
+  inlineError: { width: "100%", alignItems: "center", gap: 8, paddingHorizontal: 20 },
+  inlineErrorText: { color: "#b42318", fontSize: 13, fontWeight: "600", lineHeight: 19, textAlign: "center" },
   stateText: { color: MUTED_GRAY, fontSize: 14, fontWeight: "600", lineHeight: 20, textAlign: "center" },
   retryButton: { minWidth: 84, minHeight: 36, alignItems: "center", justifyContent: "center", paddingHorizontal: 16, borderRadius: 18, backgroundColor: YELLOW },
   retryText: { color: "#ffffff", fontSize: 13, fontWeight: "800" },
