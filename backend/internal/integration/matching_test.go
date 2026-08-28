@@ -254,12 +254,37 @@ func TestRecruitmentMatchingLifecycle(t *testing.T) {
 	if !foundWithdrawn {
 		t.Fatalf("withdrawn application missing from requester history: %+v", requesterHistory)
 	}
+	ownerHistory, err := service.ListMatches(ctx, travelerID, matching.MatchListParams{Role: "owner"}, now.Add(2*time.Minute))
+	if err != nil {
+		t.Fatalf("owner history error = %v", err)
+	}
+	var foundOwnerWithdrawn bool
+	for _, item := range ownerHistory {
+		if item.ID == withdrawInterest.ID && item.RecruitmentID == withdrawCard.ID && item.Status == "cancelled" {
+			foundOwnerWithdrawn = true
+		}
+	}
+	if !foundOwnerWithdrawn {
+		t.Fatalf("withdrawn application missing from owner history: %+v", ownerHistory)
+	}
 	withdrawNotifications, err := notifications.List(ctx, travelerID, notification.ListParams{Limit: 20}, now.Add(2*time.Minute))
 	if err != nil {
 		t.Fatalf("withdraw notifications error = %v", err)
 	}
 	if !hasNotification(withdrawNotifications, notification.TypeApplicationWithdrawn, withdrawInterest.ID) {
 		t.Fatalf("withdraw notification missing: %+v", withdrawNotifications)
+	}
+	var foundWithdrawNotification bool
+	for _, item := range withdrawNotifications {
+		if item.Type == notification.TypeApplicationWithdrawn &&
+			item.TargetID == withdrawInterest.ID &&
+			item.RecruitmentID == withdrawCard.ID &&
+			item.Destination == notification.DestinationApplicants {
+			foundWithdrawNotification = true
+		}
+	}
+	if !foundWithdrawNotification {
+		t.Fatalf("withdraw notification metadata = %+v", withdrawNotifications)
 	}
 }
 
