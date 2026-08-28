@@ -13,6 +13,7 @@ import {
 import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "../../../hooks/useAuth";
+import { APIError } from "../../../services/api-client";
 import {
   getRecruitment,
   recruitmentToMatchCard,
@@ -41,7 +42,7 @@ const CATEGORY_IMAGES = {
 export default function JapaneseMatchDetailScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { session, status } = useAuth();
+  const { getCurrentSession, refresh, session, status } = useAuth();
   const { id } = useLocalSearchParams<{ id?: string | string[] }>();
   const matchId = Array.isArray(id) ? id[0] : id;
   const [match, setMatch] = useState<MatchCardData | null>(null);
@@ -55,7 +56,8 @@ export default function JapaneseMatchDetailScreen() {
     let cancelled = false;
 
     const load = async () => {
-      if (!matchId || status !== "signed_in" || !session) {
+      const activeSession = getCurrentSession() ?? session;
+      if (!matchId || status !== "signed_in" || !activeSession) {
         if (!cancelled) {
           setLoadState("error");
           setLoadError("ログイン後に募集を表示できます。");
@@ -66,7 +68,21 @@ export default function JapaneseMatchDetailScreen() {
       setLoadState("loading");
       setLoadError(null);
       try {
-        const recruitment = await getRecruitment(matchId, session, controller.signal);
+        const loadWithSession = (currentSession: typeof activeSession) => getRecruitment(
+          matchId,
+          currentSession,
+          controller.signal,
+        );
+        let recruitment;
+        try {
+          recruitment = await loadWithSession(activeSession);
+        } catch (error) {
+          if (!(error instanceof APIError) || error.status !== 401) throw error;
+          await refresh();
+          const refreshedSession = getCurrentSession();
+          if (!refreshedSession) throw error;
+          recruitment = await loadWithSession(refreshedSession);
+        }
         if (!cancelled) {
           setMatch(recruitmentToMatchCard(recruitment));
           setLoadState("ready");
@@ -85,7 +101,7 @@ export default function JapaneseMatchDetailScreen() {
       cancelled = true;
       controller.abort();
     };
-  }, [matchId, session, status]);
+  }, [getCurrentSession, matchId, refresh, session, status]);
 
   if (!match) {
     return (
@@ -109,7 +125,8 @@ export default function JapaneseMatchDetailScreen() {
 
   const sendInterest = async () => {
     if (requestState === "sending") return;
-    if (status !== "signed_in" || !session) {
+    const activeSession = getCurrentSession() ?? session;
+    if (status !== "signed_in" || !activeSession) {
       setRequestError("ログイン後にもう一度お試しください。");
       return;
     }
@@ -118,7 +135,20 @@ export default function JapaneseMatchDetailScreen() {
     setRequestError(null);
 
     try {
-      const interest = await sendRecruitmentInterest(match.id, session);
+      const sendWithSession = (currentSession: typeof activeSession) => sendRecruitmentInterest(
+        match.id,
+        currentSession,
+      );
+      let interest;
+      try {
+        interest = await sendWithSession(activeSession);
+      } catch (error) {
+        if (!(error instanceof APIError) || error.status !== 401) throw error;
+        await refresh();
+        const refreshedSession = getCurrentSession();
+        if (!refreshedSession) throw error;
+        interest = await sendWithSession(refreshedSession);
+      }
       if (interest?.id) {
         router.push({
           pathname: "/japanese/guide-requested",
