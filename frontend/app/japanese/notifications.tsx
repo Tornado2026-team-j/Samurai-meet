@@ -248,18 +248,18 @@ export default function JapaneseNotificationsScreen() {
         .filter((group) => group.notifications.length > 0),
     [notifications],
   );
-  const openNotification = async (notification: NotificationView) => {
+  const openNotification = (notification: NotificationView) => {
     const activeSession = getCurrentSession() ?? session;
     if (notification.unread) {
       setLiveNotifications((current) => current.map((item) => (
         item.id === notification.id ? { ...item, unread: false } : item
       )));
       if (activeSession) {
-        try {
-          await markNotificationRead(activeSession, notification.id);
-        } catch {
+        // Do not make navigation wait for a best-effort read receipt. A
+        // refresh or a slow API must not make a notification appear inert.
+        void markNotificationRead(activeSession, notification.id).catch(() => {
           // The next focus reload reflects the server state if marking failed.
-        }
+        });
       }
     }
 
