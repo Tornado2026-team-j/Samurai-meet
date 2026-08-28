@@ -100,18 +100,40 @@ describe("募集APIクライアント", () => {
     });
   });
 
-  it("外国人側のマッチ一覧は保留中以外の状態も取得する", async () => {
+  it("応募履歴はrequester roleで送信済み・承認済みを取得する", async () => {
     let requestedURL = "";
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       requestedURL = String(input);
-      return new Response(JSON.stringify({ data: [] }), { status: 200 });
+      return new Response(JSON.stringify({
+        data: [
+          { id: "match-pending", status: "pending" },
+          { id: "match-accepted", status: "accepted" },
+        ],
+      }), { status: 200 });
     }) as unknown as typeof fetch;
 
-    await listMatches(session, { role: "owner", limit: 50 });
+    const result = await listMatches(session, { role: "requester", limit: 50 });
 
-    expect(requestedURL).toContain("role=owner");
+    expect(result.map((item) => item.status)).toEqual(["pending", "accepted"]);
+    expect(requestedURL).toContain("role=requester");
     expect(requestedURL).toContain("limit=50");
     expect(requestedURL).not.toContain("status=pending");
+  });
+
+  it("空配列と通信失敗を別の結果として扱う", async () => {
+    globalThis.fetch = (async () => new Response(JSON.stringify({ data: [] }), { status: 200 })) as unknown as typeof fetch;
+    await expect(listMatches(session, { role: "requester" })).resolves.toEqual([]);
+
+    globalThis.fetch = (async () => {
+      throw new Error("network unavailable");
+    }) as unknown as typeof fetch;
+    await expect(listMatches(session, { role: "requester" })).rejects.toThrow("network unavailable");
+  });
+
+  it("matchesのdata欠落を空履歴として扱わない", async () => {
+    globalThis.fetch = (async () => new Response(JSON.stringify({}), { status: 200 })) as unknown as typeof fetch;
+
+    await expect(listMatches(session, { role: "requester" })).rejects.toThrow("matches response is invalid");
   });
 
   it("自分の募集管理APIと応募取り下げAPIの契約を組み立てる", async () => {

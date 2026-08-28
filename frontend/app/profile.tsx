@@ -499,7 +499,10 @@ export default function ProfileScreen() {
             accessibilityLabel={copy.myApplications}
             accessibilityRole="button"
             disabled={loggingOut || deleting || recoveryPreparing}
-            onPress={() => router.push("/japanese/applications")}
+            onPress={() => router.push({
+              pathname: "/japanese/applications",
+              params: { language },
+            })}
             style={({ pressed }) => [
               styles.managementButton,
               pressed && !loggingOut && !deleting && !recoveryPreparing && styles.pressed,
