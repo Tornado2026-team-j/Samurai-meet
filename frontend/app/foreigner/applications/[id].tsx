@@ -43,6 +43,7 @@ export default function ForeignerApplicationDetailScreen() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [actionState, setActionState] = useState<"idle" | "accepting" | "rejecting">("idle");
   const [actionError, setActionError] = useState<string | null>(null);
+  const [bottomActionsHeight, setBottomActionsHeight] = useState(0);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -114,7 +115,12 @@ export default function ForeignerApplicationDetailScreen() {
 
   if (!application) {
     return (
-      <View style={styles.loadingScreen}>
+      <View
+        style={[
+          styles.loadingScreen,
+          { paddingTop: insets.top, paddingBottom: insets.bottom },
+        ]}
+      >
         <StatusBar style="light" />
         {loadState === "loading" ? <ActivityIndicator color={BLUE} /> : null}
         <Text accessibilityRole={loadState === "error" ? "alert" : undefined} style={styles.loadingText}>
@@ -177,7 +183,12 @@ export default function ForeignerApplicationDetailScreen() {
     <View style={styles.screen}>
       <StatusBar style="light" />
 
-      <View style={styles.header}>
+      <View
+        style={[
+          styles.header,
+          { paddingTop: Math.max(insets.top, 36) },
+        ]}
+      >
         <Pressable
           accessibilityLabel="Back"
           accessibilityRole="button"
@@ -196,7 +207,12 @@ export default function ForeignerApplicationDetailScreen() {
       </View>
 
       <ScrollView
-        contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 220 }]}
+        contentContainerStyle={[
+          styles.content,
+          {
+            paddingBottom: insets.bottom + Math.max(bottomActionsHeight + 24, 220),
+          },
+        ]}
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.profileCard}>
@@ -217,6 +233,7 @@ export default function ForeignerApplicationDetailScreen() {
       </ScrollView>
 
       <View
+        onLayout={(event) => setBottomActionsHeight(event.nativeEvent.layout.height)}
         style={[
           styles.bottomActions,
           { paddingBottom: Math.max(insets.bottom + 20, 34) },
