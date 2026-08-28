@@ -1,9 +1,10 @@
-import { useCallback, useMemo, useState, type ComponentProps } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from "react";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
-import { useFocusEffect, useRouter } from "expo-router";
+import { useRouter } from "expo-router";
 import {
   ActivityIndicator,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -176,8 +177,10 @@ export default function ForeignerNotificationsScreen() {
   const [filter, setFilter] = useState<Filter>("all");
   const [liveNotifications, setLiveNotifications] = useState<NotificationView[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const loadNotifications = useCallback(() => {
+  const initialLoadStartedRef = useRef(false);
+  const loadNotifications = useCallback((mode: "initial" | "refresh" = "refresh") => {
     const controller = new AbortController();
     let cancelled = false;
 
@@ -187,12 +190,17 @@ export default function ForeignerNotificationsScreen() {
         if (!cancelled) {
           setLiveNotifications([]);
           setLoading(false);
+          setRefreshing(false);
           setLoadError("ログイン後に通知を表示できます。");
         }
         return;
       }
 
-      setLoading(true);
+      if (mode === "initial") {
+        setLoading(true);
+      } else {
+        setRefreshing(true);
+      }
       setLoadError(null);
       try {
         let records;
@@ -212,11 +220,13 @@ export default function ForeignerNotificationsScreen() {
       } catch (error) {
         if (error instanceof Error && error.name === "AbortError") return;
         if (!cancelled) {
-          setLiveNotifications([]);
           setLoadError("通知を読み込めませんでした。時間をおいて再試行してください。");
         }
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+          setRefreshing(false);
+        }
       }
     };
 
@@ -227,7 +237,12 @@ export default function ForeignerNotificationsScreen() {
     };
   }, [getCurrentSession, refresh, session, status]);
 
-  useFocusEffect(loadNotifications);
+  useEffect(() => {
+    if (initialLoadStartedRef.current) return;
+
+    initialLoadStartedRef.current = true;
+    return loadNotifications("initial");
+  }, [loadNotifications]);
 
   const notifications = useMemo(() => {
     if (filter === "unread") {
@@ -258,7 +273,7 @@ export default function ForeignerNotificationsScreen() {
         // Do not make navigation wait for a best-effort read receipt. A
         // refresh or a slow API must not make a notification appear inert.
         void markNotificationRead(activeSession, notification.id).catch(() => {
-          // The next focus reload reflects the server state if marking failed.
+          // Keep the local optimistic state; an explicit pull-to-refresh can reconcile it.
         });
       }
     }
@@ -292,6 +307,15 @@ export default function ForeignerNotificationsScreen() {
 
       <ScrollView
         contentContainerStyle={styles.content}
+        refreshControl={
+          <RefreshControl
+            onRefresh={() => {
+              void loadNotifications("refresh");
+            }}
+            refreshing={refreshing}
+            tintColor={BLUE}
+          />
+        }
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.segmentedControl}>
@@ -323,17 +347,19 @@ export default function ForeignerNotificationsScreen() {
           })}
         </View>
 
-        {loading ? (
+        {loading && liveNotifications.length === 0 ? (
           <View style={styles.emptyState}>
             <ActivityIndicator color={BLUE} size="small" />
             <Text style={styles.emptyTitle}>Loading notifications...</Text>
           </View>
-        ) : loadError ? (
+        ) : loadError && liveNotifications.length === 0 ? (
           <View style={styles.emptyState}>
             <Text accessibilityRole="alert" style={styles.emptyTitle}>{loadError}</Text>
             <Pressable
               accessibilityRole="button"
-              onPress={loadNotifications}
+              onPress={() => {
+                void loadNotifications("initial");
+              }}
               style={({ pressed }) => [styles.retryButton, pressed && styles.pressed]}
             >
               <Text style={styles.retryButtonText}>Retry</Text>
