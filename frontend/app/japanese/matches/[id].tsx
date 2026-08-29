@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { MaterialIcons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import {
@@ -104,6 +104,8 @@ export default function JapaneseMatchDetailScreen() {
   const [language, setLanguage] = useState<AppLanguage | null>(null);
   const [languageLoaded, setLanguageLoaded] = useState(false);
   const copy = COPY[language ?? "ja"];
+  const copyRef = useRef(copy);
+  copyRef.current = copy;
 
   useEffect(() => {
     let cancelled = false;
@@ -141,7 +143,7 @@ export default function JapaneseMatchDetailScreen() {
       if (!matchId || status !== "signed_in" || !activeSession) {
         if (!cancelled) {
           setLoadState("error");
-          setLoadError(copy.loginRequired);
+          setLoadError(copyRef.current.loginRequired);
         }
         return;
       }
@@ -172,7 +174,7 @@ export default function JapaneseMatchDetailScreen() {
         if (error instanceof Error && error.name === "AbortError") return;
         if (!cancelled) {
           setLoadState("error");
-          setLoadError(copy.loadError);
+          setLoadError(copyRef.current.loadError);
         }
       }
     };
@@ -182,7 +184,7 @@ export default function JapaneseMatchDetailScreen() {
       cancelled = true;
       controller.abort();
     };
-  }, [copy.loadError, copy.loginRequired, getCurrentSession, matchId, refresh, session, status]);
+  }, [getCurrentSession, matchId, refresh, session, status]);
 
   if (!languageLoaded) {
     return (
