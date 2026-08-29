@@ -13,7 +13,7 @@ import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "../../../hooks/useAuth";
 import { APIError } from "../../../services/api-client";
-import { loadLanguage } from "../../../services/onboarding";
+import { loadLanguage, subscribeLanguage } from "../../../services/onboarding";
 import type { AppLanguage } from "../../../services/onboarding-contract";
 import {
   acceptMatch,
@@ -130,6 +130,9 @@ export default function ForeignerApplicationDetailScreen() {
 
   useEffect(() => {
     let active = true;
+    const unsubscribe = subscribeLanguage((nextLanguage) => {
+      if (active) setLanguage(nextLanguage ?? "en");
+    });
     void loadLanguage()
       .then((storedLanguage) => {
         if (active && storedLanguage) setLanguage(storedLanguage);
@@ -139,6 +142,7 @@ export default function ForeignerApplicationDetailScreen() {
       });
     return () => {
       active = false;
+      unsubscribe();
     };
   }, []);
 

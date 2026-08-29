@@ -6,7 +6,7 @@ import { StatusBar } from "expo-status-bar";
 import { useAuth } from "../../hooks/useAuth";
 import { APIError } from "../../services/api-client";
 import { getMatch, type MatchView } from "../../services/matching";
-import { loadLanguage } from "../../services/onboarding";
+import { loadLanguage, subscribeLanguage } from "../../services/onboarding";
 import type { AppLanguage } from "../../services/onboarding-contract";
 
 const HEADER_BLUE = "#5ec5f5";
@@ -64,6 +64,9 @@ export default function JapaneseGuideRequestedScreen() {
 
   useEffect(() => {
     let active = true;
+    const unsubscribe = subscribeLanguage((nextLanguage) => {
+      if (active) setLanguage(nextLanguage ?? "en");
+    });
     void loadLanguage().then((storedLanguage) => {
       if (active && storedLanguage) setLanguage(storedLanguage);
     }).catch(() => {
@@ -71,6 +74,7 @@ export default function JapaneseGuideRequestedScreen() {
     });
     return () => {
       active = false;
+      unsubscribe();
     };
   }, []);
 

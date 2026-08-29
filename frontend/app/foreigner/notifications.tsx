@@ -14,7 +14,11 @@ import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "../../hooks/useAuth";
 import { APIError } from "../../services/api-client";
-import { loadLanguage, type AppLanguage } from "../../services/onboarding";
+import {
+  loadLanguage,
+  subscribeLanguage,
+  type AppLanguage,
+} from "../../services/onboarding";
 import {
   getNotificationNavigation,
   listNotifications,
@@ -23,6 +27,7 @@ import {
 } from "../../services/notifications";
 import type {
   NotificationPeriod,
+  NotificationRecord,
   NotificationType,
   NotificationView,
 } from "../../types/notification";
@@ -196,7 +201,7 @@ export default function ForeignerNotificationsScreen() {
   const { getCurrentSession, refresh, session, status } = useAuth();
   const [language, setLanguage] = useState<AppLanguage | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
-  const [liveNotifications, setLiveNotifications] = useState<NotificationView[]>([]);
+  const [notificationRecords, setNotificationRecords] = useState<NotificationRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -210,7 +215,7 @@ export default function ForeignerNotificationsScreen() {
       const activeSession = getCurrentSession() ?? session;
       if (status !== "signed_in" || !activeSession) {
         if (!cancelled) {
-          setLiveNotifications([]);
+          setNotificationRecords([]);
           setLoading(false);
           setRefreshing(false);
           setLoadError(copy.signInRequired);
@@ -236,8 +241,7 @@ export default function ForeignerNotificationsScreen() {
           records = await listNotifications(refreshedSession, { limit: 50 }, controller.signal);
         }
         if (!cancelled) {
-          const now = new Date();
-          setLiveNotifications(records.map((record) => toNotificationView(record, language ?? "en", now)));
+          setNotificationRecords(records);
         }
       } catch (error) {
         if (error instanceof Error && error.name === "AbortError") return;
@@ -257,16 +261,22 @@ export default function ForeignerNotificationsScreen() {
       cancelled = true;
       controller.abort();
     };
-  }, [copy.loadError, copy.signInRequired, getCurrentSession, language, refresh, session, status]);
+  }, [copy.loadError, copy.signInRequired, getCurrentSession, refresh, session, status]);
 
   useEffect(() => {
     let active = true;
+    const unsubscribe = subscribeLanguage((nextLanguage) => {
+      if (active) setLanguage(nextLanguage ?? "en");
+    });
     void loadLanguage().then((storedLanguage) => {
       if (active) setLanguage(storedLanguage ?? "en");
     }).catch(() => {
       if (active) setLanguage("en");
     });
-    return () => { active = false; };
+    return () => {
+      active = false;
+      unsubscribe();
+    };
   }, []);
 
   useEffect(() => {
@@ -277,12 +287,16 @@ export default function ForeignerNotificationsScreen() {
   }, [loadNotifications]);
 
   const notifications = useMemo(() => {
+    const now = new Date();
+    const liveNotifications = notificationRecords.map((record) =>
+      toNotificationView(record, language ?? "en", now),
+    );
     if (filter === "unread") {
       return liveNotifications.filter((notification) => notification.unread);
     }
 
     return liveNotifications;
-  }, [filter, liveNotifications]);
+  }, [filter, language, notificationRecords]);
   const notificationGroups = useMemo(
     () =>
       (["today", "past_7_days"] as const)
@@ -306,8 +320,10 @@ export default function ForeignerNotificationsScreen() {
   const openNotification = (notification: NotificationView) => {
     const activeSession = getCurrentSession() ?? session;
     if (notification.unread) {
-      setLiveNotifications((current) => current.map((item) => (
-        item.id === notification.id ? { ...item, unread: false } : item
+      setNotificationRecords((current) => current.map((item) => (
+        item.id === notification.id && !item.read_at
+          ? { ...item, read_at: new Date().toISOString() }
+          : item
       )));
       if (activeSession) {
         // Do not make navigation wait for a best-effort read receipt. A
@@ -391,12 +407,12 @@ export default function ForeignerNotificationsScreen() {
           })}
         </View>
 
-        {loading && liveNotifications.length === 0 ? (
+        {loading && notificationRecords.length === 0 ? (
           <View style={styles.emptyState}>
             <ActivityIndicator color={BLUE} size="small" />
             <Text style={styles.emptyTitle}>{copy.loading}</Text>
           </View>
-        ) : loadError && liveNotifications.length === 0 ? (
+        ) : loadError && notificationRecords.length === 0 ? (
           <View style={styles.emptyState}>
             <Text accessibilityRole="alert" style={styles.emptyTitle}>{loadError}</Text>
             <Pressable

@@ -26,6 +26,7 @@ import { getCurrentCoordinates } from "../../services/location";
 import {
   loadLanguage,
   loadLocalProfile,
+  subscribeLanguage,
   type AppLanguage,
 } from "../../services/onboarding";
 import { updateMyProfile } from "../../services/profile";
@@ -476,6 +477,9 @@ export default function SearchPreferencesScreen() {
 
   useEffect(() => {
     let active = true;
+    const unsubscribe = subscribeLanguage((nextLanguage) => {
+      if (active && nextLanguage) setLanguage(nextLanguage);
+    });
 
     void loadLanguage()
       .then((storedLanguage) => {
@@ -491,6 +495,7 @@ export default function SearchPreferencesScreen() {
 
     return () => {
       active = false;
+      unsubscribe();
     };
   }, []);
 

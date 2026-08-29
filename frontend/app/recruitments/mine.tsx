@@ -19,7 +19,7 @@ import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "../../hooks/useAuth";
 import { APIError } from "../../services/api-client";
-import { loadLanguage } from "../../services/onboarding";
+import { loadLanguage, subscribeLanguage } from "../../services/onboarding";
 import type { AppLanguage } from "../../services/onboarding-contract";
 import {
   closeRecruitment,
@@ -135,12 +135,18 @@ export default function MyRecruitmentsScreen() {
 
   useEffect(() => {
     let active = true;
+    const unsubscribe = subscribeLanguage((nextLanguage) => {
+      if (active) setLanguage(nextLanguage ?? "ja");
+    });
     void loadLanguage().then((storedLanguage) => {
       if (active) setLanguage(storedLanguage ?? "ja");
     }).catch(() => {
       if (active) setLanguage("ja");
     });
-    return () => { active = false; };
+    return () => {
+      active = false;
+      unsubscribe();
+    };
   }, []);
 
   const loadManagement = useCallback(() => {

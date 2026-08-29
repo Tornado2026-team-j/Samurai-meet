@@ -23,7 +23,7 @@ import {
   searchRecruitments,
   updateCurrentLocation,
 } from "../../services/matching";
-import { loadLanguage, type AppLanguage } from "../../services/onboarding";
+import { loadLanguage, subscribeLanguage, type AppLanguage } from "../../services/onboarding";
 import type { MatchCardData } from "../../types/match";
 
 const BLUE = "#5ec5f5";
@@ -194,6 +194,9 @@ export default function JapaneseHomeScreen() {
 
   useEffect(() => {
     let active = true;
+    const unsubscribe = subscribeLanguage((nextLanguage) => {
+      if (active && nextLanguage) setLanguage(nextLanguage);
+    });
     void loadLanguage().then((storedLanguage) => {
       if (active) setLanguage(storedLanguage ?? "ja");
     }).catch(() => {
@@ -201,6 +204,7 @@ export default function JapaneseHomeScreen() {
     });
     return () => {
       active = false;
+      unsubscribe();
     };
   }, []);
 

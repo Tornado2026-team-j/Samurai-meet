@@ -15,7 +15,7 @@ import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "../../hooks/useAuth";
 import { APIError } from "../../services/api-client";
-import { loadLanguage } from "../../services/onboarding";
+import { loadLanguage, subscribeLanguage } from "../../services/onboarding";
 import type { AppLanguage } from "../../services/onboarding-contract";
 import {
   listMatches,
@@ -123,6 +123,9 @@ export default function JapaneseApplicationsScreen() {
 
   useEffect(() => {
     let active = true;
+    const unsubscribe = subscribeLanguage((nextLanguage) => {
+      if (active && nextLanguage) setLanguage(nextLanguage);
+    });
     void loadLanguage().then((storedLanguage) => {
       if (active) setLanguage(storedLanguage ?? "ja");
     }).catch(() => {
@@ -130,6 +133,7 @@ export default function JapaneseApplicationsScreen() {
     });
     return () => {
       active = false;
+      unsubscribe();
     };
   }, []);
 

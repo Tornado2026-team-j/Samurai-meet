@@ -17,7 +17,7 @@ import { useAuth } from "../../hooks/useAuth";
 import { useUnreadNotifications } from "../../hooks/useUnreadNotifications";
 import { APIError } from "../../services/api-client";
 import { listMatches, type MatchView } from "../../services/matching";
-import { loadLanguage, type AppLanguage } from "../../services/onboarding";
+import { loadLanguage, subscribeLanguage, type AppLanguage } from "../../services/onboarding";
 
 const BLUE = "#5ec5f5";
 const YELLOW = "#e7b454";
@@ -164,6 +164,9 @@ export default function ForeignerHomeScreen() {
 
   useEffect(() => {
     let active = true;
+    const unsubscribe = subscribeLanguage((nextLanguage) => {
+      if (active && nextLanguage) setLanguage(nextLanguage);
+    });
     void loadLanguage().then((storedLanguage) => {
       if (active) setLanguage(storedLanguage ?? "en");
     }).catch(() => {
@@ -171,6 +174,7 @@ export default function ForeignerHomeScreen() {
     });
     return () => {
       active = false;
+      unsubscribe();
     };
   }, []);
 

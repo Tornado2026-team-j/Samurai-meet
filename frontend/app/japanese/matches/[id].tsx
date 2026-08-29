@@ -14,7 +14,7 @@ import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "../../../hooks/useAuth";
 import { APIError } from "../../../services/api-client";
-import { loadLanguage } from "../../../services/onboarding";
+import { loadLanguage, subscribeLanguage } from "../../../services/onboarding";
 import {
   getRecruitment,
   recruitmentToMatchCard,
@@ -107,6 +107,12 @@ export default function JapaneseMatchDetailScreen() {
 
   useEffect(() => {
     let cancelled = false;
+    const unsubscribe = subscribeLanguage((nextLanguage) => {
+      if (!cancelled) {
+        setLanguage(nextLanguage ?? "ja");
+        setLanguageLoaded(true);
+      }
+    });
 
     void loadLanguage()
       .then((storedLanguage) => {
@@ -122,6 +128,7 @@ export default function JapaneseMatchDetailScreen() {
 
     return () => {
       cancelled = true;
+      unsubscribe();
     };
   }, []);
 
