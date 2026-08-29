@@ -17,6 +17,7 @@ import { useAuth } from "../../hooks/useAuth";
 import { useUnreadNotifications } from "../../hooks/useUnreadNotifications";
 import { APIError } from "../../services/api-client";
 import { listMatches, type MatchView } from "../../services/matching";
+import { loadLanguage, type AppLanguage } from "../../services/onboarding";
 
 const BLUE = "#5ec5f5";
 const YELLOW = "#e7b454";
@@ -25,11 +26,61 @@ const MUTED_GRAY = "#949494";
 const BORDER_GRAY = "#e4e4e4";
 const SOFT_BLUE = "#eff8ff";
 
+const COPY = {
+  ja: {
+    signInRequired: "ログイン後に応募を表示できます。",
+    loadError: "応募を読み込めませんでした。時間をおいて再試行してください。",
+    openSearch: "募集条件を開く",
+    search: "検索",
+    searchPlaceholder: "何をしたいですか？",
+    notifications: "通知",
+    profile: "プロフィール",
+    title: "あなたの日本を見つけよう！",
+    needsResponse: "対応が必要です",
+    newApplications: (count: number) => `${count}件の新しい応募`,
+    loading: "応募を読み込み中…",
+    retry: "再試行",
+    reviewApplications: "応募を確認",
+    reviewApplication: (name: string) => `${name}さんの応募を確認`,
+    noIntroduction: "自己紹介はありません。",
+    review: "確認する",
+    matches: "マッチング済み",
+    openMatch: (name: string) => `${name}さんとのマッチを開く`,
+    completed: "完了",
+    matched: "マッチ済み",
+    allHandled: "すべての応募に対応済みです",
+  },
+  en: {
+    signInRequired: "Sign in to view applications.",
+    loadError: "Applications could not be loaded. Please try again later.",
+    openSearch: "Open search preferences",
+    search: "Search",
+    searchPlaceholder: "What would you like to do?",
+    notifications: "Notifications",
+    profile: "Profile",
+    title: "Find Your Japan!",
+    needsResponse: "Needs your response",
+    newApplications: (count: number) => count === 1 ? "1 new application" : `${count} new applications`,
+    loading: "Loading applications…",
+    retry: "Retry",
+    reviewApplications: "Review applications",
+    reviewApplication: (name: string) => `Review application from ${name}`,
+    noIntroduction: "No introduction provided.",
+    review: "Review",
+    matches: "Your matches",
+    openMatch: (name: string) => `Open match with ${name}`,
+    completed: "Completed",
+    matched: "Matched",
+    allHandled: "All applications are handled",
+  },
+} as const;
+
 export default function ForeignerHomeScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { getCurrentSession, refresh, session, status } = useAuth();
   const hasUnreadNotifications = useUnreadNotifications();
+  const [language, setLanguage] = useState<AppLanguage | null>(null);
   const [query, setQuery] = useState("");
   const [applications, setApplications] = useState<MatchView[]>([]);
   const [loading, setLoading] = useState(true);
@@ -37,6 +88,7 @@ export default function ForeignerHomeScreen() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const searchInputRef = useRef<TextInput>(null);
   const initialLoadStartedRef = useRef(false);
+  const copy = COPY[language ?? "en"];
   const pendingApplications = useMemo(
     () => applications.filter((application) => application.status === "pending"),
     [applications],
@@ -59,7 +111,7 @@ export default function ForeignerHomeScreen() {
           setApplications([]);
           setLoading(false);
           setRefreshing(false);
-          setLoadError("ログイン後に応募を表示できます。");
+          setLoadError(copy.signInRequired);
         }
         return;
       }
@@ -93,7 +145,7 @@ export default function ForeignerHomeScreen() {
       } catch (error) {
         if (error instanceof Error && error.name === "AbortError") return;
         if (!cancelled) {
-          setLoadError("応募を読み込めませんでした。時間をおいて再試行してください。");
+          setLoadError(copy.loadError);
         }
       } finally {
         if (!cancelled) {
@@ -108,7 +160,19 @@ export default function ForeignerHomeScreen() {
       cancelled = true;
       controller.abort();
     };
-  }, [getCurrentSession, refresh, session, status]);
+  }, [copy.loadError, copy.signInRequired, getCurrentSession, refresh, session, status]);
+
+  useEffect(() => {
+    let active = true;
+    void loadLanguage().then((storedLanguage) => {
+      if (active) setLanguage(storedLanguage ?? "en");
+    }).catch(() => {
+      if (active) setLanguage("en");
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (initialLoadStartedRef.current) return;
@@ -131,6 +195,15 @@ export default function ForeignerHomeScreen() {
     });
   };
 
+  if (!language) {
+    return (
+      <View style={styles.loadingScreen}>
+        <StatusBar style="dark" />
+        <ActivityIndicator color={BLUE} size="large" />
+      </View>
+    );
+  }
+
   return (
     <View style={styles.screen}>
       <StatusBar style="light" />
@@ -144,7 +217,7 @@ export default function ForeignerHomeScreen() {
         >
           <View style={styles.searchField}>
             <Pressable
-              accessibilityLabel="Open search preferences"
+              accessibilityLabel={copy.openSearch}
               accessibilityRole="button"
               hitSlop={8}
               onPress={openSearchPreferences}
@@ -157,10 +230,10 @@ export default function ForeignerHomeScreen() {
             </Pressable>
             <TextInput
               ref={searchInputRef}
-              accessibilityLabel="Search"
+              accessibilityLabel={copy.search}
               onChangeText={setQuery}
               onSubmitEditing={openSearchPreferences}
-              placeholder="What would you like to do?"
+              placeholder={copy.searchPlaceholder}
               placeholderTextColor="#949494"
               returnKeyType="search"
               style={styles.searchInput}
@@ -169,7 +242,7 @@ export default function ForeignerHomeScreen() {
           </View>
 
           <Pressable
-            accessibilityLabel="Notifications"
+            accessibilityLabel={copy.notifications}
             accessibilityRole="button"
             hitSlop={12}
             onPress={() => router.push("/foreigner/notifications")}
@@ -187,7 +260,7 @@ export default function ForeignerHomeScreen() {
           </Pressable>
 
           <Pressable
-            accessibilityLabel="Profile"
+            accessibilityLabel={copy.profile}
             accessibilityRole="button"
             hitSlop={12}
             onPress={() => router.push("/profile")}
@@ -203,7 +276,7 @@ export default function ForeignerHomeScreen() {
             { top: Math.max(insets.top + 71, 108) },
           ]}
         >
-          Find Your Japan!
+          {copy.title}
         </Text>
       </View>
 
@@ -225,11 +298,9 @@ export default function ForeignerHomeScreen() {
             <MaterialIcons color={YELLOW} name="how-to-reg" size={28} />
           </View>
           <View style={styles.pendingHeaderText}>
-            <Text style={styles.pendingEyebrow}>Needs your response</Text>
+            <Text style={styles.pendingEyebrow}>{copy.needsResponse}</Text>
             <Text style={styles.pendingTitle}>
-              {pendingApplications.length === 1
-                ? "1 new application"
-                : `${pendingApplications.length} new applications`}
+              {copy.newApplications(pendingApplications.length)}
             </Text>
           </View>
         </View>
@@ -237,7 +308,7 @@ export default function ForeignerHomeScreen() {
         {loading && applications.length === 0 ? (
           <View style={styles.emptyPanel}>
             <ActivityIndicator color={BLUE} size="small" />
-            <Text style={styles.emptyTitle}>応募を読み込み中...</Text>
+            <Text style={styles.emptyTitle}>{copy.loading}</Text>
           </View>
         ) : loadError && applications.length === 0 ? (
           <View style={styles.emptyPanel}>
@@ -249,19 +320,19 @@ export default function ForeignerHomeScreen() {
               }}
               style={({ pressed }) => [styles.retryButton, pressed && styles.pressed]}
             >
-              <Text style={styles.retryButtonText}>Retry</Text>
+              <Text style={styles.retryButtonText}>{copy.retry}</Text>
             </Pressable>
           </View>
         ) : pendingApplications.length > 0 || matchedApplications.length > 0 ? (
           <>
             {pendingApplications.length > 0 ? (
               <View style={styles.applicationSection}>
-                <Text style={styles.sectionTitle}>Review applications</Text>
+                <Text style={styles.sectionTitle}>{copy.reviewApplications}</Text>
                 <View style={styles.applicationList}>
                   {pendingApplications.map((application) => (
                     <Pressable
                       key={application.id}
-                      accessibilityLabel={`Review application from ${application.other_user.name}`}
+                      accessibilityLabel={copy.reviewApplication(application.other_user.name)}
                       accessibilityRole="button"
                       onPress={() => openApplication(application.id)}
                       style={({ pressed }) => [
@@ -278,12 +349,12 @@ export default function ForeignerHomeScreen() {
                           {application.other_user.name}
                         </Text>
                         <Text numberOfLines={2} style={styles.applicationBio}>
-                          {application.other_user.bio || "No introduction provided."}
+                          {application.other_user.bio || copy.noIntroduction}
                         </Text>
                       </View>
 
                       <View style={styles.reviewButton}>
-                        <Text style={styles.reviewButtonText}>Review</Text>
+                        <Text style={styles.reviewButtonText}>{copy.review}</Text>
                       </View>
                     </Pressable>
                   ))}
@@ -293,12 +364,12 @@ export default function ForeignerHomeScreen() {
 
             {matchedApplications.length > 0 ? (
               <View style={styles.applicationSection}>
-                <Text style={styles.sectionTitle}>Your matches</Text>
+                <Text style={styles.sectionTitle}>{copy.matches}</Text>
                 <View style={styles.applicationList}>
                   {matchedApplications.map((application) => (
                     <Pressable
                       key={application.id}
-                      accessibilityLabel={`Open match with ${application.other_user.name}`}
+                      accessibilityLabel={copy.openMatch(application.other_user.name)}
                       accessibilityRole="button"
                       onPress={() => openApplication(application.id)}
                       style={({ pressed }) => [
@@ -321,7 +392,7 @@ export default function ForeignerHomeScreen() {
 
                       <View style={[styles.reviewButton, styles.matchedButton]}>
                         <Text style={styles.reviewButtonText}>
-                          {application.status === "completed" ? "Completed" : "Matched"}
+                          {application.status === "completed" ? copy.completed : copy.matched}
                         </Text>
                       </View>
                     </Pressable>
@@ -333,7 +404,7 @@ export default function ForeignerHomeScreen() {
         ) : (
           <View style={styles.emptyPanel}>
             <MaterialIcons color={BLUE} name="check-circle-outline" size={34} />
-            <Text style={styles.emptyTitle}>All applications are handled</Text>
+            <Text style={styles.emptyTitle}>{copy.allHandled}</Text>
           </View>
         )}
       </ScrollView>
@@ -482,6 +553,12 @@ const styles = StyleSheet.create({
     maxWidth: 342,
     marginTop: 20,
     gap: 14,
+  },
+  loadingScreen: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#ffffff",
   },
   applicationSection: {
     width: "100%",
