@@ -14,11 +14,13 @@ import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "../../../hooks/useAuth";
 import { APIError } from "../../../services/api-client";
+import { loadLanguage } from "../../../services/onboarding";
 import {
   getRecruitment,
   recruitmentToMatchCard,
   sendRecruitmentInterest,
 } from "../../../services/matching";
+import type { AppLanguage } from "../../../services/onboarding";
 import type { MatchCardData } from "../../../types/match";
 import { formatTimeRange } from "../../../utils/time";
 
@@ -39,6 +41,55 @@ const CATEGORY_IMAGES = {
   Other: require("../../../assets/images/other-category.png"),
 } as const;
 
+type MatchDetailCopy = {
+  back: string;
+  loading: string;
+  loginRequired: string;
+  loadError: string;
+  requestLogin: string;
+  requestError: string;
+  date: string;
+  time: string;
+  description: string;
+  keywords: string;
+  send: string;
+  sending: string;
+  categoryIllustration: string;
+};
+
+const COPY: Record<AppLanguage, MatchDetailCopy> = {
+  ja: {
+    back: "戻る",
+    loading: "募集を読み込み中...",
+    loginRequired: "ログイン後に募集を表示できます。",
+    loadError: "募集を読み込めませんでした。募集が終了した可能性があります。",
+    requestLogin: "ログイン後にもう一度お試しください。",
+    requestError: "応募を送信できませんでした。時間をおいてもう一度お試しください。",
+    date: "日付",
+    time: "時刻",
+    description: "したいこと",
+    keywords: "キーワード",
+    send: "この人を案内したい！",
+    sending: "応募を送信中...",
+    categoryIllustration: "カテゴリのイラスト",
+  },
+  en: {
+    back: "Back",
+    loading: "Loading recruitment...",
+    loginRequired: "Please sign in to view this recruitment.",
+    loadError: "We couldn't load this recruitment. It may have ended.",
+    requestLogin: "Please sign in and try again.",
+    requestError: "We couldn't send your application. Please try again later.",
+    date: "Date",
+    time: "Time",
+    description: "What you'd like to do",
+    keywords: "Keywords",
+    send: "I want to guide this person!",
+    sending: "Sending application...",
+    categoryIllustration: " category illustration",
+  },
+};
+
 export default function JapaneseMatchDetailScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -50,6 +101,29 @@ export default function JapaneseMatchDetailScreen() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [requestState, setRequestState] = useState<"idle" | "sending">("idle");
   const [requestError, setRequestError] = useState<string | null>(null);
+  const [language, setLanguage] = useState<AppLanguage | null>(null);
+  const [languageLoaded, setLanguageLoaded] = useState(false);
+  const copy = COPY[language ?? "ja"];
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void loadLanguage()
+      .then((storedLanguage) => {
+        if (cancelled) return;
+        setLanguage(storedLanguage ?? "ja");
+        setLanguageLoaded(true);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setLanguage("ja");
+        setLanguageLoaded(true);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -60,7 +134,7 @@ export default function JapaneseMatchDetailScreen() {
       if (!matchId || status !== "signed_in" || !activeSession) {
         if (!cancelled) {
           setLoadState("error");
-          setLoadError("ログイン後に募集を表示できます。");
+          setLoadError(copy.loginRequired);
         }
         return;
       }
@@ -91,7 +165,7 @@ export default function JapaneseMatchDetailScreen() {
         if (error instanceof Error && error.name === "AbortError") return;
         if (!cancelled) {
           setLoadState("error");
-          setLoadError("募集を読み込めませんでした。募集が終了した可能性があります。");
+          setLoadError(copy.loadError);
         }
       }
     };
@@ -101,7 +175,16 @@ export default function JapaneseMatchDetailScreen() {
       cancelled = true;
       controller.abort();
     };
-  }, [getCurrentSession, matchId, refresh, session, status]);
+  }, [copy.loadError, copy.loginRequired, getCurrentSession, matchId, refresh, session, status]);
+
+  if (!languageLoaded) {
+    return (
+      <View style={styles.loadingScreen}>
+        <StatusBar style="light" />
+        <ActivityIndicator color={HEADER_BLUE} />
+      </View>
+    );
+  }
 
   if (!match) {
     return (
@@ -109,15 +192,15 @@ export default function JapaneseMatchDetailScreen() {
         <StatusBar style="light" />
         {loadState === "loading" ? <ActivityIndicator color={HEADER_BLUE} /> : null}
         <Text accessibilityRole={loadState === "error" ? "alert" : undefined} style={styles.loadingText}>
-          {loadState === "loading" ? "募集を読み込み中..." : loadError}
+          {loadState === "loading" ? copy.loading : loadError}
         </Text>
         <Pressable
-          accessibilityLabel="前の画面に戻る"
+          accessibilityLabel={copy.back}
           accessibilityRole="button"
           onPress={() => router.back()}
           style={({ pressed }) => [styles.loadingBackButton, pressed && styles.pressed]}
         >
-          <Text style={styles.loadingBackButtonText}>戻る</Text>
+          <Text style={styles.loadingBackButtonText}>{copy.back}</Text>
         </Pressable>
       </View>
     );
@@ -127,7 +210,7 @@ export default function JapaneseMatchDetailScreen() {
     if (requestState === "sending") return;
     const activeSession = getCurrentSession() ?? session;
     if (status !== "signed_in" || !activeSession) {
-      setRequestError("ログイン後にもう一度お試しください。");
+      setRequestError(copy.requestLogin);
       return;
     }
 
@@ -158,7 +241,7 @@ export default function JapaneseMatchDetailScreen() {
         router.push("/japanese/guide-requested");
       }
     } catch {
-      setRequestError("応募を送信できませんでした。時間をおいてもう一度お試しください。");
+      setRequestError(copy.requestError);
     } finally {
       setRequestState("idle");
     }
@@ -182,14 +265,14 @@ export default function JapaneseMatchDetailScreen() {
           ]}
         >
             <Image
-              accessibilityLabel={`${match.category}カテゴリのイラスト`}
+              accessibilityLabel={`${match.category}${copy.categoryIllustration}`}
               resizeMode="contain"
               source={CATEGORY_IMAGES[match.category]}
               style={[styles.categoryImage, { top: Math.max(insets.top + 26, 66) }]}
             />
 
             <Pressable
-              accessibilityLabel="前の画面に戻る"
+              accessibilityLabel={copy.back}
               accessibilityRole="button"
               hitSlop={10}
               onPress={() => router.back()}
@@ -238,7 +321,7 @@ export default function JapaneseMatchDetailScreen() {
             <View style={styles.scheduleRow}>
               <MaterialIcons color="#168df0" name="calendar-today" size={25} />
               <View style={styles.scheduleText}>
-                <Text style={styles.scheduleLabel}>Date</Text>
+                <Text style={styles.scheduleLabel}>{copy.date}</Text>
                 <Text style={styles.scheduleValue}>{match.detailDate}</Text>
               </View>
             </View>
@@ -246,7 +329,7 @@ export default function JapaneseMatchDetailScreen() {
             <View style={[styles.scheduleRow, styles.timeRow]}>
               <MaterialIcons color="#168df0" name="schedule" size={27} />
               <View style={styles.scheduleText}>
-                <Text style={styles.scheduleLabel}>Time</Text>
+                <Text style={styles.scheduleLabel}>{copy.time}</Text>
                 <Text style={styles.scheduleValue}>
                   {formatTimeRange(match.startTime, match.durationHours)}
                 </Text>
@@ -255,14 +338,14 @@ export default function JapaneseMatchDetailScreen() {
           </View>
 
           <View style={styles.descriptionPanel}>
-            <Text style={styles.descriptionLabel}>したいこと</Text>
+            <Text style={styles.descriptionLabel}>{copy.description}</Text>
             <Text style={styles.description}>{match.description}</Text>
           </View>
 
           <View style={styles.keywordsPanel}>
             <View style={styles.keywordsTitleRow}>
               <MaterialIcons color="#168df0" name="sell" size={21} />
-              <Text style={styles.keywordsTitle}>Keywords</Text>
+              <Text style={styles.keywordsTitle}>{copy.keywords}</Text>
             </View>
             <View style={styles.keywordsRow}>
               {match.detailTags.map((tag) => (
@@ -292,7 +375,7 @@ export default function JapaneseMatchDetailScreen() {
             ]}
           >
             <Text style={styles.guideButtonText}>
-              {requestState === "sending" ? "応募を送信中..." : "この人を案内したい！"}
+              {requestState === "sending" ? copy.sending : copy.send}
             </Text>
           </Pressable>
 
