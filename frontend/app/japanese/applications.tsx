@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useRouter } from "expo-router";
 import {
   ActivityIndicator,
   Alert,
@@ -101,11 +101,6 @@ const COPY = {
   },
 } as const;
 
-function parseLanguageParam(value: string | string[] | undefined): AppLanguage | null {
-  const candidate = Array.isArray(value) ? value[0] : value;
-  return candidate === "ja" || candidate === "en" ? candidate : null;
-}
-
 function statusColor(status: MatchStatus): string {
   if (status === "accepted" || status === "completed") return "#168df0";
   if (status === "pending") return YELLOW;
@@ -116,9 +111,7 @@ export default function JapaneseApplicationsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { getCurrentSession, refresh, session, status } = useAuth();
-  const { language: languageParam } = useLocalSearchParams<{ language?: string | string[] }>();
-  const requestedLanguage = parseLanguageParam(languageParam);
-  const [language, setLanguage] = useState<AppLanguage>(requestedLanguage ?? "ja");
+  const [language, setLanguage] = useState<AppLanguage>("ja");
   const [applications, setApplications] = useState<MatchView[]>([]);
   const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading");
   const [refreshing, setRefreshing] = useState(false);
@@ -131,14 +124,14 @@ export default function JapaneseApplicationsScreen() {
   useEffect(() => {
     let active = true;
     void loadLanguage().then((storedLanguage) => {
-      if (active) setLanguage(requestedLanguage ?? storedLanguage ?? "ja");
+      if (active) setLanguage(storedLanguage ?? "ja");
     }).catch(() => {
-      // The route parameter is already a reliable fallback when storage is unavailable.
+      // Keep the stable default when the preference cannot be read.
     });
     return () => {
       active = false;
     };
-  }, [requestedLanguage]);
+  }, []);
 
   const loadApplications = useCallback(() => {
     const controller = new AbortController();
