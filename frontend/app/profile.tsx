@@ -28,8 +28,12 @@ import { resetDeviceLocalData } from "../services/device-reset";
 import { toBase64URL } from "../services/crypto";
 import type { Session } from "../services/auth-contract";
 import {
+  loadAppMode,
   loadLanguage,
   loadLocalProfile,
+  saveAppMode,
+  saveLanguage,
+  type AppMode,
 } from "../services/onboarding";
 import type {
   AppLanguage,
@@ -54,6 +58,16 @@ const COPY = {
     myRecruitmentsDescription: "公開中・下書き・終了した募集と応募者を確認できます。",
     myApplications: "応募履歴",
     myApplicationsDescription: "自分が送った応募と結果を確認できます。",
+    settingsTitle: "アプリ設定",
+    displayLanguage: "表示言語",
+    displayLanguageDescription: "アプリの表示に使う言語を選びます。",
+    languageJapanese: "日本語",
+    languageEnglish: "English",
+    appMode: "利用モード",
+    appModeDescription: "ホーム画面の利用者区分を選びます。表示言語とは別に変更できます。",
+    localMode: "地域案内モード",
+    travelerMode: "旅行者モード",
+    settingsError: "設定を保存できませんでした。もう一度お試しください。",
     logout: "ログアウト",
     loggingOut: "ログアウト中…",
     authError: "ログアウトに失敗しました。もう一度お試しください。",
@@ -112,6 +126,16 @@ const COPY = {
     myRecruitmentsDescription: "Review your open, draft, and closed recruitments and applicants.",
     myApplications: "Application history",
     myApplicationsDescription: "Review the applications you sent and their results.",
+    settingsTitle: "App settings",
+    displayLanguage: "Display language",
+    displayLanguageDescription: "Choose the language used to display the app.",
+    languageJapanese: "Japanese",
+    languageEnglish: "English",
+    appMode: "Use app as",
+    appModeDescription: "Choose the home experience separately from the display language.",
+    localMode: "Local guide",
+    travelerMode: "Traveler",
+    settingsError: "The setting could not be saved. Please try again.",
     logout: "Log out",
     loggingOut: "Logging out…",
     authError: "Log out failed. Please try again.",
@@ -166,8 +190,11 @@ export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
   const { continuePasskey, deleteAccount, error, getCurrentSession, logout, session, status } = useAuth();
   const [language, setLanguage] = useState<AppLanguage>("ja");
+  const [appMode, setAppMode] = useState<AppMode>("local");
   const [profile, setProfile] = useState<LocalProfile | null>(null);
   const [profileLoaded, setProfileLoaded] = useState(false);
+  const [settingsSaving, setSettingsSaving] = useState<"language" | "mode" | null>(null);
+  const [settingsSaveFailed, setSettingsSaveFailed] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const [showDeleteConfirmation, setShowDeleteConfirmation] = useState(false);
   const [deleteConfirmation, setDeleteConfirmation] = useState("");
@@ -205,10 +232,12 @@ export default function ProfileScreen() {
     setProfileLoaded(false);
     void Promise.all([
       loadLanguage(),
+      loadAppMode(),
       loadLocalProfile(activeSession.user_id),
-    ]).then(([storedLanguage, storedProfile]) => {
+    ]).then(([storedLanguage, storedMode, storedProfile]) => {
       if (!active) return;
       setLanguage(storedLanguage ?? "ja");
+      setAppMode(storedMode ?? (storedLanguage === "en" ? "traveler" : "local"));
       setProfile(storedProfile);
       setProfileLoaded(true);
     }).catch(() => {
@@ -256,6 +285,35 @@ export default function ProfileScreen() {
     await logout();
     router.replace("/");
     setLoggingOut(false);
+  };
+
+  const updateLanguage = async (nextLanguage: AppLanguage) => {
+    if (nextLanguage === language || settingsSaving) return;
+    setSettingsSaving("language");
+    setSettingsSaveFailed(false);
+    try {
+      await saveLanguage(nextLanguage);
+      setLanguage(nextLanguage);
+    } catch {
+      setSettingsSaveFailed(true);
+    } finally {
+      setSettingsSaving(null);
+    }
+  };
+
+  const updateAppMode = async (nextMode: AppMode) => {
+    if (nextMode === appMode || settingsSaving) return;
+    setSettingsSaving("mode");
+    setSettingsSaveFailed(false);
+    try {
+      await saveAppMode(nextMode);
+      setAppMode(nextMode);
+      router.replace(nextMode === "local" ? "/japanese" : "/foreigner");
+    } catch {
+      setSettingsSaveFailed(true);
+    } finally {
+      setSettingsSaving(null);
+    }
   };
 
   const handlePrepareRecoveryKey = async () => {
@@ -476,6 +534,44 @@ export default function ProfileScreen() {
           value={displayedProfile.bio || copy.notSet}
           multiline
         />
+
+        <View style={styles.settingsSection}>
+          <Text style={styles.settingsTitle}>{copy.settingsTitle}</Text>
+          <Text style={styles.settingsLabel}>{copy.displayLanguage}</Text>
+          <Text style={styles.settingsDescription}>{copy.displayLanguageDescription}</Text>
+          <View style={styles.settingOptions}>
+            <SettingOption
+              active={language === "ja"}
+              disabled={Boolean(settingsSaving)}
+              label={copy.languageJapanese}
+              onPress={() => void updateLanguage("ja")}
+            />
+            <SettingOption
+              active={language === "en"}
+              disabled={Boolean(settingsSaving)}
+              label={copy.languageEnglish}
+              onPress={() => void updateLanguage("en")}
+            />
+          </View>
+          <Text style={styles.settingsLabel}>{copy.appMode}</Text>
+          <Text style={styles.settingsDescription}>{copy.appModeDescription}</Text>
+          <View style={styles.settingOptions}>
+            <SettingOption
+              active={appMode === "local"}
+              disabled={Boolean(settingsSaving)}
+              label={copy.localMode}
+              onPress={() => void updateAppMode("local")}
+            />
+            <SettingOption
+              active={appMode === "traveler"}
+              disabled={Boolean(settingsSaving)}
+              label={copy.travelerMode}
+              onPress={() => void updateAppMode("traveler")}
+            />
+          </View>
+          {settingsSaving ? <ActivityIndicator color={BLUE} /> : null}
+          {settingsSaveFailed ? <Text accessibilityRole="alert" style={styles.errorText}>{copy.settingsError}</Text> : null}
+        </View>
 
         <View style={styles.managementSection}>
           <Text style={styles.managementTitle}>{copy.myRecruitments}</Text>
@@ -863,6 +959,35 @@ function ProfileRow({
   );
 }
 
+function SettingOption({
+  active,
+  disabled,
+  label,
+  onPress,
+}: {
+  active: boolean;
+  disabled: boolean;
+  label: string;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ disabled, selected: active }}
+      disabled={disabled}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.settingOption,
+        active && styles.settingOptionActive,
+        disabled && styles.disabledButton,
+        pressed && !disabled && styles.pressed,
+      ]}
+    >
+      <Text style={[styles.settingOptionText, active && styles.settingOptionTextActive]}>{label}</Text>
+    </Pressable>
+  );
+}
+
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
@@ -943,6 +1068,59 @@ const styles = StyleSheet.create({
     borderColor: "#cfe9f7",
     borderRadius: 16,
     backgroundColor: "#f5fbff",
+  },
+  settingsSection: {
+    gap: 8,
+    marginTop: 8,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: "#cfe9f7",
+    borderRadius: 16,
+    backgroundColor: "#f5fbff",
+  },
+  settingsTitle: {
+    color: TEXT_GRAY,
+    fontSize: 17,
+    fontWeight: "700",
+  },
+  settingsLabel: {
+    marginTop: 4,
+    color: TEXT_GRAY,
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  settingsDescription: {
+    color: MUTED_GRAY,
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  settingOptions: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  settingOption: {
+    flex: 1,
+    minHeight: 42,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 10,
+    borderWidth: 1,
+    borderColor: "#b8dff1",
+    borderRadius: 21,
+    backgroundColor: "#ffffff",
+  },
+  settingOptionActive: {
+    borderColor: BLUE,
+    backgroundColor: BLUE,
+  },
+  settingOptionText: {
+    color: TEXT_GRAY,
+    fontSize: 13,
+    fontWeight: "700",
+    textAlign: "center",
+  },
+  settingOptionTextActive: {
+    color: "#ffffff",
   },
   managementTitle: {
     color: TEXT_GRAY,
