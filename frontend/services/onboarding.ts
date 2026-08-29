@@ -2,8 +2,10 @@ import * as SecureStore from "expo-secure-store";
 import { Platform } from "react-native";
 import {
   parseIdentityVerificationChoice,
+  parseAppMode,
   parseLanguage,
   parseLocalProfile,
+  type AppMode,
   type AppLanguage,
   type IdentityVerificationChoice,
   type LocalProfile,
@@ -11,16 +13,19 @@ import {
 
 export {
   parseIdentityVerificationChoice,
+  parseAppMode,
   parseLanguage,
   parseLocalProfile,
 } from "./onboarding-contract";
 export type {
+  AppMode,
   AppLanguage,
   IdentityVerificationChoice,
   LocalProfile,
 } from "./onboarding-contract";
 
 const LANGUAGE_KEY = "samurai_meet_language_v1";
+const APP_MODE_KEY = "samurai_meet_app_mode_v1";
 const PROFILE_KEY_PREFIX = "samurai_meet_profile_v1_";
 const IDENTITY_VERIFICATION_CHOICE_KEY_PREFIX =
   "samurai_meet_identity_verification_choice_v1_";
@@ -69,6 +74,18 @@ export async function saveLanguage(language: AppLanguage): Promise<void> {
 
 export async function clearLanguage(): Promise<void> {
   await deleteItem(LANGUAGE_KEY);
+}
+
+export async function loadAppMode(): Promise<AppMode | null> {
+  return parseAppMode(await getItem(APP_MODE_KEY));
+}
+
+export async function saveAppMode(mode: AppMode): Promise<void> {
+  await setItem(APP_MODE_KEY, mode);
+}
+
+export async function clearAppMode(): Promise<void> {
+  await deleteItem(APP_MODE_KEY);
 }
 
 export async function loadLocalProfile(userID: string): Promise<LocalProfile | null> {

@@ -1,4 +1,5 @@
 export type AppLanguage = "ja" | "en";
+export type AppMode = "local" | "traveler";
 export type IdentityVerificationChoice = "proceed" | "later" | null;
 
 export type LocalProfile = {
@@ -11,6 +12,10 @@ export type LocalProfile = {
 
 export function parseLanguage(value: string | null): AppLanguage | null {
   return value === "ja" || value === "en" ? value : null;
+}
+
+export function parseAppMode(value: string | null): AppMode | null {
+  return value === "local" || value === "traveler" ? value : null;
 }
 
 export function parseIdentityVerificationChoice(
