@@ -794,12 +794,12 @@ export default function OnboardingScreen() {
 
   useEffect(() => {
     let active = true;
-    void Promise.all([loadLanguage(), loadAppMode()]).then(async ([storedLanguage, storedMode]) => {
+    void Promise.all([loadLanguage(), loadAppMode()]).then(([storedLanguage, storedMode]) => {
       // Existing installs used display language as their home-mode selector.
       // Keep that one-time default, then persist an independent mode value.
       const defaultMode = storedLanguage === "en" ? "traveler" : storedLanguage === "ja" ? "local" : null;
       const resolvedMode = storedMode ?? defaultMode;
-      if (!storedMode && resolvedMode) await saveAppMode(resolvedMode);
+      if (!storedMode && resolvedMode) void saveAppMode(resolvedMode);
       if (active) {
         setLanguage(storedLanguage);
         setAppMode(resolvedMode);
