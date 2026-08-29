@@ -100,18 +100,40 @@ describe("募集APIクライアント", () => {
     });
   });
 
-  it("外国人側のマッチ一覧は保留中以外の状態も取得する", async () => {
+  it("応募履歴はrequester roleで送信済み・承認済みを取得する", async () => {
     let requestedURL = "";
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       requestedURL = String(input);
-      return new Response(JSON.stringify({ data: [] }), { status: 200 });
+      return new Response(JSON.stringify({
+        data: [
+          { id: "match-pending", status: "pending" },
+          { id: "match-accepted", status: "accepted" },
+        ],
+      }), { status: 200 });
     }) as unknown as typeof fetch;
 
-    await listMatches(session, { role: "owner", limit: 50 });
+    const result = await listMatches(session, { role: "requester", limit: 50 });
 
-    expect(requestedURL).toContain("role=owner");
+    expect(result.map((item) => item.status)).toEqual(["pending", "accepted"]);
+    expect(requestedURL).toContain("role=requester");
     expect(requestedURL).toContain("limit=50");
     expect(requestedURL).not.toContain("status=pending");
+  });
+
+  it("空配列と通信失敗を別の結果として扱う", async () => {
+    globalThis.fetch = (async () => new Response(JSON.stringify({ data: [] }), { status: 200 })) as unknown as typeof fetch;
+    await expect(listMatches(session, { role: "requester" })).resolves.toEqual([]);
+
+    globalThis.fetch = (async () => {
+      throw new Error("network unavailable");
+    }) as unknown as typeof fetch;
+    await expect(listMatches(session, { role: "requester" })).rejects.toThrow("network unavailable");
+  });
+
+  it("matchesのdata欠落を空履歴として扱わない", async () => {
+    globalThis.fetch = (async () => new Response(JSON.stringify({}), { status: 200 })) as unknown as typeof fetch;
+
+    await expect(listMatches(session, { role: "requester" })).rejects.toThrow("matches response is invalid");
   });
 
   it("自分の募集管理APIと応募取り下げAPIの契約を組み立てる", async () => {
@@ -141,8 +163,14 @@ describe("募集APIクライアント", () => {
 
     await expect(listMyRecruitments(session)).resolves.toHaveLength(1);
     await expect(updateRecruitment(recruitment.id, session, {
+      category: "Places",
+      available_date: "2026-08-28",
+      start_time: "09:30",
+      end_time: "11:00",
       description: "Updated description",
       timezone: "Asia/Tokyo",
+      keywords: ["museum", "walk"],
+      visibility_radius_km: 5,
     })).resolves.toMatchObject({ id: recruitment.id });
     await expect(closeRecruitment(recruitment.id, session)).resolves.toBeUndefined();
     await expect(withdrawRecruitmentInterest("match-1", session)).resolves.toMatchObject({ status: "cancelled" });
@@ -150,8 +178,14 @@ describe("募集APIクライアント", () => {
     expect(requests[0]?.url).toContain("/recruitments/mine");
     expect(requests[1]?.method).toBe("PATCH");
     expect(JSON.parse(requests[1]?.body ?? "{}")).toMatchObject({
+      category: "Places",
+      available_date: "2026-08-28",
+      start_time: "09:30",
+      end_time: "11:00",
       description: "Updated description",
       timezone: "Asia/Tokyo",
+      keywords: ["museum", "walk"],
+      visibility_radius_km: 5,
     });
     expect(requests[2]?.method).toBe("DELETE");
     expect(requests[3]?.url).toContain("/matches/match-1/withdraw");

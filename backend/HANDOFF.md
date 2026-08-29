@@ -5,7 +5,7 @@
 ## 現在の境界（2026-08-27）
 
 - 通常のネイティブAPI Base URLは `https://samurai-meet.disnana.com/api/v1`。`127.0.0.1:8080`やLAN URLへは自動切替しない。別環境は `EXPO_PUBLIC_API_BASE_URL` 等を明示する。
-- 募集・マッチングのGo APIと、外国人／日本人画面からの募集フロー接続コードは存在する。ただしiOS初期表示で `invalid_recruitment_date` が発生した報告があり、募集作成の実機E2Eは未確認。利用日・壁時計は `Asia/Tokyo` 固定、絶対時刻はUTC。
+- 募集・マッチングのGo APIと、外国人／日本人画面からの募集フロー接続コードは存在する。日時入力はISO内部値と `Asia/Tokyo` 固定へ統一し、フロント／Goの自動テストで確認済み。募集作成から通知遷移までのiOS実機全通しE2Eは未確認。絶対時刻はUTC。
 - 通知はDB永続化、一覧・既読、応募／承認／辞退／暗号化チャット送信のイベント生成、通知画面接続まで。OSプッシュ通知は未実装。
 - チャットはRESTの暗号文送信・履歴・既読・短命token部品まで。QUIC／WebTransport／WebSocketのリアルタイム配送は未実装。
 - `POST /api/v1/chats/{id}/transport-token` はHTTP handlerの既定値 `quic` とサービス側の受理値 `websocket`／`webtransport` が不一致。コードを修正して契約を決めるまで、endpointを動作済みとみなさない。

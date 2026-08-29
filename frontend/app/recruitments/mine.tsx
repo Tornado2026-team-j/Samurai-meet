@@ -1,6 +1,6 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
-import { useFocusEffect, useRouter } from "expo-router";
+import { useRouter } from "expo-router";
 import {
   ActivityIndicator,
   Alert,
@@ -8,6 +8,7 @@ import {
   Modal,
   Platform,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -18,6 +19,8 @@ import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "../../hooks/useAuth";
 import { APIError } from "../../services/api-client";
+import { loadLanguage, subscribeLanguage } from "../../services/onboarding";
+import type { AppLanguage } from "../../services/onboarding-contract";
 import {
   closeRecruitment,
   listMatches,
@@ -40,24 +43,44 @@ const SOFT_BLUE = "#eff8ff";
 
 const CATEGORIES: MatchCategory[] = ["Food", "Places", "Activity", "Other"];
 
-const RECRUITMENT_STATUS_LABELS: Record<Recruitment["status"], string> = {
-  draft: "下書き",
-  open: "公開中",
-  matched: "マッチ済み",
-  closed: "終了",
-  expired: "期限切れ",
-  completed: "完了",
-};
-
-const MATCH_STATUS_LABELS: Record<MatchStatus, string> = {
-  pending: "応募を確認中",
-  accepted: "承認済み",
-  rejected: "却下",
-  cancelled: "応募取り下げ",
-  blocked: "利用不可",
-  expired: "期限切れ",
-  completed: "完了",
-};
+const COPY = {
+  ja: {
+    back: "戻る", title: "自分の募集を管理", intro: "公開中・下書き・終了した募集を確認できます。",
+    loginRequired: "ログイン後に募集を管理できます。", loading: "募集を読み込み中…",
+    loadError: "募集管理を読み込めませんでした。時間をおいて再試行してください。", retry: "再試行",
+    empty: "自分の募集はまだありません。", updateLoginRequired: "ログイン後にもう一度お試しください。",
+    updateError: "募集を更新できませんでした。日付・時刻と入力内容を確認してください。",
+    closeTitle: "募集を終了しますか？", closeMessage: "公開停止後も履歴として残ります。", cancel: "キャンセル",
+    close: "終了する", closeError: "募集を終了できませんでした。最新の状態を確認してください。",
+    editing: "編集", edit: "編集", ending: "終了中…", endPublic: "公開を終了", applicants: "応募者",
+    noApplicants: "まだ応募はありません。", userFallback: "ユーザー", review: "確認", state: "状態",
+    editTitle: "募集を編集", closeEditor: "編集を閉じる", category: "カテゴリ", date: "日付（JST）",
+    dateInput: "募集日付（JST）", start: "開始（JST）", startInput: "開始時刻（JST）", end: "終了（JST）",
+    endInput: "終了時刻（JST）", description: "したいこと", descriptionInput: "募集内容",
+    keywords: "キーワード（カンマ区切り）", keywordsInput: "キーワード", radius: "公開範囲",
+    jstHint: "日時はサーバーと同じJST（Asia/Tokyo）で保存されます。", save: "保存", saving: "保存中…",
+    recruitmentStatus: { draft: "下書き", open: "公開中", matched: "マッチ済み", closed: "終了", expired: "期限切れ", completed: "完了" },
+    matchStatus: { pending: "応募を確認中", accepted: "承認済み", rejected: "却下", cancelled: "応募取り下げ", blocked: "利用不可", expired: "期限切れ", completed: "完了" },
+  },
+  en: {
+    back: "Back", title: "Manage my recruitments", intro: "Review your open, draft, and closed recruitments.",
+    loginRequired: "Sign in to manage recruitments.", loading: "Loading recruitments…",
+    loadError: "Recruitments could not be loaded. Please try again later.", retry: "Retry",
+    empty: "You have not created any recruitments yet.", updateLoginRequired: "Sign in and try again.",
+    updateError: "The recruitment could not be updated. Check the date, time, and details.",
+    closeTitle: "Close this recruitment?", closeMessage: "It will remain in your history after it is no longer public.", cancel: "Cancel",
+    close: "Close", closeError: "The recruitment could not be closed. Check the latest status and try again.",
+    editing: "Edit", edit: "Edit", ending: "Closing…", endPublic: "Close recruitment", applicants: "Applicants",
+    noApplicants: "There are no applications yet.", userFallback: "User", review: "Review", state: "Status",
+    editTitle: "Edit recruitment", closeEditor: "Close editor", category: "Category", date: "Date (JST)",
+    dateInput: "Recruitment date (JST)", start: "Start (JST)", startInput: "Start time (JST)", end: "End (JST)",
+    endInput: "End time (JST)", description: "What would you like to do?", descriptionInput: "Recruitment details",
+    keywords: "Keywords (comma separated)", keywordsInput: "Keywords", radius: "Visibility range",
+    jstHint: "Times are saved in JST (Asia/Tokyo), the same time zone used by the server.", save: "Save", saving: "Saving…",
+    recruitmentStatus: { draft: "Draft", open: "Open", matched: "Matched", closed: "Closed", expired: "Expired", completed: "Completed" },
+    matchStatus: { pending: "Pending review", accepted: "Accepted", rejected: "Declined", cancelled: "Withdrawn", blocked: "Unavailable", expired: "Expired", completed: "Completed" },
+  },
+} as const;
 
 type EditDraft = {
   category: MatchCategory;
@@ -95,15 +118,36 @@ export default function MyRecruitmentsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { getCurrentSession, refresh, session, status } = useAuth();
+  const [language, setLanguage] = useState<AppLanguage | null>(null);
   const [recruitments, setRecruitments] = useState<Recruitment[]>([]);
   const [applications, setApplications] = useState<MatchView[]>([]);
   const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading");
+  const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [operationError, setOperationError] = useState<string | null>(null);
   const [editing, setEditing] = useState<Recruitment | null>(null);
   const [editDraft, setEditDraft] = useState<EditDraft | null>(null);
   const [saving, setSaving] = useState(false);
   const [closingID, setClosingID] = useState<string | null>(null);
+  const initialLoadStarted = useRef(false);
+  const hasLoaded = useRef(false);
+  const copy = COPY[language ?? "ja"];
+
+  useEffect(() => {
+    let active = true;
+    const unsubscribe = subscribeLanguage((nextLanguage) => {
+      if (active) setLanguage(nextLanguage ?? "ja");
+    });
+    void loadLanguage().then((storedLanguage) => {
+      if (active) setLanguage(storedLanguage ?? "ja");
+    }).catch(() => {
+      if (active) setLanguage("ja");
+    });
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, []);
 
   const loadManagement = useCallback(() => {
     const controller = new AbortController();
@@ -115,13 +159,19 @@ export default function MyRecruitmentsScreen() {
         if (!cancelled) {
           setRecruitments([]);
           setApplications([]);
+          setRefreshing(false);
           setLoadState("error");
-          setLoadError("ログイン後に募集を管理できます。");
+          setLoadError(copy.loginRequired);
         }
         return;
       }
 
-      setLoadState("loading");
+      const initialLoad = !hasLoaded.current;
+      if (initialLoad) {
+        setLoadState("loading");
+      } else {
+        setRefreshing(true);
+      }
       setLoadError(null);
       try {
         const request = async (currentSession: typeof activeSession) => {
@@ -144,14 +194,17 @@ export default function MyRecruitmentsScreen() {
         if (!cancelled) {
           setRecruitments(result.owned);
           setApplications(result.ownedApplications);
+          hasLoaded.current = true;
           setLoadState("ready");
         }
       } catch (error) {
         if (error instanceof Error && error.name === "AbortError") return;
         if (!cancelled) {
-          setLoadState("error");
-          setLoadError("募集管理を読み込めませんでした。時間をおいて再試行してください。");
+          setLoadState(initialLoad ? "error" : "ready");
+          setLoadError(copy.loadError);
         }
+      } finally {
+        if (!cancelled) setRefreshing(false);
       }
     };
 
@@ -160,9 +213,16 @@ export default function MyRecruitmentsScreen() {
       cancelled = true;
       controller.abort();
     };
-  }, [getCurrentSession, refresh, session, status]);
+  }, [copy.loadError, copy.loginRequired, getCurrentSession, refresh, session, status]);
 
-  useFocusEffect(loadManagement);
+  const loadManagementRef = useRef(loadManagement);
+  loadManagementRef.current = loadManagement;
+
+  useEffect(() => {
+    if (initialLoadStarted.current || status === "loading") return;
+    initialLoadStarted.current = true;
+    return loadManagementRef.current();
+  }, [status]);
 
   const applicationsByRecruitment = useMemo(() => {
     const grouped = new Map<string, MatchView[]>();
@@ -204,7 +264,7 @@ export default function MyRecruitmentsScreen() {
     if (!editing || !editDraft || saving) return;
     const activeSession = getCurrentSession() ?? session;
     if (!activeSession || status !== "signed_in") {
-      setOperationError("ログイン後にもう一度お試しください。");
+      setOperationError(copy.updateLoginRequired);
       return;
     }
 
@@ -235,7 +295,7 @@ export default function MyRecruitmentsScreen() {
       setRecruitments((current) => current.map((item) => item.id === result.id ? result : item));
       closeEditorAfterSave();
     } catch {
-      setOperationError("募集を更新できませんでした。日付・時刻と入力内容を確認してください。");
+      setOperationError(copy.updateError);
     } finally {
       setSaving(false);
     }
@@ -244,12 +304,12 @@ export default function MyRecruitmentsScreen() {
   const closeOwnedRecruitment = (recruitment: Recruitment) => {
     if (!canClose(recruitment) || closingID) return;
     Alert.alert(
-      "募集を終了しますか？",
-      "公開停止後も履歴として残ります。",
+      copy.closeTitle,
+      copy.closeMessage,
       [
-        { text: "キャンセル", style: "cancel" },
+        { text: copy.cancel, style: "cancel" },
         {
-          text: "終了する",
+          text: copy.close,
           style: "destructive",
           onPress: () => void performClose(recruitment),
         },
@@ -277,7 +337,7 @@ export default function MyRecruitmentsScreen() {
         : item
       ));
     } catch {
-      setOperationError("募集を終了できませんでした。最新の状態を確認してください。");
+      setOperationError(copy.closeError);
     } finally {
       setClosingID(null);
     }
@@ -290,12 +350,16 @@ export default function MyRecruitmentsScreen() {
     });
   };
 
+  if (!language) {
+    return <View style={styles.screen}><StatusBar style="light" /><View style={styles.statePanel}><ActivityIndicator color={BLUE} /></View></View>;
+  }
+
   return (
     <View style={styles.screen}>
       <StatusBar style="light" />
       <View style={[styles.header, { paddingTop: Math.max(insets.top, 18) }]}>
         <Pressable
-          accessibilityLabel="戻る"
+          accessibilityLabel={copy.back}
           accessibilityRole="button"
           hitSlop={10}
           onPress={() => router.back()}
@@ -303,39 +367,61 @@ export default function MyRecruitmentsScreen() {
         >
           <MaterialIcons color="#ffffff" name="arrow-back-ios-new" size={20} />
         </Pressable>
-        <Text style={styles.headerTitle}>自分の募集を管理</Text>
+        <Text style={styles.headerTitle}>{copy.title}</Text>
       </View>
 
       <ScrollView
         contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 32 }]}
+        refreshControl={
+          <RefreshControl
+            onRefresh={() => loadManagement()}
+            refreshing={refreshing}
+            tintColor={BLUE}
+          />
+        }
         showsVerticalScrollIndicator={false}
       >
-        <Text style={styles.intro}>公開中・下書き・終了した募集を確認できます。</Text>
+        <Text style={styles.intro}>{copy.intro}</Text>
         {operationError ? <Text accessibilityRole="alert" style={styles.operationError}>{operationError}</Text> : null}
 
         {loadState === "loading" ? (
           <View style={styles.statePanel}>
             <ActivityIndicator color={BLUE} />
-            <Text style={styles.stateText}>募集を読み込み中…</Text>
+            <Text style={styles.stateText}>{copy.loading}</Text>
           </View>
         ) : loadState === "error" ? (
           <View style={styles.statePanel}>
             <Text accessibilityRole="alert" style={styles.stateText}>{loadError}</Text>
             <Pressable
-              accessibilityLabel="募集管理を再読み込み"
+              accessibilityLabel={copy.retry}
               accessibilityRole="button"
               onPress={loadManagement}
               style={({ pressed }) => [styles.retryButton, pressed && styles.pressed]}
             >
-              <Text style={styles.retryText}>再試行</Text>
+              <Text style={styles.retryText}>{copy.retry}</Text>
             </Pressable>
           </View>
-        ) : recruitments.length === 0 ? (
-          <View style={styles.statePanel}>
-            <MaterialIcons color={MUTED_GRAY} name="post-add" size={38} />
-            <Text style={styles.stateText}>自分の募集はまだありません。</Text>
-          </View>
-        ) : recruitments.map((recruitment) => {
+        ) : (
+          <>
+            {loadError ? (
+              <View style={styles.inlineError}>
+                <Text accessibilityRole="alert" style={styles.inlineErrorText}>{loadError}</Text>
+                <Pressable
+                  accessibilityLabel={copy.retry}
+                  accessibilityRole="button"
+                  onPress={() => loadManagement()}
+                  style={({ pressed }) => [styles.retryButton, pressed && styles.pressed]}
+                >
+                  <Text style={styles.retryText}>{copy.retry}</Text>
+                </Pressable>
+              </View>
+            ) : null}
+            {recruitments.length === 0 ? (
+              <View style={styles.statePanel}>
+                <MaterialIcons color={MUTED_GRAY} name="post-add" size={38} />
+                <Text style={styles.stateText}>{copy.empty}</Text>
+              </View>
+            ) : recruitments.map((recruitment) => {
           const ownedApplications = applicationsByRecruitment.get(recruitment.id) ?? [];
           const editable = canEdit(recruitment);
           const closable = canClose(recruitment);
@@ -351,29 +437,29 @@ export default function MyRecruitmentsScreen() {
                 </View>
                 <View style={[styles.statusPill, { borderColor: recruitmentStatusColor(recruitment.status) }]}>
                   <Text style={[styles.statusText, { color: recruitmentStatusColor(recruitment.status) }]}>
-                    {RECRUITMENT_STATUS_LABELS[recruitment.status]}
+                    {copy.recruitmentStatus[recruitment.status]}
                   </Text>
                 </View>
               </View>
 
               <Text numberOfLines={3} style={styles.description}>{recruitment.description}</Text>
-              <Text style={styles.keywords}>タグ: {recruitment.keywords.join(" · ") || "なし"}</Text>
+              <Text style={styles.keywords}>{copy.keywords}: {recruitment.keywords.join(" · ") || "—"}</Text>
 
               <View style={styles.recruitmentActions}>
                 {editable ? (
                   <Pressable
-                    accessibilityLabel={`${recruitment.category}の募集を編集`}
+                    accessibilityLabel={`${recruitment.category} ${copy.edit}`}
                     accessibilityRole="button"
                     onPress={() => startEditing(recruitment)}
                     style={({ pressed }) => [styles.secondaryButton, pressed && styles.pressed]}
                   >
                     <MaterialIcons color={BLUE} name="edit" size={17} />
-                    <Text style={styles.secondaryButtonText}>編集</Text>
+                    <Text style={styles.secondaryButtonText}>{copy.edit}</Text>
                   </Pressable>
                 ) : null}
                 {closable ? (
                   <Pressable
-                    accessibilityLabel={closing ? "募集を終了中" : `${recruitment.category}の募集を終了`}
+                    accessibilityLabel={closing ? copy.ending : `${recruitment.category} ${copy.endPublic}`}
                     accessibilityRole="button"
                     accessibilityState={{ busy: closing, disabled: closing }}
                     disabled={closing}
@@ -381,21 +467,21 @@ export default function MyRecruitmentsScreen() {
                     style={({ pressed }) => [styles.closeButton, closing && styles.disabled, pressed && styles.pressed]}
                   >
                     {closing ? <ActivityIndicator color="#b42318" size="small" /> : null}
-                    <Text style={styles.closeButtonText}>{closing ? "終了中…" : "公開を終了"}</Text>
+                    <Text style={styles.closeButtonText}>{closing ? copy.ending : copy.endPublic}</Text>
                   </Pressable>
                 ) : null}
               </View>
 
               <View style={styles.applicationsSection}>
                 <Text style={styles.applicationsTitle}>
-                  応募者 {ownedApplications.length > 0 ? `(${ownedApplications.length})` : ""}
+                  {copy.applicants} {ownedApplications.length > 0 ? `(${ownedApplications.length})` : ""}
                 </Text>
                 {ownedApplications.length === 0 ? (
-                  <Text style={styles.noApplications}>まだ応募はありません。</Text>
+                  <Text style={styles.noApplications}>{copy.noApplicants}</Text>
                 ) : ownedApplications.map((application) => (
                   <Pressable
                     key={application.id}
-                    accessibilityLabel={`${application.other_user.name}さんの応募を確認`}
+                    accessibilityLabel={`${application.other_user.name || copy.userFallback} ${copy.review}`}
                     accessibilityRole="button"
                     onPress={() => openApplication(application)}
                     style={({ pressed }) => [styles.applicationRow, pressed && styles.pressed]}
@@ -405,21 +491,23 @@ export default function MyRecruitmentsScreen() {
                     </View>
                     <View style={styles.applicationText}>
                       <Text numberOfLines={1} style={styles.applicantName}>
-                        {application.other_user.name || "ユーザー"}
+                        {application.other_user.name || copy.userFallback}
                       </Text>
                       <Text style={styles.applicantMeta}>
-                        {application.other_user.nationality_code || "—"} · {MATCH_STATUS_LABELS[application.status]}
+                        {application.other_user.nationality_code || "—"} · {copy.matchStatus[application.status]}
                       </Text>
                     </View>
                     <Text style={[styles.applicationAction, { color: matchStatusColor(application.status) }]}>
-                      {application.status === "pending" ? "確認" : "状態"} ›
+                      {application.status === "pending" ? copy.review : copy.state} ›
                     </Text>
                   </Pressable>
                 ))}
               </View>
             </View>
           );
-        })}
+            })}
+          </>
+        )}
       </ScrollView>
 
       <Modal
@@ -439,9 +527,9 @@ export default function MyRecruitmentsScreen() {
           >
             <View style={styles.editorPanel}>
               <View style={styles.editorHeader}>
-                <Text style={styles.editorTitle}>募集を編集</Text>
+                <Text style={styles.editorTitle}>{copy.editTitle}</Text>
                 <Pressable
-                  accessibilityLabel="編集を閉じる"
+                  accessibilityLabel={copy.closeEditor}
                   accessibilityRole="button"
                   disabled={saving}
                   onPress={closeEditor}
@@ -453,7 +541,7 @@ export default function MyRecruitmentsScreen() {
 
               {editDraft ? (
                 <>
-                  <Text style={styles.fieldLabel}>カテゴリ</Text>
+                  <Text style={styles.fieldLabel}>{copy.category}</Text>
                   <View style={styles.categoryChoices}>
                     {CATEGORIES.map((category) => (
                       <Pressable
@@ -476,9 +564,9 @@ export default function MyRecruitmentsScreen() {
                     ))}
                   </View>
 
-                  <Text style={styles.fieldLabel}>日付（JST）</Text>
+                  <Text style={styles.fieldLabel}>{copy.date}</Text>
                   <TextInput
-                    accessibilityLabel="募集日付（JST）"
+                    accessibilityLabel={copy.dateInput}
                     editable={!saving}
                     onChangeText={(available_date) => setEditDraft((current) => current ? { ...current, available_date } : current)}
                     placeholder="YYYY-MM-DD"
@@ -488,9 +576,9 @@ export default function MyRecruitmentsScreen() {
 
                   <View style={styles.inlineFields}>
                     <View style={styles.inlineField}>
-                      <Text style={styles.fieldLabel}>開始（JST）</Text>
+                      <Text style={styles.fieldLabel}>{copy.start}</Text>
                       <TextInput
-                        accessibilityLabel="開始時刻（JST）"
+                        accessibilityLabel={copy.startInput}
                         editable={!saving}
                         onChangeText={(start_time) => setEditDraft((current) => current ? { ...current, start_time } : current)}
                         placeholder="HH:mm"
@@ -499,9 +587,9 @@ export default function MyRecruitmentsScreen() {
                       />
                     </View>
                     <View style={styles.inlineField}>
-                      <Text style={styles.fieldLabel}>終了（JST）</Text>
+                      <Text style={styles.fieldLabel}>{copy.end}</Text>
                       <TextInput
-                        accessibilityLabel="終了時刻（JST）"
+                        accessibilityLabel={copy.endInput}
                         editable={!saving}
                         onChangeText={(end_time) => setEditDraft((current) => current ? { ...current, end_time } : current)}
                         placeholder="HH:mm"
@@ -511,9 +599,9 @@ export default function MyRecruitmentsScreen() {
                     </View>
                   </View>
 
-                  <Text style={styles.fieldLabel}>したいこと</Text>
+                  <Text style={styles.fieldLabel}>{copy.description}</Text>
                   <TextInput
-                    accessibilityLabel="募集内容"
+                    accessibilityLabel={copy.descriptionInput}
                     editable={!saving}
                     multiline
                     onChangeText={(description) => setEditDraft((current) => current ? { ...current, description } : current)}
@@ -521,16 +609,16 @@ export default function MyRecruitmentsScreen() {
                     value={editDraft.description}
                   />
 
-                  <Text style={styles.fieldLabel}>キーワード（カンマ区切り）</Text>
+                  <Text style={styles.fieldLabel}>{copy.keywords}</Text>
                   <TextInput
-                    accessibilityLabel="キーワード"
+                    accessibilityLabel={copy.keywordsInput}
                     editable={!saving}
                     onChangeText={(keywords) => setEditDraft((current) => current ? { ...current, keywords } : current)}
                     style={styles.textInput}
                     value={editDraft.keywords}
                   />
 
-                  <Text style={styles.fieldLabel}>公開範囲</Text>
+                  <Text style={styles.fieldLabel}>{copy.radius}</Text>
                   <View style={styles.radiusChoices}>
                     {([1, 3, 5] as const).map((radius) => (
                       <Pressable
@@ -551,20 +639,20 @@ export default function MyRecruitmentsScreen() {
                     ))}
                   </View>
 
-                  <Text style={styles.jstHint}>日時はサーバーと同じJST（Asia/Tokyo）で保存されます。</Text>
+                  <Text style={styles.jstHint}>{copy.jstHint}</Text>
                   {operationError ? <Text accessibilityRole="alert" style={styles.operationError}>{operationError}</Text> : null}
                   <View style={styles.editorActions}>
                     <Pressable
-                      accessibilityLabel="編集をキャンセル"
+                      accessibilityLabel={copy.cancel}
                       accessibilityRole="button"
                       disabled={saving}
                       onPress={closeEditor}
                       style={({ pressed }) => [styles.cancelButton, pressed && styles.pressed]}
                     >
-                      <Text style={styles.cancelText}>キャンセル</Text>
+                      <Text style={styles.cancelText}>{copy.cancel}</Text>
                     </Pressable>
                     <Pressable
-                      accessibilityLabel={saving ? "募集を保存中" : "募集を保存"}
+                      accessibilityLabel={saving ? copy.saving : copy.save}
                       accessibilityRole="button"
                       accessibilityState={{ busy: saving, disabled: saving }}
                       disabled={saving}
@@ -572,7 +660,7 @@ export default function MyRecruitmentsScreen() {
                       style={({ pressed }) => [styles.saveButton, saving && styles.disabled, pressed && styles.pressed]}
                     >
                       {saving ? <ActivityIndicator color="#ffffff" size="small" /> : null}
-                      <Text style={styles.saveText}>{saving ? "保存中…" : "保存"}</Text>
+                      <Text style={styles.saveText}>{saving ? copy.saving : copy.save}</Text>
                     </Pressable>
                   </View>
                 </>
@@ -603,6 +691,8 @@ const styles = StyleSheet.create({
   intro: { alignSelf: "stretch", color: MUTED_GRAY, fontSize: 13, lineHeight: 19, textAlign: "center" },
   operationError: { alignSelf: "stretch", color: "#b42318", fontSize: 13, fontWeight: "700", lineHeight: 19, textAlign: "center" },
   statePanel: { minHeight: 180, width: "100%", alignItems: "center", justifyContent: "center", gap: 12, paddingHorizontal: 20 },
+  inlineError: { width: "100%", alignItems: "center", gap: 8, paddingHorizontal: 20 },
+  inlineErrorText: { color: "#b42318", fontSize: 13, fontWeight: "600", lineHeight: 19, textAlign: "center" },
   stateText: { color: MUTED_GRAY, fontSize: 14, fontWeight: "600", lineHeight: 20, textAlign: "center" },
   retryButton: { minWidth: 84, minHeight: 36, alignItems: "center", justifyContent: "center", paddingHorizontal: 16, borderRadius: 18, backgroundColor: YELLOW },
   retryText: { color: "#ffffff", fontSize: 13, fontWeight: "800" },

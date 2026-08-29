@@ -118,4 +118,28 @@ describe("通知APIクライアント", () => {
     });
     expect(japanese).toEqual(english);
   });
+
+  it("応募者詳細への遷移はIDを正規化し、募集IDがなくても成立する", () => {
+    expect(getNotificationNavigation({
+      type: "new_application",
+      targetId: "  match-2  ",
+      recruitmentId: "",
+    })).toEqual({
+      pathname: "/foreigner/applications/[id]",
+      params: { id: "match-2" },
+    });
+  });
+
+  it("対象IDがない通知は安全に何も開かない", () => {
+    expect(getNotificationNavigation({
+      type: "new_application",
+      targetId: "   ",
+      recruitmentId: "recruitment-1",
+    })).toBeNull();
+    expect(getNotificationNavigation({
+      type: "match_confirmed",
+      targetId: "",
+      recruitmentId: "recruitment-1",
+    })).toBeNull();
+  });
 });

@@ -1047,7 +1047,7 @@ func normalizeRecruitmentInput(input RecruitmentInput, now time.Time) (Recruitme
 		return RecruitmentInput{}, "", ErrInvalidInput
 	}
 	input.Description = strings.TrimSpace(input.Description)
-	if !utf8.ValidString(input.Description) || utf8.RuneCountInString(input.Description) > maxDescriptionRunes {
+	if input.Description == "" || !utf8.ValidString(input.Description) || utf8.RuneCountInString(input.Description) > maxDescriptionRunes {
 		return RecruitmentInput{}, "", ErrInvalidInput
 	}
 	if (input.Latitude == nil) != (input.Longitude == nil) {

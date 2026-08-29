@@ -23,7 +23,12 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "../../hooks/useAuth";
 import { APIError } from "../../services/api-client";
 import { getCurrentCoordinates } from "../../services/location";
-import { loadLocalProfile } from "../../services/onboarding";
+import {
+  loadLanguage,
+  loadLocalProfile,
+  subscribeLanguage,
+  type AppLanguage,
+} from "../../services/onboarding";
 import { updateMyProfile } from "../../services/profile";
 import {
   createRecruitmentPreview,
@@ -55,6 +60,160 @@ const EXPANDED_HEADER_HEIGHT = 653;
 const CONFIRMATION_HEADER_HEIGHT = 542;
 const EXPANSION_DURATION = 360;
 
+const RECRUITMENT_COPY = {
+  en: {
+    backToHome: "Back to home",
+    back: "BACK",
+    activityLabel: "What would you like to do?",
+    activityAccessibilityLabel: "Activity description",
+    activityPlaceholder:
+      "Please tell us more about what you'd like to do or see",
+    whereLabel: "Where",
+    locationAccessibilityLabel: "Location",
+    locationPlaceholder: "Osaka,Umeda",
+    useCurrentLocationAccessibilityLabel: "Use my current location",
+    useCurrentLocation: "Use my current location",
+    dateLabel: "Date",
+    dateAccessibilityHint: "Opens the date picker",
+    chooseRecruitmentDateAccessibilityLabel: "Choose recruitment date",
+    startTimeLabel: "Start Time",
+    startTimeAccessibilityLabel: "Start time",
+    startTimeAccessibilityHint:
+      "Opens the time picker. Times can be selected in five-minute intervals.",
+    durationLabel: "Duration",
+    durationAccessibilityLabel: "Duration",
+    durationAccessibilityHint:
+      "Opens a menu with durations from one to eight hours.",
+    distanceLabel: "Distance",
+    next: "NEXT",
+    confirmationTitle: "Is everything correct?",
+    confirmationExpiry: "Visible until the event ends:",
+    tryAgain: "TRY AGAIN",
+    summaryDate: "Date",
+    summaryTime: "Time",
+    publishing: "Publishing...",
+    go: "GO!",
+    backToFilters: "Back to search filters",
+    compactActivityPlaceholder: "What would you like to do?",
+    profile: "Profile",
+    closeDatePicker: "Close date picker",
+    pickerCancel: "Cancel",
+    pickerDateTitle: "Choose date",
+    pickerDone: "Done",
+    closeTimePicker: "Close time picker",
+    pickerTimeTitle: "Choose start time",
+    closeDurationMenu: "Close duration menu",
+    durationQuestion: "How long would you like to meet?",
+    durationCancel: "Cancel",
+    closeScheduleWarning: "Close schedule warning",
+    pastStartTitle: "This start time has passed.",
+    midnightTitle: "This duration crosses midnight.",
+    pastStartQuestion: "Change it to tomorrow?",
+    midnightQuestion: "Change it to tomorrow at 09:00?",
+    suggestedSchedule: "Suggested schedule",
+    useSuggestion: "YES, USE THIS",
+    editSchedule: "NO, EDIT",
+    invalidDate: "Choose a valid recruitment date.",
+    invalidTime: "Choose a valid start time.",
+    invalidDuration: "Choose a duration from 1 to 8 hours.",
+    activityRequired: "Tell us what you would like to do before continuing.",
+    pastDate: "The selected start time has already passed. Choose another time.",
+    crossesMidnight:
+      "The selected duration crosses midnight. Choose an earlier time or shorter duration.",
+    invalidDetails: "Check the recruitment details.",
+    previewError: "Preview could not be prepared. Please try again.",
+    requestTimeout:
+      "The server request timed out. Check your connection and try again.",
+    expiredSession: "Your session expired. Sign in again on this API environment.",
+    incompleteProfile: "Complete your profile before publishing.",
+    invalidProfile:
+      "Your profile could not be synchronized. Check your name and nationality.",
+    expiredRecruitment:
+      "The recruitment time has passed. Choose a new date and time.",
+    invalidMatchingRequest:
+      "Review the entire recruitment details and try again.",
+    publishFailed:
+      "The server could not publish this recruitment. Try again shortly.",
+    signInAgain: "Your session expired. Sign in again before publishing.",
+    notSignedIn: "Please sign in again before publishing.",
+    connectionFailed:
+      "The server could not be reached. Check your iPhone network connection and try again.",
+    expiryFallback: "...",
+  },
+  ja: {
+    backToHome: "ホームに戻る",
+    back: "戻る",
+    activityLabel: "何をしたいですか？",
+    activityAccessibilityLabel: "したいことの説明",
+    activityPlaceholder: "したいことや見たいものを教えてください",
+    whereLabel: "場所",
+    locationAccessibilityLabel: "場所",
+    locationPlaceholder: "大阪・梅田",
+    useCurrentLocationAccessibilityLabel: "現在地を使う",
+    useCurrentLocation: "現在地を使う",
+    dateLabel: "日付",
+    dateAccessibilityHint: "日付選択を開きます",
+    chooseRecruitmentDateAccessibilityLabel: "募集日を選択",
+    startTimeLabel: "開始時刻",
+    startTimeAccessibilityLabel: "開始時刻",
+    startTimeAccessibilityHint: "時刻選択を開きます。5分単位で選択できます。",
+    durationLabel: "所要時間",
+    durationAccessibilityLabel: "所要時間",
+    durationAccessibilityHint: "1時間から8時間の選択メニューを開きます。",
+    distanceLabel: "距離",
+    next: "次へ",
+    confirmationTitle: "この内容でよろしいですか？",
+    confirmationExpiry: "イベント終了まで公開されます：",
+    tryAgain: "再試行",
+    summaryDate: "日付",
+    summaryTime: "時間",
+    publishing: "公開中…",
+    go: "公開する",
+    backToFilters: "募集条件に戻る",
+    compactActivityPlaceholder: "何をしたいですか？",
+    profile: "プロフィール",
+    closeDatePicker: "日付選択を閉じる",
+    pickerCancel: "キャンセル",
+    pickerDateTitle: "日付を選択",
+    pickerDone: "完了",
+    closeTimePicker: "時刻選択を閉じる",
+    pickerTimeTitle: "開始時刻を選択",
+    closeDurationMenu: "所要時間メニューを閉じる",
+    durationQuestion: "何時間会いたいですか？",
+    durationCancel: "キャンセル",
+    closeScheduleWarning: "日時の確認を閉じる",
+    pastStartTitle: "開始時刻が過ぎています。",
+    midnightTitle: "所要時間が日付をまたぎます。",
+    pastStartQuestion: "明日に変更しますか？",
+    midnightQuestion: "明日の09:00に変更しますか？",
+    suggestedSchedule: "変更案",
+    useSuggestion: "はい、これを使う",
+    editSchedule: "いいえ、編集する",
+    invalidDate: "有効な募集日を選択してください。",
+    invalidTime: "有効な開始時刻を選択してください。",
+    invalidDuration: "所要時間は1〜8時間から選択してください。",
+    activityRequired: "したいことを入力してから次へ進んでください。",
+    pastDate: "選択した開始時刻は過ぎています。別の時刻を選択してください。",
+    crossesMidnight:
+      "所要時間が日付をまたぎます。早い時刻または短い所要時間を選択してください。",
+    invalidDetails: "募集内容を確認してください。",
+    previewError: "プレビューを作成できませんでした。もう一度お試しください。",
+    requestTimeout:
+      "サーバーへのリクエストがタイムアウトしました。接続を確認してもう一度お試しください。",
+    expiredSession: "セッションの有効期限が切れました。このAPI環境で再度ログインしてください。",
+    incompleteProfile: "公開前にプロフィールを完成させてください。",
+    invalidProfile: "プロフィールを同期できませんでした。名前と国籍を確認してください。",
+    expiredRecruitment: "募集時刻が過ぎています。新しい日付と時刻を選択してください。",
+    invalidMatchingRequest: "募集内容全体を確認してもう一度お試しください。",
+    publishFailed: "募集を公開できませんでした。しばらくしてからもう一度お試しください。",
+    signInAgain: "セッションの有効期限が切れました。公開前に再度ログインしてください。",
+    notSignedIn: "公開前にもう一度ログインしてください。",
+    connectionFailed:
+      "サーバーに接続できませんでした。iPhoneのネットワーク接続を確認してもう一度お試しください。",
+    expiryFallback: "…",
+  },
+} as const;
+
 type PreviewStatus = "idle" | "loading" | "success" | "error";
 type PublishStatus = "idle" | "publishing";
 type ScheduleWarning = {
@@ -70,22 +229,27 @@ function isSessionRefreshFailure(error: unknown): boolean {
   return error instanceof Error && /^(401|409):/u.test(error.message);
 }
 
-function recruitmentInputMessage(error: unknown): string | null {
+function recruitmentInputMessage(
+  error: unknown,
+  language: AppLanguage,
+): string | null {
   if (!(error instanceof Error)) {
     return null;
   }
 
+  const copy = RECRUITMENT_COPY[language];
+
   switch (error.message) {
     case "invalid_recruitment_date":
-      return "Choose a valid recruitment date.";
+      return copy.invalidDate;
     case "invalid_recruitment_time":
-      return "Choose a valid start time.";
+      return copy.invalidTime;
     case "invalid_recruitment_duration":
-      return "Choose a duration from 1 to 8 hours.";
+      return copy.invalidDuration;
     case "recruitment_date_in_past":
-      return "The selected start time has already passed. Choose another time.";
+      return copy.pastDate;
     case "recruitment_must_end_same_day":
-      return "The selected duration crosses midnight. Choose an earlier time or shorter duration.";
+      return copy.crossesMidnight;
     default:
       return null;
   }
@@ -107,11 +271,66 @@ function safeCurrentJSTPickerDate(): Date {
   }
 }
 
-function formatRecruitmentDateForDisplay(value: string): string {
+function formatRecruitmentDateForDisplay(
+  value: string,
+  language: AppLanguage,
+): string {
   try {
-    return formatRecruitmentDateInput(parseRecruitmentDateInput(value));
+    const date = parseRecruitmentDateInput(value);
+    if (language === "ja") {
+      return new Intl.DateTimeFormat("ja-JP", {
+        day: "numeric",
+        month: "long",
+        timeZone: JST_TIME_ZONE,
+        year: "numeric",
+      }).format(date);
+    }
+    return formatRecruitmentDateInput(date);
   } catch {
-    return "—";
+    return language === "ja" ? "—" : "—";
+  }
+}
+
+function formatDurationLabel(duration: number, language: AppLanguage): string {
+  return language === "ja" ? `${duration}時間` : `${duration} hr`;
+}
+
+function translatePreviewTag(tag: string, language: AppLanguage): string {
+  if (language === "en") return tag;
+
+  const translations: Readonly<Record<string, string>> = {
+    activity: "アクティビティ",
+    anime: "アニメ",
+    culture: "文化",
+    experience: "体験",
+    food: "食事",
+    local: "地域",
+    museum: "美術館",
+    nightlife: "夜遊び",
+    other: "その他",
+    places: "観光地",
+    shopping: "買い物",
+    takoyaki: "たこ焼き",
+    walking: "散歩",
+  };
+
+  return translations[tag.trim().toLowerCase()] ?? tag;
+}
+
+function formatPreviewExpiry(
+  preview: RecruitmentPreview,
+  language: AppLanguage,
+): string {
+  if (language === "en") return preview.expiresAt;
+
+  try {
+    const [, endTime = preview.conditions.startTime] = formatTimeRange(
+      preview.conditions.startTime,
+      preview.conditions.durationHours,
+    ).split("~");
+    return `${formatRecruitmentDateForDisplay(preview.conditions.date, language)} ${endTime}`;
+  } catch {
+    return preview.expiresAt;
   }
 }
 
@@ -202,6 +421,8 @@ export default function SearchPreferencesScreen() {
   const { getCurrentSession, refresh, session, status } = useAuth();
   const { query } = useLocalSearchParams<{ query?: string | string[] }>();
   const initialQuery = Array.isArray(query) ? query[0] : query;
+  const [language, setLanguage] = useState<AppLanguage>("en");
+  const [languageLoaded, setLanguageLoaded] = useState(false);
   const suggestedSchedule = useMemo(() => defaultRecruitmentSchedule(), []);
   const suggestedDate = suggestedSchedule.date;
   const [description, setDescription] = useState(initialQuery ?? "");
@@ -252,6 +473,30 @@ export default function SearchPreferencesScreen() {
     } catch {
       return safeCurrentJSTPickerDate();
     }
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    const unsubscribe = subscribeLanguage((nextLanguage) => {
+      if (active && nextLanguage) setLanguage(nextLanguage);
+    });
+
+    void loadLanguage()
+      .then((storedLanguage) => {
+        if (!active) return;
+        setLanguage(storedLanguage ?? "en");
+        setLanguageLoaded(true);
+      })
+      .catch(() => {
+        if (!active) return;
+        setLanguage("en");
+        setLanguageLoaded(true);
+      });
+
+    return () => {
+      active = false;
+      unsubscribe();
+    };
   }, []);
 
   useEffect(() => {
@@ -336,7 +581,7 @@ export default function SearchPreferencesScreen() {
       setPickerDate(safeParseRecruitmentDate(nextDate, minimumDate));
       setDate(nextDate);
     } catch {
-      setFormError("Choose a valid recruitment date.");
+      setFormError(recruitmentInputMessage(new Error("invalid_recruitment_date"), language));
       return;
     }
     setDatePickerVisible(false);
@@ -425,6 +670,11 @@ export default function SearchPreferencesScreen() {
       return;
     }
 
+    if (!description.trim()) {
+      setFormError(RECRUITMENT_COPY[language].activityRequired);
+      return;
+    }
+
     try {
       const issue = getRecruitmentScheduleIssue(draft);
       if (issue) {
@@ -432,7 +682,9 @@ export default function SearchPreferencesScreen() {
         return;
       }
     } catch (error) {
-      setFormError(recruitmentInputMessage(error) ?? "Check the recruitment details.");
+      setFormError(
+        recruitmentInputMessage(error, language) ?? RECRUITMENT_COPY[language].invalidDetails,
+      );
       return;
     }
 
@@ -550,7 +802,7 @@ export default function SearchPreferencesScreen() {
       }
 
       if (previewRequestRef.current === controller) {
-        setPreviewError("Preview could not be prepared. Please try again.");
+        setPreviewError(RECRUITMENT_COPY[language].previewError);
         setPreviewStatus("error");
       }
     } finally {
@@ -607,39 +859,39 @@ export default function SearchPreferencesScreen() {
       await publishRecruitment(draft, preview, activeSession, coordinates);
       router.replace("/foreigner");
     } catch (error) {
-      const localMessage = recruitmentInputMessage(error);
+      const localMessage = recruitmentInputMessage(error, language);
       if (error instanceof Error && error.name === "AbortError") {
-        setPublishError("The server request timed out. Check your connection and try again.");
+        setPublishError(RECRUITMENT_COPY[language].requestTimeout);
         return;
       }
       if (error instanceof APIError) {
         switch (error.code) {
           case "missing_or_invalid_access_token":
-            setPublishError("Your session expired. Sign in again on this API environment.");
+            setPublishError(RECRUITMENT_COPY[language].expiredSession);
             break;
           case "profile_incomplete":
-            setPublishError("Complete your profile before publishing.");
+            setPublishError(RECRUITMENT_COPY[language].incompleteProfile);
             break;
           case "invalid_profile":
-            setPublishError("Your profile could not be synchronized. Check your name and nationality.");
+            setPublishError(RECRUITMENT_COPY[language].invalidProfile);
             break;
           case "recruitment_expired":
-            setPublishError("The recruitment time has passed. Choose a new date and time.");
+            setPublishError(RECRUITMENT_COPY[language].expiredRecruitment);
             break;
           case "invalid_matching_request":
-            setPublishError("Review the entire recruitment details and try again.");
+            setPublishError(RECRUITMENT_COPY[language].invalidMatchingRequest);
             break;
           default:
-            setPublishError("The server could not publish this recruitment. Try again shortly.");
+            setPublishError(RECRUITMENT_COPY[language].publishFailed);
         }
       } else if (isSessionRefreshFailure(error)) {
-        setPublishError("Your session expired. Sign in again before publishing.");
+        setPublishError(RECRUITMENT_COPY[language].signInAgain);
       } else if (localMessage) {
         setPublishError(localMessage);
       } else if (error instanceof Error && error.message === "not_signed_in") {
-        setPublishError("Please sign in again before publishing.");
+        setPublishError(RECRUITMENT_COPY[language].notSignedIn);
       } else {
-        setPublishError("The server could not be reached. Check your iPhone network connection and try again.");
+        setPublishError(RECRUITMENT_COPY[language].connectionFailed);
       }
     } finally {
       setPublishStatus("idle");
@@ -694,6 +946,19 @@ export default function SearchPreferencesScreen() {
     });
   };
 
+  const copy = RECRUITMENT_COPY[language];
+
+  if (!languageLoaded) {
+    return (
+      <View style={styles.screen}>
+        <StatusBar style="light" />
+        <View style={styles.languageLoading}>
+          <ActivityIndicator color={BLUE} size="small" />
+        </View>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.screen}>
       <StatusBar style="light" />
@@ -703,7 +968,7 @@ export default function SearchPreferencesScreen() {
       >
         {!isConfirmationVisible ? (
           <Pressable
-            accessibilityLabel="Back to home"
+            accessibilityLabel={copy.backToHome}
             accessibilityRole="button"
             onPress={() => {
               Keyboard.dismiss();
@@ -716,7 +981,7 @@ export default function SearchPreferencesScreen() {
             ]}
           >
             <MaterialIcons color="#ffffff" name="arrow-back" size={16} />
-            <Text style={styles.menuBackButtonText}>BACK</Text>
+            <Text style={styles.menuBackButtonText}>{copy.back}</Text>
           </Pressable>
         ) : null}
         <Animated.View
@@ -736,14 +1001,14 @@ export default function SearchPreferencesScreen() {
         >
           <View style={styles.form}>
             <View style={styles.descriptionGroup}>
-              <Text style={styles.label}>What would you like to do?</Text>
+              <Text style={styles.label}>{copy.activityLabel}</Text>
               <TextInput
-                accessibilityLabel="Activity description"
+                accessibilityLabel={copy.activityAccessibilityLabel}
                 blurOnSubmit
                 maxLength={160}
                 onChangeText={setDescription}
                 onSubmitEditing={() => Keyboard.dismiss()}
-                placeholder="Please tell us more about what you'd like to do or see"
+                placeholder={copy.activityPlaceholder}
                 placeholderTextColor={PLACEHOLDER_GRAY}
                 returnKeyType="done"
                 style={[styles.input, styles.descriptionInput]}
@@ -752,7 +1017,7 @@ export default function SearchPreferencesScreen() {
             </View>
 
             <View style={styles.whereGroup}>
-              <Text style={styles.label}>Where</Text>
+              <Text style={styles.label}>{copy.whereLabel}</Text>
               <View style={[styles.input, styles.locationField]}>
                 <MaterialIcons
                   color={PLACEHOLDER_GRAY}
@@ -761,11 +1026,11 @@ export default function SearchPreferencesScreen() {
                   style={styles.locationSearchIcon}
                 />
                 <TextInput
-                  accessibilityLabel="Location"
+                accessibilityLabel={copy.locationAccessibilityLabel}
                   blurOnSubmit
                   onChangeText={setLocation}
                   onSubmitEditing={() => Keyboard.dismiss()}
-                  placeholder="Osaka,Umeda"
+                placeholder={copy.locationPlaceholder}
                   placeholderTextColor={PLACEHOLDER_GRAY}
                   returnKeyType="search"
                   style={styles.locationInput}
@@ -774,7 +1039,7 @@ export default function SearchPreferencesScreen() {
               </View>
 
               <Pressable
-                accessibilityLabel="Use my current location"
+              accessibilityLabel={copy.useCurrentLocationAccessibilityLabel}
                 accessibilityRole="checkbox"
                 accessibilityState={{ checked: useCurrentLocation }}
                 onPress={() => setUseCurrentLocation((current) => !current)}
@@ -788,26 +1053,26 @@ export default function SearchPreferencesScreen() {
                   name={useCurrentLocation ? "check-box" : "check-box-outline-blank"}
                   size={24}
                 />
-                <Text style={styles.currentLocationText}>Use my current location</Text>
+                <Text style={styles.currentLocationText}>{copy.useCurrentLocation}</Text>
               </Pressable>
             </View>
 
             <View style={styles.dateGroup}>
-              <Text style={styles.label}>Date</Text>
+              <Text style={styles.label}>{copy.dateLabel}</Text>
               <View style={styles.dateRow}>
                 <Pressable
-                  accessibilityLabel="Date"
-                  accessibilityHint="Opens the date picker"
+                  accessibilityLabel={copy.dateLabel}
+                  accessibilityHint={copy.dateAccessibilityHint}
                   accessibilityRole="button"
                   onPress={openDatePicker}
                   style={[styles.input, styles.dateInput]}
                 >
                   <Text numberOfLines={1} style={styles.pickerValue}>
-                    {formatRecruitmentDateForDisplay(date)}
+                    {formatRecruitmentDateForDisplay(date, language)}
                   </Text>
                 </Pressable>
                 <Pressable
-                  accessibilityLabel="Choose recruitment date"
+                  accessibilityLabel={copy.chooseRecruitmentDateAccessibilityLabel}
                   accessibilityRole="button"
                   hitSlop={5}
                   onPress={openDatePicker}
@@ -822,7 +1087,7 @@ export default function SearchPreferencesScreen() {
             </View>
 
             <View style={styles.startTimeGroup}>
-              <Text style={styles.label}>Start Time</Text>
+              <Text style={styles.label}>{copy.startTimeLabel}</Text>
               <View style={styles.timeRow}>
                 <Pressable
                   accessibilityLabel="Start time"
@@ -844,10 +1109,10 @@ export default function SearchPreferencesScreen() {
             </View>
 
             <View style={styles.durationGroup}>
-              <Text style={styles.label}>Duration</Text>
+              <Text style={styles.label}>{copy.durationLabel}</Text>
               <View style={styles.durationStepper}>
                 <Pressable
-                  accessibilityLabel="Duration"
+                  accessibilityLabel={copy.durationAccessibilityLabel}
                   accessibilityHint="Opens a menu with durations from one to eight hours."
                   accessibilityRole="button"
                   onPress={() => {
@@ -859,14 +1124,14 @@ export default function SearchPreferencesScreen() {
                     pressed && styles.pressed,
                   ]}
                 >
-                  <Text style={styles.pickerValue}>{`${duration} hr`}</Text>
+                  <Text style={styles.pickerValue}>{formatDurationLabel(duration, language)}</Text>
                   <MaterialIcons color={YELLOW} name="expand-more" size={20} />
                 </Pressable>
               </View>
             </View>
 
             <View style={styles.distanceGroup}>
-              <Text style={styles.label}>Distance</Text>
+              <Text style={styles.label}>{copy.distanceLabel}</Text>
               <View style={styles.distanceRow}>
                 {[1, 3, 5].map((option) => {
                   const selected = distance === option;
@@ -906,7 +1171,7 @@ export default function SearchPreferencesScreen() {
                 pressed && styles.pressed,
               ]}
             >
-              <Text style={styles.nextText}>NEXT</Text>
+              <Text style={styles.nextText}>{copy.next}</Text>
             </Pressable>
 
             {formError ? (
@@ -927,9 +1192,9 @@ export default function SearchPreferencesScreen() {
               },
             ]}
           >
-            <Text style={styles.confirmationTitle}>Is everything correct?</Text>
+            <Text style={styles.confirmationTitle}>{copy.confirmationTitle}</Text>
             <Text style={styles.confirmationExpiry}>
-              Visible until the event ends: {preview?.expiresAt ?? "..."}
+              {copy.confirmationExpiry} {preview ? formatPreviewExpiry(preview, language) : copy.expiryFallback}
             </Text>
 
             <View style={styles.summaryCard}>
@@ -950,7 +1215,7 @@ export default function SearchPreferencesScreen() {
                       pressed && styles.pressed,
                     ]}
                   >
-                    <Text style={styles.retryButtonText}>TRY AGAIN</Text>
+                    <Text style={styles.retryButtonText}>{copy.tryAgain}</Text>
                   </Pressable>
                 </View>
               )}
@@ -982,11 +1247,11 @@ export default function SearchPreferencesScreen() {
                     numberOfLines={1}
                     style={[styles.summaryLine, styles.summaryDate]}
                   >
-                    <Text style={styles.summaryLabel}>Date</Text>
-                    {`   ${formatRecruitmentDateForDisplay(preview.conditions.date)}`}
+                    <Text style={styles.summaryLabel}>{copy.summaryDate}</Text>
+                    {`   ${formatRecruitmentDateForDisplay(preview.conditions.date, language)}`}
                   </Text>
                   <Text style={[styles.summaryLine, styles.summaryTime]}>
-                    <Text style={styles.summaryLabel}>Time</Text>
+                    <Text style={styles.summaryLabel}>{copy.summaryTime}</Text>
                     {`   ${formatTimeRange(
                       preview.conditions.startTime,
                       preview.conditions.durationHours,
@@ -1001,7 +1266,7 @@ export default function SearchPreferencesScreen() {
                           numberOfLines={1}
                           style={styles.summaryTagText}
                         >
-                          {tag}
+                          {translatePreviewTag(tag, language)}
                         </Text>
                       </View>
                     ))}
@@ -1025,7 +1290,7 @@ export default function SearchPreferencesScreen() {
               ]}
             >
               <Text style={styles.goButtonText}>
-                {publishStatus === "publishing" ? "公開中..." : "GO!"}
+                {publishStatus === "publishing" ? copy.publishing : copy.go}
               </Text>
             </Pressable>
 
@@ -1042,7 +1307,7 @@ export default function SearchPreferencesScreen() {
               style={({ pressed }) => [styles.backButton, pressed && styles.pressed]}
             >
               <MaterialIcons color={YELLOW} name="arrow-back" size={18} />
-              <Text style={styles.backButtonText}>BACK</Text>
+              <Text style={styles.backButtonText}>{copy.backToFilters}</Text>
             </Pressable>
           </Animated.View>
         )}
@@ -1081,14 +1346,14 @@ export default function SearchPreferencesScreen() {
                   numberOfLines={1}
                   style={styles.compactSearchPlaceholder}
                 >
-                  What would you like to do?
+                  {copy.compactActivityPlaceholder}
                 </Text>
               </View>
               <View style={styles.compactNotificationIcon}>
                 <MaterialIcons color="#ffffff" name="notifications-none" size={30} />
               </View>
               <Pressable
-                accessibilityLabel="Profile"
+                accessibilityLabel={copy.profile}
                 accessibilityRole="button"
                 hitSlop={8}
                 onPress={() => router.push("/profile")}
@@ -1100,7 +1365,7 @@ export default function SearchPreferencesScreen() {
                 <MaterialIcons color="#ffffff" name="account-circle" size={30} />
               </Pressable>
             </View>
-            <Text style={[styles.compactTitle, { top: Math.max(insets.top + 64, 108) }]}>Find Your Japan!</Text>
+            <Text style={[styles.compactTitle, { top: Math.max(insets.top + 64, 108) }]}>{language === "ja" ? "あなたの日本を見つけよう！" : "Find Your Japan!"}</Text>
           </Animated.View>
         )}
       </Animated.View>
@@ -1153,15 +1418,15 @@ export default function SearchPreferencesScreen() {
                   onPress={() => setDatePickerVisible(false)}
                   style={styles.pickerHeaderButton}
                 >
-                  <Text style={styles.pickerCancelText}>Cancel</Text>
+                  <Text style={styles.pickerCancelText}>{copy.pickerCancel}</Text>
                 </Pressable>
-                <Text style={styles.pickerTitle}>Choose date</Text>
+                <Text style={styles.pickerTitle}>{copy.pickerDateTitle}</Text>
                 <Pressable
                   accessibilityRole="button"
                   onPress={() => commitDate(pickerDate)}
                   style={styles.pickerHeaderButton}
                 >
-                  <Text style={styles.pickerDoneText}>Done</Text>
+                  <Text style={styles.pickerDoneText}>{copy.pickerDone}</Text>
                 </Pressable>
               </View>
               <DateTimePicker
@@ -1206,7 +1471,7 @@ export default function SearchPreferencesScreen() {
                   onPress={() => setTimePickerVisible(false)}
                   style={styles.pickerHeaderButton}
                 >
-                  <Text style={styles.pickerCancelText}>Cancel</Text>
+                  <Text style={styles.pickerCancelText}>{copy.pickerCancel}</Text>
                 </Pressable>
                 <Text style={styles.pickerTitle}>Choose start time</Text>
                 <Pressable
@@ -1252,8 +1517,8 @@ export default function SearchPreferencesScreen() {
               { paddingBottom: Math.max(insets.bottom, 18) },
             ]}
           >
-            <Text style={styles.selectionTitle}>Duration</Text>
-            <Text style={styles.selectionSubtitle}>How long would you like to meet?</Text>
+              <Text style={styles.selectionTitle}>{copy.durationLabel}</Text>
+              <Text style={styles.selectionSubtitle}>{copy.durationQuestion}</Text>
             <View style={styles.durationOptions}>
               {DURATION_OPTIONS.map((option) => {
                 const selected = option === duration;
@@ -1287,7 +1552,7 @@ export default function SearchPreferencesScreen() {
               onPress={() => setDurationPickerVisible(false)}
               style={({ pressed }) => [styles.modalCancelButton, pressed && styles.pressed]}
             >
-              <Text style={styles.modalCancelText}>Cancel</Text>
+              <Text style={styles.modalCancelText}>{copy.durationCancel}</Text>
             </Pressable>
           </View>
         </View>
@@ -1309,18 +1574,18 @@ export default function SearchPreferencesScreen() {
             <View style={styles.warningSheet}>
               <Text style={styles.selectionTitle}>
                 {scheduleWarning.issue === "recruitment_date_in_past"
-                  ? "This start time has passed."
-                  : "This duration crosses midnight."}
+                  ? copy.pastStartTitle
+                  : copy.midnightTitle}
               </Text>
               <Text style={styles.warningMessage}>
                 {scheduleWarning.issue === "recruitment_date_in_past"
-                  ? "Change it to tomorrow?"
-                  : "Change it to tomorrow at 09:00?"}
+                  ? copy.pastStartQuestion
+                  : copy.midnightQuestion}
               </Text>
               <View style={styles.warningSuggestion}>
-                <Text style={styles.warningSuggestionLabel}>Suggested schedule</Text>
+                <Text style={styles.warningSuggestionLabel}>{copy.suggestedSchedule}</Text>
                 <Text style={styles.warningSuggestionValue}>
-                  {`${formatRecruitmentDateForDisplay(scheduleWarning.suggestedDate)} at ${scheduleWarning.suggestedStartTime}`}
+                  {`${formatRecruitmentDateForDisplay(scheduleWarning.suggestedDate, language)}${language === "ja" ? " " : " at "}${scheduleWarning.suggestedStartTime}`}
                 </Text>
               </View>
               <Pressable
@@ -1328,14 +1593,14 @@ export default function SearchPreferencesScreen() {
                 onPress={applyScheduleSuggestion}
                 style={({ pressed }) => [styles.warningPrimaryButton, pressed && styles.pressed]}
               >
-                <Text style={styles.warningPrimaryText}>YES, USE THIS</Text>
+                <Text style={styles.warningPrimaryText}>{copy.useSuggestion}</Text>
               </Pressable>
               <Pressable
                 accessibilityRole="button"
                 onPress={editSchedule}
                 style={({ pressed }) => [styles.warningSecondaryButton, pressed && styles.pressed]}
               >
-                <Text style={styles.warningSecondaryText}>NO, EDIT</Text>
+                <Text style={styles.warningSecondaryText}>{copy.editSchedule}</Text>
               </Pressable>
             </View>
           ) : null}
@@ -1923,6 +2188,12 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
     backgroundColor: "#ffffff",
+  },
+  languageLoading: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: BLUE,
   },
   pickerHeader: {
     height: 48,

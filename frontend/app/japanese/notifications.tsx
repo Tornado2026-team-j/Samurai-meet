@@ -1,9 +1,10 @@
-import { useCallback, useMemo, useState, type ComponentProps } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from "react";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
-import { useFocusEffect, useRouter } from "expo-router";
+import { useRouter } from "expo-router";
 import {
   ActivityIndicator,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -14,6 +15,11 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "../../hooks/useAuth";
 import { APIError } from "../../services/api-client";
 import {
+  loadLanguage,
+  subscribeLanguage,
+  type AppLanguage,
+} from "../../services/onboarding";
+import {
   getNotificationNavigation,
   listNotifications,
   markNotificationRead,
@@ -21,6 +27,7 @@ import {
 } from "../../services/notifications";
 import type {
   NotificationPeriod,
+  NotificationRecord,
   NotificationType,
   NotificationView,
 } from "../../types/notification";
@@ -43,15 +50,18 @@ type NotificationIconStyle = {
   borderColor: string;
 };
 
-const FILTERS: { key: Filter; label: string }[] = [
-  { key: "all", label: "すべて" },
-  { key: "unread", label: "未読" },
-];
-
-const PERIOD_LABELS: Record<NotificationPeriod, string> = {
-  today: "今日",
-  past_7_days: "過去7日間",
-};
+const COPY = {
+  ja: {
+    back: "戻る", title: "通知", all: "すべて", unread: "未読", today: "今日", past7Days: "過去7日間",
+    loading: "通知を読み込み中…", retry: "再試行", empty: "通知はまだありません",
+    signInRequired: "ログイン後に通知を表示できます。", loadError: "通知を読み込めませんでした。時間をおいて再試行してください。",
+  },
+  en: {
+    back: "Back", title: "Notifications", all: "All", unread: "Unread", today: "Today", past7Days: "Past 7 days",
+    loading: "Loading notifications…", retry: "Retry", empty: "No notifications yet",
+    signInRequired: "Sign in to view notifications.", loadError: "Notifications could not be loaded. Please try again later.",
+  },
+} as const;
 
 const NOTIFICATION_ICONS: Record<
   NotificationType,
@@ -173,11 +183,15 @@ export default function JapaneseNotificationsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { getCurrentSession, refresh, session, status } = useAuth();
+  const [language, setLanguage] = useState<AppLanguage | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
-  const [liveNotifications, setLiveNotifications] = useState<NotificationView[]>([]);
+  const [notificationRecords, setNotificationRecords] = useState<NotificationRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const loadNotifications = useCallback(() => {
+  const initialLoadStartedRef = useRef(false);
+  const copy = COPY[language ?? "ja"];
+  const loadNotifications = useCallback((mode: "initial" | "refresh" = "refresh") => {
     const controller = new AbortController();
     let cancelled = false;
 
@@ -185,14 +199,19 @@ export default function JapaneseNotificationsScreen() {
       const activeSession = getCurrentSession() ?? session;
       if (status !== "signed_in" || !activeSession) {
         if (!cancelled) {
-          setLiveNotifications([]);
+          setNotificationRecords([]);
           setLoading(false);
-          setLoadError("ログイン後に通知を表示できます。");
+          setRefreshing(false);
+          setLoadError(copy.signInRequired);
         }
         return;
       }
 
-      setLoading(true);
+      if (mode === "initial") {
+        setLoading(true);
+      } else {
+        setRefreshing(true);
+      }
       setLoadError(null);
       try {
         let records;
@@ -206,17 +225,18 @@ export default function JapaneseNotificationsScreen() {
           records = await listNotifications(refreshedSession, { limit: 50 }, controller.signal);
         }
         if (!cancelled) {
-          const now = new Date();
-          setLiveNotifications(records.map((record) => toNotificationView(record, "ja", now)));
+          setNotificationRecords(records);
         }
       } catch (error) {
         if (error instanceof Error && error.name === "AbortError") return;
         if (!cancelled) {
-          setLiveNotifications([]);
-          setLoadError("通知を読み込めませんでした。時間をおいて再試行してください。");
+          setLoadError(copy.loadError);
         }
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+          setRefreshing(false);
+        }
       }
     };
 
@@ -225,17 +245,42 @@ export default function JapaneseNotificationsScreen() {
       cancelled = true;
       controller.abort();
     };
-  }, [getCurrentSession, refresh, session, status]);
+  }, [copy.loadError, copy.signInRequired, getCurrentSession, refresh, session, status]);
 
-  useFocusEffect(loadNotifications);
+  useEffect(() => {
+    let active = true;
+    const unsubscribe = subscribeLanguage((nextLanguage) => {
+      if (active) setLanguage(nextLanguage ?? "ja");
+    });
+    void loadLanguage().then((storedLanguage) => {
+      if (active) setLanguage(storedLanguage ?? "ja");
+    }).catch(() => {
+      if (active) setLanguage("ja");
+    });
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (initialLoadStartedRef.current) return;
+
+    initialLoadStartedRef.current = true;
+    return loadNotifications("initial");
+  }, [loadNotifications]);
 
   const notifications = useMemo(() => {
+    const now = new Date();
+    const liveNotifications = notificationRecords.map((record) =>
+      toNotificationView(record, language ?? "ja", now),
+    );
     if (filter === "unread") {
       return liveNotifications.filter((notification) => notification.unread);
     }
 
     return liveNotifications;
-  }, [filter, liveNotifications]);
+  }, [filter, language, notificationRecords]);
   const notificationGroups = useMemo(
     () =>
       (["today", "past_7_days"] as const)
@@ -248,18 +293,28 @@ export default function JapaneseNotificationsScreen() {
         .filter((group) => group.notifications.length > 0),
     [notifications],
   );
-  const openNotification = async (notification: NotificationView) => {
+  const filters = [
+    { key: "all" as const, label: copy.all },
+    { key: "unread" as const, label: copy.unread },
+  ];
+  const periodLabels: Record<NotificationPeriod, string> = {
+    today: copy.today,
+    past_7_days: copy.past7Days,
+  };
+  const openNotification = (notification: NotificationView) => {
     const activeSession = getCurrentSession() ?? session;
     if (notification.unread) {
-      setLiveNotifications((current) => current.map((item) => (
-        item.id === notification.id ? { ...item, unread: false } : item
+      setNotificationRecords((current) => current.map((item) => (
+        item.id === notification.id && !item.read_at
+          ? { ...item, read_at: new Date().toISOString() }
+          : item
       )));
       if (activeSession) {
-        try {
-          await markNotificationRead(activeSession, notification.id);
-        } catch {
-          // The next focus reload reflects the server state if marking failed.
-        }
+        // Do not make navigation wait for a best-effort read receipt. A
+        // refresh or a slow API must not make a notification appear inert.
+        void markNotificationRead(activeSession, notification.id).catch(() => {
+          // Keep the local optimistic state; an explicit pull-to-refresh can reconcile it.
+        });
       }
     }
 
@@ -267,13 +322,17 @@ export default function JapaneseNotificationsScreen() {
     if (navigation) router.push(navigation);
   };
 
+  if (!language) {
+    return <View style={styles.loadingScreen}><StatusBar style="dark" /><ActivityIndicator color={BLUE} size="large" /></View>;
+  }
+
   return (
     <View style={styles.screen}>
       <StatusBar style="light" />
 
       <View style={styles.header}>
         <Pressable
-          accessibilityLabel="前の画面に戻る"
+          accessibilityLabel={copy.back}
           accessibilityRole="button"
           hitSlop={10}
           onPress={() => router.back()}
@@ -287,15 +346,24 @@ export default function JapaneseNotificationsScreen() {
         </Pressable>
 
         <MaterialIcons color="#ffffff" name="notifications-none" size={43} />
-        <Text style={styles.headerTitle}>通知</Text>
+        <Text style={styles.headerTitle}>{copy.title}</Text>
       </View>
 
       <ScrollView
         contentContainerStyle={styles.content}
+        refreshControl={
+          <RefreshControl
+            onRefresh={() => {
+              void loadNotifications("refresh");
+            }}
+            refreshing={refreshing}
+            tintColor={BLUE}
+          />
+        }
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.segmentedControl}>
-          {FILTERS.map((item) => {
+          {filters.map((item) => {
             const selected = filter === item.key;
 
             return (
@@ -323,26 +391,28 @@ export default function JapaneseNotificationsScreen() {
           })}
         </View>
 
-        {loading ? (
+        {loading && notificationRecords.length === 0 ? (
           <View style={styles.emptyState}>
             <ActivityIndicator color={BLUE} size="small" />
-            <Text style={styles.emptyTitle}>通知を読み込み中...</Text>
+            <Text style={styles.emptyTitle}>{copy.loading}</Text>
           </View>
-        ) : loadError ? (
+        ) : loadError && notificationRecords.length === 0 ? (
           <View style={styles.emptyState}>
             <Text accessibilityRole="alert" style={styles.emptyTitle}>{loadError}</Text>
             <Pressable
               accessibilityRole="button"
-              onPress={loadNotifications}
+              onPress={() => {
+                void loadNotifications("initial");
+              }}
               style={({ pressed }) => [styles.retryButton, pressed && styles.pressed]}
             >
-              <Text style={styles.retryButtonText}>再試行</Text>
+              <Text style={styles.retryButtonText}>{copy.retry}</Text>
             </Pressable>
           </View>
         ) : notificationGroups.length > 0 ? (
           notificationGroups.map((group) => (
             <View key={group.period} style={styles.section}>
-              <Text style={styles.sectionTitle}>{PERIOD_LABELS[group.period]}</Text>
+              <Text style={styles.sectionTitle}>{periodLabels[group.period]}</Text>
               <View style={styles.cardList}>
                 {group.notifications.map((notification) => (
                   <NotificationCard
@@ -359,7 +429,7 @@ export default function JapaneseNotificationsScreen() {
             <View style={styles.emptyIconCircle}>
               <MaterialIcons color={BLUE} name="notifications-none" size={34} />
             </View>
-            <Text style={styles.emptyTitle}>通知はまだありません</Text>
+            <Text style={styles.emptyTitle}>{copy.empty}</Text>
           </View>
         )}
       </ScrollView>
@@ -544,6 +614,12 @@ const styles = StyleSheet.create({
     letterSpacing: 0,
     lineHeight: 18,
     textAlign: "center",
+  },
+  loadingScreen: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#ffffff",
   },
   retryButton: {
     minWidth: 78,

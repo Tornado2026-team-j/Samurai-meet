@@ -139,7 +139,7 @@ Refresh request:
 
 `PATCH`の入力は`name`、`nationality_code`、`bio`です。名前は最大64、bioは最大1000 Unicode code points、国コードは大文字2文字です。指定しない項目は既存値を維持しますが、完成プロフィールでは名前と国コードが必須です。名前は次回以降のPasskey登録表示名にも同期しますが、既存PasskeyのOS表示名は変更されません。本人確認状態・いいね数・アイコン参照はこのAPIから更新できません。成功時は`{ "data": { ... } }`、不正値は`400 invalid_profile`です。
 
-### 募集・検索・マッチ（バックエンド実装済み。フロント接続コードあり・iOS実機E2E未確認）
+### 募集・検索・マッチ（バックエンド実装済み。フロント接続済み・iOS全通しE2E未確認）
 
 | Method | Path | 用途 |
 | --- | --- | --- |
@@ -159,7 +159,7 @@ Refresh request:
 | POST | `/api/v1/matches/{id}/meeting` | 承認済みマッチの会合セッション作成 |
 | POST | `/api/v1/me/location` | 現在地を1時間保存 |
 
-募集は`Food` / `Places` / `Activity` / `Other`、公開半径は1/3/5kmに限定します。利用日・開始／終了時刻は`Asia/Tokyo`固定で扱い、timezoneを省略または空にした入力はJSTへ正規化し、他のtimezoneは拒否します。検索結果とカード詳細に正確な緯度・経度は含めず、位置が利用できる場合だけ`distance_band`を返します。現行はGoのHaversine計算で、PostGISは未導入です。募集フローの接続コードはありますが、iOS初期表示の`invalid_recruitment_date`報告があるため、実機での公開成功は未確認です。重複関心は`409 interest_already_sent`、期限切れは`409 recruitment_expired`、ブロック関係は404相当で返します。
+募集は`Food` / `Places` / `Activity` / `Other`、公開半径は1/3/5kmに限定します。利用日・開始／終了時刻は`Asia/Tokyo`固定で扱い、timezoneを省略または空にした入力はJSTへ正規化し、他のtimezoneは拒否します。検索結果とカード詳細に正確な緯度・経度は含めず、位置が利用できる場合だけ`distance_band`を返します。現行はGoのHaversine計算で、PostGISは未導入です。募集・応募フローの接続と自動テストは実装済みですが、iOS実機の全通しE2Eは未確認です。重複関心は`409 interest_already_sent`、期限切れは`409 recruitment_expired`、ブロック関係は404相当で返します。
 
 ## 3. 追加・未完了API
 
@@ -185,7 +185,7 @@ Refresh request:
 | GET | `/api/v1/notifications?unread_only=false&limit=50` | 直近7日間の自分の通知一覧 |
 | POST | `/api/v1/notifications/{id}/read` | 通知を既読にする |
 
-応募、承認・辞退、暗号化チャットメッセージ送信時にサーバーで通知を作成します。通知画面の表示文はクライアント側で日本語／英語に変換し、チャット本文は保存・表示しません。現状はアプリ内REST通知であり、OSプッシュ通知は未実装です。
+応募、承認・辞退、暗号化チャットメッセージ送信時にサーバーで通知を作成します。通知画面の表示文はクライアント側で日本語／英語に変換し、応募・応募結果は表示言語に依存せず構造化IDから対応画面へ遷移します。チャット本文は保存・表示しません。現状はアプリ内REST通知であり、OSプッシュ通知は未実装です。通知遷移のiOS実機E2Eは未確認です。
 
 ### チャット・会合（バックエンドREST実装済み・フロント未接続）
 

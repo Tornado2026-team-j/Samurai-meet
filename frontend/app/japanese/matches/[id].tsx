@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { MaterialIcons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import {
@@ -13,11 +13,14 @@ import {
 import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "../../../hooks/useAuth";
+import { APIError } from "../../../services/api-client";
+import { loadLanguage, subscribeLanguage } from "../../../services/onboarding";
 import {
   getRecruitment,
   recruitmentToMatchCard,
   sendRecruitmentInterest,
 } from "../../../services/matching";
+import type { AppLanguage } from "../../../services/onboarding";
 import type { MatchCardData } from "../../../types/match";
 import { formatTimeRange } from "../../../utils/time";
 
@@ -38,10 +41,59 @@ const CATEGORY_IMAGES = {
   Other: require("../../../assets/images/other-category.png"),
 } as const;
 
+type MatchDetailCopy = {
+  back: string;
+  loading: string;
+  loginRequired: string;
+  loadError: string;
+  requestLogin: string;
+  requestError: string;
+  date: string;
+  time: string;
+  description: string;
+  keywords: string;
+  send: string;
+  sending: string;
+  categoryIllustration: string;
+};
+
+const COPY: Record<AppLanguage, MatchDetailCopy> = {
+  ja: {
+    back: "戻る",
+    loading: "募集を読み込み中...",
+    loginRequired: "ログイン後に募集を表示できます。",
+    loadError: "募集を読み込めませんでした。募集が終了した可能性があります。",
+    requestLogin: "ログイン後にもう一度お試しください。",
+    requestError: "応募を送信できませんでした。時間をおいてもう一度お試しください。",
+    date: "日付",
+    time: "時刻",
+    description: "したいこと",
+    keywords: "キーワード",
+    send: "この人を案内したい！",
+    sending: "応募を送信中...",
+    categoryIllustration: "カテゴリのイラスト",
+  },
+  en: {
+    back: "Back",
+    loading: "Loading recruitment...",
+    loginRequired: "Please sign in to view this recruitment.",
+    loadError: "We couldn't load this recruitment. It may have ended.",
+    requestLogin: "Please sign in and try again.",
+    requestError: "We couldn't send your application. Please try again later.",
+    date: "Date",
+    time: "Time",
+    description: "What you'd like to do",
+    keywords: "Keywords",
+    send: "I want to guide this person!",
+    sending: "Sending application...",
+    categoryIllustration: " category illustration",
+  },
+};
+
 export default function JapaneseMatchDetailScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { session, status } = useAuth();
+  const { getCurrentSession, refresh, session, status } = useAuth();
   const { id } = useLocalSearchParams<{ id?: string | string[] }>();
   const matchId = Array.isArray(id) ? id[0] : id;
   const [match, setMatch] = useState<MatchCardData | null>(null);
@@ -49,16 +101,49 @@ export default function JapaneseMatchDetailScreen() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [requestState, setRequestState] = useState<"idle" | "sending">("idle");
   const [requestError, setRequestError] = useState<string | null>(null);
+  const [language, setLanguage] = useState<AppLanguage | null>(null);
+  const [languageLoaded, setLanguageLoaded] = useState(false);
+  const copy = COPY[language ?? "ja"];
+  const copyRef = useRef(copy);
+  copyRef.current = copy;
+
+  useEffect(() => {
+    let cancelled = false;
+    const unsubscribe = subscribeLanguage((nextLanguage) => {
+      if (!cancelled) {
+        setLanguage(nextLanguage ?? "ja");
+        setLanguageLoaded(true);
+      }
+    });
+
+    void loadLanguage()
+      .then((storedLanguage) => {
+        if (cancelled) return;
+        setLanguage(storedLanguage ?? "ja");
+        setLanguageLoaded(true);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setLanguage("ja");
+        setLanguageLoaded(true);
+      });
+
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
     let cancelled = false;
 
     const load = async () => {
-      if (!matchId || status !== "signed_in" || !session) {
+      const activeSession = getCurrentSession() ?? session;
+      if (!matchId || status !== "signed_in" || !activeSession) {
         if (!cancelled) {
           setLoadState("error");
-          setLoadError("ログイン後に募集を表示できます。");
+          setLoadError(copyRef.current.loginRequired);
         }
         return;
       }
@@ -66,7 +151,21 @@ export default function JapaneseMatchDetailScreen() {
       setLoadState("loading");
       setLoadError(null);
       try {
-        const recruitment = await getRecruitment(matchId, session, controller.signal);
+        const loadWithSession = (currentSession: typeof activeSession) => getRecruitment(
+          matchId,
+          currentSession,
+          controller.signal,
+        );
+        let recruitment;
+        try {
+          recruitment = await loadWithSession(activeSession);
+        } catch (error) {
+          if (!(error instanceof APIError) || error.status !== 401) throw error;
+          await refresh();
+          const refreshedSession = getCurrentSession();
+          if (!refreshedSession) throw error;
+          recruitment = await loadWithSession(refreshedSession);
+        }
         if (!cancelled) {
           setMatch(recruitmentToMatchCard(recruitment));
           setLoadState("ready");
@@ -75,7 +174,7 @@ export default function JapaneseMatchDetailScreen() {
         if (error instanceof Error && error.name === "AbortError") return;
         if (!cancelled) {
           setLoadState("error");
-          setLoadError("募集を読み込めませんでした。募集が終了した可能性があります。");
+          setLoadError(copyRef.current.loadError);
         }
       }
     };
@@ -85,7 +184,16 @@ export default function JapaneseMatchDetailScreen() {
       cancelled = true;
       controller.abort();
     };
-  }, [matchId, session, status]);
+  }, [getCurrentSession, matchId, refresh, session, status]);
+
+  if (!languageLoaded) {
+    return (
+      <View style={styles.loadingScreen}>
+        <StatusBar style="light" />
+        <ActivityIndicator color={HEADER_BLUE} />
+      </View>
+    );
+  }
 
   if (!match) {
     return (
@@ -93,15 +201,15 @@ export default function JapaneseMatchDetailScreen() {
         <StatusBar style="light" />
         {loadState === "loading" ? <ActivityIndicator color={HEADER_BLUE} /> : null}
         <Text accessibilityRole={loadState === "error" ? "alert" : undefined} style={styles.loadingText}>
-          {loadState === "loading" ? "募集を読み込み中..." : loadError}
+          {loadState === "loading" ? copy.loading : loadError}
         </Text>
         <Pressable
-          accessibilityLabel="前の画面に戻る"
+          accessibilityLabel={copy.back}
           accessibilityRole="button"
           onPress={() => router.back()}
           style={({ pressed }) => [styles.loadingBackButton, pressed && styles.pressed]}
         >
-          <Text style={styles.loadingBackButtonText}>戻る</Text>
+          <Text style={styles.loadingBackButtonText}>{copy.back}</Text>
         </Pressable>
       </View>
     );
@@ -109,8 +217,9 @@ export default function JapaneseMatchDetailScreen() {
 
   const sendInterest = async () => {
     if (requestState === "sending") return;
-    if (status !== "signed_in" || !session) {
-      setRequestError("ログイン後にもう一度お試しください。");
+    const activeSession = getCurrentSession() ?? session;
+    if (status !== "signed_in" || !activeSession) {
+      setRequestError(copy.requestLogin);
       return;
     }
 
@@ -118,7 +227,20 @@ export default function JapaneseMatchDetailScreen() {
     setRequestError(null);
 
     try {
-      const interest = await sendRecruitmentInterest(match.id, session);
+      const sendWithSession = (currentSession: typeof activeSession) => sendRecruitmentInterest(
+        match.id,
+        currentSession,
+      );
+      let interest;
+      try {
+        interest = await sendWithSession(activeSession);
+      } catch (error) {
+        if (!(error instanceof APIError) || error.status !== 401) throw error;
+        await refresh();
+        const refreshedSession = getCurrentSession();
+        if (!refreshedSession) throw error;
+        interest = await sendWithSession(refreshedSession);
+      }
       if (interest?.id) {
         router.push({
           pathname: "/japanese/guide-requested",
@@ -128,7 +250,7 @@ export default function JapaneseMatchDetailScreen() {
         router.push("/japanese/guide-requested");
       }
     } catch {
-      setRequestError("応募を送信できませんでした。時間をおいてもう一度お試しください。");
+      setRequestError(copy.requestError);
     } finally {
       setRequestState("idle");
     }
@@ -141,27 +263,31 @@ export default function JapaneseMatchDetailScreen() {
       <ScrollView
         contentContainerStyle={[
           styles.scrollContent,
-          { paddingBottom: insets.bottom + 24 },
+          { paddingBottom: insets.bottom + 32 },
         ]}
         showsVerticalScrollIndicator={false}
       >
-        <View style={[styles.canvas, { height: 844 + insets.bottom + 24 }]}>
-          <View style={styles.header}>
+        <View
+          style={[
+            styles.header,
+            { minHeight: Math.max(insets.top + 238, 286) },
+          ]}
+        >
             <Image
-              accessibilityLabel={`${match.category}カテゴリのイラスト`}
+              accessibilityLabel={`${match.category}${copy.categoryIllustration}`}
               resizeMode="contain"
               source={CATEGORY_IMAGES[match.category]}
-              style={styles.categoryImage}
+              style={[styles.categoryImage, { top: Math.max(insets.top + 26, 66) }]}
             />
 
             <Pressable
-              accessibilityLabel="前の画面に戻る"
+              accessibilityLabel={copy.back}
               accessibilityRole="button"
               hitSlop={10}
               onPress={() => router.back()}
               style={({ pressed }) => [
                 styles.backButton,
-                { top: Math.max(insets.top + 8, 49) },
+            { top: Math.max(insets.top + 8, 49) },
                 pressed && styles.pressed,
               ]}
             >
@@ -171,7 +297,7 @@ export default function JapaneseMatchDetailScreen() {
             <View
               style={[
                 styles.categoryBadge,
-                { top: Math.max(insets.top + 8, 46) },
+                { top: Math.max(insets.top + 12, 52) },
               ]}
             >
               <MaterialIcons
@@ -181,8 +307,8 @@ export default function JapaneseMatchDetailScreen() {
               />
               <Text style={styles.categoryText}>{match.category}</Text>
             </View>
-          </View>
-
+        </View>
+        <View style={styles.content}>
           <View style={styles.profileGroup}>
             <MaterialIcons color="#d4d4d4" name="account-circle" size={50} />
             <View style={styles.profileText}>
@@ -204,7 +330,7 @@ export default function JapaneseMatchDetailScreen() {
             <View style={styles.scheduleRow}>
               <MaterialIcons color="#168df0" name="calendar-today" size={25} />
               <View style={styles.scheduleText}>
-                <Text style={styles.scheduleLabel}>Date</Text>
+                <Text style={styles.scheduleLabel}>{copy.date}</Text>
                 <Text style={styles.scheduleValue}>{match.detailDate}</Text>
               </View>
             </View>
@@ -212,7 +338,7 @@ export default function JapaneseMatchDetailScreen() {
             <View style={[styles.scheduleRow, styles.timeRow]}>
               <MaterialIcons color="#168df0" name="schedule" size={27} />
               <View style={styles.scheduleText}>
-                <Text style={styles.scheduleLabel}>Time</Text>
+                <Text style={styles.scheduleLabel}>{copy.time}</Text>
                 <Text style={styles.scheduleValue}>
                   {formatTimeRange(match.startTime, match.durationHours)}
                 </Text>
@@ -221,14 +347,14 @@ export default function JapaneseMatchDetailScreen() {
           </View>
 
           <View style={styles.descriptionPanel}>
-            <Text style={styles.descriptionLabel}>したいこと</Text>
+            <Text style={styles.descriptionLabel}>{copy.description}</Text>
             <Text style={styles.description}>{match.description}</Text>
           </View>
 
           <View style={styles.keywordsPanel}>
             <View style={styles.keywordsTitleRow}>
               <MaterialIcons color="#168df0" name="sell" size={21} />
-              <Text style={styles.keywordsTitle}>Keywords</Text>
+              <Text style={styles.keywordsTitle}>{copy.keywords}</Text>
             </View>
             <View style={styles.keywordsRow}>
               {match.detailTags.map((tag) => (
@@ -253,20 +379,19 @@ export default function JapaneseMatchDetailScreen() {
             onPress={() => void sendInterest()}
             style={({ pressed }) => [
               styles.guideButton,
-              { top: 772 - insets.bottom },
               requestState === "sending" && styles.guideButtonDisabled,
               pressed && styles.pressed,
             ]}
           >
             <Text style={styles.guideButtonText}>
-              {requestState === "sending" ? "応募を送信中..." : "この人を案内したい！"}
+              {requestState === "sending" ? copy.sending : copy.send}
             </Text>
           </Pressable>
 
           {requestError ? (
             <Text
               accessibilityRole="alert"
-              style={[styles.requestError, { top: 811 - insets.bottom }]}
+              style={styles.requestError}
             >
               {requestError}
             </Text>
@@ -312,23 +437,12 @@ const styles = StyleSheet.create({
     fontWeight: "800",
   },
   scrollContent: {
-    minHeight: 844,
-    alignItems: "center",
     flexGrow: 1,
-  },
-  canvas: {
-    position: "relative",
-    width: "100%",
-    maxWidth: 390,
-    height: 844,
     backgroundColor: "#ffffff",
   },
   header: {
-    position: "absolute",
-    top: 0,
-    right: 0,
-    left: 0,
-    height: 238,
+    position: "relative",
+    width: "100%",
     overflow: "hidden",
     borderBottomLeftRadius: 50,
     borderBottomRightRadius: 50,
@@ -345,9 +459,10 @@ const styles = StyleSheet.create({
   },
   categoryImage: {
     position: "absolute",
-    top: 49,
+    top: 66,
     alignSelf: "center",
-    width: 383,
+    width: "100%",
+    maxWidth: 383,
     height: 209,
   },
   categoryBadge: {
@@ -371,13 +486,17 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   profileGroup: {
-    position: "absolute",
-    top: 257,
-    left: 38,
-    right: 38,
-    height: 77,
+    width: "100%",
+    minHeight: 77,
     flexDirection: "row",
     alignItems: "flex-start",
+  },
+  content: {
+    width: "100%",
+    maxWidth: 440,
+    alignSelf: "center",
+    paddingTop: 28,
+    paddingHorizontal: 38,
   },
   profileText: {
     marginLeft: 17,
@@ -426,28 +545,23 @@ const styles = StyleSheet.create({
     lineHeight: 15,
   },
   schedulePanel: {
-    position: "absolute",
-    top: 348,
-    left: 45.5,
-    width: 299,
-    height: 152,
-    overflow: "hidden",
+    width: "100%",
+    minHeight: 152,
+    marginTop: 14,
+    paddingHorizontal: 24,
+    paddingVertical: 20,
     borderWidth: 1,
     borderColor: "#e4e4e4",
     borderRadius: 12,
     backgroundColor: "#ffffff",
   },
   scheduleRow: {
-    position: "absolute",
-    top: 20,
-    left: 24,
-    right: 18,
-    height: 48,
+    minHeight: 48,
     flexDirection: "row",
     alignItems: "center",
   },
   timeRow: {
-    top: 87,
+    marginTop: 12,
   },
   scheduleText: {
     marginLeft: 17,
@@ -468,20 +582,16 @@ const styles = StyleSheet.create({
     lineHeight: 24,
   },
   divider: {
-    position: "absolute",
-    top: 75,
-    right: 23,
-    left: 23,
+    width: "100%",
     height: 1,
+    marginVertical: 7,
     backgroundColor: "#e6e6e6",
   },
   descriptionPanel: {
-    position: "absolute",
-    top: 516,
-    left: 56,
-    width: 278,
-    height: 124,
-    paddingTop: 8,
+    width: "100%",
+    minHeight: 124,
+    marginTop: 16,
+    paddingTop: 12,
     paddingHorizontal: 15,
     borderWidth: 1,
     borderColor: BLUE,
@@ -504,11 +614,9 @@ const styles = StyleSheet.create({
     lineHeight: 15,
   },
   keywordsPanel: {
-    position: "absolute",
-    top: 656,
-    left: 57,
-    width: 276,
-    height: 77,
+    width: "100%",
+    minHeight: 77,
+    marginTop: 18,
   },
   keywordsTitleRow: {
     height: 25,
@@ -525,8 +633,8 @@ const styles = StyleSheet.create({
   },
   keywordsRow: {
     marginTop: 11,
-    height: 30,
     flexDirection: "row",
+    flexWrap: "wrap",
     gap: 8,
   },
   keyword: {
@@ -547,11 +655,9 @@ const styles = StyleSheet.create({
     lineHeight: 15,
   },
   guideButton: {
-    position: "absolute",
-    top: 772,
-    left: 66,
-    width: 258,
-    height: 29,
+    width: "100%",
+    minHeight: 46,
+    marginTop: 24,
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
@@ -570,10 +676,8 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   requestError: {
-    position: "absolute",
-    top: 811,
-    left: 45,
-    right: 45,
+    width: "100%",
+    marginTop: 10,
     color: "#d45555",
     fontSize: 11,
     fontWeight: "700",

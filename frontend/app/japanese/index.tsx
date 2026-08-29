@@ -1,9 +1,10 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MaterialIcons } from "@expo/vector-icons";
-import { useFocusEffect, useRouter } from "expo-router";
+import { useRouter } from "expo-router";
 import {
   ActivityIndicator,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -22,6 +23,7 @@ import {
   searchRecruitments,
   updateCurrentLocation,
 } from "../../services/matching";
+import { loadLanguage, subscribeLanguage, type AppLanguage } from "../../services/onboarding";
 import type { MatchCardData } from "../../types/match";
 
 const BLUE = "#5ec5f5";
@@ -30,8 +32,37 @@ const TEXT_GRAY = "#535353";
 const PLACEHOLDER_GRAY = "#949494";
 const BORDER_GRAY = "#d4d4d4";
 
+const COPY = {
+  ja: {
+    all: "すべて",
+    signInRequired: "ログイン後に募集を表示できます。",
+    loadError: "募集を読み込めませんでした。時間をおいて再試行してください。",
+    loading: "募集を読み込み中…",
+    retry: "再試行",
+    noRecruitments: "該当する募集がありません",
+    search: "キーワードで検索",
+    notifications: "通知",
+    profile: "プロフィール",
+    category: (category: string) => `${category}カテゴリ`,
+    nearest: "現在地から近い順",
+  },
+  en: {
+    all: "All",
+    signInRequired: "Sign in to view recruitments.",
+    loadError: "Recruitments could not be loaded. Please try again later.",
+    loading: "Loading recruitments…",
+    retry: "Retry",
+    noRecruitments: "No matching recruitments found",
+    search: "Search by keyword",
+    notifications: "Notifications",
+    profile: "Profile",
+    category: (category: string) => `${category} category`,
+    nearest: "Nearest to current location",
+  },
+} as const;
+
 const CATEGORIES = [
-  "すべて",
+  "all",
   "Food",
   "Places",
   "Activity",
@@ -43,20 +74,25 @@ export default function JapaneseHomeScreen() {
   const insets = useSafeAreaInsets();
   const { getCurrentSession, refresh, session, status } = useAuth();
   const hasUnreadNotifications = useUnreadNotifications();
+  const [language, setLanguage] = useState<AppLanguage | null>(null);
   const [query, setQuery] = useState("");
   const [submittedQuery, setSubmittedQuery] = useState("");
   const [matches, setMatches] = useState<MatchCardData[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const initialLoadStarted = useRef(false);
+  const hasLoaded = useRef(false);
   const [selectedCategory, setSelectedCategory] = useState<(typeof CATEGORIES)[number]>(
-    "すべて",
+    "all",
   );
+  const copy = COPY[language ?? "ja"];
   const filteredMatches = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase();
 
     return matches.filter((match) => {
       const matchesCategory =
-        selectedCategory === "すべて" ||
+        selectedCategory === "all" ||
         match.category === selectedCategory;
       const matchesQuery =
         normalizedQuery.length === 0 ||
@@ -80,12 +116,18 @@ export default function JapaneseHomeScreen() {
       if (status !== "signed_in" || !activeSession) {
         if (!cancelled) {
           setLoading(false);
-          setLoadError("ログイン後に募集を表示できます。");
+          setRefreshing(false);
+          setLoadError(copy.signInRequired);
         }
         return;
       }
 
-      setLoading(true);
+      const initialLoad = !hasLoaded.current;
+      if (initialLoad) {
+        setLoading(true);
+      } else {
+        setRefreshing(true);
+      }
       setLoadError(null);
       try {
         let coordinates = null;
@@ -126,14 +168,20 @@ export default function JapaneseHomeScreen() {
             controller.signal,
           );
         }
-        if (!cancelled) setMatches(result.map(recruitmentToMatchCard));
+        if (!cancelled) {
+          setMatches(result.map(recruitmentToMatchCard));
+          hasLoaded.current = true;
+        }
       } catch (error) {
         if (error instanceof Error && error.name === "AbortError") return;
         if (!cancelled) {
-          setLoadError("募集を読み込めませんでした。時間をおいて再試行してください。");
+          setLoadError(copy.loadError);
         }
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+          setRefreshing(false);
+        }
       }
     };
 
@@ -142,15 +190,48 @@ export default function JapaneseHomeScreen() {
       cancelled = true;
       controller.abort();
     };
-  }, [getCurrentSession, refresh, session, status, submittedQuery]);
+  }, [copy.loadError, copy.signInRequired, getCurrentSession, refresh, session, status, submittedQuery]);
 
-  useFocusEffect(loadRecruitments);
+  useEffect(() => {
+    let active = true;
+    const unsubscribe = subscribeLanguage((nextLanguage) => {
+      if (active && nextLanguage) setLanguage(nextLanguage);
+    });
+    void loadLanguage().then((storedLanguage) => {
+      if (active) setLanguage(storedLanguage ?? "ja");
+    }).catch(() => {
+      if (active) setLanguage("ja");
+    });
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, []);
+
+  const loadRecruitmentsRef = useRef(loadRecruitments);
+  loadRecruitmentsRef.current = loadRecruitments;
+
+  useEffect(() => {
+    if (initialLoadStarted.current || status === "loading") return;
+    initialLoadStarted.current = true;
+    return loadRecruitmentsRef.current();
+  }, [status]);
+
   const openMatch = (match: MatchCardData) => {
     router.push({
       pathname: "/japanese/matches/[id]",
       params: { id: match.id },
     });
   };
+
+  if (!language) {
+    return (
+      <View style={styles.loadingScreen}>
+        <StatusBar style="dark" />
+        <ActivityIndicator color={BLUE} size="large" />
+      </View>
+    );
+  }
 
   return (
     <View style={styles.screen}>
@@ -161,15 +242,22 @@ export default function JapaneseHomeScreen() {
           styles.matchListContent,
           { paddingTop: headerHeight + 28 },
         ]}
+        refreshControl={
+          <RefreshControl
+            onRefresh={() => loadRecruitments()}
+            refreshing={refreshing}
+            tintColor={BLUE}
+          />
+        }
         showsVerticalScrollIndicator={false}
         style={styles.matchList}
       >
         {loading ? (
           <View style={styles.statePanel}>
             <ActivityIndicator color={BLUE} size="small" />
-            <Text style={styles.stateText}>募集を読み込み中...</Text>
+            <Text style={styles.stateText}>{copy.loading}</Text>
           </View>
-        ) : loadError ? (
+        ) : loadError && matches.length === 0 ? (
           <View style={styles.statePanel}>
             <Text accessibilityRole="alert" style={styles.stateText}>{loadError}</Text>
             <Pressable
@@ -177,15 +265,31 @@ export default function JapaneseHomeScreen() {
               onPress={loadRecruitments}
               style={({ pressed }) => [styles.retryButton, pressed && styles.pressed]}
             >
-              <Text style={styles.retryButtonText}>再試行</Text>
+              <Text style={styles.retryButtonText}>{copy.retry}</Text>
             </Pressable>
           </View>
-        ) : filteredMatches.map((match) => (
-          <MatchCard key={match.id} match={match} onOpen={openMatch} />
-        ))}
+        ) : (
+          <>
+            {loadError ? (
+              <View style={styles.inlineError}>
+                <Text accessibilityRole="alert" style={styles.inlineErrorText}>{loadError}</Text>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => loadRecruitments()}
+                  style={({ pressed }) => [styles.retryButton, pressed && styles.pressed]}
+                >
+                  <Text style={styles.retryButtonText}>{copy.retry}</Text>
+                </Pressable>
+              </View>
+            ) : null}
+            {filteredMatches.map((match) => (
+              <MatchCard key={match.id} match={match} onOpen={openMatch} />
+            ))}
+          </>
+        )}
 
         {!loading && !loadError && filteredMatches.length === 0 && (
-          <Text style={styles.emptyText}>該当する募集がありません</Text>
+          <Text style={styles.emptyText}>{copy.noRecruitments}</Text>
         )}
       </ScrollView>
 
@@ -199,10 +303,10 @@ export default function JapaneseHomeScreen() {
               style={styles.searchIcon}
             />
             <TextInput
-              accessibilityLabel="キーワードで検索"
+              accessibilityLabel={copy.search}
               onChangeText={setQuery}
               onSubmitEditing={() => setSubmittedQuery(query.trim())}
-              placeholder="キーワードで検索"
+              placeholder={copy.search}
               placeholderTextColor={PLACEHOLDER_GRAY}
               returnKeyType="search"
               style={styles.searchInput}
@@ -211,7 +315,7 @@ export default function JapaneseHomeScreen() {
           </View>
 
           <Pressable
-            accessibilityLabel="通知"
+            accessibilityLabel={copy.notifications}
             accessibilityRole="button"
             hitSlop={12}
             onPress={() => router.push("/japanese/notifications")}
@@ -226,7 +330,7 @@ export default function JapaneseHomeScreen() {
           </Pressable>
 
           <Pressable
-            accessibilityLabel="プロフィール"
+            accessibilityLabel={copy.profile}
             accessibilityRole="button"
             hitSlop={12}
             onPress={() => router.push("/profile")}
@@ -252,7 +356,7 @@ export default function JapaneseHomeScreen() {
             return (
               <Pressable
                 key={category}
-                accessibilityLabel={`${category}カテゴリ`}
+                accessibilityLabel={copy.category(category === "all" ? copy.all : category)}
                 accessibilityRole="button"
                 accessibilityState={{ selected }}
                 onPress={() => setSelectedCategory(category)}
@@ -276,7 +380,7 @@ export default function JapaneseHomeScreen() {
           ]}
         >
           <MaterialIcons color={TEXT_GRAY} name="swap-vert" size={20} />
-          <Text style={styles.sortText}>現在地から近い順</Text>
+          <Text style={styles.sortText}>{copy.nearest}</Text>
         </Pressable>
       </View>
     </View>
@@ -407,6 +511,12 @@ const styles = StyleSheet.create({
     letterSpacing: 0,
     lineHeight: 15,
   },
+  loadingScreen: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#ffffff",
+  },
   emptyText: {
     marginTop: 40,
     color: PLACEHOLDER_GRAY,
@@ -421,6 +531,19 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingHorizontal: 28,
     gap: 12,
+  },
+  inlineError: {
+    width: "100%",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 24,
+  },
+  inlineErrorText: {
+    color: "#b42318",
+    fontSize: 13,
+    fontWeight: "600",
+    lineHeight: 18,
+    textAlign: "center",
   },
   stateText: {
     color: PLACEHOLDER_GRAY,

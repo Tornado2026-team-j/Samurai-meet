@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { parseLanguage, parseLocalProfile } from "../services/onboarding-contract";
+import {
+  parseAppMode,
+  parseLanguage,
+  parseLocalProfile,
+} from "../services/onboarding-contract";
 
 describe("onboarding storage validation", () => {
   test("accepts only supported languages", () => {
@@ -7,6 +11,14 @@ describe("onboarding storage validation", () => {
     expect(parseLanguage("en")).toBe("en");
     expect(parseLanguage("fr")).toBeNull();
     expect(parseLanguage(null)).toBeNull();
+  });
+
+  test("accepts only supported app modes", () => {
+    expect(parseAppMode("local")).toBe("local");
+    expect(parseAppMode("traveler")).toBe("traveler");
+    expect(parseAppMode("ja")).toBeNull();
+    expect(parseAppMode("unknown")).toBeNull();
+    expect(parseAppMode(null)).toBeNull();
   });
 
   test("accepts a complete local profile", () => {

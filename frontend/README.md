@@ -56,6 +56,6 @@ iPhoneのExpo GoからローカルGo APIを確認する場合だけ、`EXPO_PUBL
 
 募集の利用日は日本国内向けに`Asia/Tokyo`へ固定しています。`available_date`は`YYYY-MM-DD`、`start_time` / `end_time`は24時間制の`HH:mm`で扱い、APIへ送る`timezone`も`Asia/Tokyo`です。DBの期限などの絶対時刻はUTC RFC3339ですが、募集の日付・時刻は端末や実行ホストのローカルタイムゾーンへ変換しません。
 
-OSのプッシュ通知は未実装で、現在の通知機能はGo APIの一覧・既読とアプリ内通知画面です。現在の作業ブランチでは募集画面の初期日時パースエラーがiOSで報告されており、実機での募集公開は未確認です。
+OSのプッシュ通知は未実装で、現在の通知機能はGo APIの一覧・既読とアプリ内通知画面です。以前iOSで報告された募集画面の初期日時パース問題はISO内部値／`Asia/Tokyo`固定化と自動テストで解消済みですが、募集公開から応募・通知遷移までの実機全通し確認は未完了です。
 
 詳細な受入手順は [docs/features/auth-client.md](../docs/features/auth-client.md) を参照してください。

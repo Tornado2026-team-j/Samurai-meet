@@ -171,4 +171,16 @@ describe("募集プレビューのモック", () => {
       ),
     ).toThrow("recruitment_must_end_same_day");
   });
+
+  it("募集内容が空のまま公開API入力へ変換しない", () => {
+    const preview = buildMockRecruitmentPreview({ ...draft, date: "2026-08-27" });
+
+    expect(() =>
+      buildRecruitmentCreateRequest(
+        { ...draft, date: "2026-08-27", activity: "   " },
+        preview,
+        new Date("2026-08-26T00:00:00.000Z"),
+      ),
+    ).toThrow("invalid_recruitment_description");
+  });
 });

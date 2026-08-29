@@ -49,6 +49,12 @@ func TestNormalizeRecruitmentInput(t *testing.T) {
 	if _, _, err := normalizeRecruitmentInput(invalid, now); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("invalid time error = %v, want ErrInvalidInput", err)
 	}
+
+	invalid = input
+	invalid.Description = " \t"
+	if _, _, err := normalizeRecruitmentInput(invalid, now); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("empty description error = %v, want ErrInvalidInput", err)
+	}
 }
 
 func TestNormalizeRecruitmentInputDefaultsToJSTAndRejectsOtherTimezones(t *testing.T) {

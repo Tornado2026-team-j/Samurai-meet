@@ -1,10 +1,11 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
-import { useFocusEffect, useRouter } from "expo-router";
+import { useRouter } from "expo-router";
 import {
   ActivityIndicator,
   Alert,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -14,6 +15,8 @@ import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "../../hooks/useAuth";
 import { APIError } from "../../services/api-client";
+import { loadLanguage, subscribeLanguage } from "../../services/onboarding";
+import type { AppLanguage } from "../../services/onboarding-contract";
 import {
   listMatches,
   recruitmentToMatchCard,
@@ -29,15 +32,74 @@ const TEXT_GRAY = "#535353";
 const MUTED_GRAY = "#949494";
 const BORDER_GRAY = "#e4e4e4";
 
-const STATUS_LABELS: Record<MatchStatus, string> = {
-  pending: "審査中",
-  accepted: "承認済み",
-  rejected: "却下",
-  cancelled: "取り下げ済み",
-  blocked: "利用不可",
-  expired: "期限切れ",
-  completed: "完了",
-};
+const COPY = {
+  ja: {
+    title: "応募履歴",
+    intro: "自分が送った応募だけを表示しています。",
+    loginRequired: "ログイン後に応募履歴を表示できます。",
+    loading: "応募履歴を読み込み中…",
+    loadError: "応募履歴を読み込めませんでした。時間をおいて再試行してください。",
+    retry: "再試行",
+    empty: "送信した応募はまだありません。",
+    ownerLabel: "募集作成者",
+    userFallback: "ユーザー",
+    openHint: "応募の状態を確認する ›",
+    withdrawTitle: "応募を取り下げますか？",
+    withdrawMessageSuffix: "さんへの応募を取り下げます。",
+    cancel: "キャンセル",
+    withdraw: "取り下げる",
+    withdrawing: "取り下げ中…",
+    withdrawFailedTitle: "応募を取り下げられませんでした",
+    withdrawFailedMessage: "最新の状態を確認して、もう一度お試しください。",
+    resultFixed: "この応募は結果が確定しています。",
+    back: "戻る",
+    detailLabelSuffix: "さんへの応募詳細を開く",
+    withdrawLabel: "応募を取り下げる",
+    withdrawingLabel: "応募を取り下げ中",
+    status: {
+      pending: "審査中",
+      accepted: "承認済み",
+      rejected: "却下",
+      cancelled: "取り下げ済み",
+      blocked: "利用不可",
+      expired: "期限切れ",
+      completed: "完了",
+    },
+  },
+  en: {
+    title: "Application history",
+    intro: "Showing applications you sent.",
+    loginRequired: "Sign in to view your application history.",
+    loading: "Loading application history…",
+    loadError: "Application history could not be loaded. Please try again later.",
+    retry: "Retry",
+    empty: "You have not sent any applications yet.",
+    ownerLabel: "Recruitment owner",
+    userFallback: "User",
+    openHint: "View application status ›",
+    withdrawTitle: "Withdraw this application?",
+    withdrawMessageSuffix: "'s application will be withdrawn.",
+    cancel: "Cancel",
+    withdraw: "Withdraw",
+    withdrawing: "Withdrawing…",
+    withdrawFailedTitle: "The application could not be withdrawn",
+    withdrawFailedMessage: "Check the latest status and try again.",
+    resultFixed: "The result for this application is final.",
+    back: "Back",
+    detailLabelSuffix: "'s application details",
+    withdrawLabel: "Withdraw application",
+    withdrawingLabel: "Withdrawing application",
+    status: {
+      pending: "Pending",
+      accepted: "Accepted",
+      rejected: "Declined",
+      cancelled: "Withdrawn",
+      blocked: "Unavailable",
+      expired: "Expired",
+      completed: "Completed",
+    },
+  },
+} as const;
 
 function statusColor(status: MatchStatus): string {
   if (status === "accepted" || status === "completed") return "#168df0";
@@ -49,10 +111,31 @@ export default function JapaneseApplicationsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { getCurrentSession, refresh, session, status } = useAuth();
+  const [language, setLanguage] = useState<AppLanguage>("ja");
   const [applications, setApplications] = useState<MatchView[]>([]);
   const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading");
+  const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [withdrawingID, setWithdrawingID] = useState<string | null>(null);
+  const initialLoadStarted = useRef(false);
+  const hasLoaded = useRef(false);
+  const copy = COPY[language];
+
+  useEffect(() => {
+    let active = true;
+    const unsubscribe = subscribeLanguage((nextLanguage) => {
+      if (active && nextLanguage) setLanguage(nextLanguage);
+    });
+    void loadLanguage().then((storedLanguage) => {
+      if (active) setLanguage(storedLanguage ?? "ja");
+    }).catch(() => {
+      // Keep the stable default when the preference cannot be read.
+    });
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, []);
 
   const loadApplications = useCallback(() => {
     const controller = new AbortController();
@@ -63,13 +146,19 @@ export default function JapaneseApplicationsScreen() {
       if (status !== "signed_in" || !activeSession) {
         if (!cancelled) {
           setApplications([]);
+          setRefreshing(false);
           setLoadState("error");
-          setLoadError("ログイン後に応募履歴を表示できます。");
+          setLoadError(copy.loginRequired);
         }
         return;
       }
 
-      setLoadState("loading");
+      const initialLoad = !hasLoaded.current;
+      if (initialLoad) {
+        setLoadState("loading");
+      } else {
+        setRefreshing(true);
+      }
       setLoadError(null);
       try {
         const request = (currentSession: typeof activeSession) => listMatches(
@@ -89,14 +178,17 @@ export default function JapaneseApplicationsScreen() {
         }
         if (!cancelled) {
           setApplications(result);
+          hasLoaded.current = true;
           setLoadState("ready");
         }
       } catch (error) {
         if (error instanceof Error && error.name === "AbortError") return;
         if (!cancelled) {
-          setLoadState("error");
-          setLoadError("応募履歴を読み込めませんでした。時間をおいて再試行してください。");
+          setLoadState(initialLoad ? "error" : "ready");
+          setLoadError(copy.loadError);
         }
+      } finally {
+        if (!cancelled) setRefreshing(false);
       }
     };
 
@@ -105,9 +197,16 @@ export default function JapaneseApplicationsScreen() {
       cancelled = true;
       controller.abort();
     };
-  }, [getCurrentSession, refresh, session, status]);
+  }, [copy.loadError, copy.loginRequired, getCurrentSession, refresh, session, status]);
 
-  useFocusEffect(loadApplications);
+  const loadApplicationsRef = useRef(loadApplications);
+  loadApplicationsRef.current = loadApplications;
+
+  useEffect(() => {
+    if (initialLoadStarted.current || status === "loading") return;
+    initialLoadStarted.current = true;
+    return loadApplicationsRef.current();
+  }, [status]);
 
   const openApplication = (matchID: string) => {
     router.push({
@@ -118,13 +217,14 @@ export default function JapaneseApplicationsScreen() {
 
   const withdraw = (application: MatchView) => {
     if (application.status !== "pending" || withdrawingID) return;
+    const recipientName = application.other_user.name || copy.userFallback;
     Alert.alert(
-      "応募を取り下げますか？",
-      `${application.other_user.name}さんへの応募を取り下げます。`,
+      copy.withdrawTitle,
+      `${recipientName}${copy.withdrawMessageSuffix}`,
       [
-        { text: "キャンセル", style: "cancel" },
+        { text: copy.cancel, style: "cancel" },
         {
-          text: "取り下げる",
+          text: copy.withdraw,
           style: "destructive",
           onPress: () => void performWithdraw(application),
         },
@@ -153,7 +253,7 @@ export default function JapaneseApplicationsScreen() {
           : item
       )));
     } catch {
-      Alert.alert("応募を取り下げられませんでした", "最新の状態を確認して、もう一度お試しください。");
+      Alert.alert(copy.withdrawFailedTitle, copy.withdrawFailedMessage);
     } finally {
       setWithdrawingID(null);
     }
@@ -164,7 +264,7 @@ export default function JapaneseApplicationsScreen() {
       <StatusBar style="light" />
       <View style={[styles.header, { paddingTop: Math.max(insets.top, 18) }]}>
         <Pressable
-          accessibilityLabel="戻る"
+          accessibilityLabel={copy.back}
           accessibilityRole="button"
           hitSlop={10}
           onPress={() => router.back()}
@@ -172,96 +272,118 @@ export default function JapaneseApplicationsScreen() {
         >
           <MaterialIcons color="#ffffff" name="arrow-back-ios-new" size={20} />
         </Pressable>
-        <Text style={styles.headerTitle}>応募履歴</Text>
+        <Text style={styles.headerTitle}>{copy.title}</Text>
       </View>
 
       <ScrollView
         contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 32 }]}
+        refreshControl={
+          <RefreshControl
+            onRefresh={() => loadApplications()}
+            refreshing={refreshing}
+            tintColor={BLUE}
+          />
+        }
         showsVerticalScrollIndicator={false}
       >
-        <Text style={styles.intro}>自分が送った応募だけを表示しています。</Text>
+        <Text style={styles.intro}>{copy.intro}</Text>
 
         {loadState === "loading" ? (
           <View style={styles.statePanel}>
             <ActivityIndicator color={BLUE} />
-            <Text style={styles.stateText}>応募履歴を読み込み中…</Text>
+            <Text style={styles.stateText}>{copy.loading}</Text>
           </View>
         ) : loadState === "error" ? (
           <View style={styles.statePanel}>
             <Text accessibilityRole="alert" style={styles.stateText}>{loadError}</Text>
             <Pressable
-              accessibilityLabel="応募履歴を再読み込み"
+              accessibilityLabel={copy.retry}
               accessibilityRole="button"
               onPress={loadApplications}
               style={({ pressed }) => [styles.retryButton, pressed && styles.pressed]}
             >
-              <Text style={styles.retryText}>再試行</Text>
+              <Text style={styles.retryText}>{copy.retry}</Text>
             </Pressable>
           </View>
-        ) : applications.length === 0 ? (
-          <View style={styles.statePanel}>
-            <MaterialIcons color={MUTED_GRAY} name="history" size={36} />
-            <Text style={styles.stateText}>送信した応募はまだありません。</Text>
-          </View>
         ) : (
-          applications.map((application) => {
-            const recruitmentCard = recruitmentToMatchCard(application.recruitment);
-            const pending = application.status === "pending";
-            const withdrawing = withdrawingID === application.id;
-            return (
-              <View key={application.id} style={styles.applicationCard}>
+          <>
+            {loadError ? (
+              <View style={styles.inlineError}>
+                <Text accessibilityRole="alert" style={styles.inlineErrorText}>{loadError}</Text>
                 <Pressable
-                  accessibilityLabel={`${application.other_user.name}さんへの応募詳細を開く`}
+                  accessibilityLabel={copy.retry}
                   accessibilityRole="button"
-                  onPress={() => openApplication(application.id)}
-                  style={({ pressed }) => [styles.cardMain, pressed && styles.pressed]}
+                  onPress={() => loadApplications()}
+                  style={({ pressed }) => [styles.retryButton, pressed && styles.pressed]}
                 >
-                  <View style={styles.cardHeader}>
-                    <View style={styles.avatar}>
-                      <MaterialIcons color="#d4d4d4" name="account-circle" size={38} />
-                    </View>
-                    <View style={styles.recipientBlock}>
-                      <Text numberOfLines={1} style={styles.recipientName}>
-                        {application.other_user.name || "ユーザー"}
-                      </Text>
-                      <Text style={styles.recipientCountry}>
-                        募集作成者 · {application.other_user.nationality_code || "—"}
-                      </Text>
-                    </View>
-                    <View style={[styles.statusPill, { borderColor: statusColor(application.status) }]}>
-                      <Text style={[styles.statusText, { color: statusColor(application.status) }]}>
-                        {STATUS_LABELS[application.status]}
-                      </Text>
-                    </View>
-                  </View>
-
-                  <Text numberOfLines={2} style={styles.description}>
-                    {application.recruitment.description}
-                  </Text>
-                  <Text style={styles.schedule}>
-                    {recruitmentCard.detailDate} · {formatTimeRange(application.recruitment.start_time, application.recruitment.duration_hours)}
-                  </Text>
-                  <Text style={styles.openHint}>応募の状態を確認する ›</Text>
+                  <Text style={styles.retryText}>{copy.retry}</Text>
                 </Pressable>
-
-                {pending ? (
-                  <Pressable
-                    accessibilityLabel={withdrawing ? "応募を取り下げ中" : "応募を取り下げる"}
-                    accessibilityRole="button"
-                    accessibilityState={{ busy: withdrawing, disabled: withdrawing }}
-                    disabled={withdrawing}
-                    onPress={() => withdraw(application)}
-                    style={({ pressed }) => [styles.withdrawButton, withdrawing && styles.disabled, pressed && styles.pressed]}
-                  >
-                    {withdrawing ? <ActivityIndicator color="#b42318" size="small" /> : null}
-                    <Text style={styles.withdrawText}>{withdrawing ? "取り下げ中…" : "応募を取り下げる"}</Text>
-                  </Pressable>
-                ) : (
-                  <Text style={styles.resultText}>この応募は結果が確定しています。</Text>
-                )}
               </View>
-            );
-          })
+            ) : null}
+            {applications.length === 0 ? (
+              <View style={styles.statePanel}>
+                <MaterialIcons color={MUTED_GRAY} name="history" size={36} />
+                <Text style={styles.stateText}>{copy.empty}</Text>
+              </View>
+            ) : applications.map((application) => {
+              const recruitmentCard = recruitmentToMatchCard(application.recruitment);
+              const pending = application.status === "pending";
+              const withdrawing = withdrawingID === application.id;
+              return (
+                <View key={application.id} style={styles.applicationCard}>
+                  <Pressable
+                    accessibilityLabel={`${application.other_user.name || copy.userFallback}${copy.detailLabelSuffix}`}
+                    accessibilityRole="button"
+                    onPress={() => openApplication(application.id)}
+                    style={({ pressed }) => [styles.cardMain, pressed && styles.pressed]}
+                  >
+                    <View style={styles.cardHeader}>
+                      <View style={styles.avatar}>
+                        <MaterialIcons color="#d4d4d4" name="account-circle" size={38} />
+                      </View>
+                      <View style={styles.recipientBlock}>
+                        <Text numberOfLines={1} style={styles.recipientName}>
+                          {application.other_user.name || copy.userFallback}
+                        </Text>
+                        <Text style={styles.recipientCountry}>
+                          {copy.ownerLabel} · {application.other_user.nationality_code || "—"}
+                        </Text>
+                      </View>
+                      <View style={[styles.statusPill, { borderColor: statusColor(application.status) }]}>
+                        <Text style={[styles.statusText, { color: statusColor(application.status) }]}>
+                          {copy.status[application.status]}
+                        </Text>
+                      </View>
+                    </View>
+
+                    <Text numberOfLines={2} style={styles.description}>
+                      {application.recruitment.description}
+                    </Text>
+                    <Text style={styles.schedule}>
+                      {recruitmentCard.detailDate} · {formatTimeRange(application.recruitment.start_time, application.recruitment.duration_hours)}
+                    </Text>
+                    <Text style={styles.openHint}>{copy.openHint}</Text>
+                  </Pressable>
+
+                  {pending ? (
+                    <Pressable
+                      accessibilityLabel={withdrawing ? copy.withdrawingLabel : copy.withdrawLabel}
+                      accessibilityRole="button"
+                      accessibilityState={{ busy: withdrawing, disabled: withdrawing }}
+                      disabled={withdrawing}
+                      onPress={() => withdraw(application)}
+                      style={({ pressed }) => [styles.withdrawButton, withdrawing && styles.disabled, pressed && styles.pressed]}
+                    >
+                      {withdrawing ? <ActivityIndicator color="#b42318" size="small" /> : null}
+                      <Text style={styles.withdrawText}>{withdrawing ? copy.withdrawing : copy.withdraw}</Text>
+                    </Pressable>
+                  ) : (
+                    <Text style={styles.resultText}>{copy.resultFixed}</Text>
+                  )}
+                </View>
+              );
+            })}
+          </>
         )}
       </ScrollView>
     </View>
@@ -308,6 +430,19 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 12,
     paddingHorizontal: 20,
+  },
+  inlineError: {
+    width: "100%",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 20,
+  },
+  inlineErrorText: {
+    color: "#b42318",
+    fontSize: 13,
+    fontWeight: "600",
+    lineHeight: 19,
+    textAlign: "center",
   },
   stateText: { color: MUTED_GRAY, fontSize: 14, fontWeight: "600", lineHeight: 20, textAlign: "center" },
   retryButton: {

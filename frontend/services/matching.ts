@@ -121,6 +121,13 @@ export type Coordinates = {
 
 type DataResponse<T> = { data?: T };
 
+function requireArrayData<T>(response: DataResponse<T[]>, resource: string): T[] {
+  if (!Array.isArray(response.data)) {
+    throw new Error(`${resource} response is invalid`);
+  }
+  return response.data;
+}
+
 function appendQueryPart(parts: string[], key: string, value: string | number | boolean) {
   parts.push(`${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`);
 }
@@ -160,7 +167,7 @@ export async function searchRecruitments(
     session,
     { method: "GET", signal },
   );
-  return Array.isArray(response.data) ? response.data : [];
+  return requireArrayData(response, "recruitments");
 }
 
 export async function createRecruitment(
@@ -200,7 +207,7 @@ export async function listMyRecruitments(
     session,
     { method: "GET", signal },
   );
-  return Array.isArray(response.data) ? response.data : [];
+  return requireArrayData(response, "my recruitments");
 }
 
 export async function updateRecruitment(
@@ -274,7 +281,7 @@ export async function listMatches(
     session,
     { method: "GET", signal },
   );
-  return Array.isArray(response.data) ? response.data : [];
+  return requireArrayData(response, "matches");
 }
 
 export async function getMatch(
