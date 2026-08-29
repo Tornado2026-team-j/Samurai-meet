@@ -372,6 +372,10 @@ export function buildRecruitmentCreateRequest(
   coordinates?: Coordinates | null,
 ): RecruitmentCreateRequest {
   void timezone;
+  const description = draft.activity.trim();
+  if (!description) {
+    throw new Error("invalid_recruitment_description");
+  }
   const scheduleIssue = getRecruitmentScheduleIssue(draft, now);
   if (scheduleIssue) throw new Error(scheduleIssue);
 
@@ -392,7 +396,7 @@ export function buildRecruitmentCreateRequest(
     end_time: `${String(endHour).padStart(2, "0")}:${String(endMinute).padStart(2, "0")}`,
     timezone: JST_TIME_ZONE,
     keywords: preview.tags.length > 0 ? preview.tags : ["Experience"],
-    description: draft.activity.trim() || "Explore Osaka with a local",
+    description,
     visibility_radius_km: draft.distanceKm,
     status: "open",
   };

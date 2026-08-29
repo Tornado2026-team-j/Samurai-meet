@@ -115,6 +115,7 @@ const RECRUITMENT_COPY = {
     invalidDate: "Choose a valid recruitment date.",
     invalidTime: "Choose a valid start time.",
     invalidDuration: "Choose a duration from 1 to 8 hours.",
+    activityRequired: "Tell us what you would like to do before continuing.",
     pastDate: "The selected start time has already passed. Choose another time.",
     crossesMidnight:
       "The selected duration crosses midnight. Choose an earlier time or shorter duration.",
@@ -190,6 +191,7 @@ const RECRUITMENT_COPY = {
     invalidDate: "有効な募集日を選択してください。",
     invalidTime: "有効な開始時刻を選択してください。",
     invalidDuration: "所要時間は1〜8時間から選択してください。",
+    activityRequired: "したいことを入力してから次へ進んでください。",
     pastDate: "選択した開始時刻は過ぎています。別の時刻を選択してください。",
     crossesMidnight:
       "所要時間が日付をまたぎます。早い時刻または短い所要時間を選択してください。",
@@ -660,6 +662,11 @@ export default function SearchPreferencesScreen() {
 
   const showConfirmation = (draft = createDraft()) => {
     if (previewStatus === "loading") {
+      return;
+    }
+
+    if (!description.trim()) {
+      setFormError(RECRUITMENT_COPY[language].activityRequired);
       return;
     }
 
