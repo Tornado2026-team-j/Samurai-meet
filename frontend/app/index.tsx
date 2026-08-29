@@ -36,13 +36,17 @@ import {
 import { createRecoveryMaterial, deriveAccountDataKey, getRecoveryKDFImplementation, type KeyEnvelope, type RecoveryKDFImplementation } from "../services/crypto";
 import { updateMyProfile } from "../services/profile";
 import {
+  clearAppMode,
   clearLanguage,
+  loadAppMode,
   loadIdentityVerificationChoice,
   loadLanguage,
   loadLocalProfile,
+  saveAppMode,
   saveIdentityVerificationChoice,
   saveLanguage,
   saveLocalProfile,
+  type AppMode,
   type AppLanguage,
   type IdentityVerificationChoice,
   type LocalProfile,
@@ -705,6 +709,7 @@ export default function OnboardingScreen() {
     status,
   } = useAuth();
   const [language, setLanguage] = useState<AppLanguage | null>(null);
+  const [appMode, setAppMode] = useState<AppMode | null>(null);
   const [profile, setProfile] = useState<LocalProfile | null>(null);
   const [identityVerificationChoice, setIdentityVerificationChoice] =
     useState<IdentityVerificationChoice>(null);
@@ -789,9 +794,15 @@ export default function OnboardingScreen() {
 
   useEffect(() => {
     let active = true;
-    void loadLanguage().then((storedLanguage) => {
+    void Promise.all([loadLanguage(), loadAppMode()]).then(async ([storedLanguage, storedMode]) => {
+      // Existing installs used display language as their home-mode selector.
+      // Keep that one-time default, then persist an independent mode value.
+      const defaultMode = storedLanguage === "en" ? "traveler" : storedLanguage === "ja" ? "local" : null;
+      const resolvedMode = storedMode ?? defaultMode;
+      if (!storedMode && resolvedMode) await saveAppMode(resolvedMode);
       if (active) {
         setLanguage(storedLanguage);
+        setAppMode(resolvedMode);
         setLanguageLoaded(true);
       }
     }).catch(() => {
@@ -815,6 +826,7 @@ export default function OnboardingScreen() {
     // A completed logout must start from the same language screen as a new
     // install, including when logout was initiated from key setup on `/`.
     setLanguage(null);
+    setAppMode(null);
     setAccountStepCompleted(false);
   }, [status]);
 
@@ -1018,12 +1030,15 @@ export default function OnboardingScreen() {
     );
   }
 
-  if (!language) {
+  if (!language || !appMode) {
     return (
       <LanguageStep
         onContinue={async (selectedLanguage) => {
+          const defaultMode: AppMode = selectedLanguage === "ja" ? "local" : "traveler";
           await saveLanguage(selectedLanguage);
+          await saveAppMode(defaultMode);
           setLanguage(selectedLanguage);
+          setAppMode(defaultMode);
           setAccountStepCompleted(false);
         }}
       />
@@ -1037,7 +1052,9 @@ export default function OnboardingScreen() {
         onAuthenticated={() => setAccountStepCompleted(true)}
         onBack={async () => {
           await clearLanguage();
+          await clearAppMode();
           setLanguage(null);
+          setAppMode(null);
           setAccountStepCompleted(false);
         }}
       />
@@ -1213,7 +1230,9 @@ export default function OnboardingScreen() {
         onAuthenticated={() => setAccountStepCompleted(true)}
         onBack={async () => {
           await clearLanguage();
+          await clearAppMode();
           setLanguage(null);
+          setAppMode(null);
           setAccountStepCompleted(false);
         }}
       />
@@ -1245,7 +1264,7 @@ export default function OnboardingScreen() {
   }
 
   if (profile?.completed) {
-    return <Redirect href={language === "ja" ? "/japanese" : "/foreigner"} />;
+    return <Redirect href={appMode === "local" ? "/japanese" : "/foreigner"} />;
   }
 
   return (
@@ -1254,7 +1273,9 @@ export default function OnboardingScreen() {
       language={language}
       onBack={async () => {
         await clearLanguage();
+        await clearAppMode();
         setLanguage(null);
+        setAppMode(null);
       }}
       onSubmit={async (nextProfile) => {
         const profileWithIdentityVerificationChoice = {
