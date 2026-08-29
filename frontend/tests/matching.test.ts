@@ -163,8 +163,14 @@ describe("募集APIクライアント", () => {
 
     await expect(listMyRecruitments(session)).resolves.toHaveLength(1);
     await expect(updateRecruitment(recruitment.id, session, {
+      category: "Places",
+      available_date: "2026-08-28",
+      start_time: "09:30",
+      end_time: "11:00",
       description: "Updated description",
       timezone: "Asia/Tokyo",
+      keywords: ["museum", "walk"],
+      visibility_radius_km: 5,
     })).resolves.toMatchObject({ id: recruitment.id });
     await expect(closeRecruitment(recruitment.id, session)).resolves.toBeUndefined();
     await expect(withdrawRecruitmentInterest("match-1", session)).resolves.toMatchObject({ status: "cancelled" });
@@ -172,8 +178,14 @@ describe("募集APIクライアント", () => {
     expect(requests[0]?.url).toContain("/recruitments/mine");
     expect(requests[1]?.method).toBe("PATCH");
     expect(JSON.parse(requests[1]?.body ?? "{}")).toMatchObject({
+      category: "Places",
+      available_date: "2026-08-28",
+      start_time: "09:30",
+      end_time: "11:00",
       description: "Updated description",
       timezone: "Asia/Tokyo",
+      keywords: ["museum", "walk"],
+      visibility_radius_km: 5,
     });
     expect(requests[2]?.method).toBe("DELETE");
     expect(requests[3]?.url).toContain("/matches/match-1/withdraw");
