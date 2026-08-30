@@ -15,31 +15,26 @@ import type { AppLanguage } from "../../../services/onboarding-contract";
 
 const BLUE = "#5ec5f5";
 const YELLOW = "#e7b454";
-const TEXT_GRAY = "#535353";
-const MUTED_GRAY = "#949494";
-const BORDER_GRAY = "#e4e4e4";
-const SOFT_BLUE = "#eff8ff";
+const GREEN = "#3d9a68";
+const LIGHT_GREEN = "#C6EDC9";
+const MUTED_GRAY = "#8e8e93";
 
 const COPY = {
   ja: {
+    header: "Feedback",
     title: "今日の案内はどうでしたか？",
-    back: "戻る",
-    like: "いいね！",
-    liked: "いいねを送りました！",
-    thankYou: "評価ありがとうございました",
-    likeHint: "相手に「いいね」を送ることができます（1回のみ）",
+    hint: "楽しかったら、いいねを送ってみましょう！",
+    thankYou: "評価ありがとうございました！",
+    continue: "次へ",
     report: "運営に報告する",
-    finish: "完了",
   },
   en: {
+    header: "Feedback",
     title: "How was today's guide?",
-    back: "Back",
-    like: "Like!",
-    liked: "Sent a like!",
+    hint: "If you enjoyed today's guide, tap Like!",
     thankYou: "Thank you for your feedback!",
-    likeHint: "You can send a like to the other person (once only)",
+    continue: "Continue",
     report: "Report to support",
-    finish: "Done",
   },
 } as const;
 
@@ -48,20 +43,25 @@ export default function ReviewScreen() {
   const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id?: string | string[] }>();
   const matchId = Array.isArray(id) ? id[0] : id;
+
   const [language, setLanguage] = useState<AppLanguage | null>(null);
   const [liked, setLiked] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     let active = true;
+
     const unsubscribe = subscribeLanguage((nextLanguage) => {
       if (active) setLanguage(nextLanguage ?? "ja");
     });
-    void loadLanguage().then((storedLanguage) => {
-      if (active) setLanguage(storedLanguage ?? "ja");
-    }).catch(() => {
-      if (active) setLanguage("ja");
-    });
+
+    void loadLanguage()
+      .then((storedLanguage) => {
+        if (active) setLanguage(storedLanguage ?? "ja");
+      })
+      .catch(() => {
+        if (active) setLanguage("ja");
+      });
+
     return () => {
       active = false;
       unsubscribe();
@@ -69,30 +69,25 @@ export default function ReviewScreen() {
   }, []);
 
   if (!language) {
-    return <View style={styles.loadingScreen}><StatusBar style="dark" /></View>;
+    return (
+      <View style={styles.loadingScreen}>
+        <StatusBar style="dark" />
+      </View>
+    );
   }
 
   const copy = COPY[language];
 
-  const handleLike = async () => {
-    if (liked || submitting) return;
-    setSubmitting(true);
-    // TODO: Connect to POST /matches/{id}/reviews when backend API is ready
-    // For MVP, just update local state
-    setLiked(true);
-    setSubmitting(false);
-  };
-
   const goReport = () => {
-    if (matchId) {
-      router.push({
-        pathname: "/match-result/[id]/report",
-        params: { id: matchId },
-      });
-    }
+    if (!matchId) return;
+
+    router.push({
+      pathname: "/match-result/[id]/report",
+      params: { id: matchId },
+    });
   };
 
-  const goHome = () => {
+  const handleContinue = () => {
     router.replace("/japanese");
   };
 
@@ -100,71 +95,85 @@ export default function ReviewScreen() {
     <View style={styles.screen}>
       <StatusBar style="light" />
 
-      <View style={[styles.header, { paddingTop: Math.max(insets.top, 18) }]}>
-        <Pressable
-          accessibilityLabel={copy.back}
-          accessibilityRole="button"
-          hitSlop={10}
-          onPress={() => router.back()}
-          style={({ pressed }) => [styles.backButton, pressed && styles.pressed]}
-        >
-          <MaterialIcons color="#ffffff" name="arrow-back-ios-new" size={20} />
-        </Pressable>
-        <Text style={styles.headerTitle}>{copy.title}</Text>
+      <View
+        style={[
+          styles.header,
+          { paddingTop: Math.max(insets.top, 24) },
+        ]}
+      >
+        <Text style={styles.headerTitle}>{copy.header}</Text>
       </View>
 
       <ScrollView
-        contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 32 }]}
+        contentContainerStyle={[
+          styles.content,
+          { paddingBottom: insets.bottom + 32 },
+        ]}
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.reviewCard}>
-          <Text style={styles.reviewHint}>{copy.likeHint}</Text>
+        {!liked ? (
+          <>
+            <Text style={styles.title}>{copy.title}</Text>
 
-          <Pressable
-            accessibilityRole="button"
-            accessibilityState={{ disabled: liked || submitting }}
-            disabled={liked || submitting}
-            onPress={() => void handleLike()}
-            style={({ pressed }) => [
-              styles.likeButton,
-              liked && styles.likeButtonDone,
-              (liked || submitting) && styles.disabled,
-              pressed && styles.pressed,
-            ]}
-          >
-            <MaterialIcons
-              color={liked ? "#ffffff" : YELLOW}
-              name={liked ? "thumb-up" : "thumb-up-off-alt"}
-              size={48}
-            />
-            <Text style={[styles.likeText, liked && styles.likeTextDone]}>
-              {liked ? copy.liked : copy.like}
-            </Text>
-          </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setLiked(true)}
+              style={({ pressed }) => [
+                styles.likeArea,
+                pressed && styles.pressed,
+              ]}
+            >
+              <View style={styles.likeCircle}>
+                <MaterialIcons
+                  name="thumb-up"
+                  size={76}
+                  color={YELLOW}
+                />
+              </View>
+            </Pressable>
 
-          {liked ? (
-            <View style={styles.thankYouBanner}>
-              <MaterialIcons color="#3d9a68" name="check-circle" size={22} />
-              <Text style={styles.thankYouText}>{copy.thankYou}</Text>
+            <Text style={styles.hint}>{copy.hint}</Text>
+          </>
+        ) : (
+          <View style={styles.thankYouSection}>
+            <View style={styles.checkCircle}>
+              <MaterialIcons
+                name="check"
+                size={50}
+                color={GREEN}
+              />
             </View>
-          ) : null}
-        </View>
+
+            <Text style={styles.thankYouText}>
+              {copy.thankYou}
+            </Text>
+          </View>
+        )}
+
+        <Pressable
+          accessibilityRole="button"
+          onPress={handleContinue}
+          style={({ pressed }) => [
+            styles.continueButton,
+            pressed && styles.pressed,
+          ]}
+        >
+          <Text style={styles.continueText}>
+            {copy.continue}
+          </Text>
+        </Pressable>
 
         <Pressable
           accessibilityRole="button"
           onPress={goReport}
-          style={({ pressed }) => [styles.reportButton, pressed && styles.pressed]}
+          style={({ pressed }) => [
+            styles.reportButton,
+            pressed && styles.pressed,
+          ]}
         >
-          <MaterialIcons color="#b42318" name="report-problem" size={20} />
-          <Text style={styles.reportButtonText}>{copy.report}</Text>
-        </Pressable>
-
-        <Pressable
-          accessibilityRole="button"
-          onPress={goHome}
-          style={({ pressed }) => [styles.finishButton, pressed && styles.pressed]}
-        >
-          <Text style={styles.finishButtonText}>{copy.finish}</Text>
+          <Text style={styles.reportText}>
+            {copy.report}
+          </Text>
         </Pressable>
       </ScrollView>
     </View>
@@ -172,84 +181,120 @@ export default function ReviewScreen() {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: "#ffffff" },
-  loadingScreen: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#ffffff" },
+  screen: {
+    flex: 1,
+    backgroundColor: "#ffffff",
+  },
+
+  loadingScreen: {
+    flex: 1,
+    backgroundColor: "#ffffff",
+  },
+
   header: {
-    minHeight: 108,
-    flexDirection: "row",
-    alignItems: "flex-end",
-    paddingHorizontal: 20,
-    paddingBottom: 18,
+    minHeight: 156,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingBottom: 24,
     backgroundColor: BLUE,
-    borderBottomLeftRadius: 36,
-    borderBottomRightRadius: 36,
+    borderBottomLeftRadius: 50,
+    borderBottomRightRadius: 50,
   },
-  backButton: { width: 34, height: 34, alignItems: "center", justifyContent: "center", marginRight: 12 },
-  headerTitle: { color: "#ffffff", fontSize: 22, fontWeight: "800" },
-  content: { alignItems: "center", paddingHorizontal: 18, paddingTop: 22, gap: 14 },
-  reviewCard: {
-    width: "100%",
-    maxWidth: 390,
+
+  headerTitle: {
+    color: "#ffffff",
+    fontSize: 22,
+    fontWeight: "900",
+  },
+
+  content: {
+    flexGrow: 1,
     alignItems: "center",
-    gap: 20,
-    padding: 28,
-    borderWidth: 1,
-    borderColor: BORDER_GRAY,
-    borderRadius: 18,
-    backgroundColor: "#ffffff",
+    paddingHorizontal: 38,
+    paddingTop: 42,
   },
-  reviewHint: { color: MUTED_GRAY, fontSize: 13, lineHeight: 19, textAlign: "center" },
-  likeButton: {
-    width: 160,
-    height: 160,
+
+  title: {
+    color: "#000000",
+    fontSize: 24,
+    fontWeight: "900",
+    textAlign: "center",
+  },
+
+  likeArea: {
+    marginTop: 42,
+  },
+
+  likeCircle: {
+    width: 150,
+    height: 150,
     alignItems: "center",
     justifyContent: "center",
-    gap: 12,
-    borderWidth: 2,
-    borderColor: YELLOW,
-    borderRadius: 80,
-    backgroundColor: "#fff9ec",
   },
-  likeButtonDone: { borderColor: "#3d9a68", backgroundColor: "#eef8f2" },
-  likeText: { color: YELLOW, fontSize: 18, fontWeight: "900" },
-  likeTextDone: { color: "#3d9a68" },
-  thankYouBanner: {
-    flexDirection: "row",
+
+  hint: {
+    marginTop: 24,
+    maxWidth: 300,
+    color: MUTED_GRAY,
+    fontSize: 16,
+    fontWeight: "700",
+    lineHeight: 23,
+    textAlign: "center",
+  },
+
+  thankYouSection: {
     alignItems: "center",
-    gap: 8,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderWidth: 1,
-    borderColor: "#cfe9d8",
-    borderRadius: 10,
-    backgroundColor: "#eef8f2",
+    marginTop: 20,
+    marginBottom: 30,
   },
-  thankYouText: { color: "#3d9a68", fontSize: 14, fontWeight: "800" },
+
+  checkCircle: {
+    width: 100,
+    height: 100,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 50,
+    backgroundColor: LIGHT_GREEN,
+  },
+
+  thankYouText: {
+    marginTop: 26,
+    color: "#000000",
+    fontSize: 23,
+    fontWeight: "900",
+    textAlign: "center",
+  },
+
+  continueButton: {
+    width: "100%",
+    maxWidth: 315,
+    minHeight: 58,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 55,
+    borderRadius: 16,
+    backgroundColor: YELLOW,
+  },
+
+  continueText: {
+    color: "#000000",
+    fontSize: 20,
+    fontWeight: "900",
+  },
+
   reportButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    minHeight: 44,
-    paddingHorizontal: 16,
-    borderWidth: 1,
-    borderColor: "#f0c8c4",
-    borderRadius: 22,
-    backgroundColor: "#fff5f4",
+    marginTop: 24,
+    padding: 10,
   },
-  reportButtonText: { color: "#b42318", fontSize: 14, fontWeight: "800" },
-  finishButton: {
-    width: "100%",
-    maxWidth: 390,
-    minHeight: 46,
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 1,
-    borderColor: BLUE,
-    borderRadius: 10,
-    backgroundColor: "#ffffff",
+
+  reportText: {
+    color: "#777777",
+    fontSize: 14,
+    fontWeight: "700",
+    textDecorationLine: "underline",
   },
-  finishButtonText: { color: BLUE, fontSize: 14, fontWeight: "800" },
-  disabled: { opacity: 0.55 },
-  pressed: { opacity: 0.72 },
+
+  pressed: {
+    opacity: 0.72,
+  },
 });
