@@ -12,7 +12,7 @@
 - フロントの既存モック、言語選択画面、ログアウト後のナビゲーションは、このバックエンド実装メモの対象外である。現行フロントでは募集日時・JST入力・通知画面接続などを別作業で変更中のため、「モックを変更していない」とは扱わない。
 - 募集画面はAPI接続済みで、日時入力のISO内部値／`Asia/Tokyo`固定と自動テストは完了している。日時選択から公開・応募・通知遷移までのiOS実機全通しE2Eを確認する。
 - 募集日時の壁時計は`Asia/Tokyo`固定、絶対時刻はUTC。通常のネイティブ接続先はproduction domainで、LAN URLは明示設定時だけ使う。通知はアプリ内RESTまでで、OSプッシュは未実装。
-- chat transport tokenはHTTP handler既定の`quic`とサービス受理値`websocket`／`webtransport`が不一致であり、QUIC配送の実装完了を意味しない。
+- chat transport tokenはhandler既定値・サービス受理値ともに`websocket`で一致し、`websocket`のみ発行する（`webtransport`／`quic`は終端サーバー未実装のため400で拒否）。WebSocket配送は実装済みだが、QUIC／HTTP/3 WebTransport配送の実装完了は意味しない。
 
 ## フロント追従時に引き継ぐ課題（今回の変更対象外）
 

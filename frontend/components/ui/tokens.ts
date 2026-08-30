@@ -114,12 +114,12 @@ export const opacity = {
 
 export const shadows = {
   control: {
-    boxShadow: "0 4px 4px rgba(0, 0, 0, 0.25)",
+    boxShadow: "0 2px 4px rgba(0, 0, 0, 0.14)",
   },
   action: {
-    boxShadow: "0 4px 2px rgba(0, 0, 0, 0.25)",
+    boxShadow: "0 2px 3px rgba(0, 0, 0, 0.16)",
   },
   card: {
-    boxShadow: "0 3px 4px rgba(0, 0, 0, 0.14)",
+    boxShadow: "0 2px 3px rgba(0, 0, 0, 0.10)",
   },
 } as const satisfies Record<string, ViewStyle>;

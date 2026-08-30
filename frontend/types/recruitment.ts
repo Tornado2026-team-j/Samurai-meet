@@ -9,6 +9,7 @@ export type RecruitmentDraft = {
   date: string;
   startTime: string;
   durationHours: number;
+  participantLimit: number;
   distanceKm: RecruitmentDistanceKm;
 };
 

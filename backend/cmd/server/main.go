@@ -10,11 +10,13 @@ import (
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/config"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/db"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/httpapi"
+	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/identity"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/image"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/keys"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/matching"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/meeting"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/notification"
+	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/push"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/safety"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/user"
 	"log"
@@ -115,6 +117,12 @@ func main() {
 	recruitmentClassifier := classification.NewGemini(cfg.Gemini.APIKey, cfg.Gemini.Model)
 	chatService := chat.NewService(database, signer, notifications).
 		WithAttachments(store, int64(cfg.ImageStorage.MaxUploadBytes))
+	chatService.ConfigureSendRateLimit(cfg.Chat.SendBurst, float64(cfg.Chat.SendRefillPerMinute)/60.0)
+	chatService.ConfigureMessageRetention(cfg.Chat.MessageRetentionDays)
+	chatService.SetClusterLogger(log.Printf)
+	if err = chatService.StartClusterFanout(context.Background()); err != nil {
+		log.Fatalf("chat cross-instance fan-out initialization failed: %v", err)
+	}
 	chatCleanupCtx, chatCleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	if e = chatService.ProcessExpiredAttachments(chatCleanupCtx, 24*time.Hour, time.Now()); e != nil {
 		chatCleanupCancel()
@@ -122,8 +130,11 @@ func main() {
 	}
 	chatCleanupCancel()
 	startChatAttachmentSweep(chatService)
+	startChatRetentionSweep(chatService)
 	meetingService := meeting.NewService(database)
 	safetyService := safety.NewService(database)
+	identityService := identity.NewService(database, cfg.Stripe.SecretKey, cfg.Stripe.IdentityWebhookSecret, cfg.Stripe.IdentityReturnURL)
+	pushService := push.NewService(database)
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
 		ReadTimeout:       2 * time.Minute,
@@ -131,8 +142,9 @@ func main() {
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       60 * time.Second,
 		MaxHeaderBytes:    32 * 1024,
-		Handler:           httpapi.NewRouterWithOptions(httpapi.RouterOptions{Environment: cfg.Environment, AllowExpoGoRedirect: cfg.AllowExpoGoRedirect, DevClientOrigin: cfg.DevClientOrigin, ClientOrigin: cfg.ClientOrigin, OAuthLogin: oauthLogin, PreAuth: preauth, Sessions: sessions, SessionHandoffs: handoffs, PasskeyBootstraps: bootstraps, Recovery: recovery, Passkeys: passkeys, KeyEnvelopes: envelopes, Devices: devices, DeviceTransfers: deviceTransfers, Images: images, Accounts: accounts, Profiles: profiles, Matching: matchingService, RecruitmentClassifier: recruitmentClassifier, Chats: chatService, Meetings: meetingService, Notifications: notifications, Safety: safetyService}),
+		Handler:           httpapi.NewRouterWithOptions(httpapi.RouterOptions{Environment: cfg.Environment, AllowExpoGoRedirect: cfg.AllowExpoGoRedirect, DevClientOrigin: cfg.DevClientOrigin, ClientOrigin: cfg.ClientOrigin, OAuthLogin: oauthLogin, PreAuth: preauth, Sessions: sessions, SessionHandoffs: handoffs, PasskeyBootstraps: bootstraps, Recovery: recovery, Passkeys: passkeys, KeyEnvelopes: envelopes, Devices: devices, DeviceTransfers: deviceTransfers, Images: images, Accounts: accounts, Profiles: profiles, Matching: matchingService, RecruitmentClassifier: recruitmentClassifier, Chats: chatService, Meetings: meetingService, Notifications: notifications, Safety: safetyService, Identity: identityService, Push: pushService}),
 	}
+	log.Printf("chat message retention window: %d days", chatService.RetentionDays())
 	log.Printf("backend server listening on %s (environment=%s)", cfg.HTTPAddr, cfg.Environment)
 	if e := server.ListenAndServe(); e != nil && e != http.ErrServerClosed {
 		log.Fatal(e)
@@ -152,6 +164,35 @@ func startChatAttachmentSweep(chatService *chat.Service) {
 	}
 	go func() {
 		ticker := time.NewTicker(time.Hour)
+		defer ticker.Stop()
+		for range ticker.C {
+			sweep()
+		}
+	}()
+}
+
+// startChatRetentionSweep tombstones expired chat messages once at startup and
+// then every 6 hours. It is safe on every instance: the purge statement is
+// idempotent and races cleanly.
+func startChatRetentionSweep(chatService *chat.Service) {
+	if chatService.RetentionDays() <= 0 {
+		return
+	}
+	sweep := func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		purged, err := chatService.PurgeExpiredMessages(ctx, time.Now())
+		if err != nil {
+			log.Printf("chat retention sweep failed: %v", err)
+			return
+		}
+		if purged > 0 {
+			log.Printf("chat retention sweep tombstoned %d message(s)", purged)
+		}
+	}
+	go func() {
+		sweep()
+		ticker := time.NewTicker(6 * time.Hour)
 		defer ticker.Stop()
 		for range ticker.C {
 			sweep()

@@ -12,7 +12,9 @@ import {
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { colors } from "../../../components/ui";
 import { useAuth } from "../../../hooks/useAuth";
+import { findMockMatchById } from "../../../mocks/matches";
 import { APIError } from "../../../services/api-client";
 import { loadLanguage, subscribeLanguage } from "../../../services/onboarding";
 import {
@@ -24,19 +26,19 @@ import type { AppLanguage } from "../../../services/onboarding";
 import type { MatchCardData } from "../../../types/match";
 import { formatTimeRange } from "../../../utils/time";
 
-const BLUE = "#00aeff";
-const YELLOW = "#e7b454";
-const TEXT_GRAY = "#949494";
-const HEADER_BLUE = "#5ec5f5";
+const BLUE = colors.brand.sky;
+const YELLOW = colors.brand.gold;
+const TEXT_GRAY = colors.text.muted;
+const HEADER_BLUE = colors.brand.sky;
 const CATEGORY_ICONS = {
   Food: "restaurant",
-  Places: "place",
+  Heritage: "place",
   Activity: "directions-run",
   Other: "category",
 } as const;
 const CATEGORY_IMAGES = {
   Food: require("../../../assets/images/food.png"),
-  Places: require("../../../assets/images/places-category.png"),
+  Heritage: require("../../../assets/images/places-category.png"),
   Activity: require("../../../assets/images/activity-category.png"),
   Other: require("../../../assets/images/other-category.png"),
 } as const;
@@ -50,11 +52,14 @@ type MatchDetailCopy = {
   requestError: string;
   date: string;
   time: string;
+  location: string;
+  people: string;
   description: string;
   keywords: string;
   send: string;
   sending: string;
   categoryIllustration: string;
+  report: string;
 };
 
 const COPY: Record<AppLanguage, MatchDetailCopy> = {
@@ -67,11 +72,14 @@ const COPY: Record<AppLanguage, MatchDetailCopy> = {
     requestError: "応募を送信できませんでした。時間をおいてもう一度お試しください。",
     date: "日付",
     time: "時刻",
+    location: "場所",
+    people: "募集人数",
     description: "したいこと",
     keywords: "キーワード",
     send: "この人を案内したい！",
     sending: "応募を送信中...",
     categoryIllustration: "カテゴリのイラスト",
+    report: "この募集を通報",
   },
   en: {
     back: "Back",
@@ -82,11 +90,14 @@ const COPY: Record<AppLanguage, MatchDetailCopy> = {
     requestError: "We couldn't send your application. Please try again later.",
     date: "Date",
     time: "Time",
+    location: "Where",
+    people: "People needed",
     description: "What you'd like to do",
     keywords: "Keywords",
     send: "I want to guide this person!",
     sending: "Sending application...",
     categoryIllustration: " category illustration",
+    report: "Report this recruitment",
   },
 };
 
@@ -176,8 +187,14 @@ export default function JapaneseMatchDetailScreen() {
       } catch (error) {
         if (error instanceof Error && error.name === "AbortError" && (cancelled || controller.signal.aborted)) return;
         if (!cancelled) {
-          setLoadState("error");
-          setLoadError(copyRef.current.loadError);
+          const mockMatch = findMockMatchById(matchId);
+          if (mockMatch) {
+            setMatch(mockMatch);
+            setLoadState("ready");
+          } else {
+            setLoadState("error");
+            setLoadError(copyRef.current.loadError);
+          }
         }
       }
     };
@@ -347,6 +364,8 @@ export default function JapaneseMatchDetailScreen() {
                 </Text>
               </View>
             </View>
+            {match.locationName ? <><View style={styles.divider} /><View style={[styles.scheduleRow, styles.timeRow]}><MaterialIcons color={BLUE} name="place" size={27} /><View style={styles.scheduleText}><Text style={styles.scheduleLabel}>{copy.location}</Text><Text style={styles.scheduleValue}>{match.locationName}</Text></View></View></> : null}
+            <View style={styles.peopleRow}><MaterialIcons color={BLUE} name="groups" size={20} /><Text style={styles.peopleText}>{copy.people}: {match.participantLimit ?? 1}</Text></View>
           </View>
 
           <View style={styles.descriptionPanel}>
@@ -399,6 +418,18 @@ export default function JapaneseMatchDetailScreen() {
               {requestError}
             </Text>
           ) : null}
+
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => router.push({
+              pathname: "/report",
+              params: { targetType: "recruitment_card", targetId: match.id, name: match.authorName },
+            })}
+            style={({ pressed }) => [styles.reportButton, pressed && styles.pressed]}
+          >
+            <MaterialIcons color="#b42318" name="outlined-flag" size={19} />
+            <Text style={styles.reportButtonText}>{copy.report}</Text>
+          </Pressable>
         </View>
       </ScrollView>
     </View>
@@ -436,6 +467,19 @@ const styles = StyleSheet.create({
   },
   loadingBackButtonText: {
     color: "#ffffff",
+    fontSize: 13,
+    fontWeight: "800",
+  },
+  reportButton: {
+    minHeight: 44,
+    marginTop: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 7,
+  },
+  reportButtonText: {
+    color: "#b42318",
     fontSize: 13,
     fontWeight: "800",
   },
@@ -583,6 +627,17 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     letterSpacing: 0,
     lineHeight: 24,
+  },
+  peopleRow: {
+    marginTop: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  peopleText: {
+    color: TEXT_GRAY,
+    fontSize: 13,
+    fontWeight: "700",
   },
   divider: {
     width: "100%",

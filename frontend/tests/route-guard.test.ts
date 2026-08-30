@@ -11,11 +11,15 @@ test("認証が必要な画面と公開画面を区別する", () => {
   expect(isProtectedRoute("/chat/chat-1")).toBe(true);
   expect(isProtectedRoute("/japanese/matches/match-1")).toBe(true);
   expect(isProtectedRoute("/profile?from=menu")).toBe(true);
+  expect(isProtectedRoute("/plans")).toBe(true);
+  expect(isProtectedRoute("/security")).toBe(true);
+  expect(isProtectedRoute("/users/user-1")).toBe(true);
   expect(isProtectedRoute("/recruitments/mine")).toBe(true);
   expect(isProtectedRoute("/tabs")).toBe(true);
 
   expect(isProtectedRoute("/")).toBe(false);
   expect(isProtectedRoute("/auth/complete")).toBe(false);
+  expect(isProtectedRoute("/legal/privacy")).toBe(false);
   expect(isProtectedRoute("/passkey")).toBe(false);
   expect(isProtectedRoute("/japan")).toBe(false);
 });

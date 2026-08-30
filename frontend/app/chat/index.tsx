@@ -137,7 +137,9 @@ export default function ChatListScreen() {
       if (active) setLanguage(nextLanguage ?? "ja");
     });
     void loadLanguage().then((storedLanguage) => {
-      if (active) setLanguage(storedLanguage ?? "ja");
+      if (!active) return;
+      const nextLanguage = storedLanguage ?? "ja";
+      setLanguage(nextLanguage);
     }).catch(() => {
       if (active) setLanguage("ja");
     });
@@ -173,9 +175,7 @@ export default function ChatListScreen() {
     <View style={styles.screen}>
       <StatusBar style="light" />
       <Header
-        backAccessibilityLabel={copy.back}
         iconName="chat-bubble-outline"
-        onBack={() => router.back()}
         title={copy.title}
         variant="hero"
       />
@@ -183,7 +183,7 @@ export default function ChatListScreen() {
       <ScrollView
         contentContainerStyle={[
           styles.content,
-          { paddingBottom: insets.bottom + 42 },
+          { paddingBottom: Math.max(insets.bottom + 120, 132) },
         ]}
         refreshControl={
           <RefreshControl onRefresh={() => void load("refresh")} refreshing={refreshing} tintColor={BLUE} />

@@ -22,9 +22,15 @@ import {
 import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Button, Card, Pill, colors, opacity, radius, shadows, typography } from "../../components/ui";
+import ForeignerHomeScreen from "../foreigner";
 import { useAuth } from "../../hooks/useAuth";
 import { APIError } from "../../services/api-client";
-import { getCurrentCoordinates } from "../../services/location";
+import {
+  resolveCurrentLocationDisplay,
+  searchLocationSuggestions,
+  type LocationSearchSuggestion,
+} from "../../services/location";
+import type { Coordinates } from "../../services/matching";
 import {
   loadLanguage,
   loadLocalProfile,
@@ -61,15 +67,19 @@ const TEXT_GRAY = "#535353";
 const PLACEHOLDER_GRAY = "#949494";
 const BORDER_GRAY = "#d4d4d4";
 const COLLAPSED_HEADER_HEIGHT = 156;
-const EXPANDED_HEADER_HEIGHT = 653;
+const EXPANDED_HEADER_HEIGHT = 724;
 const CONFIRMATION_HEADER_HEIGHT = 542;
 const EXPANSION_DURATION = 360;
 const RECRUITMENT_CATEGORIES: readonly MatchCategory[] = [
   "Food",
-  "Places",
+  "Heritage",
   "Activity",
   "Other",
 ];
+const MIN_DURATION_HOURS = 0.5;
+const MAX_DURATION_HOURS = 8;
+const DURATION_STEP_HOURS = 0.5;
+const LOCATION_SEARCH_DEBOUNCE_MS = 300;
 
 const RECRUITMENT_COPY = {
   en: {
@@ -77,8 +87,7 @@ const RECRUITMENT_COPY = {
     back: "BACK",
     activityLabel: "What would you like to do?",
     activityAccessibilityLabel: "Activity description",
-    activityPlaceholder:
-      "Please tell us more about what you'd like to do or see",
+    activityPlaceholder: "Describe the plan, place, and details",
     whereLabel: "Where",
     locationAccessibilityLabel: "Location",
     locationPlaceholder: "Osaka,Umeda",
@@ -93,8 +102,12 @@ const RECRUITMENT_COPY = {
       "Opens the time picker. Times can be selected in five-minute intervals.",
     durationLabel: "Duration",
     durationAccessibilityLabel: "Duration",
-    durationAccessibilityHint:
-      "Opens a menu with durations from one to eight hours.",
+    decreaseDuration: "Decrease duration",
+    increaseDuration: "Increase duration",
+    participantsLabel: "People needed",
+    participantsAccessibilityLabel: "Number of people needed",
+    decreaseParticipants: "Decrease number of people",
+    increaseParticipants: "Increase number of people",
     distanceLabel: "Distance",
     next: "NEXT",
     confirmationTitle: "Is everything correct?",
@@ -119,6 +132,9 @@ const RECRUITMENT_COPY = {
     closeDurationMenu: "Close duration menu",
     durationQuestion: "How long would you like to meet?",
     durationCancel: "Cancel",
+    currentLocationResolving: "Finding your area...",
+    currentLocationFallback: "Current location",
+    noLocationResults: "No places found",
     closeScheduleWarning: "Close schedule warning",
     pastStartTitle: "This start time has passed.",
     midnightTitle: "This duration crosses midnight.",
@@ -131,6 +147,7 @@ const RECRUITMENT_COPY = {
     invalidTime: "Choose a valid start time.",
     invalidDuration: "Choose a duration from 1 to 8 hours.",
     activityRequired: "Tell us what you would like to do before continuing.",
+    locationRequired: "Choose a valid place for Where.",
     pastDate: "The selected start time has already passed. Choose another time.",
     crossesMidnight:
       "The selected duration crosses midnight. Choose an earlier time or shorter duration.",
@@ -162,7 +179,7 @@ const RECRUITMENT_COPY = {
     back: "戻る",
     activityLabel: "何をしたいですか？",
     activityAccessibilityLabel: "したいことの説明",
-    activityPlaceholder: "したいことや見たいものを教えてください",
+    activityPlaceholder: "内容・場所・希望を詳しく入力",
     whereLabel: "場所",
     locationAccessibilityLabel: "場所",
     locationPlaceholder: "大阪・梅田",
@@ -176,7 +193,12 @@ const RECRUITMENT_COPY = {
     startTimeAccessibilityHint: "時刻選択を開きます。5分単位で選択できます。",
     durationLabel: "所要時間",
     durationAccessibilityLabel: "所要時間",
-    durationAccessibilityHint: "1時間から8時間の選択メニューを開きます。",
+    decreaseDuration: "所要時間を短くする",
+    increaseDuration: "所要時間を長くする",
+    participantsLabel: "募集人数",
+    participantsAccessibilityLabel: "募集人数",
+    decreaseParticipants: "募集人数を減らす",
+    increaseParticipants: "募集人数を増やす",
     distanceLabel: "距離",
     next: "次へ",
     confirmationTitle: "この内容でよろしいですか？",
@@ -201,6 +223,9 @@ const RECRUITMENT_COPY = {
     closeDurationMenu: "所要時間メニューを閉じる",
     durationQuestion: "何時間会いたいですか？",
     durationCancel: "キャンセル",
+    currentLocationResolving: "現在地を確認中…",
+    currentLocationFallback: "現在地",
+    noLocationResults: "候補が見つかりません",
     closeScheduleWarning: "日時の確認を閉じる",
     pastStartTitle: "開始時刻が過ぎています。",
     midnightTitle: "所要時間が日付をまたぎます。",
@@ -213,6 +238,7 @@ const RECRUITMENT_COPY = {
     invalidTime: "有効な開始時刻を選択してください。",
     invalidDuration: "所要時間は1〜8時間から選択してください。",
     activityRequired: "したいことを入力してから次へ進んでください。",
+    locationRequired: "Whereで有効な場所を選択してください。",
     pastDate: "選択した開始時刻は過ぎています。別の時刻を選択してください。",
     crossesMidnight:
       "所要時間が日付をまたぎます。早い時刻または短い所要時間を選択してください。",
@@ -245,8 +271,6 @@ type ScheduleWarning = {
   suggestedStartTime: string;
   fromConfirmation: boolean;
 };
-
-const DURATION_OPTIONS = [1, 2, 3, 4, 5, 6, 7, 8] as const;
 
 function isSessionRefreshFailure(error: unknown): boolean {
   return error instanceof Error && /^(401|409):/u.test(error.message);
@@ -330,7 +354,14 @@ function formatRecruitmentDateForDisplay(
 }
 
 function formatDurationLabel(duration: number, language: AppLanguage): string {
-  return language === "ja" ? `${duration}時間` : `${duration} hr`;
+  if (duration === 0.5) return language === "ja" ? "30分" : "30min";
+  const label = Number.isInteger(duration) ? String(duration) : duration.toFixed(1);
+  return language === "ja" ? `${label}時間` : `${label}hr`;
+}
+
+function clampDuration(value: number): number {
+  const stepped = Math.round(value / DURATION_STEP_HOURS) * DURATION_STEP_HOURS;
+  return Math.min(MAX_DURATION_HOURS, Math.max(MIN_DURATION_HOURS, stepped));
 }
 
 function translatePreviewTag(tag: string, language: AppLanguage): string {
@@ -460,20 +491,25 @@ export default function SearchPreferencesScreen() {
   const { query } = useLocalSearchParams<{ query?: string | string[] }>();
   const initialQuery = Array.isArray(query) ? query[0] : query;
   const [language, setLanguage] = useState<AppLanguage>("en");
-  const [languageLoaded, setLanguageLoaded] = useState(false);
   const suggestedSchedule = useMemo(() => defaultRecruitmentSchedule(), []);
   const suggestedDate = suggestedSchedule.date;
   const [description, setDescription] = useState(initialQuery ?? "");
   const [location, setLocation] = useState("");
+  const [selectedLocationCoordinates, setSelectedLocationCoordinates] =
+    useState<Coordinates | null>(null);
+  const [selectedLocationLabel, setSelectedLocationLabel] = useState("");
+  const [locationSuggestions, setLocationSuggestions] = useState<LocationSearchSuggestion[]>([]);
+  const [locationSearchStatus, setLocationSearchStatus] =
+    useState<"idle" | "loading" | "error">("idle");
   const [date, setDate] = useState(suggestedDate);
   const [useCurrentLocation, setUseCurrentLocation] = useState(true);
   const [hour, setHour] = useState(() => Number(suggestedSchedule.startTime.slice(0, 2)));
   const [minute, setMinute] = useState(() => Number(suggestedSchedule.startTime.slice(3, 5)));
   const [duration, setDuration] = useState(suggestedSchedule.durationHours);
+  const [participantLimit, setParticipantLimit] = useState(1);
   const [distance, setDistance] = useState<RecruitmentDistanceKm>(3);
   const [datePickerVisible, setDatePickerVisible] = useState(false);
   const [timePickerVisible, setTimePickerVisible] = useState(false);
-  const [durationPickerVisible, setDurationPickerVisible] = useState(false);
   const [pickerDate, setPickerDate] = useState(() =>
     safeParseRecruitmentDate(suggestedDate, safeCurrentJSTPickerDate()),
   );
@@ -514,6 +550,13 @@ export default function SearchPreferencesScreen() {
       return safeCurrentJSTPickerDate();
     }
   }, []);
+  const maximumDate = useMemo(() => {
+    const nextMaximum = new Date(minimumDate);
+    nextMaximum.setUTCMonth(nextMaximum.getUTCMonth() + 2);
+    nextMaximum.setUTCHours(23, 59, 59, 999);
+    return nextMaximum;
+  }, [minimumDate]);
+  const copy = RECRUITMENT_COPY[language];
 
   useEffect(() => {
     let active = true;
@@ -525,12 +568,10 @@ export default function SearchPreferencesScreen() {
       .then((storedLanguage) => {
         if (!active) return;
         setLanguage(storedLanguage ?? "en");
-        setLanguageLoaded(true);
       })
       .catch(() => {
         if (!active) return;
         setLanguage("en");
-        setLanguageLoaded(true);
       });
 
     return () => {
@@ -593,6 +634,71 @@ export default function SearchPreferencesScreen() {
     panelHeight,
   ]);
 
+  useEffect(() => {
+    if (!useCurrentLocation) return;
+
+    let active = true;
+    setLocationSearchStatus("loading");
+    setLocationSuggestions([]);
+    void resolveCurrentLocationDisplay()
+      .then((result) => {
+        if (!active) return;
+        const displayName = result?.displayName ?? copy.currentLocationFallback;
+        setLocation(displayName);
+        setSelectedLocationLabel(displayName);
+        setSelectedLocationCoordinates(result?.coordinates ?? null);
+        setLocationSearchStatus("idle");
+      })
+      .catch(() => {
+        if (!active) return;
+        setLocation(copy.currentLocationFallback);
+        setSelectedLocationLabel(copy.currentLocationFallback);
+        setSelectedLocationCoordinates(null);
+        setLocationSearchStatus("error");
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [copy.currentLocationFallback, useCurrentLocation]);
+
+  useEffect(() => {
+    if (useCurrentLocation) return;
+
+    const trimmedLocation = location.trim();
+    if (trimmedLocation.length < 2) {
+      setLocationSuggestions([]);
+      setLocationSearchStatus("idle");
+      return;
+    }
+    if (selectedLocationCoordinates && trimmedLocation === selectedLocationLabel) {
+      setLocationSuggestions([]);
+      setLocationSearchStatus("idle");
+      return;
+    }
+
+    let active = true;
+    setLocationSearchStatus("loading");
+    const timeout = setTimeout(() => {
+      void searchLocationSuggestions(trimmedLocation)
+        .then((suggestions) => {
+          if (!active) return;
+          setLocationSuggestions(suggestions);
+          setLocationSearchStatus("idle");
+        })
+        .catch(() => {
+          if (!active) return;
+          setLocationSuggestions([]);
+          setLocationSearchStatus("error");
+        });
+    }, LOCATION_SEARCH_DEBOUNCE_MS);
+
+    return () => {
+      active = false;
+      clearTimeout(timeout);
+    };
+  }, [location, selectedLocationCoordinates, selectedLocationLabel, useCurrentLocation]);
+
   useEffect(
     () => () => {
       previewRequestRef.current?.abort();
@@ -602,11 +708,12 @@ export default function SearchPreferencesScreen() {
 
   const createDraft = (): RecruitmentDraft => ({
     activity: description.trim() || "Explore Osaka with a local",
-    location: location.trim() || "Osaka,Umeda",
+    location: location.trim() || (useCurrentLocation ? copy.currentLocationFallback : "Osaka,Umeda"),
     useCurrentLocation,
     date: date.trim() || suggestedDate,
     startTime: `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`,
     durationHours: duration,
+    participantLimit,
     distanceKm: distance,
   });
 
@@ -618,7 +725,11 @@ export default function SearchPreferencesScreen() {
   const commitDate = (value: Date) => {
     try {
       const nextDate = formatRecruitmentISODate(value);
-      setPickerDate(safeParseRecruitmentDate(nextDate, minimumDate));
+      const nextPickerDate = safeParseRecruitmentDate(nextDate, minimumDate);
+      if (nextPickerDate < minimumDate || nextPickerDate > maximumDate) {
+        throw new Error("invalid_recruitment_date");
+      }
+      setPickerDate(nextPickerDate);
       setDate(nextDate);
     } catch {
       setFormError(recruitmentInputMessage(new Error("invalid_recruitment_date"), language));
@@ -661,7 +772,10 @@ export default function SearchPreferencesScreen() {
     if (event.type === "set" && value) {
       try {
         const nextDate = formatRecruitmentISODate(value);
-        setPickerDate(safeParseRecruitmentDate(nextDate, minimumDate));
+        const nextPickerDate = safeParseRecruitmentDate(nextDate, minimumDate);
+        if (nextPickerDate <= maximumDate) {
+          setPickerDate(nextPickerDate);
+        }
       } catch {
         // Ignore an invalid native event and keep the last valid picker value.
       }
@@ -682,10 +796,74 @@ export default function SearchPreferencesScreen() {
     }
   };
 
-  const selectDuration = (value: number) => {
-    setDuration(value);
-    setDurationPickerVisible(false);
+  const adjustDuration = (amount: number) => {
+    setDuration((current) => clampDuration(current + amount));
     clearScheduleMessages();
+  };
+
+  const handleLocationChange = (value: string) => {
+    setLocation(value);
+    setSelectedLocationCoordinates(null);
+    setSelectedLocationLabel("");
+  };
+
+  const selectLocationSuggestion = (suggestion: LocationSearchSuggestion) => {
+    setLocation(suggestion.label);
+    setSelectedLocationLabel(suggestion.label);
+    setSelectedLocationCoordinates(suggestion.coordinates);
+    setLocationSuggestions([]);
+    setLocationSearchStatus("idle");
+    Keyboard.dismiss();
+  };
+
+  const toggleUseCurrentLocation = () => {
+    setUseCurrentLocation((current) => {
+      const next = !current;
+      if (!next) {
+        setLocation("");
+        setSelectedLocationLabel("");
+        setSelectedLocationCoordinates(null);
+        setLocationSuggestions([]);
+        setLocationSearchStatus("idle");
+      }
+      return next;
+    });
+  };
+
+  const resolveWhereCoordinates = async (): Promise<Coordinates | null> => {
+    if (selectedLocationCoordinates) return selectedLocationCoordinates;
+
+    setLocationSearchStatus("loading");
+    try {
+      if (useCurrentLocation) {
+        const result = await resolveCurrentLocationDisplay();
+        if (!result) return null;
+        setLocation(result.displayName);
+        setSelectedLocationLabel(result.displayName);
+        setSelectedLocationCoordinates(result.coordinates);
+        return result.coordinates;
+      }
+
+      if (location.trim().length < 2) return null;
+      const [suggestion] = await searchLocationSuggestions(location);
+      if (!suggestion) return null;
+      setLocation(suggestion.label);
+      setSelectedLocationLabel(suggestion.label);
+      setSelectedLocationCoordinates(suggestion.coordinates);
+      setLocationSuggestions([]);
+      return suggestion.coordinates;
+    } finally {
+      setLocationSearchStatus("idle");
+    }
+  };
+
+  const closeToHome = () => {
+    Keyboard.dismiss();
+    if (router.canGoBack()) {
+      router.back();
+      return;
+    }
+    router.replace("/foreigner");
   };
 
   const openScheduleWarning = (
@@ -705,7 +883,7 @@ export default function SearchPreferencesScreen() {
     });
   };
 
-  const showConfirmation = (draft = createDraft()) => {
+  const showConfirmation = async (draft = createDraft()) => {
     if (previewStatus === "loading") {
       return;
     }
@@ -725,6 +903,12 @@ export default function SearchPreferencesScreen() {
       setFormError(
         recruitmentInputMessage(error, language) ?? RECRUITMENT_COPY[language].invalidDetails,
       );
+      return;
+    }
+
+    const coordinates = await resolveWhereCoordinates();
+    if (!coordinates) {
+      setFormError(RECRUITMENT_COPY[language].locationRequired);
       return;
     }
 
@@ -794,7 +978,7 @@ export default function SearchPreferencesScreen() {
     setFormError(null);
     setPublishError(null);
     setScheduleWarning(null);
-    showConfirmation(nextDraft);
+    void showConfirmation(nextDraft);
   };
 
   const editSchedule = () => {
@@ -892,13 +1076,10 @@ export default function SearchPreferencesScreen() {
         });
       }
 
-      let coordinates = null;
-      if (useCurrentLocation) {
-        try {
-          coordinates = await getCurrentCoordinates();
-        } catch {
-          coordinates = null;
-        }
+      const coordinates = await resolveWhereCoordinates();
+      if (!coordinates) {
+        setPublishError(RECRUITMENT_COPY[language].locationRequired);
+        return;
       }
 
       const selection: RecruitmentSelection | undefined = selectedCategory
@@ -1001,42 +1182,25 @@ export default function SearchPreferencesScreen() {
     });
   };
 
-  const copy = RECRUITMENT_COPY[language];
-
-  if (!languageLoaded) {
-    return (
-      <View style={styles.screen}>
-        <StatusBar style="light" />
-        <View style={styles.languageLoading}>
-          <ActivityIndicator color={BLUE} size="small" />
-        </View>
-      </View>
-    );
-  }
-
   return (
     <View style={styles.screen}>
+      <View pointerEvents="none" style={styles.homeLayer}>
+        <ForeignerHomeScreen />
+      </View>
+      <Pressable
+        accessibilityLabel={copy.backToHome}
+        accessibilityRole="button"
+        onPress={closeToHome}
+        style={[
+          styles.homeDismissLayer,
+          { top: isConfirmationVisible ? CONFIRMATION_HEADER_HEIGHT : EXPANDED_HEADER_HEIGHT },
+        ]}
+      />
       <StatusBar style="light" />
 
       <Animated.View
         style={[styles.panel, { height: panelHeight }]}
       >
-        {!isConfirmationVisible ? (
-          <Button
-            accessibilityLabel={copy.backToHome}
-            iconLeft={<MaterialIcons color={colors.brand.gold} name="arrow-back" size={16} />}
-            onPress={() => {
-              Keyboard.dismiss();
-              router.back();
-            }}
-            size="sm"
-            style={[styles.menuBackButton, { top: Math.max(insets.top + 4, 16) }]}
-            textStyle={styles.menuBackButtonText}
-            variant="secondary"
-          >
-            {copy.back}
-          </Button>
-        ) : null}
         <Animated.View
           accessibilityElementsHidden={isConfirmationVisible}
           importantForAccessibility={
@@ -1071,7 +1235,11 @@ export default function SearchPreferencesScreen() {
 
             <View style={styles.whereGroup}>
               <Text style={styles.label}>{copy.whereLabel}</Text>
-              <View style={[styles.input, styles.locationField]}>
+              <View style={[
+                styles.input,
+                styles.locationField,
+                useCurrentLocation && styles.locationFieldDisabled,
+              ]}>
                 <MaterialIcons
                   color={colors.text.muted}
                   name="search"
@@ -1079,35 +1247,79 @@ export default function SearchPreferencesScreen() {
                   style={styles.locationSearchIcon}
                 />
                 <TextInput
-                accessibilityLabel={copy.locationAccessibilityLabel}
+                  accessibilityLabel={copy.locationAccessibilityLabel}
                   blurOnSubmit
-                  onChangeText={setLocation}
+                  editable={!useCurrentLocation}
+                  onChangeText={handleLocationChange}
                   onSubmitEditing={() => Keyboard.dismiss()}
-                placeholder={copy.locationPlaceholder}
+                  placeholder={
+                    useCurrentLocation
+                      ? copy.currentLocationResolving
+                      : copy.locationPlaceholder
+                  }
                   placeholderTextColor={colors.text.muted}
                   returnKeyType="search"
                   style={styles.locationInput}
                   value={location}
                 />
+                {locationSearchStatus === "loading" ? (
+                  <ActivityIndicator
+                    color={colors.brand.gold}
+                    size="small"
+                    style={styles.locationStatusIcon}
+                  />
+                ) : null}
               </View>
 
               <Pressable
-              accessibilityLabel={copy.useCurrentLocationAccessibilityLabel}
+                accessibilityLabel={copy.useCurrentLocationAccessibilityLabel}
                 accessibilityRole="checkbox"
                 accessibilityState={{ checked: useCurrentLocation }}
-                onPress={() => setUseCurrentLocation((current) => !current)}
+                onPress={toggleUseCurrentLocation}
                 style={({ pressed }) => [
                   styles.currentLocation,
                   pressed && styles.pressed,
                 ]}
               >
-                <MaterialIcons
-                  color={colors.text.inverse}
-                  name={useCurrentLocation ? "check-box" : "check-box-outline-blank"}
-                  size={24}
-                />
+                <View style={styles.currentLocationCheckbox}>
+                  {useCurrentLocation ? (
+                    <MaterialIcons color={colors.brand.gold} name="check" size={21} />
+                  ) : null}
+                </View>
                 <Text style={styles.currentLocationText}>{copy.useCurrentLocation}</Text>
               </Pressable>
+
+              {!useCurrentLocation && location.trim().length >= 2 ? (
+                <View style={styles.locationSuggestions}>
+                  {locationSuggestions.length > 0 ? (
+                    locationSuggestions.map((suggestion) => (
+                      <Pressable
+                        key={suggestion.id}
+                        accessibilityRole="button"
+                        onPress={() => selectLocationSuggestion(suggestion)}
+                        style={({ pressed }) => [
+                          styles.locationSuggestion,
+                          pressed && styles.pressed,
+                        ]}
+                      >
+                        <MaterialIcons color={colors.brand.gold} name="place" size={18} />
+                        <View style={styles.locationSuggestionTextGroup}>
+                          <Text numberOfLines={1} style={styles.locationSuggestionLabel}>
+                            {suggestion.label}
+                          </Text>
+                          <Text numberOfLines={1} style={styles.locationSuggestionSubtitle}>
+                            {suggestion.subtitle}
+                          </Text>
+                        </View>
+                      </Pressable>
+                    ))
+                  ) : locationSearchStatus === "idle" ? (
+                    <Text style={styles.locationSuggestionEmpty}>
+                      {copy.noLocationResults}
+                    </Text>
+                  ) : null}
+                </View>
+              ) : null}
             </View>
 
             <View style={styles.dateGroup}>
@@ -1165,20 +1377,71 @@ export default function SearchPreferencesScreen() {
               <Text style={styles.label}>{copy.durationLabel}</Text>
               <View style={styles.durationStepper}>
                 <Pressable
-                  accessibilityLabel={copy.durationAccessibilityLabel}
-                  accessibilityHint="Opens a menu with durations from one to eight hours."
+                  accessibilityLabel={copy.decreaseDuration}
                   accessibilityRole="button"
-                  onPress={() => {
-                    Keyboard.dismiss();
-                    setDurationPickerVisible(true);
-                  }}
+                  disabled={duration <= MIN_DURATION_HOURS}
+                  onPress={() => adjustDuration(-DURATION_STEP_HOURS)}
                   style={({ pressed }) => [
-                    styles.durationPickerButton,
+                    styles.durationStepButton,
+                    duration <= MIN_DURATION_HOURS && styles.buttonDisabled,
                     pressed && styles.pressed,
                   ]}
                 >
-                  <Text style={styles.pickerValue}>{formatDurationLabel(duration, language)}</Text>
-                  <MaterialIcons color={colors.brand.gold} name="expand-more" size={20} />
+                  <Text style={styles.durationStepText}>-</Text>
+                </Pressable>
+                <Text
+                  accessibilityLabel={copy.durationAccessibilityLabel}
+                  style={styles.durationValue}
+                >
+                  {formatDurationLabel(duration, language)}
+                </Text>
+                <Pressable
+                  accessibilityLabel={copy.increaseDuration}
+                  accessibilityRole="button"
+                  disabled={duration >= MAX_DURATION_HOURS}
+                  onPress={() => adjustDuration(DURATION_STEP_HOURS)}
+                  style={({ pressed }) => [
+                    styles.durationStepButton,
+                    duration >= MAX_DURATION_HOURS && styles.buttonDisabled,
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <Text style={styles.durationStepText}>+</Text>
+                </Pressable>
+              </View>
+            </View>
+
+            <View style={styles.participantsGroup}>
+              <Text style={styles.label}>{copy.participantsLabel}</Text>
+              <View style={styles.durationStepper}>
+                <Pressable
+                  accessibilityLabel={copy.decreaseParticipants}
+                  accessibilityRole="button"
+                  disabled={participantLimit <= 1}
+                  onPress={() => setParticipantLimit((current) => Math.max(1, current - 1))}
+                  style={({ pressed }) => [
+                    styles.durationStepButton,
+                    participantLimit <= 1 && styles.buttonDisabled,
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <Text style={styles.durationStepText}>-</Text>
+                </Pressable>
+                <Text accessibilityLabel={copy.participantsAccessibilityLabel} style={styles.durationValue}>
+                  {language === "ja" ? `${participantLimit}人` : `${participantLimit}`}
+                </Text>
+                <Pressable
+                  accessibilityLabel={copy.increaseParticipants}
+                  accessibilityRole="button"
+                  disabled={participantLimit >= 10}
+                  onPress={() => setParticipantLimit((current) => Math.min(10, current + 1))}
+                  style={({ pressed }) => [
+                    styles.durationStepButton,
+                    participantLimit >= 10 && styles.buttonDisabled,
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <Text style={styles.durationStepText}>+</Text>
                 </Pressable>
               </View>
             </View>
@@ -1207,8 +1470,10 @@ export default function SearchPreferencesScreen() {
             </View>
 
             <Button
-              disabled={previewStatus === "loading"}
-              onPress={() => showConfirmation()}
+              disabled={previewStatus === "loading" || locationSearchStatus === "loading"}
+              onPress={() => {
+                void showConfirmation();
+              }}
               size="sm"
               style={styles.nextButton}
               textStyle={styles.nextText}
@@ -1407,6 +1672,7 @@ export default function SearchPreferencesScreen() {
       {Platform.OS !== "ios" && datePickerVisible ? (
         <DateTimePicker
           display="default"
+          maximumDate={maximumDate}
           minimumDate={minimumDate}
           mode="date"
           onChange={handleDatePickerChange}
@@ -1467,6 +1733,7 @@ export default function SearchPreferencesScreen() {
                 accentColor={BLUE}
                 display="spinner"
                 locale="en-US"
+                maximumDate={maximumDate}
                 minimumDate={minimumDate}
                 mode="date"
                 onChange={handleDatePickerChange}
@@ -1532,65 +1799,6 @@ export default function SearchPreferencesScreen() {
           </View>
         </Modal>
       ) : null}
-
-      <Modal
-        animationType="fade"
-        onRequestClose={() => setDurationPickerVisible(false)}
-        transparent
-        visible={durationPickerVisible}
-      >
-        <View style={styles.modalBackdrop}>
-          <Pressable
-            accessibilityLabel="Close duration menu"
-            onPress={() => setDurationPickerVisible(false)}
-            style={StyleSheet.absoluteFillObject}
-          />
-          <View
-            style={[
-              styles.selectionSheet,
-              { paddingBottom: Math.max(insets.bottom, 18) },
-            ]}
-          >
-              <Text style={styles.selectionTitle}>{copy.durationLabel}</Text>
-              <Text style={styles.selectionSubtitle}>{copy.durationQuestion}</Text>
-            <View style={styles.durationOptions}>
-              {DURATION_OPTIONS.map((option) => {
-                const selected = option === duration;
-
-                return (
-                  <Pressable
-                    key={option}
-                    accessibilityRole="radio"
-                    accessibilityState={{ selected }}
-                    onPress={() => selectDuration(option)}
-                    style={({ pressed }) => [
-                      styles.durationOption,
-                      selected && styles.durationOptionSelected,
-                      pressed && styles.pressed,
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.durationOptionText,
-                        selected && styles.durationOptionTextSelected,
-                      ]}
-                    >
-                      {option} hr
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => setDurationPickerVisible(false)}
-              style={({ pressed }) => [styles.modalCancelButton, pressed && styles.pressed]}
-            >
-              <Text style={styles.modalCancelText}>{copy.durationCancel}</Text>
-            </Pressable>
-          </View>
-        </View>
-      </Modal>
 
       <Modal
         animationType="fade"
@@ -1723,8 +1931,19 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.surface.screen,
   },
+  homeLayer: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  homeDismissLayer: {
+    position: "absolute",
+    right: 0,
+    bottom: 0,
+    left: 0,
+    zIndex: 1,
+  },
   panel: {
     width: "100%",
+    zIndex: 2,
     overflow: "hidden",
     backgroundColor: colors.brand.sky,
     borderBottomLeftRadius: radius.header,
@@ -2076,6 +2295,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border.default,
   },
+  locationFieldDisabled: {
+    backgroundColor: "rgba(255, 255, 255, 0.94)",
+  },
   locationSearchIcon: {
     position: "absolute",
     left: 16,
@@ -2092,6 +2314,61 @@ const styles = StyleSheet.create({
     fontWeight: "400",
     letterSpacing: 0,
   },
+  locationStatusIcon: {
+    position: "absolute",
+    right: 12,
+  },
+  locationSuggestions: {
+    position: "absolute",
+    top: 66,
+    right: 0,
+    left: 0,
+    zIndex: 3,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: colors.border.default,
+    borderRadius: radius.lg,
+    backgroundColor: colors.surface.default,
+    ...shadows.control,
+  },
+  locationSuggestion: {
+    minHeight: 44,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border.subtle,
+  },
+  locationSuggestionTextGroup: {
+    flex: 1,
+    minWidth: 0,
+  },
+  locationSuggestionLabel: {
+    color: colors.text.secondary,
+    fontSize: 13,
+    fontWeight: "800",
+    letterSpacing: 0,
+    lineHeight: 17,
+  },
+  locationSuggestionSubtitle: {
+    color: colors.text.muted,
+    fontSize: 10,
+    fontWeight: "600",
+    letterSpacing: 0,
+    lineHeight: 13,
+  },
+  locationSuggestionEmpty: {
+    minHeight: 40,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    color: colors.text.muted,
+    fontSize: 12,
+    fontWeight: "700",
+    letterSpacing: 0,
+    lineHeight: 16,
+    textAlign: "center",
+  },
   currentLocation: {
     position: "absolute",
     top: 70,
@@ -2100,6 +2377,16 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
+  },
+  currentLocationCheckbox: {
+    width: 24,
+    height: 24,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 2,
+    borderColor: colors.text.inverse,
+    borderRadius: radius.xs,
+    backgroundColor: colors.text.inverse,
   },
   currentLocationText: {
     color: colors.text.inverse,
@@ -2181,23 +2468,50 @@ const styles = StyleSheet.create({
     position: "absolute",
     top: 22,
     alignSelf: "center",
-  },
-  durationPickerButton: {
     width: 152,
     height: 34,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: 18,
+    paddingHorizontal: 12,
     borderWidth: 1,
     borderColor: colors.border.default,
     borderRadius: radius["2xl"],
     backgroundColor: colors.surface.default,
     ...shadows.control,
   },
+  durationStepButton: {
+    width: 30,
+    height: 30,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  durationStepText: {
+    color: colors.brand.gold,
+    fontSize: 18,
+    fontWeight: "900",
+    letterSpacing: 0,
+    lineHeight: 22,
+  },
+  durationValue: {
+    flex: 1,
+    color: colors.text.secondary,
+    fontSize: 13,
+    fontWeight: "900",
+    letterSpacing: 0,
+    lineHeight: 17,
+    textAlign: "center",
+  },
+  participantsGroup: {
+    position: "absolute",
+    top: 463,
+    right: 0,
+    left: 0,
+    height: 51,
+  },
   distanceGroup: {
     position: "absolute",
-    top: 469,
+    top: 536,
     right: 0,
     left: 0,
     height: 53,
@@ -2239,7 +2553,7 @@ const styles = StyleSheet.create({
   },
   nextButton: {
     position: "absolute",
-    top: 552,
+    top: 619,
     alignSelf: "center",
     width: 110,
     height: 25,
@@ -2261,7 +2575,7 @@ const styles = StyleSheet.create({
   },
   formError: {
     position: "absolute",
-    top: 520,
+    top: 654,
     right: 14,
     left: 14,
     color: colors.text.inverse,
@@ -2281,12 +2595,6 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
     backgroundColor: colors.surface.default,
-  },
-  languageLoading: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: BLUE,
   },
   pickerHeader: {
     height: 48,

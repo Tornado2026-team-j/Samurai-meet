@@ -56,6 +56,7 @@ const RECOVERY_RATE_LIMITED_MESSAGE = 'Recovery Phraseの試行回数が多す�
 type KeyEnvelopeResponseItem = Omit<KeyEnvelope, 'recovery_public_key'> & { recovery_public_key?: string };
 type EnvelopeResponse = { data?: KeyEnvelopeResponseItem | KeyEnvelopeResponseItem[] };
 type DeviceResponse = { data?: { device_id?: string; key_version?: string; agreement_key_version?: string; agreement_public_key?: string } };
+type DeviceListResponse = { data?: RegisteredDevice[] };
 type RecoveryChallengeResponse = { data?: RecoveryChallenge };
 type RecoveryVerifyResponse = { data?: PreAuth };
 type DeviceTransferResponse = { data?: DeviceTransfer | DeviceTransfer[] };
@@ -108,6 +109,14 @@ export type DeviceKeyMaterial = {
   deviceID: string;
   keyVersion: string;
   keyB: Uint8Array;
+};
+
+export type RegisteredDevice = {
+  device_id: string;
+  key_version: string;
+  agreement_key_version?: string;
+  created_at: string;
+  last_seen_at: string;
 };
 
 export type RecoveryRotationStage =
@@ -616,6 +625,20 @@ export async function ensureDeviceKeyB(session: Session): Promise<DeviceKeyMater
 		await registerDeviceMaterial(session, material);
 		return material;
 	}
+}
+
+export async function listRegisteredDevices(session: Session): Promise<RegisteredDevice[]> {
+  const response = await requestWithSession<DeviceListResponse>('/me/devices', { method: 'GET' }, session);
+  if (!Array.isArray(response.data) || !response.data.every((item) => (
+    item
+    && typeof item.device_id === 'string'
+    && typeof item.key_version === 'string'
+    && typeof item.created_at === 'string'
+    && typeof item.last_seen_at === 'string'
+  ))) {
+    throw new Error('Device list response is invalid');
+  }
+  return response.data;
 }
 
 export async function loadStoredDeviceAgreementKey(userID: string): Promise<DeviceAgreementKeyMaterial | null> {

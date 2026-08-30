@@ -11,10 +11,12 @@ import (
 	"time"
 )
 
-const (
-	ChatAudience = "samurai-meet-chat"
-	ChatTokenTTL = 2 * time.Minute
-)
+const ChatAudience = "samurai-meet-chat"
+
+// ChatTokenTTL is the Chat Token lifetime. It is a var, not a const, so an
+// integration test can shorten it to exercise in-connection rotation and the
+// heartbeat's token-expiry disconnect without waiting two minutes.
+var ChatTokenTTL = 2 * time.Minute
 
 // ChatClaims are intentionally separate from AccessClaims. A chat token is
 // accepted only by a chat transport after the chat ID and active session have
@@ -27,11 +29,15 @@ type ChatClaims struct {
 	ChatID    string `json:"chat_id"`
 	TokenID   string `json:"jti"`
 	Transport string `json:"transport"`
+	TokenSeq  int64  `json:"token_seq"`
 	IssuedAt  int64  `json:"iat"`
 	ExpiresAt int64  `json:"exp"`
 }
 
-func (s *Signer) IssueChatToken(userID, sessionID, chatID, transport string, now time.Time) (string, ChatClaims, error) {
+// IssueChatToken mints a Chat Token. tokenSeq is a per-(session, chat)
+// monotonic generation number supplied by the caller; a live connection uses it
+// to reject rotation to an older Chat Token.
+func (s *Signer) IssueChatToken(userID, sessionID, chatID, transport string, tokenSeq int64, now time.Time) (string, ChatClaims, error) {
 	if s == nil || len(s.keys[s.activeKeyID]) == 0 || userID == "" || sessionID == "" || chatID == "" || transport == "" {
 		return "", ChatClaims{}, errors.New("chat signer is not configured")
 	}
@@ -43,6 +49,7 @@ func (s *Signer) IssueChatToken(userID, sessionID, chatID, transport string, now
 		ChatID:    chatID,
 		TokenID:   newID(),
 		Transport: transport,
+		TokenSeq:  tokenSeq,
 		IssuedAt:  now.Unix(),
 		ExpiresAt: now.Add(ChatTokenTTL).Unix(),
 	}
@@ -64,7 +71,8 @@ func (s *Signer) VerifyChatToken(token string, now time.Time) (ChatClaims, error
 	}
 	if claims.Issuer != s.issuer || claims.Audience != ChatAudience ||
 		claims.Subject == "" || claims.SessionID == "" || claims.ChatID == "" ||
-		claims.TokenID == "" || claims.Transport == "" || now.Unix() >= claims.ExpiresAt {
+		claims.TokenID == "" || claims.Transport == "" || claims.TokenSeq < 0 ||
+		now.Unix() >= claims.ExpiresAt {
 		return ChatClaims{}, fmt.Errorf("invalid chat token claims")
 	}
 	return claims, nil

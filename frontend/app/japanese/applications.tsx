@@ -268,20 +268,11 @@ export default function JapaneseApplicationsScreen() {
     <View style={styles.screen}>
       <StatusBar style="light" />
       <View style={[styles.header, { paddingTop: Math.max(insets.top, 18) }]}>
-        <Pressable
-          accessibilityLabel={copy.back}
-          accessibilityRole="button"
-          hitSlop={10}
-          onPress={() => router.back()}
-          style={({ pressed }) => [styles.backButton, pressed && styles.pressed]}
-        >
-          <MaterialIcons color="#ffffff" name="arrow-back-ios-new" size={20} />
-        </Pressable>
         <Text style={styles.headerTitle}>{copy.title}</Text>
       </View>
 
       <ScrollView
-        contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 32 }]}
+        contentContainerStyle={[styles.content, { paddingBottom: Math.max(insets.bottom + 120, 132) }]}
         refreshControl={
           <RefreshControl
             onRefresh={() => loadApplications()}

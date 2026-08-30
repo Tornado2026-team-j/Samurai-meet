@@ -312,6 +312,7 @@ func recruitmentSearchParams(r *http.Request) (matching.SearchParams, error) {
 	query := r.URL.Query()
 	params := matching.SearchParams{
 		Keywords:      append([]string(nil), query["keyword"]...),
+		Category:      strings.TrimSpace(query.Get("category")),
 		AvailableDate: strings.TrimSpace(query.Get("available_date")),
 		StartTime:     strings.TrimSpace(query.Get("start_time")),
 		EndTime:       strings.TrimSpace(query.Get("end_time")),

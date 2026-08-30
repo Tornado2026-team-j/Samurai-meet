@@ -50,7 +50,7 @@ func TestRecruitmentMatchingLifecycle(t *testing.T) {
 	service := matching.NewService(database, notifications)
 	cardLatitude, cardLongitude := 35.681236, 139.767125
 	card, err := service.CreateRecruitment(ctx, travelerID, matching.RecruitmentInput{
-		Category:           "Places",
+		Category:           "Heritage",
 		AvailableDate:      firstDate,
 		StartTime:          "18:00",
 		EndTime:            "20:00",

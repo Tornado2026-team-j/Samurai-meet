@@ -1,12 +1,22 @@
 export type AuthRouteStatus = "loading" | "signed_out" | "pre_auth" | "signed_in";
 
 const PROTECTED_ROUTE_ROOTS = [
+  "/blocked-users",
   "/chat",
+  "/device-transfer",
   "/foreigner",
+  "/identity-verification",
   "/japanese",
+  "/monsters",
+  "/notification-settings",
+  "/plans",
   "/profile",
+  "/profile-edit",
   "/recruitments",
+  "/report",
+  "/security",
   "/tabs",
+  "/users",
 ] as const;
 
 function normalizePathname(pathname: string): string {

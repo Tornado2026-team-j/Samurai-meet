@@ -13,7 +13,7 @@ import { MaterialIcons } from "@expo/vector-icons";
 import * as Clipboard from "expo-clipboard";
 import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { canonicalizeRecoveryPhrase, recoveryPhraseMatches, type RecoveryKDFImplementation } from "../services/crypto";
+import { canonicalizeRecoveryPhrase, recoveryPhraseMatches } from "../services/crypto";
 import type { AppLanguage } from "../services/onboarding";
 
 const BLUE = "#5ec5f5";
@@ -150,13 +150,12 @@ type RecoveryKeyInputProps = {
   language: AppLanguage;
   busy: boolean;
   error: string | null;
-  kdfImplementation?: RecoveryKDFImplementation;
   onBack: () => void;
   onSubmit: (recoveryKey: string) => Promise<void>;
   onDeleteAccount?: () => Promise<void>;
 };
 
-export function RecoveryKeyInput({ accountID, language, busy, error, kdfImplementation, onBack, onSubmit, onDeleteAccount }: RecoveryKeyInputProps) {
+export function RecoveryKeyInput({ accountID, language, busy, error, onBack, onSubmit, onDeleteAccount }: RecoveryKeyInputProps) {
   const insets = useSafeAreaInsets();
   const copy = COPY[language];
   const [recoveryKey, setRecoveryKey] = useState("");
@@ -214,7 +213,6 @@ export function RecoveryKeyInput({ accountID, language, busy, error, kdfImplemen
           value={recoveryKey}
         />
         {error || submitError ? <Text style={styles.errorText}>{error ?? submitError}</Text> : null}
-        {kdfImplementation === "javascript" ? <RecoveryKDFFallbackNotice language={language} /> : null}
         <Pressable
           accessibilityRole="button"
           disabled={busy || recoveryKey.trim().length === 0}
@@ -497,19 +495,6 @@ export function RecoveryAccountDeleteAction({
   );
 }
 
-export function RecoveryKDFFallbackNotice({ language }: { language: AppLanguage }) {
-  return (
-    <View accessibilityRole="text" style={styles.kdfFallbackNotice}>
-      <MaterialIcons color="#946200" name="info-outline" size={18} />
-      <Text style={styles.kdfFallbackText}>
-        {language === "ja"
-          ? "JavaScript実装（互換モード）で暗号鍵を準備しています。暗号化方式と安全性の設定は変わりませんが、Development Buildより時間がかかる場合があります。"
-          : "Encryption keys are being prepared with the JavaScript compatibility implementation. The encryption scheme and security settings are unchanged, but this may take longer than a development build."}
-      </Text>
-    </View>
-  );
-}
-
 function formatRecoveryPhrase(value: string): string {
   const words = value.trim().split(/\s+/u);
   if (words.length === 24) {
@@ -689,18 +674,6 @@ const styles = StyleSheet.create({
     paddingBottom: 13,
     lineHeight: 22,
   },
-  kdfFallbackNotice: {
-    width: "100%",
-    padding: 12,
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 8,
-    borderWidth: 1,
-    borderColor: "#efd596",
-    borderRadius: 10,
-    backgroundColor: "#fffaf0",
-  },
-  kdfFallbackText: { flex: 1, color: "#765000", fontSize: 12, lineHeight: 18 },
   recoveryKey: {
     padding: 18,
     borderRadius: 12,

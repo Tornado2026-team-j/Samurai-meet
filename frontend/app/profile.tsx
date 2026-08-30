@@ -60,6 +60,15 @@ const COPY = {
     myRecruitmentsDescription: "公開中・下書き・終了した募集と応募者を確認できます。",
     myApplications: "応募履歴",
     myApplicationsDescription: "自分が送った応募と結果を確認できます。",
+    editProfile: "プロフィールを編集",
+    security: "ログイン・Passkey管理",
+    deviceTransfer: "端末引き継ぎ",
+    identityVerification: "本人確認",
+    notificationSettings: "通知設定",
+    blockedUsers: "ブロック中のユーザー",
+    terms: "利用規約",
+    privacy: "プライバシー",
+    safetyGuide: "安全ガイド",
     settingsTitle: "アプリ設定",
     displayLanguage: "表示言語",
     displayLanguageDescription: "アプリの表示に使う言語を選びます。",
@@ -130,6 +139,15 @@ const COPY = {
     myRecruitmentsDescription: "Review your open, draft, and closed recruitments and applicants.",
     myApplications: "Application history",
     myApplicationsDescription: "Review the applications you sent and their results.",
+    editProfile: "Edit profile",
+    security: "Sign-ins and Passkeys",
+    deviceTransfer: "Transfer device",
+    identityVerification: "Identity verification",
+    notificationSettings: "Notification settings",
+    blockedUsers: "Blocked users",
+    terms: "Terms of service",
+    privacy: "Privacy",
+    safetyGuide: "Safety guide",
     settingsTitle: "App settings",
     displayLanguage: "Display language",
     displayLanguageDescription: "Choose the language used to display the app.",
@@ -570,21 +588,15 @@ export default function ProfileScreen() {
       <StatusBar style="light" />
 
       <View style={[styles.header, { paddingTop: Math.max(insets.top, 20) }]}>
-        <Pressable
-          accessibilityLabel={language === "ja" ? "戻る" : "Back"}
-          accessibilityRole="button"
-          hitSlop={8}
-          onPress={() => router.back()}
-          style={({ pressed }) => [styles.backButton, pressed && styles.pressed]}
-        >
-          <MaterialIcons color="#ffffff" name="arrow-back-ios-new" size={21} />
-        </Pressable>
         <Text style={styles.headerTitle}>{copy.title}</Text>
       </View>
 
       <ScrollView
         style={styles.profileScrollView}
-        contentContainerStyle={styles.content}
+        contentContainerStyle={[
+          styles.content,
+          { paddingBottom: Math.max(insets.bottom + 120, 132) },
+        ]}
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.avatar}>
@@ -685,6 +697,31 @@ export default function ProfileScreen() {
             <Text style={styles.managementButtonText}>{copy.myApplications}</Text>
             <MaterialIcons color={BLUE} name="chevron-right" size={21} />
           </Pressable>
+          {([
+            [copy.editProfile, "/profile-edit", "manage-accounts"],
+            [copy.security, "/security", "security"],
+            [copy.deviceTransfer, "/device-transfer", "devices-other"],
+            [copy.identityVerification, "/identity-verification", "verified-user"],
+            [copy.notificationSettings, "/notification-settings", "notifications-none"],
+            [copy.blockedUsers, "/blocked-users", "block"],
+            [copy.terms, "/legal/terms", "description"],
+            [copy.privacy, "/legal/privacy", "privacy-tip"],
+            [copy.safetyGuide, "/legal/safety", "health-and-safety"],
+          ] as const).map(([label, href, icon]) => (
+            <Pressable
+              key={href}
+              accessibilityLabel={label}
+              accessibilityRole="button"
+              onPress={() => router.push(href)}
+              style={({ pressed }) => [styles.managementButton, pressed && styles.pressed]}
+            >
+              <View style={styles.managementButtonLabel}>
+                <MaterialIcons color={BLUE} name={icon} size={20} />
+                <Text style={styles.managementButtonText}>{label}</Text>
+              </View>
+              <MaterialIcons color={BLUE} name="chevron-right" size={21} />
+            </Pressable>
+          ))}
         </View>
 
         <View style={styles.recoverySection}>
@@ -1085,20 +1122,12 @@ const styles = StyleSheet.create({
     minHeight: 104,
     paddingHorizontal: 20,
     paddingBottom: 18,
-    flexDirection: "row",
-    alignItems: "flex-end",
+    justifyContent: "flex-end",
     zIndex: 10,
     elevation: 4,
     backgroundColor: BLUE,
     borderBottomLeftRadius: 36,
     borderBottomRightRadius: 36,
-  },
-  backButton: {
-    width: 34,
-    height: 34,
-    alignItems: "center",
-    justifyContent: "center",
-    marginRight: 12,
   },
   headerTitle: {
     color: "#ffffff",
@@ -1224,6 +1253,11 @@ const styles = StyleSheet.create({
     color: BLUE,
     fontSize: 15,
     fontWeight: "700",
+  },
+  managementButtonLabel: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 9,
   },
   recoverySectionTitle: {
     color: TEXT_GRAY,

@@ -29,13 +29,15 @@ var (
 )
 
 const (
-	defaultSearchLimit  = 20
-	maxSearchLimit      = 50
-	maxKeywords         = 20
-	maxKeywordRunes     = 80
-	maxDescriptionRunes = 2000
-	locationTTL         = time.Hour
-	recruitmentTimezone = "Asia/Tokyo"
+	defaultSearchLimit   = 20
+	maxSearchLimit       = 50
+	maxKeywords          = 20
+	maxKeywordRunes      = 80
+	maxDescriptionRunes  = 2000
+	maxLocationNameRunes = 120
+	maxParticipantLimit  = 10
+	locationTTL          = time.Hour
+	recruitmentTimezone  = "Asia/Tokyo"
 )
 
 // recruitmentLocation is deliberately fixed at Japan Standard Time. The
@@ -63,6 +65,8 @@ type Recruitment struct {
 	DurationHours      float64  `json:"duration_hours"`
 	Keywords           []string `json:"keywords"`
 	Description        string   `json:"description"`
+	LocationName       string   `json:"location_name"`
+	ParticipantLimit   int      `json:"participant_limit"`
 	VisibilityRadiusKM int      `json:"visibility_radius_km"`
 	DistanceBand       string   `json:"distance_band,omitempty"`
 	Status             string   `json:"status"`
@@ -115,6 +119,8 @@ type RecruitmentInput struct {
 	Timezone           string   `json:"timezone"`
 	Keywords           []string `json:"keywords"`
 	Description        string   `json:"description"`
+	LocationName       string   `json:"location_name"`
+	ParticipantLimit   int      `json:"participant_limit"`
 	VisibilityRadiusKM int      `json:"visibility_radius_km"`
 	Latitude           *float64 `json:"latitude"`
 	Longitude          *float64 `json:"longitude"`
@@ -130,6 +136,8 @@ type RecruitmentPatch struct {
 	Timezone           *string   `json:"timezone"`
 	Keywords           *[]string `json:"keywords"`
 	Description        *string   `json:"description"`
+	LocationName       *string   `json:"location_name"`
+	ParticipantLimit   *int      `json:"participant_limit"`
 	VisibilityRadiusKM *int      `json:"visibility_radius_km"`
 	Latitude           *float64  `json:"latitude"`
 	Longitude          *float64  `json:"longitude"`
@@ -140,6 +148,7 @@ type RecruitmentPatch struct {
 
 type SearchParams struct {
 	Keywords      []string
+	Category      string
 	AvailableDate string
 	StartTime     string
 	EndTime       string
@@ -169,6 +178,8 @@ type cardRecord struct {
 	Timezone           string
 	KeywordsJSON       string
 	Description        string
+	LocationName       string
+	ParticipantLimit   int
 	VisibilityRadiusKM int
 	Latitude           sql.NullFloat64
 	Longitude          sql.NullFloat64
@@ -233,13 +244,14 @@ func (s *Service) CreateRecruitment(ctx context.Context, userID string, input Re
 	if _, err = s.db.ExecContext(ctx, `
 		INSERT INTO recruitment_cards (
 			id, owner_user_id, category, available_date, start_time, end_time,
-			timezone, keywords_json, description, visibility_radius_km,
+			timezone, keywords_json, description, location_name, participant_limit, visibility_radius_km,
 			latitude, longitude, location_accuracy_m, status, expires_at,
 			created_at, updated_at
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$16)`,
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$18)`,
 		id, userID, normalized.Category, normalized.AvailableDate, normalized.StartTime,
 		normalized.EndTime, normalized.Timezone, string(keywordsJSON), normalized.Description,
-		normalized.VisibilityRadiusKM, nullableFloat(normalized.Latitude), nullableFloat(normalized.Longitude),
+		normalized.LocationName, normalized.ParticipantLimit, normalized.VisibilityRadiusKM,
+		nullableFloat(normalized.Latitude), nullableFloat(normalized.Longitude),
 		nullableFloat(normalized.LocationAccuracyM), normalized.Status, expiresAt, created); err != nil {
 		return Recruitment{}, err
 	}
@@ -262,7 +274,7 @@ func (s *Service) SearchRecruitments(ctx context.Context, userID string, params 
 		SELECT r.id, r.owner_user_id, r.category, COALESCE(p.name,''),
 		       COALESCE(p.nationality_code,''), r.available_date, r.start_time,
 		       r.end_time, r.timezone, r.keywords_json, r.description,
-		       r.visibility_radius_km, r.latitude, r.longitude,
+		       r.location_name, r.participant_limit, r.visibility_radius_km, r.latitude, r.longitude,
 		       r.location_accuracy_m, r.status, r.expires_at, r.created_at,
 		       r.updated_at, COALESCE(p.identity_status,'unverified')
 		FROM recruitment_cards r
@@ -271,6 +283,7 @@ func (s *Service) SearchRecruitments(ctx context.Context, userID string, params 
 		WHERE r.owner_user_id <> $1
 		  AND r.status IN ('open','matched')
 		  AND r.expires_at > $2
+		  AND (SELECT COUNT(*) FROM matches accepted WHERE accepted.card_id=r.id AND accepted.status='accepted') < r.participant_limit
 		  AND NOT EXISTS (
 				SELECT 1 FROM blocks b
 				WHERE (b.blocker_user_id = $1 AND b.blocked_user_id = r.owner_user_id)
@@ -297,6 +310,7 @@ func (s *Service) SearchRecruitments(ctx context.Context, userID string, params 
 			&record.ID, &record.OwnerUserID, &record.Category, &record.AuthorName,
 			&record.NationalityCode, &record.AvailableDate, &record.StartTime,
 			&record.EndTime, &record.Timezone, &record.KeywordsJSON, &record.Description,
+			&record.LocationName, &record.ParticipantLimit,
 			&record.VisibilityRadiusKM, &record.Latitude, &record.Longitude,
 			&record.LocationAccuracyM, &record.Status, &record.ExpiresAt, &record.CreatedAt,
 			&record.UpdatedAt, &record.IdentityStatus,
@@ -305,6 +319,7 @@ func (s *Service) SearchRecruitments(ctx context.Context, userID string, params 
 		}
 		keywords, decodeErr := decodeKeywords(record.KeywordsJSON)
 		if decodeErr != nil || !matchesKeywords(keywords, params.Keywords) ||
+			(params.Category != "" && record.Category != params.Category) ||
 			!matchesDateAndTime(record, params) || (params.VerifiedOnly && record.IdentityStatus != "verified") {
 			continue
 		}
@@ -356,7 +371,7 @@ func (s *Service) ListOwnedRecruitments(ctx context.Context, userID string, now 
 		SELECT r.id, r.owner_user_id, r.category, COALESCE(p.name,''),
 		       COALESCE(p.nationality_code,''), r.available_date, r.start_time,
 		       r.end_time, r.timezone, r.keywords_json, r.description,
-		       r.visibility_radius_km, r.latitude, r.longitude,
+		       r.location_name, r.participant_limit, r.visibility_radius_km, r.latitude, r.longitude,
 		       r.location_accuracy_m, r.status, r.expires_at, r.created_at,
 		       r.updated_at, COALESCE(p.identity_status,'unverified')
 		FROM recruitment_cards r
@@ -377,6 +392,7 @@ func (s *Service) ListOwnedRecruitments(ctx context.Context, userID string, now 
 			&record.ID, &record.OwnerUserID, &record.Category, &record.AuthorName,
 			&record.NationalityCode, &record.AvailableDate, &record.StartTime,
 			&record.EndTime, &record.Timezone, &record.KeywordsJSON, &record.Description,
+			&record.LocationName, &record.ParticipantLimit,
 			&record.VisibilityRadiusKM, &record.Latitude, &record.Longitude,
 			&record.LocationAccuracyM, &record.Status, &record.ExpiresAt, &record.CreatedAt,
 			&record.UpdatedAt, &record.IdentityStatus,
@@ -457,6 +473,8 @@ func (s *Service) UpdateRecruitment(ctx context.Context, userID, recruitmentID s
 		Timezone:           record.Timezone,
 		Keywords:           keywords,
 		Description:        record.Description,
+		LocationName:       record.LocationName,
+		ParticipantLimit:   record.ParticipantLimit,
 		VisibilityRadiusKM: record.VisibilityRadiusKM,
 		Latitude:           latitude,
 		Longitude:          longitude,
@@ -485,12 +503,14 @@ func (s *Service) UpdateRecruitment(ctx context.Context, userID, recruitmentID s
 	_, err = s.db.ExecContext(ctx, `
 		UPDATE recruitment_cards SET
 			category=$1, available_date=$2, start_time=$3, end_time=$4,
-			timezone=$5, keywords_json=$6, description=$7, visibility_radius_km=$8,
-			latitude=$9, longitude=$10, location_accuracy_m=$11, status=$12,
-			expires_at=$13, updated_at=$14
-		WHERE id=$15 AND owner_user_id=$16`, normalized.Category, normalized.AvailableDate,
+			timezone=$5, keywords_json=$6, description=$7, location_name=$8,
+			participant_limit=$9, visibility_radius_km=$10,
+			latitude=$11, longitude=$12, location_accuracy_m=$13, status=$14,
+			expires_at=$15, updated_at=$16
+		WHERE id=$17 AND owner_user_id=$18`, normalized.Category, normalized.AvailableDate,
 		normalized.StartTime, normalized.EndTime, normalized.Timezone, string(keywordsJSON),
-		normalized.Description, normalized.VisibilityRadiusKM, nullableFloat(normalized.Latitude),
+		normalized.Description, normalized.LocationName, normalized.ParticipantLimit,
+		normalized.VisibilityRadiusKM, nullableFloat(normalized.Latitude),
 		nullableFloat(normalized.Longitude), nullableFloat(normalized.LocationAccuracyM),
 		normalized.Status, expiresAt, updated, recruitmentID, userID)
 	if err != nil {
@@ -524,9 +544,10 @@ func (s *Service) SendInterest(ctx context.Context, userID, recruitmentID string
 	}
 	defer tx.Rollback()
 	var ownerID, status, expiresAt, description string
+	var participantLimit int
 	if err = tx.QueryRowContext(ctx, `
-		SELECT owner_user_id,status,expires_at,description FROM recruitment_cards
-		WHERE id=$1 FOR UPDATE`, recruitmentID).Scan(&ownerID, &status, &expiresAt, &description); errors.Is(err, sql.ErrNoRows) {
+		SELECT owner_user_id,status,expires_at,description,participant_limit FROM recruitment_cards
+		WHERE id=$1 FOR UPDATE`, recruitmentID).Scan(&ownerID, &status, &expiresAt, &description, &participantLimit); errors.Is(err, sql.ErrNoRows) {
 		return Match{}, ErrRecruitmentNotFound
 	} else if err != nil {
 		return Match{}, err
@@ -539,6 +560,13 @@ func (s *Service) SendInterest(ctx context.Context, userID, recruitmentID string
 		return Match{}, ErrRecruitmentExpired
 	}
 	if status != "open" && status != "matched" {
+		return Match{}, ErrInvalidState
+	}
+	var acceptedCount int
+	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM matches WHERE card_id=$1 AND status='accepted'`, recruitmentID).Scan(&acceptedCount); err != nil {
+		return Match{}, err
+	}
+	if acceptedCount >= participantLimit {
 		return Match{}, ErrInvalidState
 	}
 	var blocked bool
@@ -784,14 +812,15 @@ func (s *Service) RejectMatch(ctx context.Context, userID, matchID string, now t
 
 	var match Match
 	var ownerID, requesterID, expiresAt, cardStatus, description string
+	var participantLimit int
 	var matchedAt sql.NullString
 	if err = tx.QueryRowContext(ctx, `
 		SELECT m.id,m.card_id,m.owner_user_id,m.requester_user_id,m.status,
-		       m.matched_at,m.created_at,m.updated_at,r.expires_at,r.status,r.description
+		       m.matched_at,m.created_at,m.updated_at,r.expires_at,r.status,r.description,r.participant_limit
 		FROM matches m JOIN recruitment_cards r ON r.id=m.card_id
 		WHERE m.id=$1 FOR UPDATE`, matchID).Scan(
 		&match.ID, &match.RecruitmentID, &ownerID, &requesterID, &match.Status,
-		&matchedAt, &match.CreatedAt, &match.UpdatedAt, &expiresAt, &cardStatus, &description); errors.Is(err, sql.ErrNoRows) {
+		&matchedAt, &match.CreatedAt, &match.UpdatedAt, &expiresAt, &cardStatus, &description, &participantLimit); errors.Is(err, sql.ErrNoRows) {
 		return Match{}, ErrMatchNotFound
 	} else if err != nil {
 		return Match{}, err
@@ -816,6 +845,13 @@ func (s *Service) RejectMatch(ctx context.Context, userID, matchID string, now t
 		return Match{}, ErrRecruitmentExpired
 	}
 	if cardStatus != "open" && cardStatus != "matched" {
+		return Match{}, ErrInvalidState
+	}
+	var acceptedCount int
+	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM matches WHERE card_id=$1 AND status='accepted'`, match.RecruitmentID).Scan(&acceptedCount); err != nil {
+		return Match{}, err
+	}
+	if acceptedCount >= participantLimit {
 		return Match{}, ErrInvalidState
 	}
 	updated := now.UTC().Format(time.RFC3339Nano)
@@ -856,14 +892,15 @@ func (s *Service) AcceptMatch(ctx context.Context, userID, matchID string, now t
 	defer tx.Rollback()
 	var match Match
 	var ownerID, requesterID, expiresAt, cardStatus, description string
+	var participantLimit int
 	var matchedAt sql.NullString
 	if err = tx.QueryRowContext(ctx, `
 		SELECT m.id,m.card_id,m.owner_user_id,m.requester_user_id,m.status,
-		       m.matched_at,m.created_at,m.updated_at,r.expires_at,r.status,r.description
+		       m.matched_at,m.created_at,m.updated_at,r.expires_at,r.status,r.description,r.participant_limit
 		FROM matches m JOIN recruitment_cards r ON r.id=m.card_id
 		WHERE m.id=$1 FOR UPDATE`, matchID).Scan(
 		&match.ID, &match.RecruitmentID, &ownerID, &requesterID, &match.Status,
-		&matchedAt, &match.CreatedAt, &match.UpdatedAt, &expiresAt, &cardStatus, &description); errors.Is(err, sql.ErrNoRows) {
+		&matchedAt, &match.CreatedAt, &match.UpdatedAt, &expiresAt, &cardStatus, &description, &participantLimit); errors.Is(err, sql.ErrNoRows) {
 		return Match{}, ErrMatchNotFound
 	} else if err != nil {
 		return Match{}, err
@@ -890,6 +927,13 @@ func (s *Service) AcceptMatch(ctx context.Context, userID, matchID string, now t
 	if cardStatus != "open" && cardStatus != "matched" {
 		return Match{}, ErrInvalidState
 	}
+	var acceptedCount int
+	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM matches WHERE card_id=$1 AND status='accepted'`, match.RecruitmentID).Scan(&acceptedCount); err != nil {
+		return Match{}, err
+	}
+	if acceptedCount >= participantLimit {
+		return Match{}, ErrInvalidState
+	}
 	var blocked bool
 	if err = tx.QueryRowContext(ctx, `
 		SELECT EXISTS(
@@ -907,9 +951,13 @@ func (s *Service) AcceptMatch(ctx context.Context, userID, matchID string, now t
 		UPDATE matches SET status='accepted',matched_at=$1,updated_at=$1 WHERE id=$2`, updated, matchID); err != nil {
 		return Match{}, err
 	}
+	nextCardStatus := "open"
+	if acceptedCount+1 >= participantLimit {
+		nextCardStatus = "matched"
+	}
 	if _, err = tx.ExecContext(ctx, `
-		UPDATE recruitment_cards SET status='matched',updated_at=$1
-		WHERE id=$2 AND status='open'`, updated, match.RecruitmentID); err != nil {
+		UPDATE recruitment_cards SET status=$1,updated_at=$2
+		WHERE id=$3 AND status IN ('open','matched')`, nextCardStatus, updated, match.RecruitmentID); err != nil {
 		return Match{}, err
 	}
 	if s.notifications != nil {
@@ -1014,7 +1062,17 @@ func normalizeRecruitmentInput(input RecruitmentInput, now time.Time) (Recruitme
 	if input.Status != "draft" && input.Status != "open" && input.Status != "closed" {
 		return RecruitmentInput{}, "", ErrInvalidInput
 	}
-	if input.Category != "Food" && input.Category != "Places" && input.Category != "Activity" && input.Category != "Other" {
+	if input.Category != "Food" && input.Category != "Heritage" && input.Category != "Activity" && input.Category != "Other" {
+		return RecruitmentInput{}, "", ErrInvalidInput
+	}
+	input.LocationName = strings.TrimSpace(input.LocationName)
+	if !utf8.ValidString(input.LocationName) || utf8.RuneCountInString(input.LocationName) > maxLocationNameRunes {
+		return RecruitmentInput{}, "", ErrInvalidInput
+	}
+	if input.ParticipantLimit == 0 {
+		input.ParticipantLimit = 1
+	}
+	if input.ParticipantLimit < 1 || input.ParticipantLimit > maxParticipantLimit {
 		return RecruitmentInput{}, "", ErrInvalidInput
 	}
 	if input.VisibilityRadiusKM != 1 && input.VisibilityRadiusKM != 3 && input.VisibilityRadiusKM != 5 {
@@ -1096,6 +1154,10 @@ func normalizeKeywords(values []string) ([]string, error) {
 }
 
 func normalizeSearchParams(params SearchParams) (SearchParams, error) {
+	params.Category = strings.TrimSpace(params.Category)
+	if params.Category != "" && params.Category != "Food" && params.Category != "Heritage" && params.Category != "Activity" && params.Category != "Other" {
+		return SearchParams{}, ErrInvalidInput
+	}
 	if params.RadiusKM != 0 && params.RadiusKM != 1 && params.RadiusKM != 3 && params.RadiusKM != 5 {
 		return SearchParams{}, ErrInvalidInput
 	}
@@ -1192,7 +1254,7 @@ func (s *Service) loadCard(ctx context.Context, recruitmentID string) (cardRecor
 		SELECT r.id, r.owner_user_id, r.category, COALESCE(p.name,''),
 		       COALESCE(p.nationality_code,''), r.available_date, r.start_time,
 		       r.end_time, r.timezone, r.keywords_json, r.description,
-		       r.visibility_radius_km, r.latitude, r.longitude,
+		       r.location_name, r.participant_limit, r.visibility_radius_km, r.latitude, r.longitude,
 		       r.location_accuracy_m, r.status, r.expires_at, r.created_at,
 		       r.updated_at, COALESCE(p.identity_status,'unverified')
 		FROM recruitment_cards r
@@ -1202,6 +1264,7 @@ func (s *Service) loadCard(ctx context.Context, recruitmentID string) (cardRecor
 		&record.ID, &record.OwnerUserID, &record.Category, &record.AuthorName,
 		&record.NationalityCode, &record.AvailableDate, &record.StartTime,
 		&record.EndTime, &record.Timezone, &record.KeywordsJSON, &record.Description,
+		&record.LocationName, &record.ParticipantLimit,
 		&record.VisibilityRadiusKM, &record.Latitude, &record.Longitude,
 		&record.LocationAccuracyM, &record.Status, &record.ExpiresAt, &record.CreatedAt,
 		&record.UpdatedAt, &record.IdentityStatus)
@@ -1292,7 +1355,8 @@ func buildRecruitment(record cardRecord, keywords []string, band string) Recruit
 		NationalityCode: record.NationalityCode, Rating: 0, AvailableDate: record.AvailableDate,
 		StartTime: record.StartTime, EndTime: record.EndTime, Timezone: record.Timezone,
 		DurationHours: durationHours(record.StartTime, record.EndTime), Keywords: keywords,
-		Description: record.Description, VisibilityRadiusKM: record.VisibilityRadiusKM,
+		Description: record.Description, LocationName: record.LocationName,
+		ParticipantLimit: record.ParticipantLimit, VisibilityRadiusKM: record.VisibilityRadiusKM,
 		DistanceBand: band, Status: record.Status, ExpiresAt: record.ExpiresAt,
 		CreatedAt: record.CreatedAt, UpdatedAt: record.UpdatedAt,
 	}
@@ -1429,6 +1493,12 @@ func applyPatch(input *RecruitmentInput, patch RecruitmentPatch) {
 	if patch.Description != nil {
 		input.Description = *patch.Description
 	}
+	if patch.LocationName != nil {
+		input.LocationName = *patch.LocationName
+	}
+	if patch.ParticipantLimit != nil {
+		input.ParticipantLimit = *patch.ParticipantLimit
+	}
 	if patch.VisibilityRadiusKM != nil {
 		input.VisibilityRadiusKM = *patch.VisibilityRadiusKM
 	}
@@ -1446,7 +1516,8 @@ func applyPatch(input *RecruitmentInput, patch RecruitmentPatch) {
 func changesRecruitmentContent(patch RecruitmentPatch) bool {
 	return patch.Category != nil || patch.AvailableDate != nil || patch.StartTime != nil ||
 		patch.EndTime != nil || patch.Timezone != nil || patch.Keywords != nil ||
-		patch.Description != nil || patch.VisibilityRadiusKM != nil || patch.Latitude != nil ||
+		patch.Description != nil || patch.LocationName != nil || patch.ParticipantLimit != nil ||
+		patch.VisibilityRadiusKM != nil || patch.Latitude != nil ||
 		patch.Longitude != nil || patch.LocationAccuracyM != nil || patch.ClearLocation
 }
 

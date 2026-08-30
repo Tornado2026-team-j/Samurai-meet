@@ -57,7 +57,7 @@ type MaterialIconName = ComponentProps<typeof MaterialIcons>["name"];
 
 const CATEGORY_ICONS: Record<MatchCategory, MaterialIconName> = {
   Food: "restaurant",
-  Places: "place",
+  Heritage: "place",
   Activity: "directions-run",
   Other: "category",
 };

@@ -42,7 +42,7 @@ const MUTED_GRAY = "#949494";
 const BORDER_GRAY = "#e4e4e4";
 const SOFT_BLUE = "#eff8ff";
 
-const CATEGORIES: MatchCategory[] = ["Food", "Places", "Activity", "Other"];
+const CATEGORIES: MatchCategory[] = ["Food", "Heritage", "Activity", "Other"];
 
 const COPY = {
   ja: {
@@ -59,6 +59,7 @@ const COPY = {
     dateInput: "募集日付（JST）", start: "開始（JST）", startInput: "開始時刻（JST）", end: "終了（JST）",
     endInput: "終了時刻（JST）", description: "したいこと", descriptionInput: "募集内容",
     keywords: "キーワード（カンマ区切り）", keywordsInput: "キーワード", radius: "公開範囲",
+    location: "場所表示名", people: "募集人数（1〜10人）",
     jstHint: "日時はサーバーと同じJST（Asia/Tokyo）で保存されます。", save: "保存", saving: "保存中…",
     recruitmentStatus: { draft: "下書き", open: "公開中", matched: "マッチ済み", closed: "終了", expired: "期限切れ", completed: "完了" },
     matchStatus: { pending: "応募を確認中", accepted: "承認済み", rejected: "却下", cancelled: "応募取り下げ", blocked: "利用不可", expired: "期限切れ", completed: "完了" },
@@ -77,6 +78,7 @@ const COPY = {
     dateInput: "Recruitment date (JST)", start: "Start (JST)", startInput: "Start time (JST)", end: "End (JST)",
     endInput: "End time (JST)", description: "What would you like to do?", descriptionInput: "Recruitment details",
     keywords: "Keywords (comma separated)", keywordsInput: "Keywords", radius: "Visibility range",
+    location: "Location name", people: "People needed (1–10)",
     jstHint: "Times are saved in JST (Asia/Tokyo), the same time zone used by the server.", save: "Save", saving: "Saving…",
     recruitmentStatus: { draft: "Draft", open: "Open", matched: "Matched", closed: "Closed", expired: "Expired", completed: "Completed" },
     matchStatus: { pending: "Pending review", accepted: "Accepted", rejected: "Declined", cancelled: "Withdrawn", blocked: "Unavailable", expired: "Expired", completed: "Completed" },
@@ -90,6 +92,8 @@ type EditDraft = {
   end_time: string;
   keywords: string;
   description: string;
+  location_name: string;
+  participant_limit: string;
   visibility_radius_km: 1 | 3 | 5;
 };
 
@@ -248,6 +252,8 @@ export default function MyRecruitmentsScreen() {
       end_time: recruitment.end_time,
       keywords: recruitment.keywords.join(", "),
       description: recruitment.description,
+      location_name: recruitment.location_name,
+      participant_limit: String(recruitment.participant_limit),
       visibility_radius_km: recruitment.visibility_radius_km,
     });
   };
@@ -279,6 +285,8 @@ export default function MyRecruitmentsScreen() {
       timezone: "Asia/Tokyo",
       keywords: editDraft.keywords.split(/[,、\n]/).map((item) => item.trim()).filter(Boolean),
       description: editDraft.description.trim(),
+      location_name: editDraft.location_name.trim(),
+      participant_limit: Number(editDraft.participant_limit),
       visibility_radius_km: editDraft.visibility_radius_km,
     };
 
@@ -361,20 +369,11 @@ export default function MyRecruitmentsScreen() {
     <View style={styles.screen}>
       <StatusBar style="light" />
       <View style={[styles.header, { paddingTop: Math.max(insets.top, 18) }]}>
-        <Pressable
-          accessibilityLabel={copy.back}
-          accessibilityRole="button"
-          hitSlop={10}
-          onPress={() => router.back()}
-          style={({ pressed }) => [styles.backButton, pressed && styles.pressed]}
-        >
-          <MaterialIcons color="#ffffff" name="arrow-back-ios-new" size={20} />
-        </Pressable>
         <Text style={styles.headerTitle}>{copy.title}</Text>
       </View>
 
       <ScrollView
-        contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 32 }]}
+        contentContainerStyle={[styles.content, { paddingBottom: Math.max(insets.bottom + 120, 132) }]}
         refreshControl={
           <RefreshControl
             onRefresh={() => loadManagement()}
@@ -436,6 +435,9 @@ export default function MyRecruitmentsScreen() {
                   <Text style={styles.category}>{recruitment.category}</Text>
                   <Text style={styles.schedule}>
                     {recruitment.available_date} · {formatTimeRange(recruitment.start_time, recruitment.duration_hours)}
+                  </Text>
+                  <Text style={styles.schedule}>
+                    {recruitment.location_name || "-"} · {recruitment.participant_limit}人
                   </Text>
                 </View>
                 <View style={[styles.statusPill, { borderColor: recruitmentStatusColor(recruitment.status) }]}>
@@ -580,6 +582,27 @@ export default function MyRecruitmentsScreen() {
                     placeholder="YYYY-MM-DD"
                     style={styles.textInput}
                     value={editDraft.available_date}
+                  />
+
+                  <Text style={styles.fieldLabel}>{copy.location}</Text>
+                  <TextInput
+                    editable={!saving}
+                    maxLength={120}
+                    onChangeText={(location_name) => setEditDraft((current) => current ? { ...current, location_name } : current)}
+                    placeholder="Tokyo Station"
+                    style={styles.textInput}
+                    value={editDraft.location_name}
+                  />
+
+                  <Text style={styles.fieldLabel}>{copy.people}</Text>
+                  <TextInput
+                    editable={!saving}
+                    keyboardType="number-pad"
+                    maxLength={2}
+                    onChangeText={(participant_limit) => setEditDraft((current) => current ? { ...current, participant_limit } : current)}
+                    placeholder="1"
+                    style={styles.textInput}
+                    value={editDraft.participant_limit}
                   />
 
                   <View style={styles.inlineFields}>

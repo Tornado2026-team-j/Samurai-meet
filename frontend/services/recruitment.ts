@@ -14,7 +14,7 @@ import type {
 
 const MATCH_CATEGORIES: readonly MatchCategory[] = [
   "Food",
-  "Places",
+  "Heritage",
   "Activity",
   "Other",
 ];
@@ -417,6 +417,9 @@ export function buildRecruitmentCreateRequest(
   if (!Number.isFinite(durationMinutes) || durationMinutes <= 0) {
     throw new Error("invalid_recruitment_duration");
   }
+  if (!Number.isInteger(draft.participantLimit) || draft.participantLimit < 1 || draft.participantLimit > 10) {
+    throw new Error("invalid_recruitment_participant_limit");
+  }
   const endMinutes = startMinutes + durationMinutes;
 
   const endHour = Math.floor(endMinutes / 60);
@@ -432,6 +435,8 @@ export function buildRecruitmentCreateRequest(
     timezone: JST_TIME_ZONE,
     keywords: selectedKeywords.length > 0 ? selectedKeywords : ["Experience"],
     description,
+    location_name: draft.location.trim(),
+    participant_limit: draft.participantLimit,
     visibility_radius_km: draft.distanceKm,
     status: "open",
   };

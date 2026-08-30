@@ -1,6 +1,7 @@
 import { Redirect, Stack, usePathname, useRouter } from "expo-router";
 import { useEffect, useRef, type ReactNode } from "react";
 import { View } from "react-native";
+import GlobalTabBar from "../components/GlobalTabBar";
 import { AuthProvider, useAuth } from "../hooks/useAuth";
 import {
   isProtectedRoute,
@@ -20,7 +21,12 @@ function AuthRouteGuard({ children }: { children: ReactNode }) {
     return <Redirect href="/" />;
   }
 
-  return <>{children}</>;
+  return (
+    <View style={{ flex: 1 }}>
+      {children}
+      <GlobalTabBar />
+    </View>
+  );
 }
 
 function RootNavigator() {
@@ -35,7 +41,9 @@ function RootNavigator() {
 
     // Keep this reset above individual screens so a screen-level replace
     // cannot unmount the logout cleanup before the old stack is removed.
-    router.dismissAll();
+    if (router.canDismiss()) {
+      router.dismissAll();
+    }
     router.replace("/");
   }, [router, status]);
 

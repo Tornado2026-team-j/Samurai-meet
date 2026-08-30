@@ -483,8 +483,8 @@ Request body:
 | GET | `/api/v1/chats` | Access Token | 自分のaccepted/completedチャット一覧 |
 | GET | `/api/v1/chats/{id}/messages?after=0&limit=50` | Access Token | 暗号化メッセージ履歴。最大100件 |
 | POST | `/api/v1/chats/{id}/messages` | Access Token | 暗号化メッセージ送信 |
-| POST | `/api/v1/chats/{id}/read` | Access Token | `last_message_sequence`まで既読 |
-| POST | `/api/v1/chats/{id}/transport-token` | Access Token | WebSocket/WebTransport用短命Chat Token発行 |
+| POST | `/api/v1/chats/{id}/read` | Access Token | `last_message_sequence`まで既読（クライアントが見た最大`sequence`。最新messageへクランプし前進のみ） |
+| POST | `/api/v1/chats/{id}/transport-token` | Access Token | WebSocket用短命Chat Token発行（`transport`は省略時・明示ともに`websocket`のみ。他値は400） |
 | GET | `/api/v1/ws/chats/{id}` | Chat Token（接続後の認証フレーム） | リアルタイム配送のWebSocket |
 | POST | `/api/v1/chats/{id}/attachments` | Access Token | チャット写真（暗号文BLOB）のアップロード |
 | GET | `/api/v1/chats/{id}/attachments/{attachment_id}` | Access Token | チャット写真の暗号文取得 |
@@ -504,6 +504,12 @@ Request body:
 
 サーバーは`ciphertext`を復号せず、平文本文・検索用プレビュー・暗号鍵を受け付けません。`client_message_id`は送信者とチャット単位で一意で、同じIDの再送は元のメッセージを返します。暗号文は復号前128KiBまでです。履歴は`sequence`をcursorにして再接続時に補完します。
 
+`POST /read` の `last_message_sequence` は「クライアントが受信した最大`sequence`」を渡すハイウォーターマークで、message行との厳密一致は不要です（`sequence`は全チャット横断の`BIGSERIAL`で1チャット内は歯抜け）。サーバーはその値をそのチャットの最新live messageへクランプし、保存マーカーは前進のみ（`GREATEST`）。`message.read`レシートはクランプ後の実効値を通知します。1未満は`invalid_chat_request`、messageが無いチャットは`chat_not_found`。
+
+メッセージは作成から `CHAT_MESSAGE_RETENTION_DAYS`（既定180日）を過ぎると、6時間ごとのスイープで `deleted_at` を打たれ、暗号文・nonce が消去され、`chat_message_deletions` に監査行が残ります。以後は履歴・未読数・WebSocket 配送のいずれにも現れません。
+
+メッセージ送信はユーザー単位のトークンバケットでレート制限します（`CHAT_SEND_BURST` 既定15、`CHAT_SEND_REFILL_PER_MINUTE` 既定60）。REST/WebSocket で共通の予算を消費し、超過時は REST が `429 {"error":"chat_rate_limited"}` ＋ `Retry-After` ヘッダ、WebSocket が `{"type":"error","code":"rate_limited","retry_after_seconds":N}`（接続は維持、`closing` なし）を返します。クライアントは chat-transport.md §7.2 の自動再送契約に従い `Retry-After` / `retry_after_seconds` を尊重します。
+
 ### チャット写真（添付）
 
 `accepted`マッチの参加者は、暗号化した画像をチャットに添付できます。フローは2段階です。
@@ -515,7 +521,7 @@ Request body:
 
 transport tokenはAccess Token・Refresh Tokenと別audience（`samurai-meet-chat`）で、対象chat・session・transportだけに束縛した2分のJWSです。Refresh TokenをWebSocket、WebTransport、URL queryへ送ってはいけません。
 
-`GET /api/v1/ws/chats/{id}` へ接続後、クライアントは5秒以内に `{"type":"auth","chat_token":"<JWS>"}` を送ります（Chat TokenをURL queryに載せない）。サーバーは token・セッション・マッチ・ブロック・チャット状態を検証し `{"type":"auth.ok",…}` を返します。以後のフレームは `message.send` / `message.read` / `typing.start` / `typing.stop` / `ping`（client→server）、`message.created` / `message.ack` / `message.read` / `typing` / `pong` / `error` / `closing`（server→client）。`message.send` は REST の送信と同じ冪等性・バリデーション（暗号文のみ、128KiBまで）で、REST経由の送信・既読も接続中の相手へ配送されます。接続中は20秒間隔のheartbeatでセッション・マッチ・ブロックを再確認し、失効時は `closing` を送って切断します。配送は現状**単一APIインスタンス前提**（プロセス内ハブ）で、複数インスタンス対応の `LISTEN/NOTIFY` fan-out と接続中のChat Tokenローテーション（`token_seq`）は次の作業です。
+`GET /api/v1/ws/chats/{id}` へ接続後、クライアントは5秒以内に `{"type":"auth","chat_token":"<JWS>"}` を送ります（Chat TokenをURL queryに載せない）。サーバーは token・セッション・マッチ・ブロック・チャット状態を検証し `{"type":"auth.ok",…}` を返します。以後のフレームは `message.send` / `message.read` / `typing.start` / `typing.stop` / `ping`（client→server）、`message.created` / `message.ack` / `message.read` / `typing` / `pong` / `error` / `closing`（server→client）。`message.send` は REST の送信と同じ冪等性・バリデーション（暗号文のみ、128KiBまで）で、REST経由の送信・既読も接続中の全ソケットへ配送されます。`message.created` / `message.read` の配送除外はユーザー単位ではなくソケット単位です（送信・既読を発行したソケットだけ除外し、同一ユーザーの他端末には配送する）。`typing` だけは自端末エコー回避のためユーザー単位で除外します。接続中は20秒間隔のheartbeatでセッション・マッチ・ブロックを再確認し、失効時は `closing` を送って切断します。接続維持中の Chat Token ローテーションは `{"type":"token.renew","chat_token":"<新JWS>"}` で行い、成功時 `{"type":"token.renewed","token_seq":N,"token_expires_at":"…"}` を返します。`token_seq` は `(session, chat)` 単位で発行のたびに +1 され、接続は受理済み最大値以下への `token.renew` を `error(stale_token)` で拒否します（接続維持）。期限までに `token.renew` されないと heartbeat が `closing(token_expired)` で切断します。配送はプロセス内ハブで行い、複数APIインスタンス構成は PostgreSQL `LISTEN/NOTIFY` fan-out（`chat_events` チャネル、`cluster.go`）で対応します。他インスタンス発の `message.created` / `message.read` / `typing` は各インスタンスがローカルソケットへ再配送し、NOTIFY 取りこぼしは再接続時の `sequence` cursor 補完で回収します。
 
 ### 6.8 会合セッション・Bluetooth／位置推測の補助（バックエンド実装済み。実測はクライアント）
 

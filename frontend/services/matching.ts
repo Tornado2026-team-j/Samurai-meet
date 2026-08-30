@@ -32,6 +32,8 @@ export type Recruitment = {
   duration_hours: number;
   keywords: string[];
   description: string;
+  location_name: string;
+  participant_limit: number;
   visibility_radius_km: 1 | 3 | 5;
   distance_band?: string;
   status: RecruitmentStatus;
@@ -48,6 +50,8 @@ export type RecruitmentCreateRequest = {
   timezone: string;
   keywords: string[];
   description: string;
+  location_name: string;
+  participant_limit: number;
   visibility_radius_km: 1 | 3 | 5;
   latitude?: number;
   longitude?: number;
@@ -67,6 +71,8 @@ export type RecruitmentUpdateRequest = {
   timezone?: string;
   keywords?: string[];
   description?: string;
+  location_name?: string;
+  participant_limit?: number;
   visibility_radius_km?: 1 | 3 | 5;
   latitude?: number;
   longitude?: number;
@@ -77,6 +83,7 @@ export type RecruitmentUpdateRequest = {
 
 export type RecruitmentSearchParams = {
   keywords?: string[];
+  category?: MatchCategory;
   availableDate?: string;
   startTime?: string;
   endTime?: string;
@@ -142,6 +149,7 @@ function recruitmentQuery(params: RecruitmentSearchParams): string {
     const normalizedKeyword = keyword.trim();
     if (normalizedKeyword) appendQueryPart(parts, "keyword", normalizedKeyword);
   }
+  if (params.category) appendQueryPart(parts, "category", params.category);
   if (params.availableDate) appendQueryPart(parts, "available_date", params.availableDate);
   if (params.startTime) appendQueryPart(parts, "start_time", params.startTime);
   if (params.endTime) appendQueryPart(parts, "end_time", params.endTime);
@@ -213,7 +221,7 @@ export async function classifyRecruitmentDescription(
     { method: "POST", body: JSON.stringify({ description }), signal },
   );
   const category = response.data?.category;
-  if (category === "Food" || category === "Places" || category === "Activity" || category === "Other") {
+  if (category === "Food" || category === "Heritage" || category === "Activity" || category === "Other") {
     return category;
   }
   throw new Error("recruitment classification response is invalid");
@@ -479,6 +487,7 @@ export function recruitmentToMatchCard(recruitment: Recruitment): MatchCardData 
   const tags = uniqueTags(recruitment);
   const detailTags = [...new Set([...tags, recruitment.category])].slice(0, 5);
   const countryCode = recruitment.nationality_code.trim().toUpperCase();
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Tokyo", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
 
   return {
     id: recruitment.id,
@@ -491,9 +500,12 @@ export function recruitmentToMatchCard(recruitment: Recruitment): MatchCardData 
     detailDate: dates.detail,
     startTime: recruitment.start_time,
     durationHours: recruitment.duration_hours,
+    locationName: recruitment.location_name || undefined,
+    participantLimit: recruitment.participant_limit,
     tags,
     detailTags,
     expiresAt: formatExpiry(recruitment.expires_at),
     description: recruitment.description,
+    isToday: recruitment.available_date === today,
   };
 }

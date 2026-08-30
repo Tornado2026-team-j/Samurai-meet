@@ -55,7 +55,7 @@
 - `POST /api/v1/chats/{id}/attachments` — AES-256-GCM暗号文をraw bodyでアップロード。メタは `X-Chat-Attachment-*` ヘッダ。
 - `GET /api/v1/chats/{id}/attachments/{attachment_id}` — 暗号文を `application/octet-stream` で取得。`accepted`/`completed` マッチの参加者のみ、ブロック時は不可。
 - `POST /api/v1/chats/{id}/messages` の body に `attachment_id` を入れて、アップロード済みの添付を1つのメッセージへ結び付ける（同一チャット・同一アップロード者・未参照のものだけ）。
-- テーブル：`chat_attachments`（`0028_chat_attachments.sql`）。
+- テーブル：`chat_attachments`（`0034_chat_attachments.sql`）。
 - 暗号文上限は `IMAGE_MAX_UPLOAD_BYTES`（既定20MiB）。許可 MIME は `image/jpeg` / `image/png` / `image/webp` / `application/octet-stream`。
 - メッセージから参照されない添付は約24時間後に起動時スイープ（`chat.Service.ProcessExpiredAttachments`）で削除。
 - アップロードは Access Token とマッチ参加者判定のみ（プロフィール写真の端末proofは要求しない。Key-B画像方式とは別系統のため）。

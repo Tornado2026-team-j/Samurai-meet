@@ -10,6 +10,10 @@ type MatchCardProps = {
 };
 
 export default function MatchCard({ match, onOpen }: MatchCardProps) {
+  const statusLabel = match.applicationStatus === "pending" ? "応募中"
+    : match.applicationStatus === "accepted" ? "承認済み"
+      : match.applicationStatus === "completed" ? "完了"
+        : match.applicationStatus ? "結果確定" : null;
   return (
     <Card
       accessibilityLabel={`${match.authorName}の募集詳細を開く`}
@@ -26,9 +30,7 @@ export default function MatchCard({ match, onOpen }: MatchCardProps) {
         <Text style={styles.countryFlag}>{match.countryFlag}</Text>
       </View>
 
-      <View style={styles.openButton}>
-        <MaterialIcons color={colors.text.secondary} name="open-in-new" size={18} />
-      </View>
+      {statusLabel ? <View style={[styles.statusBadge, match.applicationStatus === "accepted" && styles.statusAccepted]}><Text style={[styles.statusText, match.applicationStatus === "accepted" && styles.statusAcceptedText]}>{statusLabel}</Text></View> : <View style={styles.openButton}><MaterialIcons color={colors.text.secondary} name="open-in-new" size={18} /></View>}
 
       <Text numberOfLines={1} style={[styles.detailLine, styles.dateLine]}>
         <Text style={styles.detailLabel}>Date</Text>
@@ -48,6 +50,8 @@ export default function MatchCard({ match, onOpen }: MatchCardProps) {
       </View>
 
       <Text style={styles.expiry}>{match.expiresAt}まで</Text>
+      {match.locationName ? <View style={styles.locationRow}><MaterialIcons color={colors.text.muted} name="place" size={12} /><Text numberOfLines={1} style={styles.locationText}>{match.locationName}</Text></View> : null}
+      {match.isToday ? <Text style={styles.today}>今日</Text> : null}
     </Card>
   );
 }
@@ -91,6 +95,26 @@ const styles = StyleSheet.create({
     height: 20,
     alignItems: "center",
     justifyContent: "center",
+  },
+  statusBadge: {
+    position: "absolute",
+    top: 8,
+    right: 9,
+    paddingHorizontal: 7,
+    paddingVertical: 4,
+    borderRadius: radius.pill,
+    backgroundColor: colors.surface.goldSoft,
+  },
+  statusAccepted: { backgroundColor: colors.surface.blueSoft },
+  statusText: { color: colors.brand.gold, ...typography.micro, fontWeight: "900" },
+  statusAcceptedText: { color: colors.brand.sky },
+  today: {
+    position: "absolute",
+    right: 10,
+    bottom: 24,
+    color: colors.state.danger,
+    ...typography.micro,
+    fontWeight: "900",
   },
   detailLine: {
     position: "absolute",
@@ -138,5 +162,19 @@ const styles = StyleSheet.create({
     ...typography.micro,
     fontWeight: "600",
     letterSpacing: 0,
+  },
+  locationRow: {
+    position: "absolute",
+    left: 22,
+    right: 96,
+    bottom: 7,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+  },
+  locationText: {
+    flex: 1,
+    color: colors.text.muted,
+    ...typography.micro,
   },
 });
