@@ -24,9 +24,9 @@
 - `0025_notifications.sql`はユーザー単位の直近7日通知、既読時刻、応募・承認／辞退・暗号化チャット送信の冪等イベントを保存する。通知にはチャット本文や鍵を保存しない。
 - `0026_match_withdrawal.sql` は応募取り下げ用の`matches.status = cancelled`を追加する。取り下げ後も応募履歴を保持するため、既存の応募・通知フローと合わせて適用する。
 - `0027_reports.sql` は通報の原票テーブル`reports`（対象種別・理由・任意コメント・運営ステータス）を追加する。運営キュー処理と管理者操作の監査ログは別途。通報者情報は対象者へ返さない。同一通報者×同一対象で未処理の通報は1件に集約する。
-- `0028_recruitment_details.sql` は募集カテゴリの`Places`を`Heritage`へ移行し、募集人数と公開用の場所表示名を追加する。正確な座標は従来どおりAPIレスポンスへ含めない。
-- `0029_identity_verifications.sql` はStripe IdentityのセッションIDと確認状態を保存する。本人確認書類や住所は保存しない。
-- `0030_push_devices.sql` はOSプッシュ通知用のExpo Push Tokenと通知種別ごとの設定を端末単位で保存する。
+- `0031_recruitment_details.sql` は募集カテゴリの`Places`を`Heritage`へ移行し、募集人数と公開用の場所表示名を追加する。正確な座標は従来どおりAPIレスポンスへ含めない。
+- `0032_identity_verifications.sql` はStripe IdentityのセッションIDと確認状態を保存する。本人確認書類や住所は保存しない。
+- `0033_push_devices.sql` はOSプッシュ通知用のExpo Push Tokenと通知種別ごとの設定を端末単位で保存する。
 - runnerは`schema_migrations`へファイル名と正規化SQLのSHA-256を記録し、適用済みSQLを再実行しない。起動が同時になった場合もPostgreSQL advisory lockで直列化する。適用済みファイルの内容が変わった場合はchecksum mismatchで停止する。
 - 既存DBへ導入する初回起動では、ファイル名順に現行schemaを確認しながら未登録migrationを一度だけ適用する。適用済み状態を手作業で捏造・削除せず、バックアップと監査ログを残してから運用する。
 

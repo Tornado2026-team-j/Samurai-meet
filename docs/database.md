@@ -45,6 +45,9 @@
 | `0028_chat_token_sequences.sql` | `(session, chat)`単位のChat Token世代カウンタ。発行のたびに+1し、接続維持中のトークンローテーションで巻き戻しを拒否する |
 | `0029_chat_threads_drop_status.sql` | 未使用だった`chat_threads.status` / `closed_at`列を削除（B3のデッドコード整理。スレッドclose flowは製品トリガーがないため実装せず削除を選択） |
 | `0030_chat_message_deletions.sql` | メッセージ削除の追記専用監査`chat_message_deletions`（chat/message/sequence/送信者/元created_at/理由/保持日数/削除時刻）。保持期間スイープが暗号文を消去した記録を残す |
+| `0031_recruitment_details.sql` | 募集カテゴリを`Heritage`へ統一し、募集人数と公開用場所表示名を追加する |
+| `0032_identity_verifications.sql` | Stripe IdentityのセッションIDと確認状態を保存する。本人確認書類や住所は保存しない |
+| `0033_push_devices.sql` | Expo Push Tokenと通知種別ごとの端末設定を保存する |
 
 注意: 現行のmigration runnerはSQLファイルを順番に正規化して実行し、`schema_migrations`へファイル名と正規化SQLのSHA-256 checksum、適用時刻を記録する。同じchecksumの適用済みmigrationはスキップし、PostgreSQL advisory lockで同時起動を直列化する。適用済みファイルの内容が変わった場合はchecksum mismatchで起動を停止する。適用済みmigrationを編集・置換してはいけない。DDL変更は新しい番号のSQLを追加する。
 
