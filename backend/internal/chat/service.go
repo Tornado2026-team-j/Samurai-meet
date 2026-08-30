@@ -21,7 +21,6 @@ var (
 	ErrChatBlocked       = errors.New("chat participants are blocked")
 	ErrChatInvalidInput  = errors.New("invalid chat input")
 	ErrChatNotAvailable  = errors.New("chat is not available for this match")
-	ErrChatClosed        = errors.New("chat is closed")
 	ErrMessageNotFound   = errors.New("message not found")
 	ErrMessageTooLarge   = errors.New("message is too large")
 	ErrChatSignerMissing = errors.New("chat token signer is not configured")
@@ -92,7 +91,6 @@ type TransportToken struct {
 type chatAccess struct {
 	ChatID      string
 	MatchID     string
-	ChatStatus  string
 	MatchStatus string
 	OwnerUserID string
 	RequesterID string
@@ -439,22 +437,19 @@ func (s *Service) ensureChat(ctx context.Context, userID, matchID string, now ti
 	if userID == access.OwnerUserID {
 		access.OtherUserID = access.RequesterID
 	}
-	var existingStatus string
-	err = tx.QueryRowContext(ctx, `SELECT id,status FROM chat_threads WHERE match_id=$1 FOR UPDATE`, matchID).Scan(&access.ChatID, &existingStatus)
+	err = tx.QueryRowContext(ctx, `SELECT id FROM chat_threads WHERE match_id=$1 FOR UPDATE`, matchID).Scan(&access.ChatID)
 	if errors.Is(err, sql.ErrNoRows) {
 		access.ChatID, err = randomID()
 		if err != nil {
 			return chatAccess{}, err
 		}
 		created := now.UTC().Format(time.RFC3339Nano)
-		if _, err = tx.ExecContext(ctx, `INSERT INTO chat_threads (id,match_id,status,created_at,updated_at) VALUES ($1,$2,'open',$3,$3)`, access.ChatID, matchID, created); err != nil {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO chat_threads (id,match_id,created_at,updated_at) VALUES ($1,$2,$3,$3)`, access.ChatID, matchID, created); err != nil {
 			return chatAccess{}, err
 		}
-		existingStatus = "open"
 	} else if err != nil {
 		return chatAccess{}, err
 	}
-	access.ChatStatus = existingStatus
 	if err = tx.Commit(); err != nil {
 		return chatAccess{}, err
 	}
@@ -467,10 +462,10 @@ func (s *Service) loadChat(ctx context.Context, userID, chatID string, allowComp
 	}
 	var access chatAccess
 	if err := s.db.QueryRowContext(ctx, `
-		SELECT c.id,c.match_id,c.status,m.status,m.owner_user_id,m.requester_user_id
+		SELECT c.id,c.match_id,m.status,m.owner_user_id,m.requester_user_id
 		FROM chat_threads c JOIN matches m ON m.id=c.match_id
 		WHERE c.id=$1`, chatID).Scan(
-		&access.ChatID, &access.MatchID, &access.ChatStatus, &access.MatchStatus, &access.OwnerUserID, &access.RequesterID); errors.Is(err, sql.ErrNoRows) {
+		&access.ChatID, &access.MatchID, &access.MatchStatus, &access.OwnerUserID, &access.RequesterID); errors.Is(err, sql.ErrNoRows) {
 		return chatAccess{}, ErrChatNotFound
 	} else if err != nil {
 		return chatAccess{}, err
@@ -492,9 +487,6 @@ func (s *Service) loadChat(ctx context.Context, userID, chatID string, allowComp
 		access.OtherUserID = access.RequesterID
 	} else {
 		access.OtherUserID = access.OwnerUserID
-	}
-	if access.ChatStatus != "open" && !allowCompleted {
-		return chatAccess{}, ErrChatClosed
 	}
 	return access, nil
 }

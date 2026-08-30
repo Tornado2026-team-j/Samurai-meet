@@ -370,7 +370,7 @@ func (s *Service) handleSend(c *wsConn, frame inboundFrame) {
 			return
 		}
 		s.replyError(c, wsErrorCode(err), "message rejected")
-		if errors.Is(err, ErrChatNotAvailable) || errors.Is(err, ErrChatBlocked) || errors.Is(err, ErrChatClosed) || errors.Is(err, ErrChatForbidden) {
+		if errors.Is(err, ErrChatNotAvailable) || errors.Is(err, ErrChatBlocked) || errors.Is(err, ErrChatForbidden) {
 			c.stop(wsErrorCode(err))
 		}
 		return
@@ -470,8 +470,6 @@ func wsErrorCode(err error) string {
 		return "blocked"
 	case errors.Is(err, ErrChatNotAvailable):
 		return "chat_not_available"
-	case errors.Is(err, ErrChatClosed):
-		return "chat_closed"
 	case errors.Is(err, ErrChatForbidden):
 		return "forbidden"
 	case errors.Is(err, ErrChatNotFound), errors.Is(err, ErrMessageNotFound):

@@ -43,6 +43,7 @@
 | `0026_match_withdrawal.sql` | 応募取り下げによる`matches.status = cancelled`を追加 |
 | `0027_reports.sql` | 通報の原票`reports`（対象種別・理由・任意コメント・運営ステータス） |
 | `0028_chat_token_sequences.sql` | `(session, chat)`単位のChat Token世代カウンタ。発行のたびに+1し、接続維持中のトークンローテーションで巻き戻しを拒否する |
+| `0029_chat_threads_drop_status.sql` | 未使用だった`chat_threads.status` / `closed_at`列を削除（B3のデッドコード整理。スレッドclose flowは製品トリガーがないため実装せず削除を選択） |
 
 注意: 現行のmigration runnerはSQLファイルを順番に正規化して実行し、`schema_migrations`へファイル名と正規化SQLのSHA-256 checksum、適用時刻を記録する。同じchecksumの適用済みmigrationはスキップし、PostgreSQL advisory lockで同時起動を直列化する。適用済みファイルの内容が変わった場合はchecksum mismatchで起動を停止する。適用済みmigrationを編集・置換してはいけない。DDL変更は新しい番号のSQLを追加する。
 
@@ -202,7 +203,7 @@ Recovery Phraseで復号したMaster Keyの所有証明を一時的に受け付�
 - `recruitment_cards`: 日時、時間帯、timezone、keywords、説明、公開半径、位置、状態。
 - `blocks`: ブロックする側・される側の複合主キー。
 - `matches`: 関心、承認、完了の状態。`card_id`と`requester_user_id`を一意にする。
-- `chat_threads`: accepted/completedマッチに遅延作成する1対1チャット。`match_id`を一意にする。
+- `chat_threads`: accepted/completedマッチに遅延作成する1対1チャット。`match_id`を一意にする。利用可否は`matches.status`と`blocks`で判定し、スレッド自体の状態列は持たない（`0029`で`status`/`closed_at`を削除）。
 - `messages`: Base64URLの暗号文、nonce、アルゴリズム、鍵versionだけを保存する。平文本文は列にもログにも存在しない。送信者・チャット・`client_message_id`の組み合わせを一意にして再送を冪等化する。
 - `chat_read_states`: ユーザーごとの最後の既読`sequence`。
 - `meeting_sessions`: acceptedマッチのplanned/active/completed/cancelled会合状態。

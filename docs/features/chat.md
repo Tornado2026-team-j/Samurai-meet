@@ -64,7 +64,7 @@ MVP のリアルタイム配送は WebSocket。QUIC / HTTP/3 WebTransport は将
 | `message.read` | 既読の前進。`user_id`, `last_message_sequence`。既読操作を発行したソケット以外の全ソケットへ配送する（相手の端末＋既読した本人の他端末） |
 | `typing` | `user_id`, `state`（`start` / `stop`） |
 | `token.renewed` | `token_seq`, `token_expires_at`。`token.renew` 成功時。接続の期限がここまで前進する |
-| `error` | `code`, `message`。回復不能な `code`（`blocked` / `chat_not_available` / `chat_closed` / `forbidden`）の後は `closing` が続く。`rate_limited`（`retry_after_seconds` を伴う）/ `stale_token` / `invalid_token` は一時的で `closing` は続かない |
+| `error` | `code`, `message`。回復不能な `code`（`blocked` / `chat_not_available` / `forbidden`）の後は `closing` が続く。`rate_limited`（`retry_after_seconds` を伴う）/ `stale_token` / `invalid_token` は一時的で `closing` は続かない |
 | `closing` | `reason`。サーバーが接続を閉じる直前に一度だけ送る。`token_expired` は期限までに `token.renew` されなかった場合 |
 
 送信メッセージには `client_message_id` を付け、再送されても二重登録しません（`message.send` は既存の REST `SendMessage` と同じ冪等性）。`message.created` / `message.read` は REST 経由の送信・既読でも接続中の全ソケットへ配送されます。配送の除外はユーザー単位ではなくソケット単位のため、同一ユーザーが複数端末で接続していても、送信・既読を行っていない他端末は更新を受け取れます（`typing` だけは自端末のエコーを避けるためユーザー単位で除外）。
