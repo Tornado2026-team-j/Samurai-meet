@@ -23,6 +23,7 @@
 | 接続認証・配送・順序確定 | `backend/internal/chat/websocket.go` / `backend/internal/chat/hub.go` | Go（WebSocket配送 実装済み。単一インスタンス前提） |
 | QUIC配送（将来） | `backend/internal/chat/quic.go`（未実装） | Go（標準候補） |
 | 保存・取得・既読 | `backend/internal/chat/service.go` / `backend/internal/httpapi/chat.go` | Go（REST実装済み） |
+| 写真添付（暗号文BLOB） | `backend/internal/chat/attachment.go` / `backend/internal/httpapi/chat_attachment.go` | Go（REST実装済み。サーバーは鍵を持たない） |
 
 ## 3. 利用条件
 
@@ -91,15 +92,19 @@ QUICの理由、JWS claimの検証、heartbeat、失敗時の自動再送、WebS
 
 - `GET /chats`
 - `GET /chats/{id}/messages`
-- `POST /chats/{id}/messages`
+- `POST /chats/{id}/messages`（任意で `attachment_id` を含む）
 - `POST /chats/{id}/read`
 - `POST /chats/{id}/transport-token`
+- `POST /chats/{id}/attachments`（チャット写真の暗号文アップロード）
+- `GET /chats/{id}/attachments/{attachment_id}`（チャット写真の暗号文取得）
 - `POST /matches/{id}/meeting`
 - `GET|POST /meetings/{id}/proximity`
 - QUIC endpoint：将来、環境ごとに設定する（`chat_id`単位。HTTP/3 WebTransportの場合はHTTPS URLとして提供）
-- テーブル：`matches`、`chat_threads`、`messages`、`chat_read_states`、`photos`
+- テーブル：`matches`、`chat_threads`、`messages`、`chat_read_states`、`chat_attachments`
 
 RESTのメッセージ送信は`accepted`マッチの参加者だけが利用でき、本文ではなくBase64URLのAES-256-GCM暗号文を保存します。`client_message_id`で再送を冪等化し、WebSocket未接続・再接続直後は`sequence` cursorで`GET /chats/{id}/messages?after=`を使って補完します。サーバーは暗号文を復号しません。
+
+写真添付は2段階です。まず`POST /chats/{id}/attachments`へAES-256-GCM暗号文をraw bodyでアップロードし（メタは`X-Chat-Attachment-*`ヘッダ）、次に`POST /chats/{id}/messages`の`attachment_id`で1つのメッセージへ結び付けます。参照できるのは同一チャットで自分がアップロードした未参照の添付だけです。`GET /messages`とWebSocketの`message.created` / `message.ack`は、添付付きメッセージに`attachment`オブジェクトを含めます。サーバーは画像鍵を持たず、`nonce` / `algorithm` / `key_version`を不透明メタデータとして保存するだけで、EXIF除去はクライアントの責務です。暗号文上限は`IMAGE_MAX_UPLOAD_BYTES`（既定20MiB）、許可MIMEは`image/jpeg` / `image/png` / `image/webp` / `application/octet-stream`。メッセージから参照されない添付は約24時間後にスイープで削除します。取得は`accepted`/`completed`マッチの参加者のみ、ブロック時は不可です。詳細は [写真仕様](photos.md)。
 
 WebSocket配送は現状**単一APIインスタンス前提のin-memoryハブ**（`hub.go`）です。複数インスタンスで動かす場合は、A で送ったメッセージが B の接続へ届きません。PostgreSQL `LISTEN/NOTIFY` によるfan-out（chat-transport.md §6）が次の作業で、それまではチャット配送を1インスタンスに寄せるか、クライアントのRESTポーリングで許容します。
 

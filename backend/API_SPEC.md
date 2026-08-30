@@ -482,6 +482,8 @@ Request body:
 | POST | `/api/v1/chats/{id}/read` | Access Token | `last_message_sequence`まで既読 |
 | POST | `/api/v1/chats/{id}/transport-token` | Access Token | WebSocket/WebTransport用短命Chat Token発行 |
 | GET | `/api/v1/ws/chats/{id}` | Chat Token（接続後の認証フレーム） | リアルタイム配送のWebSocket |
+| POST | `/api/v1/chats/{id}/attachments` | Access Token | チャット写真（暗号文BLOB）のアップロード |
+| GET | `/api/v1/chats/{id}/attachments/{attachment_id}` | Access Token | チャット写真の暗号文取得 |
 
 送信bodyは次の形式です。
 
@@ -491,11 +493,21 @@ Request body:
   "ciphertext": "Base64URL(no padding)",
   "nonce": "12byte AES-GCM nonceのBase64URL",
   "algorithm": "AES-256-GCM",
-  "key_version": "v1"
+  "key_version": "v1",
+  "attachment_id": "任意。事前にアップロードしたチャット写真のID"
 }
 ```
 
 サーバーは`ciphertext`を復号せず、平文本文・検索用プレビュー・暗号鍵を受け付けません。`client_message_id`は送信者とチャット単位で一意で、同じIDの再送は元のメッセージを返します。暗号文は復号前128KiBまでです。履歴は`sequence`をcursorにして再接続時に補完します。
+
+### チャット写真（添付）
+
+`accepted`マッチの参加者は、暗号化した画像をチャットに添付できます。フローは2段階です。
+
+1. `POST /api/v1/chats/{id}/attachments` に**AES-256-GCM暗号文をraw bodyで**送る。メタはヘッダ `X-Chat-Attachment-Content-Type`（`image/jpeg` / `image/png` / `image/webp` / `application/octet-stream`）、`X-Chat-Attachment-Nonce`（12byte b64url）、`X-Chat-Attachment-Algorithm`（`AES-256-GCM`）、`X-Chat-Attachment-Key-Version`。応答は `{ "data": { id, chat_id, content_type, size_bytes, cipher_sha256, nonce, algorithm, key_version, created_at } }`。
+2. `POST /api/v1/chats/{id}/messages` の body に `attachment_id` を入れて送信する。参照できるのは**同一チャットで自分がアップロードした未参照の添付**だけ。以後、そのメッセージは `GET /messages` と WebSocket `message.created` / `message.ack` の各要素に `attachment` オブジェクトを持つ。
+
+`GET /api/v1/chats/{id}/attachments/{attachment_id}` は暗号文を `application/octet-stream` で返す（`accepted`/`completed`マッチの参加者のみ、ブロック時は不可）。サーバーは復号せず、EXIF除去はクライアント側の責務。暗号文の上限は `IMAGE_MAX_UPLOAD_BYTES`（既定20MiB）。メッセージから参照されない添付は約24時間後にスイープで削除される。鍵の生成・共有はクライアント契約で、`key_version = "chat-attachment-mvp-v1"` は「添付ごとのランダム鍵を参照元メッセージの暗号化本文で相手へ渡す」前提。
 
 transport tokenはAccess Token・Refresh Tokenと別audience（`samurai-meet-chat`）で、対象chat・session・transportだけに束縛した2分のJWSです。Refresh TokenをWebSocket、WebTransport、URL queryへ送ってはいけません。
 

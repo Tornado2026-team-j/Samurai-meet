@@ -38,10 +38,12 @@ const (
 // Service persists ciphertext-only chat messages. The server never receives
 // or decrypts the message body.
 type Service struct {
-	db            *sql.DB
-	signer        *auth.Signer
-	notifications *notification.Service
-	hub           *Hub
+	db                 *sql.DB
+	signer             *auth.Signer
+	notifications      *notification.Service
+	hub                *Hub
+	blobs              BlobStore
+	maxAttachmentBytes int64
 }
 
 type ChatSummary struct {
@@ -56,16 +58,17 @@ type ChatSummary struct {
 }
 
 type Message struct {
-	ID              string `json:"id"`
-	ChatID          string `json:"chat_id"`
-	SenderUserID    string `json:"sender_user_id"`
-	ClientMessageID string `json:"client_message_id"`
-	Sequence        int64  `json:"sequence"`
-	Ciphertext      string `json:"ciphertext"`
-	Nonce           string `json:"nonce"`
-	Algorithm       string `json:"algorithm"`
-	KeyVersion      string `json:"key_version"`
-	CreatedAt       string `json:"created_at"`
+	ID              string      `json:"id"`
+	ChatID          string      `json:"chat_id"`
+	SenderUserID    string      `json:"sender_user_id"`
+	ClientMessageID string      `json:"client_message_id"`
+	Sequence        int64       `json:"sequence"`
+	Ciphertext      string      `json:"ciphertext"`
+	Nonce           string      `json:"nonce"`
+	Algorithm       string      `json:"algorithm"`
+	KeyVersion      string      `json:"key_version"`
+	CreatedAt       string      `json:"created_at"`
+	Attachment      *Attachment `json:"attachment,omitempty"`
 }
 
 type MessagePage struct {
@@ -80,6 +83,9 @@ type SendMessageInput struct {
 	Nonce           string `json:"nonce"`
 	Algorithm       string `json:"algorithm"`
 	KeyVersion      string `json:"key_version"`
+	// AttachmentID optionally references a chat photo the caller already
+	// uploaded to this chat. REST only; WebSocket message.send ignores it.
+	AttachmentID string `json:"attachment_id"`
 }
 
 type TransportToken struct {
@@ -103,7 +109,20 @@ func NewService(database *sql.DB, signer *auth.Signer, notificationServices ...*
 	if len(notificationServices) > 0 {
 		notifications = notificationServices[0]
 	}
-	return &Service{db: database, signer: signer, notifications: notifications, hub: newHub()}
+	return &Service{db: database, signer: signer, notifications: notifications, hub: newHub(), maxAttachmentBytes: defaultMaxAttachmentBytes}
+}
+
+// WithAttachments enables chat photo attachments backed by blobs. maxBytes <= 0
+// keeps the default ciphertext size cap.
+func (s *Service) WithAttachments(blobs BlobStore, maxBytes int64) *Service {
+	if s == nil {
+		return nil
+	}
+	s.blobs = blobs
+	if maxBytes > 0 {
+		s.maxAttachmentBytes = maxBytes
+	}
+	return s
 }
 
 // sessionActive confirms the session behind a Chat Token is still usable:
@@ -184,10 +203,12 @@ func (s *Service) ListMessages(ctx context.Context, userID, chatID string, after
 		return MessagePage{}, err
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id,chat_id,sender_user_id,client_message_id,sequence,ciphertext,nonce,algorithm,key_version,created_at
-		FROM messages
-		WHERE chat_id=$1 AND sequence>$2 AND deleted_at IS NULL
-		ORDER BY sequence ASC
+		SELECT m.id,m.chat_id,m.sender_user_id,m.client_message_id,m.sequence,m.ciphertext,m.nonce,m.algorithm,m.key_version,m.created_at,
+		       a.id,a.content_type,a.size_bytes,a.cipher_sha256,a.nonce,a.algorithm,a.key_version,a.created_at
+		FROM messages m
+		LEFT JOIN chat_attachments a ON a.message_id=m.id AND a.deleted_at IS NULL
+		WHERE m.chat_id=$1 AND m.sequence>$2 AND m.deleted_at IS NULL
+		ORDER BY m.sequence ASC
 		LIMIT $3`, access.ChatID, after, limit+1)
 	if err != nil {
 		return MessagePage{}, err
@@ -196,8 +217,24 @@ func (s *Service) ListMessages(ctx context.Context, userID, chatID string, after
 	items := make([]Message, 0, limit)
 	for rows.Next() {
 		var item Message
-		if err := rows.Scan(&item.ID, &item.ChatID, &item.SenderUserID, &item.ClientMessageID, &item.Sequence, &item.Ciphertext, &item.Nonce, &item.Algorithm, &item.KeyVersion, &item.CreatedAt); err != nil {
+		var attID, attType, attHash, attNonce, attAlg, attKeyVersion, attCreated sql.NullString
+		var attSize sql.NullInt64
+		if err := rows.Scan(&item.ID, &item.ChatID, &item.SenderUserID, &item.ClientMessageID, &item.Sequence, &item.Ciphertext, &item.Nonce, &item.Algorithm, &item.KeyVersion, &item.CreatedAt,
+			&attID, &attType, &attSize, &attHash, &attNonce, &attAlg, &attKeyVersion, &attCreated); err != nil {
 			return MessagePage{}, err
+		}
+		if attID.Valid {
+			item.Attachment = &Attachment{
+				ID:           attID.String,
+				ChatID:       item.ChatID,
+				ContentType:  attType.String,
+				SizeBytes:    attSize.Int64,
+				CipherSHA256: attHash.String,
+				Nonce:        attNonce.String,
+				Algorithm:    attAlg.String,
+				KeyVersion:   attKeyVersion.String,
+				CreatedAt:    attCreated.String,
+			}
 		}
 		items = append(items, item)
 	}
@@ -267,6 +304,17 @@ func (s *Service) SendMessage(ctx context.Context, userID, chatID string, input 
 	} else if _, err = tx.ExecContext(ctx, `UPDATE chat_threads SET updated_at=$1 WHERE id=$2`, timestamp, access.ChatID); err != nil {
 		return Message{}, false, err
 	}
+	if attachmentID := strings.TrimSpace(input.AttachmentID); attachmentID != "" {
+		var linked bool
+		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM chat_attachments WHERE message_id=$1 AND deleted_at IS NULL)`, message.ID).Scan(&linked); err != nil {
+			return Message{}, false, err
+		}
+		if !linked {
+			if err = linkAttachmentTx(ctx, tx, access.ChatID, userID, attachmentID, message.ID, timestamp); err != nil {
+				return Message{}, false, err
+			}
+		}
+	}
 	if isNew && s.notifications != nil {
 		actorName, nameErr := s.notificationActorNameTx(ctx, tx, userID)
 		if nameErr != nil {
@@ -285,6 +333,13 @@ func (s *Service) SendMessage(ctx context.Context, userID, chatID string, input 
 	}
 	if err = tx.Commit(); err != nil {
 		return Message{}, false, err
+	}
+	if !isNew || strings.TrimSpace(input.AttachmentID) != "" {
+		attachment, aErr := s.attachmentByMessageID(ctx, message.ID)
+		if aErr != nil {
+			return Message{}, false, aErr
+		}
+		message.Attachment = attachment
 	}
 	if isNew && s.hub != nil {
 		s.hub.broadcastExceptUser(access.ChatID, userID, mustFrame(messageFrame{Type: serverFrameMessageCreated, Message: message}))
@@ -496,6 +551,9 @@ func validateMessageInput(input SendMessageInput) error {
 	input.Algorithm = strings.TrimSpace(input.Algorithm)
 	if !validIdentifier(input.ClientMessageID, maxClientMessageID) ||
 		!validIdentifier(input.KeyVersion, maxKeyVersion) || input.Algorithm != "AES-256-GCM" {
+		return ErrChatInvalidInput
+	}
+	if input.AttachmentID != "" && !validIdentifier(input.AttachmentID, maxClientMessageID) {
 		return ErrChatInvalidInput
 	}
 	ciphertext, err := base64.RawURLEncoding.DecodeString(input.Ciphertext)

@@ -111,7 +111,14 @@ func main() {
 	profiles := user.NewService(database)
 	notifications := notification.NewService(database)
 	matchingService := matching.NewService(database, notifications)
-	chatService := chat.NewService(database, signer, notifications)
+	chatService := chat.NewService(database, signer, notifications).
+		WithAttachments(store, int64(cfg.ImageStorage.MaxUploadBytes))
+	chatCleanupCtx, chatCleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	if e = chatService.ProcessExpiredAttachments(chatCleanupCtx, 24*time.Hour, time.Now()); e != nil {
+		chatCleanupCancel()
+		log.Fatalf("pending chat attachment cleanup failed: %v", e)
+	}
+	chatCleanupCancel()
 	meetingService := meeting.NewService(database)
 	safetyService := safety.NewService(database)
 	server := &http.Server{

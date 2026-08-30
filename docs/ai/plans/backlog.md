@@ -20,7 +20,7 @@ flowchart TD
 | P1 | native Passkey実機 | app links | Associated Domains/assetlinks、登録・別端末・解除を確認 |
 | P2 | 認証統合テスト拡張 | PostgreSQL | handoff/reuse/challenge/rotationの実DB並行ケース |
 | P2 | Web Passkey transaction reconciler | PostgreSQL/worker | bootstrap消費・handoff作成失敗時の孤児sessionを検出し、再試行または安全に失効させる |
-| P2 | 業務APIの残り | profile schema | プロフィール、募集、検索、関心、承認、完了、チャット（REST+WebSocket配送）、会合セッション／距離補助、通知一覧・未読管理、通報登録（`reports`）・ブロック作成/一覧/解除まで実装済み。残: 通報の運営キュー`/admin/reports`と`audit_logs`、rate limit、評価、チャット配送の複数インスタンス対応（`LISTEN/NOTIFY`） |
+| P2 | 業務APIの残り | profile schema | プロフィール、募集、検索、関心、承認、完了、チャット（REST+WebSocket配送＋写真添付の暗号文BLOB）、会合セッション／距離補助、通知一覧・未読管理、通報登録（`reports`）・ブロック作成/一覧/解除まで実装済み。残: 通報の運営キュー`/admin/reports`と`audit_logs`、rate limit、評価、チャット配送の複数インスタンス対応（`LISTEN/NOTIFY`） |
 | P2 | Stripe Identity本人確認 | Stripe Identity / Webhook / identity_verifications | Verification Session発行、Webhook署名検証・イベント冪等性・ユーザー紐付け・再確認期限を実装し、正規の検証結果だけ`verified`バッジへ反映。戻りURLやクライアント自己申告では更新しない |
 | P2 | プロフィール編集・通知のフロント接続 | Go API契約 | 募集公開・検索・応募・承認／辞退、通知一覧・未読管理は接続済み。自己紹介編集の完全同期、通知の実機E2E、OSプッシュ通知の要否を確認 |
 | P2 | ログアウト後の言語選択・履歴ガードのiOS実機確認 | Expo Router | コードと自動テストは実装済み。ログアウト後に旧保護画面へ戻らず、言語選択から再開することを実機で確認 |
@@ -29,6 +29,6 @@ flowchart TD
 | P0 | Native hardware posture | iOS Secure Enclave / Android Keystore | Expo Goと本番nativeを区別し、hardware-backed/attestation可否を画面と監査へ反映 |
 | P1 | Go admin panel | 認証・監査・運用権限設計 | 公開APIと別listenerまたは別serviceで、管理者認証、監査ログ、危険操作の再認証、運用分離を実機・障害時も検証 |
 | P1 | Recovery Codes | client-owned root key v2 | 8個程度のone-time auth recovery codeをhashのみ保存し、phrase復号能力と分離 |
-| P1 | Chat transport | 業務API | WebSocket配送を実装済み（別audience Chat Token、first-frame認証、20秒heartbeatでセッション/ブロック/マッチ失効、単一インスタンスのin-memoryハブ）。残: 複数インスタンスの`LISTEN/NOTIFY` fan-out、接続中のChat Tokenローテーション（`token_seq`）、Expo実機での再接続負荷試験 |
+| P1 | Chat transport | 業務API | WebSocket配送を実装済み（別audience Chat Token、first-frame認証、20秒heartbeatでセッション/ブロック/マッチ失効、単一インスタンスのin-memoryハブ）。写真添付（`chat_attachments`、暗号文BLOB、サーバーは鍵を持たない）も実装済み。残: 複数インスタンスの`LISTEN/NOTIFY` fan-out、接続中のChat Tokenローテーション（`token_seq`）、Expo実機での再接続負荷試験、添付の複数枚/サムネイル/削除API |
 
 各項目は実装前に脅威、API契約、migration、observability、rollback、E2E受入条件をPR本文へ記載する。
