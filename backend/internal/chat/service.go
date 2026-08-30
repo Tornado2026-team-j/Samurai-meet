@@ -47,6 +47,8 @@ type Service struct {
 	clusterCh      string
 	clusterEnabled bool
 	clusterLogf    func(string, ...any)
+
+	retentionDays int
 }
 
 type ChatSummary struct {
@@ -107,7 +109,7 @@ func NewService(database *sql.DB, signer *auth.Signer, notificationServices ...*
 	if len(notificationServices) > 0 {
 		notifications = notificationServices[0]
 	}
-	return &Service{db: database, signer: signer, notifications: notifications, hub: newHub(), sendLimiter: newSendRateLimiter(), instanceID: newInstanceID()}
+	return &Service{db: database, signer: signer, notifications: notifications, hub: newHub(), sendLimiter: newSendRateLimiter(), instanceID: newInstanceID(), retentionDays: defaultMessageRetentionDays}
 }
 
 // SetClusterLogger installs a logger for cross-instance fan-out diagnostics

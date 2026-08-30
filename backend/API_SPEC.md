@@ -497,6 +497,8 @@ Request body:
 
 サーバーは`ciphertext`を復号せず、平文本文・検索用プレビュー・暗号鍵を受け付けません。`client_message_id`は送信者とチャット単位で一意で、同じIDの再送は元のメッセージを返します。暗号文は復号前128KiBまでです。履歴は`sequence`をcursorにして再接続時に補完します。
 
+メッセージは作成から `CHAT_MESSAGE_RETENTION_DAYS`（既定180日）を過ぎると、6時間ごとのスイープで `deleted_at` を打たれ、暗号文・nonce が消去され、`chat_message_deletions` に監査行が残ります。以後は履歴・未読数・WebSocket 配送のいずれにも現れません。
+
 メッセージ送信はユーザー単位のトークンバケットでレート制限します（`CHAT_SEND_BURST` 既定15、`CHAT_SEND_REFILL_PER_MINUTE` 既定60）。REST/WebSocket で共通の予算を消費し、超過時は REST が `429 {"error":"chat_rate_limited"}` ＋ `Retry-After` ヘッダ、WebSocket が `{"type":"error","code":"rate_limited","retry_after_seconds":N}`（接続は維持、`closing` なし）を返します。クライアントは chat-transport.md §7.2 の自動再送契約に従い `Retry-After` / `retry_after_seconds` を尊重します。
 
 transport tokenはAccess Token・Refresh Tokenと別audience（`samurai-meet-chat`）で、対象chat・session・transportだけに束縛した2分のJWSです。Refresh TokenをWebSocket、WebTransport、URL queryへ送ってはいけません。

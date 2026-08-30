@@ -101,9 +101,11 @@ QUICの理由、JWS claimの検証、heartbeat、失敗時の自動再送、WebS
 - `POST /matches/{id}/meeting`
 - `GET|POST /meetings/{id}/proximity`
 - QUIC endpoint：将来、環境ごとに設定する（`chat_id`単位。HTTP/3 WebTransportの場合はHTTPS URLとして提供）
-- テーブル：`matches`、`chat_threads`、`messages`、`chat_read_states`、`photos`
+- テーブル：`matches`、`chat_threads`、`messages`、`chat_read_states`、`chat_token_sequences`、`chat_message_deletions`、`photos`
 
 RESTのメッセージ送信は`accepted`マッチの参加者だけが利用でき、本文ではなくBase64URLのAES-256-GCM暗号文を保存します。`client_message_id`で再送を冪等化し、WebSocket未接続・再接続直後は`sequence` cursorで`GET /chats/{id}/messages?after=`を使って補完します。サーバーは暗号文を復号しません。
+
+保持期間（既定180日・`CHAT_MESSAGE_RETENTION_DAYS`）を過ぎたメッセージは6時間ごとのスイープで`deleted_at`を打ち、暗号文・nonceを消去し、`chat_message_deletions`へ監査行を残します。以後は履歴・未読数・配送のいずれにも現れません。
 
 WebSocketの配送はプロセス内ハブ（`hub.go`）で行い、複数インスタンス構成では PostgreSQL `LISTEN/NOTIFY` fan-out（`cluster.go`）が各インスタンスの `message.created` / `message.read` / `typing` を他インスタンスのローカルソケットへ再配送します。NOTIFY のペイロードは `sequence` などの最小情報だけで、受信側が暗号文行を DB から再取得します（8000 byte 上限内）。発行元インスタンスのイベントは自分では再配送しません。NOTIFY 取りこぼし時はクライアントが再接続時に `sequence` cursor で REST 補完します。単一インスタンス運用では `StartClusterFanout` を呼ばなければ NOTIFY を出しません。`LISTEN` 用に専用のプールコネクションを1本占有します。
 
@@ -117,10 +119,11 @@ WebSocketの配送はプロセス内ハブ（`hub.go`）で行い、複数イン
 - ブロック後は新規メッセージを送受信できない。
 - 送信レート上限を超えると REST は 429、WebSocket は `rate_limited` エラーフレームで拒否し、接続は維持される（統合テスト `TestChatSendRateLimit`）。
 - セッション失効・マッチ終了（`completed`/`cancelled`）を heartbeat で検知し `closing` を送って切断する（統合テスト `TestChatWebSocketClosesOnSessionRevoke` / `TestChatWebSocketClosesOnMatchCompletion`）。失効していない相手側の接続は維持される。
+- 保持期間を過ぎたメッセージは暗号文が消去され、履歴・未読・配送から除外され、削除監査が残る（統合テスト `TestChatMessageRetentionPurge`）。
 
 ## 9. 要確認
 
-- メッセージの保存期間と削除後の監査ログ。
+- メッセージの保存期間の**具体日数**（実装は完了。既定180日・`CHAT_MESSAGE_RETENTION_DAYS`で調整、期限超過で暗号文消去＋`chat_message_deletions`へ監査。最終日数は運用・法務判断）。
 - E2EE の採用範囲と通報時の検査方法。
 - 既読を相手へ必ず通知するか。
 - タイピング表示、通知、オフライン送信の MVP 対象可否。

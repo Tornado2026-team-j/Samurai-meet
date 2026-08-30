@@ -113,10 +113,12 @@ func main() {
 	matchingService := matching.NewService(database, notifications)
 	chatService := chat.NewService(database, signer, notifications)
 	chatService.ConfigureSendRateLimit(cfg.Chat.SendBurst, float64(cfg.Chat.SendRefillPerMinute)/60.0)
+	chatService.ConfigureMessageRetention(cfg.Chat.MessageRetentionDays)
 	chatService.SetClusterLogger(log.Printf)
 	if err = chatService.StartClusterFanout(context.Background()); err != nil {
 		log.Fatalf("chat cross-instance fan-out initialization failed: %v", err)
 	}
+	startChatRetentionSweep(chatService)
 	meetingService := meeting.NewService(database)
 	safetyService := safety.NewService(database)
 	server := &http.Server{
@@ -128,8 +130,38 @@ func main() {
 		MaxHeaderBytes:    32 * 1024,
 		Handler:           httpapi.NewRouterWithOptions(httpapi.RouterOptions{Environment: cfg.Environment, AllowExpoGoRedirect: cfg.AllowExpoGoRedirect, DevClientOrigin: cfg.DevClientOrigin, ClientOrigin: cfg.ClientOrigin, OAuthLogin: oauthLogin, PreAuth: preauth, Sessions: sessions, SessionHandoffs: handoffs, PasskeyBootstraps: bootstraps, Recovery: recovery, Passkeys: passkeys, KeyEnvelopes: envelopes, Devices: devices, DeviceTransfers: deviceTransfers, Images: images, Accounts: accounts, Profiles: profiles, Matching: matchingService, Chats: chatService, Meetings: meetingService, Notifications: notifications, Safety: safetyService}),
 	}
+	log.Printf("chat message retention window: %d days", chatService.RetentionDays())
 	log.Printf("backend server listening on %s (environment=%s)", cfg.HTTPAddr, cfg.Environment)
 	if e := server.ListenAndServe(); e != nil && e != http.ErrServerClosed {
 		log.Fatal(e)
 	}
+}
+
+// startChatRetentionSweep tombstones expired chat messages once at startup and
+// then every 6 hours. It is safe on every instance: the purge statement is
+// idempotent and races cleanly.
+func startChatRetentionSweep(chatService *chat.Service) {
+	if chatService.RetentionDays() <= 0 {
+		return
+	}
+	sweep := func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		purged, err := chatService.PurgeExpiredMessages(ctx, time.Now())
+		if err != nil {
+			log.Printf("chat retention sweep failed: %v", err)
+			return
+		}
+		if purged > 0 {
+			log.Printf("chat retention sweep tombstoned %d message(s)", purged)
+		}
+	}
+	go func() {
+		sweep()
+		ticker := time.NewTicker(6 * time.Hour)
+		defer ticker.Stop()
+		for range ticker.C {
+			sweep()
+		}
+	}()
 }
