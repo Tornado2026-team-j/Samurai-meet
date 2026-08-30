@@ -52,18 +52,22 @@ func chatItem(service *chat.Service, sessions *auth.SessionService) http.Handler
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "chat_unavailable"})
 			return
 		}
-		chatID, action, ok := chatPathParts(r.URL.Path)
-		if !ok {
+		chatID, rest, ok := chatPathParts(r.URL.Path)
+		if !ok || len(rest) == 0 {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "chat_not_found"})
 			return
 		}
-		switch action {
-		case "messages":
+		switch {
+		case rest[0] == "messages" && len(rest) == 1:
 			chatMessages(w, r, service, claims.Subject, chatID)
-		case "read":
+		case rest[0] == "read" && len(rest) == 1:
 			chatRead(w, r, service, claims.Subject, chatID)
-		case "transport-token":
+		case rest[0] == "transport-token" && len(rest) == 1:
 			chatTransportToken(w, r, service, claims.Subject, claims.SessionID, chatID)
+		case rest[0] == "attachments" && len(rest) == 1:
+			chatAttachmentUpload(w, r, service, claims.Subject, chatID)
+		case rest[0] == "attachments" && len(rest) == 2:
+			chatAttachmentDownload(w, r, service, claims.Subject, chatID, rest[1])
 		default:
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "chat_not_found"})
 		}
@@ -169,17 +173,33 @@ func chatQuery(r *http.Request) (int64, int, error) {
 	return after, limit, nil
 }
 
-func chatPathParts(path string) (string, string, bool) {
+func chatPathParts(path string) (string, []string, bool) {
 	trimmed := strings.Trim(strings.TrimPrefix(path, chatPath+"/"), "/")
+	if trimmed == "" {
+		return "", nil, false
+	}
 	parts := strings.Split(trimmed, "/")
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-		return "", "", false
+	if len(parts) < 2 || len(parts) > 3 {
+		return "", nil, false
+	}
+	for _, part := range parts {
+		if part == "" {
+			return "", nil, false
+		}
 	}
 	chatID, err := url.PathUnescape(parts[0])
 	if err != nil || chatID == "" {
-		return "", "", false
+		return "", nil, false
 	}
-	return chatID, parts[1], true
+	rest := parts[1:]
+	if len(rest) == 2 {
+		tail, err := url.PathUnescape(rest[1])
+		if err != nil || tail == "" || strings.Contains(tail, "/") {
+			return "", nil, false
+		}
+		rest[1] = tail
+	}
+	return chatID, rest, true
 }
 
 func decodeOptionalJSONRequest(w http.ResponseWriter, r *http.Request, destination any, maxBytes int64) error {
@@ -212,14 +232,20 @@ func writeChatError(w http.ResponseWriter, err error) {
 		status, code = http.StatusBadRequest, "invalid_chat_request"
 	case errors.Is(err, chat.ErrMessageTooLarge):
 		status, code = http.StatusRequestEntityTooLarge, "chat_message_too_large"
-	case errors.Is(err, chat.ErrChatNotFound), errors.Is(err, chat.ErrChatBlocked), errors.Is(err, chat.ErrMessageNotFound):
+	case errors.Is(err, chat.ErrChatAttachmentTooLarge):
+		status, code = http.StatusRequestEntityTooLarge, "chat_attachment_too_large"
+	case errors.Is(err, chat.ErrChatNotFound), errors.Is(err, chat.ErrChatBlocked), errors.Is(err, chat.ErrMessageNotFound), errors.Is(err, chat.ErrChatAttachmentNotFound):
 		status, code = http.StatusNotFound, "chat_not_found"
 	case errors.Is(err, chat.ErrChatForbidden):
 		status, code = http.StatusForbidden, "chat_forbidden"
 	case errors.Is(err, chat.ErrChatNotAvailable):
 		status, code = http.StatusConflict, "chat_not_available"
+	case errors.Is(err, chat.ErrTooManyPendingAttachments):
+		status, code = http.StatusConflict, "too_many_pending_attachments"
 	case errors.Is(err, chat.ErrChatSignerMissing):
 		status, code = http.StatusServiceUnavailable, "chat_transport_unavailable"
+	case errors.Is(err, chat.ErrChatAttachmentUnavailable):
+		status, code = http.StatusServiceUnavailable, "chat_attachment_unavailable"
 	}
 	writeJSON(w, status, map[string]string{"error": code})
 }

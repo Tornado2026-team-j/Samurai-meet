@@ -39,20 +39,36 @@
 
 ## 5. API / DB
 
+### プロフィールアイコン・端末暗号化写真
+
 - `POST /photos`
 - `DELETE /photos/{id}`
 - `GET /photos/{id}` または短期取得 URL
-- テーブル：`photos`、`messages`
+- テーブル：`photos`
 
 初期上限値は要決定ですが、少なくとも「1 ファイル上限」「1 日あたり容量」「許可 MIME」「最大解像度」を API と UI で一致させます。
+
+### チャット写真（実装済み）
+
+チャット写真は**プロフィール写真とは別系統**で、`photos` テーブルではなく `chat_attachments` テーブル＋暗号文BLOBストレージを使う。サーバーは鍵を保持も導出もせず、`nonce` / `algorithm` / `key_version` を不透明メタデータとして保存するだけ（チャットメッセージと同じ扱い）。
+
+- `POST /api/v1/chats/{id}/attachments` — AES-256-GCM暗号文をraw bodyでアップロード。メタは `X-Chat-Attachment-*` ヘッダ。
+- `GET /api/v1/chats/{id}/attachments/{attachment_id}` — 暗号文を `application/octet-stream` で取得。`accepted`/`completed` マッチの参加者のみ、ブロック時は不可。
+- `POST /api/v1/chats/{id}/messages` の body に `attachment_id` を入れて、アップロード済みの添付を1つのメッセージへ結び付ける（同一チャット・同一アップロード者・未参照のものだけ）。
+- テーブル：`chat_attachments`（`0034_chat_attachments.sql`）。
+- 暗号文上限は `IMAGE_MAX_UPLOAD_BYTES`（既定20MiB）。許可 MIME は `image/jpeg` / `image/png` / `image/webp` / `application/octet-stream`。
+- メッセージから参照されない添付は約24時間後に起動時スイープ（`chat.Service.ProcessExpiredAttachments`）で削除。
+- アップロードは Access Token とマッチ参加者判定のみ（プロフィール写真の端末proofは要求しない。Key-B画像方式とは別系統のため）。
+
+詳細な契約は [チャット仕様](chat.md) と [API 仕様書](../../backend/API_SPEC.md) §6.7。
 
 ## 6. セキュリティ
 
 - 拡張子だけでなくファイル実体を検査する。
 - 公開バケットを使用しない。
-- EXIF GPS、端末情報、不要なメタデータを除去する。
-- ウイルス・不正ファイル検査を行う。
-- チャット写真はそのマッチ参加者だけが取得できる。
+- EXIF GPS、端末情報、不要なメタデータを除去する。**チャット写真はサーバーが復号しないため、除去はクライアントが暗号化前に行う契約**。
+- ウイルス・不正ファイル検査を行う（チャット写真は暗号文のため、サーバー側スキャンは不可。クライアント前処理に依存）。
+- チャット写真はそのマッチ参加者だけが取得できる（`accepted`/`completed`、非ブロック）。
 - 本人確認書類の保存・削除は、チャット写真と別ポリシーにする。
 
 ## 7. 受け入れ条件

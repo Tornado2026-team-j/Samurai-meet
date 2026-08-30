@@ -95,6 +95,8 @@ func setSecurityHeaders(w http.ResponseWriter, r *http.Request) {
 
 func requestRateProfile(path string) (int, time.Duration, string) {
 	switch {
+	case strings.HasPrefix(path, APIV1Prefix+"/chats/") && strings.HasSuffix(path, "/attachments"):
+		return 30, defaultRequestWindow, "chat-upload"
 	case path == APIV1Prefix+"/auth/refresh":
 		return 30, defaultRequestWindow, "refresh"
 	case strings.HasPrefix(path, recoveryPath), strings.HasPrefix(path, APIV1Prefix+"/auth/passkey"), strings.HasPrefix(path, deviceTransferPath):

@@ -189,5 +189,16 @@ func (s *Service) loadMessageBySequence(chatID string, sequence int64) (Message,
 	if errors.Is(err, sql.ErrNoRows) {
 		return Message{}, ErrMessageNotFound
 	}
-	return message, err
+	if err != nil {
+		return Message{}, err
+	}
+	// Match the local fan-out and REST history: a photo message carries its
+	// attachment metadata so a socket on another instance renders it without a
+	// REST refetch.
+	attachment, aErr := s.attachmentByMessageID(ctx, message.ID)
+	if aErr != nil {
+		return Message{}, aErr
+	}
+	message.Attachment = attachment
+	return message, nil
 }

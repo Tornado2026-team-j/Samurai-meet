@@ -115,13 +115,21 @@ func main() {
 	notifications := notification.NewService(database)
 	matchingService := matching.NewService(database, notifications)
 	recruitmentClassifier := classification.NewGemini(cfg.Gemini.APIKey, cfg.Gemini.Model)
-	chatService := chat.NewService(database, signer, notifications)
+	chatService := chat.NewService(database, signer, notifications).
+		WithAttachments(store, int64(cfg.ImageStorage.MaxUploadBytes))
 	chatService.ConfigureSendRateLimit(cfg.Chat.SendBurst, float64(cfg.Chat.SendRefillPerMinute)/60.0)
 	chatService.ConfigureMessageRetention(cfg.Chat.MessageRetentionDays)
 	chatService.SetClusterLogger(log.Printf)
 	if err = chatService.StartClusterFanout(context.Background()); err != nil {
 		log.Fatalf("chat cross-instance fan-out initialization failed: %v", err)
 	}
+	chatCleanupCtx, chatCleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	if e = chatService.ProcessExpiredAttachments(chatCleanupCtx, 24*time.Hour, time.Now()); e != nil {
+		chatCleanupCancel()
+		log.Fatalf("pending chat attachment cleanup failed: %v", e)
+	}
+	chatCleanupCancel()
+	startChatAttachmentSweep(chatService)
 	startChatRetentionSweep(chatService)
 	meetingService := meeting.NewService(database)
 	safetyService := safety.NewService(database)
@@ -141,6 +149,26 @@ func main() {
 	if e := server.ListenAndServe(); e != nil && e != http.ErrServerClosed {
 		log.Fatal(e)
 	}
+}
+
+// startChatAttachmentSweep removes abandoned uploads during normal uptime as
+// well as at startup. A failed storage deletion remains marked and is retried
+// by the next run without making it linkable again.
+func startChatAttachmentSweep(chatService *chat.Service) {
+	sweep := func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		if err := chatService.ProcessExpiredAttachments(ctx, 24*time.Hour, time.Now()); err != nil {
+			log.Printf("chat attachment cleanup failed: %v", err)
+		}
+	}
+	go func() {
+		ticker := time.NewTicker(time.Hour)
+		defer ticker.Stop()
+		for range ticker.C {
+			sweep()
+		}
+	}()
 }
 
 // startChatRetentionSweep tombstones expired chat messages once at startup and

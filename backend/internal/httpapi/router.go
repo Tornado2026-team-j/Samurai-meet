@@ -173,9 +173,9 @@ func withCORS(next http.Handler, o RouterOptions) http.Handler {
 		if containsExactOrigin(allowedOrigins, origin) {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Vary", "Origin")
-			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Passkey-Ceremony-Token, X-Web-Passkey-Token, X-Photo-Visibility, X-Photo-Content-Type, X-Photo-Nonce, X-Photo-Algorithm, X-Photo-Key-Version, X-Photo-Device-ID, X-Photo-Wrapped-Key, X-Photo-Account-Wrapped-Key, X-Photo-Server-Wrapped-Key, X-Photo-Wrapping-Algorithm, X-Device-Timestamp, X-Device-Nonce, X-Device-Body-SHA256, X-Device-Signature")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Passkey-Ceremony-Token, X-Web-Passkey-Token, X-Photo-Visibility, X-Photo-Content-Type, X-Photo-Nonce, X-Photo-Algorithm, X-Photo-Key-Version, X-Photo-Device-ID, X-Photo-Wrapped-Key, X-Photo-Account-Wrapped-Key, X-Photo-Server-Wrapped-Key, X-Photo-Wrapping-Algorithm, X-Chat-Attachment-Content-Type, X-Chat-Attachment-Nonce, X-Chat-Attachment-Algorithm, X-Chat-Attachment-Key-Version, X-Device-Timestamp, X-Device-Nonce, X-Device-Body-SHA256, X-Device-Signature")
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-			w.Header().Set("Access-Control-Expose-Headers", "X-Photo-Nonce, X-Photo-Algorithm, X-Photo-Key-Version, X-Photo-Device-ID, X-Photo-Wrapped-Key, X-Photo-Account-Wrapped-Key, X-Photo-Wrapping-Algorithm")
+			w.Header().Set("Access-Control-Expose-Headers", "X-Photo-Nonce, X-Photo-Algorithm, X-Photo-Key-Version, X-Photo-Device-ID, X-Photo-Wrapped-Key, X-Photo-Account-Wrapped-Key, X-Photo-Wrapping-Algorithm, X-Chat-Attachment-Nonce, X-Chat-Attachment-Algorithm, X-Chat-Attachment-Key-Version")
 			if r.Method == http.MethodOptions {
 				w.WriteHeader(http.StatusNoContent)
 				return

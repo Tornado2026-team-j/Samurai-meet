@@ -34,7 +34,10 @@ func (s *Service) RetentionDays() int {
 // PurgeExpiredMessages tombstones every message older than the retention
 // window: it sets deleted_at, clears the ciphertext and nonce (the point of a
 // retention policy is that the content is gone), and writes one
-// chat_message_deletions audit row per message. Read paths already filter
+// chat_message_deletions audit row per message. A photo attachment linked to a
+// purged message is tombstoned in the same statement (deleted_at set), which
+// removes it from history and the download endpoint immediately; the chat
+// attachment sweep then deletes its ciphertext blob. Read paths already filter
 // deleted_at IS NULL, so a tombstoned message disappears from history, unread
 // counts, and cross-instance fan-out. It returns the number purged and is safe
 // to run concurrently on multiple instances and to call repeatedly.
@@ -55,6 +58,10 @@ func (s *Service) PurgeExpiredMessages(ctx context.Context, now time.Time) (int,
 			UPDATE messages m SET deleted_at=$3, ciphertext='', nonce=''
 			FROM expired e WHERE m.id=e.id
 			RETURNING m.id, m.chat_id, m.sequence, m.sender_user_id, m.created_at
+		),
+		purged_attachments AS (
+			UPDATE chat_attachments a SET deleted_at=$3
+			FROM purged p WHERE a.message_id=p.id AND a.deleted_at IS NULL
 		)
 		INSERT INTO chat_message_deletions
 			(chat_id, message_id, sequence, sender_user_id, message_created_at, reason, retention_days, deleted_at)

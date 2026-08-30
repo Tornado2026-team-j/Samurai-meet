@@ -24,6 +24,7 @@
 | 複数インスタンス配送 | `backend/internal/chat/cluster.go` | Go（PostgreSQL `LISTEN/NOTIFY` fan-out 実装済み） |
 | QUIC配送（将来） | `backend/internal/chat/quic.go`（未実装） | Go（標準候補） |
 | 保存・取得・既読 | `backend/internal/chat/service.go` / `backend/internal/httpapi/chat.go` | Go（REST実装済み） |
+| 写真添付（暗号文BLOB） | `backend/internal/chat/attachment.go` / `backend/internal/httpapi/chat_attachment.go` | Go（REST実装済み。サーバーは鍵を持たない） |
 
 ## 3. 利用条件
 
@@ -102,18 +103,22 @@ QUICの理由、JWS claimの検証、heartbeat、失敗時の自動再送、WebS
 
 - `GET /chats`（`accepted` / `completed`）
 - `GET /chats/{id}/messages`（`accepted` / `completed`）
-- `POST /chats/{id}/messages`（`accepted` のみ）
+- `POST /chats/{id}/messages`（`accepted` のみ。任意で `attachment_id` を含む）
 - `POST /chats/{id}/read`（`accepted` / `completed`）
 - `POST /chats/{id}/transport-token`（`accepted` のみ）
 - `GET /ws/chats/{id}`（`accepted` のみ）
+- `POST /chats/{id}/attachments`（チャット写真の暗号文アップロード。`accepted` のみ）
+- `GET /chats/{id}/attachments/{attachment_id}`（チャット写真の暗号文取得。`accepted` / `completed`）
 - `POST /matches/{id}/meeting`
 - `GET|POST /meetings/{id}/proximity`
 - QUIC endpoint：将来、環境ごとに設定する（`chat_id`単位。HTTP/3 WebTransportの場合はHTTPS URLとして提供）
-- テーブル：`matches`、`chat_threads`、`messages`、`chat_read_states`、`chat_token_sequences`、`chat_message_deletions`、`photos`
+- テーブル：`matches`、`chat_threads`、`messages`、`chat_read_states`、`chat_token_sequences`、`chat_message_deletions`、`chat_attachments`、`photos`
 
 RESTのメッセージ送信・`transport-token`発行・WebSocket接続は`accepted`マッチの参加者だけが利用できます。`completed`マッチは一覧・履歴・既読のみで、送信と接続は`chat_not_available`で拒否されます。本文ではなくBase64URLのAES-256-GCM暗号文を保存します。`client_message_id`で再送を冪等化し、WebSocket未接続・再接続直後は`sequence` cursorで`GET /chats/{id}/messages?after=`を使って補完します。サーバーは暗号文を復号しません。
 
-保持期間（既定180日・`CHAT_MESSAGE_RETENTION_DAYS`）を過ぎたメッセージは6時間ごとのスイープで`deleted_at`を打ち、暗号文・nonceを消去し、`chat_message_deletions`へ監査行を残します。以後は履歴・未読数・配送のいずれにも現れません。
+写真添付は2段階です。まず`POST /chats/{id}/attachments`へAES-256-GCM暗号文をraw bodyでアップロードし（メタは`X-Chat-Attachment-*`ヘッダ）、次に`POST /chats/{id}/messages`の`attachment_id`で1つのメッセージへ結び付けます。参照できるのは同一チャットで自分がアップロードした未参照の添付だけです。`GET /messages`とWebSocketの`message.created` / `message.ack`は、添付付きメッセージに`attachment`オブジェクトを含めます。サーバーは画像鍵を持たず、`nonce` / `algorithm` / `key_version`を不透明メタデータとして保存するだけで、EXIF除去はクライアントの責務です。暗号文上限は`IMAGE_MAX_UPLOAD_BYTES`（既定20MiB）、許可MIMEは`image/jpeg` / `image/png` / `image/webp` / `application/octet-stream`。メッセージから参照されない添付は約24時間後にスイープで削除します。取得は`accepted`/`completed`マッチの参加者のみ、ブロック時は不可です。詳細は [写真仕様](photos.md)。
+
+保持期間（既定180日・`CHAT_MESSAGE_RETENTION_DAYS`）を過ぎたメッセージは6時間ごとのスイープで`deleted_at`を打ち、暗号文・nonceを消去し、`chat_message_deletions`へ監査行を残します。写真添付が結び付いている場合は同じスイープで添付行も`deleted_at`を打ち（取得エンドポイントは即座に404）、次の添付スイープが暗号文BLOBと行を削除します。以後は履歴・未読数・配送のいずれにも現れません。
 
 WebSocketの配送はプロセス内ハブ（`hub.go`）で行い、複数インスタンス構成では PostgreSQL `LISTEN/NOTIFY` fan-out（`cluster.go`）が各インスタンスの `message.created` / `message.read` / `typing` を他インスタンスのローカルソケットへ再配送します。NOTIFY のペイロードは `sequence` などの最小情報だけで、受信側が暗号文行を DB から再取得します（8000 byte 上限内）。発行元インスタンスのイベントは自分では再配送しません。NOTIFY 取りこぼし時はクライアントが再接続時に `sequence` cursor で REST 補完します。単一インスタンス運用では `StartClusterFanout` を呼ばなければ NOTIFY を出しません。`LISTEN` 用に専用のプールコネクションを1本占有します。
 
