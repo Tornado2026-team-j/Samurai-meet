@@ -306,6 +306,18 @@ func (s *Service) handleSend(c *wsConn, frame inboundFrame) {
 		KeyVersion:      frame.KeyVersion,
 	}, time.Now(), c)
 	if err != nil {
+		var rateLimited *RateLimitError
+		if errors.As(err, &rateLimited) {
+			// Transient: the client backs off and retries the same
+			// client_message_id, it does not tear the connection down.
+			c.enqueue(mustFrame(errorFrame{
+				Type:              serverFrameError,
+				Code:              "rate_limited",
+				Message:           "message rejected: send rate limit exceeded",
+				RetryAfterSeconds: int(rateLimited.RetryAfter.Round(time.Second) / time.Second),
+			}))
+			return
+		}
 		s.replyError(c, wsErrorCode(err), "message rejected")
 		if errors.Is(err, ErrChatNotAvailable) || errors.Is(err, ErrChatBlocked) || errors.Is(err, ErrChatClosed) || errors.Is(err, ErrChatForbidden) {
 			c.stop(wsErrorCode(err))
@@ -359,6 +371,8 @@ func wsErrorCode(err error) string {
 	switch {
 	case errors.Is(err, ErrChatInvalidInput):
 		return "invalid_input"
+	case errors.Is(err, ErrChatRateLimited):
+		return "rate_limited"
 	case errors.Is(err, ErrMessageTooLarge):
 		return "message_too_large"
 	case errors.Is(err, ErrChatBlocked):

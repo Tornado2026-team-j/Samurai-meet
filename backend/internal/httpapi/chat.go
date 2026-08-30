@@ -198,6 +198,15 @@ func decodeOptionalJSONRequest(w http.ResponseWriter, r *http.Request, destinati
 func writeChatError(w http.ResponseWriter, err error) {
 	status := http.StatusInternalServerError
 	code := "chat_failed"
+	if rateLimited := (*chat.RateLimitError)(nil); errors.As(err, &rateLimited) {
+		seconds := int(rateLimited.RetryAfter.Round(time.Second) / time.Second)
+		if seconds < 1 {
+			seconds = 1
+		}
+		w.Header().Set("Retry-After", strconv.Itoa(seconds))
+		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "chat_rate_limited"})
+		return
+	}
 	switch {
 	case errors.Is(err, chat.ErrChatInvalidInput):
 		status, code = http.StatusBadRequest, "invalid_chat_request"

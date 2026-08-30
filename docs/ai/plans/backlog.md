@@ -20,7 +20,7 @@ flowchart TD
 | P1 | native Passkey実機 | app links | Associated Domains/assetlinks、登録・別端末・解除を確認 |
 | P2 | 認証統合テスト拡張 | PostgreSQL | handoff/reuse/challenge/rotationの実DB並行ケース |
 | P2 | Web Passkey transaction reconciler | PostgreSQL/worker | bootstrap消費・handoff作成失敗時の孤児sessionを検出し、再試行または安全に失効させる |
-| P2 | 業務APIの残り | profile schema | プロフィール、募集、検索、関心、承認、完了、チャット（REST+WebSocket配送）、会合セッション／距離補助、通知一覧・未読管理、通報登録（`reports`）・ブロック作成/一覧/解除まで実装済み。残: 通報の運営キュー`/admin/reports`と`audit_logs`、rate limit、評価、チャット配送の複数インスタンス対応（`LISTEN/NOTIFY`） |
+| P2 | 業務APIの残り | profile schema | プロフィール、募集、検索、関心、承認、完了、チャット（REST+WebSocket配送）、会合セッション／距離補助、通知一覧・未読管理、通報登録（`reports`）・ブロック作成/一覧/解除まで実装済み。残: 通報の運営キュー`/admin/reports`と`audit_logs`、評価、チャット配送の複数インスタンス対応（`LISTEN/NOTIFY`）。IPベースのHTTP rate limitとチャット送信のユーザー単位rate limitは実装済み |
 | P2 | Stripe Identity本人確認 | Stripe Identity / Webhook / identity_verifications | Verification Session発行、Webhook署名検証・イベント冪等性・ユーザー紐付け・再確認期限を実装し、正規の検証結果だけ`verified`バッジへ反映。戻りURLやクライアント自己申告では更新しない |
 | P2 | プロフィール編集・通知のフロント接続 | Go API契約 | 募集公開・検索・応募・承認／辞退、通知一覧・未読管理は接続済み。自己紹介編集の完全同期、通知の実機E2E、OSプッシュ通知の要否を確認 |
 | P2 | ログアウト後の言語選択・履歴ガードのiOS実機確認 | Expo Router | コードと自動テストは実装済み。ログアウト後に旧保護画面へ戻らず、言語選択から再開することを実機で確認 |

@@ -29,6 +29,7 @@
 - `matches.status = accepted` の参加者だけが利用できる。
 - ブロックまたは運営停止された場合は送受信を停止する。
 - マッチ成立前の自由チャットは提供しない。
+- メッセージ送信はユーザー単位のトークンバケットでレート制限する（REST/WebSocket 共通、`chat.Service` 層で実施）。既定は容量15・補充60/分（`CHAT_SEND_BURST` / `CHAT_SEND_REFILL_PER_MINUTE`）。超過時は REST が `429 chat_rate_limited` ＋ `Retry-After`、WebSocket が `{"type":"error","code":"rate_limited","retry_after_seconds":N}`（接続は維持し、`closing` は送らない）。
 - 将来のリアルタイム配送は QUIC（HTTP/3 WebTransportを含む）を標準候補とし、`aud = samurai-meet-chat` のChat Tokenだけを利用する。現行はRESTである。
 - Refresh Tokenを将来のtransportへ送信しない。
 
@@ -61,7 +62,7 @@ MVP のリアルタイム配送は WebSocket。QUIC / HTTP/3 WebTransport は将
 | `message.ack` | 自分の送信の確定。送信を発行したソケットにだけ返す。`message`, `duplicate`（再送で既存を返した場合 true） |
 | `message.read` | 既読の前進。`user_id`, `last_message_sequence`。既読操作を発行したソケット以外の全ソケットへ配送する（相手の端末＋既読した本人の他端末） |
 | `typing` | `user_id`, `state`（`start` / `stop`） |
-| `error` | `code`, `message`。回復不能な `code`（`blocked` / `chat_not_available` / `chat_closed` / `forbidden`）の後は `closing` が続く |
+| `error` | `code`, `message`。回復不能な `code`（`blocked` / `chat_not_available` / `chat_closed` / `forbidden`）の後は `closing` が続く。`rate_limited` は一時的で `closing` は続かず、`retry_after_seconds` を伴う |
 | `closing` | `reason`。サーバーが接続を閉じる直前に一度だけ送る |
 
 送信メッセージには `client_message_id` を付け、再送されても二重登録しません（`message.send` は既存の REST `SendMessage` と同じ冪等性）。`message.created` / `message.read` は REST 経由の送信・既読でも接続中の全ソケットへ配送されます。配送の除外はユーザー単位ではなくソケット単位のため、同一ユーザーが複数端末で接続していても、送信・既読を行っていない他端末は更新を受け取れます（`typing` だけは自端末のエコーを避けるためユーザー単位で除外）。
@@ -111,6 +112,7 @@ WebSocket配送は現状**単一APIインスタンス前提のin-memoryハブ**�
 - 同じ送信操作を再試行しても二重メッセージにならない。
 - 既読状態が相手へ反映される。
 - ブロック後は新規メッセージを送受信できない。
+- 送信レート上限を超えると REST は 429、WebSocket は `rate_limited` エラーフレームで拒否し、接続は維持される（統合テスト `TestChatSendRateLimit`）。
 
 ## 9. 要確認
 

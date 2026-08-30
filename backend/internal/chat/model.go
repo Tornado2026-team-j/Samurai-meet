@@ -72,9 +72,10 @@ type typingFrame struct {
 }
 
 type errorFrame struct {
-	Type    string `json:"type"`
-	Code    string `json:"code"`
-	Message string `json:"message"`
+	Type              string `json:"type"`
+	Code              string `json:"code"`
+	Message           string `json:"message"`
+	RetryAfterSeconds int    `json:"retry_after_seconds,omitempty"`
 }
 
 type closingFrame struct {

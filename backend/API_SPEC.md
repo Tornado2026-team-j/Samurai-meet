@@ -497,6 +497,8 @@ Request body:
 
 サーバーは`ciphertext`を復号せず、平文本文・検索用プレビュー・暗号鍵を受け付けません。`client_message_id`は送信者とチャット単位で一意で、同じIDの再送は元のメッセージを返します。暗号文は復号前128KiBまでです。履歴は`sequence`をcursorにして再接続時に補完します。
 
+メッセージ送信はユーザー単位のトークンバケットでレート制限します（`CHAT_SEND_BURST` 既定15、`CHAT_SEND_REFILL_PER_MINUTE` 既定60）。REST/WebSocket で共通の予算を消費し、超過時は REST が `429 {"error":"chat_rate_limited"}` ＋ `Retry-After` ヘッダ、WebSocket が `{"type":"error","code":"rate_limited","retry_after_seconds":N}`（接続は維持、`closing` なし）を返します。クライアントは chat-transport.md §7.2 の自動再送契約に従い `Retry-After` / `retry_after_seconds` を尊重します。
+
 transport tokenはAccess Token・Refresh Tokenと別audience（`samurai-meet-chat`）で、対象chat・session・transportだけに束縛した2分のJWSです。Refresh TokenをWebSocket、WebTransport、URL queryへ送ってはいけません。
 
 `GET /api/v1/ws/chats/{id}` へ接続後、クライアントは5秒以内に `{"type":"auth","chat_token":"<JWS>"}` を送ります（Chat TokenをURL queryに載せない）。サーバーは token・セッション・マッチ・ブロック・チャット状態を検証し `{"type":"auth.ok",…}` を返します。以後のフレームは `message.send` / `message.read` / `typing.start` / `typing.stop` / `ping`（client→server）、`message.created` / `message.ack` / `message.read` / `typing` / `pong` / `error` / `closing`（server→client）。`message.send` は REST の送信と同じ冪等性・バリデーション（暗号文のみ、128KiBまで）で、REST経由の送信・既読も接続中の全ソケットへ配送されます。`message.created` / `message.read` の配送除外はユーザー単位ではなくソケット単位です（送信・既読を発行したソケットだけ除外し、同一ユーザーの他端末には配送する）。`typing` だけは自端末エコー回避のためユーザー単位で除外します。接続中は20秒間隔のheartbeatでセッション・マッチ・ブロックを再確認し、失効時は `closing` を送って切断します。配送は現状**単一APIインスタンス前提**（プロセス内ハブ）で、複数インスタンス対応の `LISTEN/NOTIFY` fan-out と接続中のChat Tokenローテーション（`token_seq`）は次の作業です。

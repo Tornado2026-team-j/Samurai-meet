@@ -112,6 +112,7 @@ func main() {
 	notifications := notification.NewService(database)
 	matchingService := matching.NewService(database, notifications)
 	chatService := chat.NewService(database, signer, notifications)
+	chatService.ConfigureSendRateLimit(cfg.Chat.SendBurst, float64(cfg.Chat.SendRefillPerMinute)/60.0)
 	meetingService := meeting.NewService(database)
 	safetyService := safety.NewService(database)
 	server := &http.Server{

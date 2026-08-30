@@ -25,6 +25,15 @@ type Config struct {
 	GoogleOIDC          GoogleOIDCConfig
 	WebAuthn            WebAuthnConfig
 	JWS                 JWSConfig
+	Chat                ChatConfig
+}
+
+// ChatConfig tunes chat message send rate limiting. SendBurst is the per-user
+// token-bucket capacity (absorbs a legitimate burst); SendRefillPerMinute is
+// the sustained per-user send rate the bucket refills at.
+type ChatConfig struct {
+	SendBurst           int
+	SendRefillPerMinute int
 }
 
 type GoogleOIDCConfig struct{ ClientID, ClientSecret, RedirectURI string }
@@ -173,6 +182,10 @@ func Load() Config {
 		GoogleOIDC: GoogleOIDCConfig{os.Getenv("GOOGLE_CLIENT_ID"), os.Getenv("GOOGLE_CLIENT_SECRET"), os.Getenv("GOOGLE_REDIRECT_URI")},
 		WebAuthn:   WebAuthnConfig{valueOrDefault("WEBAUTHN_RP_ID", "localhost"), valueOrDefault("WEBAUTHN_RP_ORIGIN", "http://localhost:8081"), valueOrDefault("WEBAUTHN_RP_DISPLAY_NAME", "Samurai Meet")},
 		JWS:        JWSConfig{os.Getenv("JWS_SIGNING_KEY"), valueOrDefault("JWS_KEY_ID", "v1"), os.Getenv("JWS_VERIFY_KEYS"), valueOrDefault("JWS_ISSUER", "samurai-meet-api"), valueOrDefault("JWS_AUDIENCE", "samurai-meet-mobile")},
+		Chat: ChatConfig{
+			SendBurst:           intValueOrDefault("CHAT_SEND_BURST", 15),
+			SendRefillPerMinute: intValueOrDefault("CHAT_SEND_REFILL_PER_MINUTE", 60),
+		},
 	}
 }
 

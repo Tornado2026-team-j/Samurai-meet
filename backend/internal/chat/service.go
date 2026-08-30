@@ -42,6 +42,7 @@ type Service struct {
 	signer        *auth.Signer
 	notifications *notification.Service
 	hub           *Hub
+	sendLimiter   *sendRateLimiter
 }
 
 type ChatSummary struct {
@@ -103,7 +104,17 @@ func NewService(database *sql.DB, signer *auth.Signer, notificationServices ...*
 	if len(notificationServices) > 0 {
 		notifications = notificationServices[0]
 	}
-	return &Service{db: database, signer: signer, notifications: notifications, hub: newHub()}
+	return &Service{db: database, signer: signer, notifications: notifications, hub: newHub(), sendLimiter: newSendRateLimiter()}
+}
+
+// ConfigureSendRateLimit overrides the per-user message send budget. capacity
+// is the burst size; refillPerSecond is the sustained send rate. Non-positive
+// values leave the corresponding default in place.
+func (s *Service) ConfigureSendRateLimit(capacity int, refillPerSecond float64) {
+	if s == nil || s.sendLimiter == nil {
+		return
+	}
+	s.sendLimiter.configure(capacity, refillPerSecond)
 }
 
 // sessionActive confirms the session behind a Chat Token is still usable:
@@ -230,6 +241,11 @@ func (s *Service) SendMessage(ctx context.Context, userID, chatID string, input 
 func (s *Service) sendMessage(ctx context.Context, userID, chatID string, input SendMessageInput, now time.Time, origin *wsConn) (Message, bool, error) {
 	if err := validateMessageInput(input); err != nil {
 		return Message{}, false, err
+	}
+	if s.sendLimiter != nil {
+		if allowed, retryAfter := s.sendLimiter.allow(userID, now); !allowed {
+			return Message{}, false, &RateLimitError{RetryAfter: retryAfter}
+		}
 	}
 	access, err := s.loadChat(ctx, userID, chatID, false)
 	if err != nil {
