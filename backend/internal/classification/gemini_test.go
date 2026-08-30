@@ -41,3 +41,10 @@ func TestGeminiClassifyRejectsUnexpectedModelOutput(t *testing.T) {
 		t.Fatalf("Classify() error = %v, want ErrUpstream", err)
 	}
 }
+
+func TestGeminiPlaceholderKeyIsUnavailable(t *testing.T) {
+	service := NewGemini(PlaceholderAPIKey, DefaultModel)
+	if service.Available() {
+		t.Fatal("placeholder Gemini key must not enable classification")
+	}
+}

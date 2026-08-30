@@ -18,6 +18,7 @@ import (
 )
 
 const DefaultModel = "gemini-3.1-flash-lite"
+const PlaceholderAPIKey = "CHANGE_ME_GEMINI_API_KEY"
 
 var (
 	ErrUnavailable  = errors.New("recruitment classification is unavailable")
@@ -54,7 +55,7 @@ func NewGeminiWithClient(apiKey, model, endpoint string, httpClient *http.Client
 }
 
 func (s *Service) Available() bool {
-	return s != nil && s.apiKey != "" && s.endpoint != ""
+	return s != nil && s.apiKey != "" && s.apiKey != PlaceholderAPIKey && s.endpoint != ""
 }
 
 func (s *Service) Classify(ctx context.Context, userID, description string) (string, error) {
