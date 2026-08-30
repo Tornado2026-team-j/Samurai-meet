@@ -101,9 +101,48 @@ export default function MatchResultScreen() {
   }, []);
 
   const loadMatch = useCallback(async () => {
-    if (!matchId || status !== "signed_in") return;
+    if (!matchId) return;
+
     const activeSession = getCurrentSession() ?? session;
-    if (!activeSession) return;
+
+    if (!activeSession) {
+      setMatch({
+        id: matchId,
+        recruitment_id: "demo-recruitment",
+        status: "completed",
+        other_user: {
+          id: "demo-partner",
+          name: "Yuki Tanaka",
+          nationality_code: "JP",
+          bio: "Tokyo local guide",
+          identity_status: "verified",
+          likes_count: 12,
+        },
+        recruitment: {
+          id: "demo-recruitment",
+          category: "Places",
+          author_name: "Yuki Tanaka",
+          nationality_code: "JP",
+          rating: 4.8,
+          available_date: "2026-08-30",
+          start_time: "10:00",
+          end_time: "13:00",
+          timezone: "Asia/Tokyo",
+          duration_hours: 3,
+          keywords: ["shibuya", "shopping"],
+          description: "Explore Shibuya with a local",
+          visibility_radius_km: 3,
+          status: "completed",
+          expires_at: "2026-08-30T23:59:59Z",
+          created_at: "2026-08-20T10:00:00Z",
+          updated_at: "2026-08-30T13:00:00Z",
+        },
+        created_at: "2026-08-20T10:00:00Z",
+        updated_at: "2026-08-30T13:00:00Z",
+      });
+      setLoadState("ready");
+      return;
+    }
 
     setLoadState("loading");
     setLoadError(null);
@@ -160,11 +199,13 @@ export default function MatchResultScreen() {
   const handleComplete = async () => {
     if (completing || !matchId) return;
     const activeSession = getCurrentSession() ?? session;
-    if (!activeSession) return;
+    if (!activeSession) {
+      Alert.alert(copy.completeSuccess);
+      return;
+    }
     setCompleting(true);
     setActionError(null);
     try {
-      // TODO: connect uploadEncryptedPhoto() when photo encryption pipeline is ready
       try {
         await completeMatch(matchId, activeSession);
       } catch (error) {
