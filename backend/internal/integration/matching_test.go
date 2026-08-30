@@ -191,6 +191,18 @@ func TestRecruitmentMatchingLifecycle(t *testing.T) {
 	if !hasNotification(guideNotifications, notification.TypeMatchConfirmed, interest.ID) {
 		t.Fatalf("match confirmed notification = %+v", guideNotifications)
 	}
+	var foundMatchConfirmedMetadata bool
+	for _, item := range guideNotifications {
+		if item.Type == notification.TypeMatchConfirmed &&
+			item.TargetID == interest.ID &&
+			item.RecruitmentID == card.ID &&
+			item.Destination == notification.DestinationGuideDetail {
+			foundMatchConfirmedMetadata = true
+		}
+	}
+	if !foundMatchConfirmedMetadata {
+		t.Fatalf("match confirmed notification metadata = %+v", guideNotifications)
+	}
 
 	completed, err := service.CompleteMatch(ctx, guideID, interest.ID, now.Add(2*time.Hour))
 	if err != nil {
@@ -231,6 +243,18 @@ func TestRecruitmentMatchingLifecycle(t *testing.T) {
 	}
 	if !hasNotification(guideNotifications, notification.TypeApplicationRejected, secondInterest.ID) {
 		t.Fatalf("application rejected notification = %+v", guideNotifications)
+	}
+	var foundRejectedMetadata bool
+	for _, item := range guideNotifications {
+		if item.Type == notification.TypeApplicationRejected &&
+			item.TargetID == secondInterest.ID &&
+			item.RecruitmentID == secondCard.ID &&
+			item.Destination == notification.DestinationApplicationDetail {
+			foundRejectedMetadata = true
+		}
+	}
+	if !foundRejectedMetadata {
+		t.Fatalf("application rejected notification metadata = %+v", guideNotifications)
 	}
 
 	updatedDescription := "Lunch with a local host."
