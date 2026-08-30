@@ -380,11 +380,29 @@ func (s *Service) IssueTransportToken(ctx context.Context, userID, sessionID, ch
 	if access.MatchStatus != "accepted" {
 		return TransportToken{}, ErrChatNotAvailable
 	}
-	token, claims, err := s.signer.IssueChatToken(userID, sessionID, access.ChatID, transport, now)
+	seq, err := s.nextTokenSeq(ctx, sessionID, access.ChatID, now)
+	if err != nil {
+		return TransportToken{}, err
+	}
+	token, claims, err := s.signer.IssueChatToken(userID, sessionID, access.ChatID, transport, seq, now)
 	if err != nil {
 		return TransportToken{}, err
 	}
 	return TransportToken{Token: token, ExpiresAt: time.Unix(claims.ExpiresAt, 0).UTC(), Transport: transport}, nil
+}
+
+// nextTokenSeq returns the next monotonic Chat Token generation number for a
+// (session, chat) pair. Every transport-token issue advances it; a live
+// connection rejects an in-connection rotation to a lower number.
+func (s *Service) nextTokenSeq(ctx context.Context, sessionID, chatID string, now time.Time) (int64, error) {
+	var seq int64
+	err := s.db.QueryRowContext(ctx, `
+		INSERT INTO chat_token_sequences (session_id,chat_id,seq,updated_at)
+		VALUES ($1,$2,1,$3)
+		ON CONFLICT (session_id,chat_id) DO UPDATE SET
+			seq=chat_token_sequences.seq+1, updated_at=EXCLUDED.updated_at
+		RETURNING seq`, sessionID, chatID, now.UTC().Format(time.RFC3339Nano)).Scan(&seq)
+	return seq, err
 }
 
 func (s *Service) ensureChat(ctx context.Context, userID, matchID string, now time.Time) (chatAccess, error) {

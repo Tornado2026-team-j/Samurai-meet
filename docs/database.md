@@ -42,6 +42,7 @@
 | `0025_notifications.sql` | 通知、既読時刻、応募・承認／辞退・暗号化チャット送信イベント |
 | `0026_match_withdrawal.sql` | 応募取り下げによる`matches.status = cancelled`を追加 |
 | `0027_reports.sql` | 通報の原票`reports`（対象種別・理由・任意コメント・運営ステータス） |
+| `0028_chat_token_sequences.sql` | `(session, chat)`単位のChat Token世代カウンタ。発行のたびに+1し、接続維持中のトークンローテーションで巻き戻しを拒否する |
 
 注意: 現行のmigration runnerはSQLファイルを順番に正規化して実行し、`schema_migrations`へファイル名と正規化SQLのSHA-256 checksum、適用時刻を記録する。同じchecksumの適用済みmigrationはスキップし、PostgreSQL advisory lockで同時起動を直列化する。適用済みファイルの内容が変わった場合はchecksum mismatchで起動を停止する。適用済みmigrationを編集・置換してはいけない。DDL変更は新しい番号のSQLを追加する。
 

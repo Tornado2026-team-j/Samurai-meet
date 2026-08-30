@@ -13,12 +13,15 @@ func TestChatTokenIsSeparateFromAccessToken(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Date(2026, time.August, 26, 12, 0, 0, 0, time.UTC)
-	token, claims, err := signer.IssueChatToken("user-1", "session-1", "chat-1", "websocket", now)
+	token, claims, err := signer.IssueChatToken("user-1", "session-1", "chat-1", "websocket", 7, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if claims.Audience != ChatAudience || claims.ChatID != "chat-1" || claims.Transport != "websocket" {
+	if claims.Audience != ChatAudience || claims.ChatID != "chat-1" || claims.Transport != "websocket" || claims.TokenSeq != 7 {
 		t.Fatalf("chat claims = %+v", claims)
+	}
+	if verified, err := signer.VerifyChatToken(token, now.Add(time.Second)); err != nil || verified.TokenSeq != 7 {
+		t.Fatalf("VerifyChatToken() token_seq = %d, err = %v", verified.TokenSeq, err)
 	}
 	verified, err := signer.VerifyChatToken(token, now.Add(time.Second))
 	if err != nil {

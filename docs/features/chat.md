@@ -43,7 +43,7 @@ MVP のリアルタイム配送は WebSocket。QUIC / HTTP/3 WebTransport は将
 {"type":"auth","chat_token":"<JWS>"}
 ```
 
-サーバーは Chat Token（`aud=samurai-meet-chat`、`chat_id` 一致、`transport=websocket`）とセッション有効性・マッチ・ブロック・チャット状態を検証し、`{"type":"auth.ok","chat_id":"…","token_expires_at":"…"}` を返します。失敗時は `{"type":"error","code":"…"}` の後に接続を閉じます。
+サーバーは Chat Token（`aud=samurai-meet-chat`、`chat_id` 一致、`transport=websocket`）とセッション有効性・マッチ・ブロック・チャット状態を検証し、`{"type":"auth.ok","chat_id":"…","token_seq":N,"token_expires_at":"…"}` を返します。失敗時は `{"type":"error","code":"…"}` の後に接続を閉じます。接続維持中は `token.renew` で Chat Token をローテーションでき（`token_seq` は前進のみ）、期限までに更新しないと heartbeat が `closing(token_expired)` で切断します。
 
 ### クライアント → サーバー
 
@@ -53,6 +53,7 @@ MVP のリアルタイム配送は WebSocket。QUIC / HTTP/3 WebTransport は将
 | `message.read` | `last_message_sequence` |
 | `typing.start` / `typing.stop` | なし |
 | `ping` | なし（`pong` が返る） |
+| `token.renew` | `chat_token`（期限前に取得した新しい Chat Token。`token.renewed` または `error` が返る） |
 
 ### サーバー → クライアント
 
@@ -62,8 +63,9 @@ MVP のリアルタイム配送は WebSocket。QUIC / HTTP/3 WebTransport は将
 | `message.ack` | 自分の送信の確定。送信を発行したソケットにだけ返す。`message`, `duplicate`（再送で既存を返した場合 true） |
 | `message.read` | 既読の前進。`user_id`, `last_message_sequence`。既読操作を発行したソケット以外の全ソケットへ配送する（相手の端末＋既読した本人の他端末） |
 | `typing` | `user_id`, `state`（`start` / `stop`） |
-| `error` | `code`, `message`。回復不能な `code`（`blocked` / `chat_not_available` / `chat_closed` / `forbidden`）の後は `closing` が続く。`rate_limited` は一時的で `closing` は続かず、`retry_after_seconds` を伴う |
-| `closing` | `reason`。サーバーが接続を閉じる直前に一度だけ送る |
+| `token.renewed` | `token_seq`, `token_expires_at`。`token.renew` 成功時。接続の期限がここまで前進する |
+| `error` | `code`, `message`。回復不能な `code`（`blocked` / `chat_not_available` / `chat_closed` / `forbidden`）の後は `closing` が続く。`rate_limited`（`retry_after_seconds` を伴う）/ `stale_token` / `invalid_token` は一時的で `closing` は続かない |
+| `closing` | `reason`。サーバーが接続を閉じる直前に一度だけ送る。`token_expired` は期限までに `token.renew` されなかった場合 |
 
 送信メッセージには `client_message_id` を付け、再送されても二重登録しません（`message.send` は既存の REST `SendMessage` と同じ冪等性）。`message.created` / `message.read` は REST 経由の送信・既読でも接続中の全ソケットへ配送されます。配送の除外はユーザー単位ではなくソケット単位のため、同一ユーザーが複数端末で接続していても、送信・既読を行っていない他端末は更新を受け取れます（`typing` だけは自端末のエコーを避けるためユーザー単位で除外）。
 
@@ -123,5 +125,4 @@ WebSocket配送は現状**単一APIインスタンス前提のin-memoryハブ**�
 - タイピング表示、通知、オフライン送信の MVP 対象可否。
 - Expo実機での再接続負荷・失効確認（バックエンドのWebSocket配送は実装済み・統合テスト済み）。
 - 複数APIインスタンス構成にするタイミングと、その際の `LISTEN/NOTIFY` fan-out 実装。
-- Chat Token（2分TTL）の接続中ローテーション（`token_seq`）。現状は接続確立時のみ検証し、接続維持はセッション有効性のheartbeatに委ねている。
 - 将来QUICを採用する場合の、パケット損失、0-RTTリプレイ、JWSの期限・世代再利用、メッセージ自動再送の上限とバックオフ。

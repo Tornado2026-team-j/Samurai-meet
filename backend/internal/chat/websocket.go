@@ -60,8 +60,32 @@ type wsConn struct {
 	done chan struct{}
 	once sync.Once
 
-	mu     sync.Mutex
-	reason string
+	mu             sync.Mutex
+	reason         string
+	tokenSeq       int64
+	tokenExpiresAt time.Time
+}
+
+// currentToken returns the connection's accepted Chat Token generation and
+// expiry.
+func (c *wsConn) currentToken() (int64, time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.tokenSeq, c.tokenExpiresAt
+}
+
+// adoptToken records a rotated Chat Token. It rejects a generation that is not
+// strictly newer than the one in force, which blocks replay of a captured
+// earlier token to keep a connection alive.
+func (c *wsConn) adoptToken(seq int64, expiresAt time.Time) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if seq <= c.tokenSeq {
+		return false
+	}
+	c.tokenSeq = seq
+	c.tokenExpiresAt = expiresAt
+	return true
 }
 
 func (c *wsConn) stop(reason string) {
@@ -127,11 +151,13 @@ func (s *Service) ServeWebSocket(w http.ResponseWriter, r *http.Request, chatID 
 	}
 
 	conn := &wsConn{
-		chatID:  access.ChatID,
-		userID:  claims.Subject,
-		session: claims.SessionID,
-		send:    make(chan []byte, wsSendBuffer),
-		done:    make(chan struct{}),
+		chatID:         access.ChatID,
+		userID:         claims.Subject,
+		session:        claims.SessionID,
+		send:           make(chan []byte, wsSendBuffer),
+		done:           make(chan struct{}),
+		tokenSeq:       claims.TokenSeq,
+		tokenExpiresAt: time.Unix(claims.ExpiresAt, 0),
 	}
 	if s.hub.connectionCount(conn.chatID, conn.userID) >= maxConnectionsPerUser {
 		_ = ws.Close(websocket.StatusPolicyViolation, "too_many_connections")
@@ -143,6 +169,7 @@ func (s *Service) ServeWebSocket(w http.ResponseWriter, r *http.Request, chatID 
 	_ = writeFrame(r.Context(), ws, authOKFrame{
 		Type:           serverFrameAuthOK,
 		ChatID:         conn.chatID,
+		TokenSeq:       claims.TokenSeq,
 		TokenExpiresAt: time.Unix(claims.ExpiresAt, 0).UTC().Format(time.RFC3339),
 	})
 
@@ -216,6 +243,8 @@ func (s *Service) readPump(ctx context.Context, ws *websocket.Conn, c *wsConn) {
 			s.broadcastTyping(c, "stop")
 		case clientFramePing:
 			c.enqueue(mustFrame(map[string]string{"type": serverFramePong}))
+		case clientFrameTokenRenew:
+			s.handleTokenRenew(c, frame)
 		case clientFrameAuth:
 			s.replyError(c, "already_authenticated", "")
 		default:
@@ -289,6 +318,11 @@ func (s *Service) heartbeat(c *wsConn) {
 		case <-c.done:
 			return
 		case <-t.C:
+			if _, expiresAt := c.currentToken(); !expiresAt.IsZero() && !time.Now().Before(expiresAt) {
+				// The client did not rotate the Chat Token before it expired.
+				c.stop("token_expired")
+				return
+			}
 			opctx, opcancel := context.WithTimeout(context.Background(), wsOpTimeout)
 			err := s.revalidateConnection(opctx, c)
 			opcancel()
@@ -355,6 +389,46 @@ func (s *Service) handleRead(c *wsConn, frame inboundFrame) {
 	}
 	// markRead already fanned the receipt out to every other socket on the
 	// chat, including this reader's other devices.
+}
+
+// handleTokenRenew rotates the Chat Token on a live connection. The client is
+// expected to fetch a fresh token over REST before the current one expires and
+// hand it in here; the connection then tracks the new expiry so the heartbeat
+// stops disconnecting it. A rotation to an equal or older generation, a token
+// for a different chat/user/session, or an otherwise invalid token is rejected
+// without tearing the connection down.
+func (s *Service) handleTokenRenew(c *wsConn, frame inboundFrame) {
+	if strings.TrimSpace(frame.ChatToken) == "" {
+		s.replyError(c, "invalid_input", "token.renew requires chat_token")
+		return
+	}
+	now := time.Now()
+	claims, err := s.signer.VerifyChatToken(frame.ChatToken, now)
+	if err != nil {
+		s.replyError(c, "invalid_token", "chat token rejected")
+		return
+	}
+	if claims.ChatID != c.chatID || claims.Transport != "websocket" ||
+		claims.Subject != c.userID || claims.SessionID != c.session {
+		s.replyError(c, "forbidden", "chat token does not match this connection")
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), wsOpTimeout)
+	defer cancel()
+	if _, err := s.sessionActive(ctx, c.userID, c.session, now); err != nil {
+		s.replyError(c, wsErrorCode(err), "session is no longer active")
+		c.stop(wsErrorCode(err))
+		return
+	}
+	if !c.adoptToken(claims.TokenSeq, time.Unix(claims.ExpiresAt, 0)) {
+		s.replyError(c, "stale_token", "chat token generation is not newer than the one in force")
+		return
+	}
+	c.enqueue(mustFrame(tokenRenewedFrame{
+		Type:           serverFrameTokenRenewed,
+		TokenSeq:       claims.TokenSeq,
+		TokenExpiresAt: time.Unix(claims.ExpiresAt, 0).UTC().Format(time.RFC3339),
+	}))
 }
 
 func (s *Service) broadcastTyping(c *wsConn, state string) {
