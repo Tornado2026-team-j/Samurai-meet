@@ -24,28 +24,39 @@ const COPY = {
     header: "Feedback",
     title: "今日の案内はどうでしたか？",
     hint: "楽しかったら、いいねを送ってみましょう！",
-    thankYou: "評価ありがとうございました！",
+    thankYou: "ありがとうございました！",
+    thankYouLiked: "評価ありがとうございました！",
     continue: "次へ",
     report: "運営に報告する",
+    backHome: "ホームに戻る",
   },
   en: {
     header: "Feedback",
     title: "How was today's guide?",
     hint: "If you enjoyed today's guide, tap Like!",
-    thankYou: "Thank you for your feedback!",
+    thankYou: "Thank you!",
+    thankYouLiked: "Thank you for your feedback!",
     continue: "Continue",
     report: "Report to support",
+    backHome: "Back to Home",
   },
 } as const;
 
 export default function ReviewScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+
   const { id } = useLocalSearchParams<{ id?: string | string[] }>();
   const matchId = Array.isArray(id) ? id[0] : id;
 
   const [language, setLanguage] = useState<AppLanguage | null>(null);
+
+  // いいねしたか
   const [liked, setLiked] = useState(false);
+
+  // false = ④評価画面
+  // true  = ⑤評価後画面
+  const [finished, setFinished] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -78,6 +89,13 @@ export default function ReviewScreen() {
 
   const copy = COPY[language];
 
+  // ④ → ⑤
+  // いいねの有無に関係なく進める
+  const handleContinue = () => {
+    setFinished(true);
+  };
+
+  // ④または⑤ → ⑥
   const goReport = () => {
     if (!matchId) return;
 
@@ -87,7 +105,8 @@ export default function ReviewScreen() {
     });
   };
 
-  const handleContinue = () => {
+  // ⑤ → Home
+  const goHome = () => {
     router.replace("/japanese");
   };
 
@@ -104,78 +123,125 @@ export default function ReviewScreen() {
         <Text style={styles.headerTitle}>{copy.header}</Text>
       </View>
 
-      <ScrollView
-        contentContainerStyle={[
-          styles.content,
-          { paddingBottom: insets.bottom + 32 },
-        ]}
-        showsVerticalScrollIndicator={false}
-      >
-        {!liked ? (
-          <>
-            <Text style={styles.title}>{copy.title}</Text>
+      {!finished ? (
+        /* ④ 相互評価画面 */
+        <ScrollView
+          contentContainerStyle={[
+            styles.content,
+            { paddingBottom: insets.bottom + 32 },
+          ]}
+          showsVerticalScrollIndicator={false}
+        >
+          <Text style={styles.title}>{copy.title}</Text>
 
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => setLiked(true)}
-              style={({ pressed }) => [
-                styles.likeArea,
-                pressed && styles.pressed,
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ selected: liked }}
+            onPress={() => setLiked(true)}
+            style={({ pressed }) => [
+              styles.likeArea,
+              pressed && styles.pressed,
+            ]}
+          >
+            <View
+              style={[
+                styles.likeCircle,
+                liked && styles.likeCircleLiked,
               ]}
             >
-              <View style={styles.likeCircle}>
-                <MaterialIcons
-                  name="thumb-up"
-                  size={76}
-                  color={YELLOW}
-                />
-              </View>
-            </Pressable>
-
-            <Text style={styles.hint}>{copy.hint}</Text>
-          </>
-        ) : (
-          <View style={styles.thankYouSection}>
-            <View style={styles.checkCircle}>
               <MaterialIcons
-                name="check"
-                size={50}
-                color={GREEN}
+                name="thumb-up"
+                size={76}
+                color={YELLOW}
               />
             </View>
+          </Pressable>
 
-            <Text style={styles.thankYouText}>
-              {copy.thankYou}
+          <Text style={styles.hint}>{copy.hint}</Text>
+
+          {/* Likeしていてもしていなくても押せる */}
+          <Pressable
+            accessibilityRole="button"
+            onPress={handleContinue}
+            style={({ pressed }) => [
+              styles.continueButton,
+              pressed && styles.pressed,
+            ]}
+          >
+            <Text style={styles.continueText}>
+              {copy.continue}
             </Text>
+          </Pressable>
+
+          {/* ④ → ⑥ */}
+          <Pressable
+            accessibilityRole="button"
+            onPress={goReport}
+            style={({ pressed }) => [
+              styles.reportButton,
+              pressed && styles.pressed,
+            ]}
+          >
+            <Text style={styles.reportText}>
+              {copy.report}
+            </Text>
+          </Pressable>
+        </ScrollView>
+      ) : (
+        /* ⑤ 評価後画面 */
+        <View
+          style={[
+            styles.finishedContent,
+            { paddingBottom: insets.bottom + 32 },
+          ]}
+        >
+          <View style={styles.checkCircle}>
+            <MaterialIcons
+              name="check"
+              size={50}
+              color={GREEN}
+            />
           </View>
-        )}
 
-        <Pressable
-          accessibilityRole="button"
-          onPress={handleContinue}
-          style={({ pressed }) => [
-            styles.continueButton,
-            pressed && styles.pressed,
-          ]}
-        >
-          <Text style={styles.continueText}>
-            {copy.continue}
+          <Text style={styles.thankYouText}>
+            {liked ? copy.thankYouLiked : copy.thankYou}
           </Text>
-        </Pressable>
 
-        <Pressable
-          accessibilityRole="button"
-          onPress={goReport}
-          style={({ pressed }) => [
-            styles.reportButton,
-            pressed && styles.pressed,
-          ]}
-        >
-          <Text style={styles.reportText}>
-            {copy.report}
+          <Text style={styles.thankYouSubText}>
+            {language === "ja"
+              ? "ご利用ありがとうございました。"
+              : "We appreciate your time."}
           </Text>
-        </Pressable>
-      </ScrollView>
+
+          {/* ⑤ → Home */}
+          <Pressable
+            accessibilityRole="button"
+            onPress={goHome}
+            style={({ pressed }) => [
+              styles.homeButton,
+              pressed && styles.pressed,
+            ]}
+          >
+            <Text style={styles.homeButtonText}>
+              {copy.backHome}
+            </Text>
+          </Pressable>
+
+          {/* ⑤ → ⑥ */}
+          <Pressable
+            accessibilityRole="button"
+            onPress={goReport}
+            style={({ pressed }) => [
+              styles.reportButton,
+              pressed && styles.pressed,
+            ]}
+          >
+            <Text style={styles.reportText}>
+              {copy.report}
+            </Text>
+          </Pressable>
+        </View>
+      )}
     </View>
   );
 }
@@ -230,6 +296,12 @@ const styles = StyleSheet.create({
     height: 150,
     alignItems: "center",
     justifyContent: "center",
+    borderRadius: 75,
+    backgroundColor: "#fff9ec",
+  },
+
+  likeCircleLiked: {
+    backgroundColor: "#fff3c9",
   },
 
   hint: {
@@ -242,10 +314,30 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
 
-  thankYouSection: {
+  continueButton: {
+    width: "100%",
+    maxWidth: 315,
+    minHeight: 58,
     alignItems: "center",
-    marginTop: 20,
-    marginBottom: 30,
+    justifyContent: "center",
+    marginTop: 55,
+    borderRadius: 16,
+    backgroundColor: "#dcecf8",
+    borderWidth: 1,
+    borderColor: BLUE,
+  },
+
+  continueText: {
+    color: "#000000",
+    fontSize: 18,
+    fontWeight: "900",
+  },
+
+  finishedContent: {
+    flex: 1,
+    alignItems: "center",
+    paddingHorizontal: 38,
+    paddingTop: 80,
   },
 
   checkCircle: {
@@ -258,43 +350,52 @@ const styles = StyleSheet.create({
   },
 
   thankYouText: {
-    marginTop: 26,
+    marginTop: 30,
+    maxWidth: 300,
     color: "#000000",
     fontSize: 23,
     fontWeight: "900",
     textAlign: "center",
   },
 
-  continueButton: {
+  thankYouSubText: {
+    marginTop: 12,
+    color: MUTED_GRAY,
+    fontSize: 14,
+    fontWeight: "600",
+    textAlign: "center",
+  },
+
+  homeButton: {
     width: "100%",
     maxWidth: 315,
     minHeight: 58,
+    marginTop: 56,
     alignItems: "center",
     justifyContent: "center",
-    marginTop: 55,
     borderRadius: 16,
     backgroundColor: YELLOW,
   },
 
-  continueText: {
+  homeButtonText: {
     color: "#000000",
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: "900",
   },
 
   reportButton: {
-    marginTop: 24,
+    marginTop: 26,
     padding: 10,
   },
 
   reportText: {
-    color: "#777777",
+    color: "#00aeff",
     fontSize: 14,
-    fontWeight: "700",
-    textDecorationLine: "underline",
+    fontWeight: "800",
   },
 
   pressed: {
     opacity: 0.72,
   },
 });
+      
