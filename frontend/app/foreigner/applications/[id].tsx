@@ -30,6 +30,27 @@ const MUTED_GRAY = "#949494";
 const BORDER_GRAY = "#e4e4e4";
 const SOFT_BLUE = "#eff8ff";
 
+export function humanReadableIntroduction(value: unknown, fallback: string): string {
+  if (typeof value !== "string") return fallback;
+  const trimmed = value.trim();
+  if (!trimmed) return fallback;
+
+  try {
+    const parsed: unknown = JSON.parse(trimmed);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return fallback;
+
+    const seed = (parsed as { monsterSeed?: unknown }).monsterSeed;
+    if (!seed || typeof seed !== "object" || Array.isArray(seed)) return fallback;
+
+    const freeText = (seed as { freeText?: unknown }).freeText;
+    return typeof freeText === "string" && freeText.trim() ? freeText.trim() : fallback;
+  } catch {
+    // Older profiles store the user's introduction directly as text.  Only
+    // structured metadata is suppressed; ordinary prose remains visible.
+    return trimmed;
+  }
+}
+
 type LoadErrorKey = "loginRequired" | "failed";
 type ActionErrorKey = "loginRequired" | "failed";
 
@@ -253,6 +274,7 @@ export default function ForeignerApplicationDetailScreen() {
     && application.recruitment.status !== "open"
     && application.recruitment.status !== "matched";
   const decided = choseGuide || declined || withdrawn || unavailable || recruitmentClosed;
+  const introduction = humanReadableIntroduction(application.other_user.bio, copy.noIntroduction);
 
   const decide = async (action: "accept" | "reject") => {
     if (decided || actionState !== "idle") return;
@@ -335,7 +357,7 @@ export default function ForeignerApplicationDetailScreen() {
           <View style={styles.divider} />
 
           <Text style={styles.sectionLabel}>{copy.introduction}</Text>
-          <Text style={styles.bio}>{application.other_user.bio || copy.noIntroduction}</Text>
+          <Text style={styles.bio}>{introduction}</Text>
         </View>
       </ScrollView>
 

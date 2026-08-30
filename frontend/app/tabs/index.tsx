@@ -58,7 +58,7 @@ import type {
   RecruitmentDraft,
   RecruitmentPreview,
 } from "../../types/recruitment";
-import type { MatchCategory } from "../../types/match";
+import { MATCH_CATEGORIES, type MatchCategory } from "../../types/match";
 import { formatTimeRange } from "../../utils/time";
 
 const BLUE = "#5ec5f5";
@@ -70,12 +70,7 @@ const COLLAPSED_HEADER_HEIGHT = 156;
 const EXPANDED_HEADER_HEIGHT = 724;
 const CONFIRMATION_HEADER_HEIGHT = 542;
 const EXPANSION_DURATION = 360;
-const RECRUITMENT_CATEGORIES: readonly MatchCategory[] = [
-  "Food",
-  "Heritage",
-  "Activity",
-  "Other",
-];
+const RECRUITMENT_CATEGORIES = MATCH_CATEGORIES;
 const MIN_DURATION_HOURS = 0.5;
 const MAX_DURATION_HOURS = 8;
 const DURATION_STEP_HOURS = 0.5;
@@ -1501,7 +1496,10 @@ export default function SearchPreferencesScreen() {
             ]}
           >
             <ScrollView
-              contentContainerStyle={styles.confirmationScrollContent}
+              contentContainerStyle={[
+                styles.confirmationScrollContent,
+                { paddingTop: Math.max(insets.top + 20, 34) },
+              ]}
               keyboardShouldPersistTaps="handled"
               showsVerticalScrollIndicator
               style={styles.confirmationScroll}
@@ -1597,17 +1595,24 @@ export default function SearchPreferencesScreen() {
               ) : null}
 
             </ScrollView>
-            <Button
-              accessibilityLabel="Back to search filters"
-              iconLeft={<MaterialIcons color={colors.brand.gold} name="arrow-back" size={18} />}
-              onPress={showFilters}
-              size="sm"
-              style={styles.backButton}
-              textStyle={styles.backButtonText}
-              variant="secondary"
+            <View
+              style={[
+                styles.confirmationFooter,
+                { paddingBottom: Math.max(insets.bottom, 14) },
+              ]}
             >
-              {copy.back}
-            </Button>
+              <Button
+                accessibilityLabel="Back to search filters"
+                iconLeft={<MaterialIcons color={colors.brand.gold} name="arrow-back" size={18} />}
+                onPress={showFilters}
+                size="sm"
+                style={styles.backButton}
+                textStyle={styles.backButtonText}
+                variant="secondary"
+              >
+                {copy.back}
+              </Button>
+            </View>
           </Animated.View>
         )}
 
@@ -1854,24 +1859,34 @@ export default function SearchPreferencesScreen() {
 
 const styles = StyleSheet.create({
   confirmationScrollContent: {
+    flexGrow: 1,
+    alignItems: "center",
+    paddingHorizontal: 24,
     paddingBottom: 24,
   },
   confirmationScroll: {
     flex: 1,
   },
   categorySelectionLabel: {
+    width: "100%",
+    maxWidth: 340,
+    marginTop: 20,
     color: '#1E3A8A',
     fontSize: 15,
     fontWeight: '700',
     marginBottom: 8,
   },
   categorySelectionRow: {
+    width: "100%",
+    maxWidth: 340,
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
     marginBottom: 16,
   },
   categorySelectionButton: {
+    maxWidth: "100%",
+    flexShrink: 1,
     backgroundColor: '#FFF7CC',
     borderColor: '#F2C94C',
     borderRadius: 16,
@@ -1884,6 +1899,7 @@ const styles = StyleSheet.create({
     borderColor: '#1E3A8A',
   },
   categorySelectionText: {
+    flexShrink: 1,
     color: '#1E3A8A',
     fontSize: 14,
     fontWeight: '600',
@@ -1892,22 +1908,31 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
   },
   keywordSelectionLabel: {
+    width: "100%",
+    maxWidth: 340,
+    marginTop: 4,
     color: '#1E3A8A',
     fontSize: 15,
     fontWeight: '700',
     marginBottom: 4,
   },
   keywordSelectionHint: {
+    width: "100%",
+    maxWidth: 340,
     color: '#6B7280',
     fontSize: 13,
     marginBottom: 8,
   },
   keywordSelectionRow: {
+    width: "100%",
+    maxWidth: 340,
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
   },
   keywordSelectionButton: {
+    maxWidth: "100%",
+    flexShrink: 1,
     backgroundColor: '#FFFFFF',
     borderColor: '#1E3A8A',
     borderRadius: 16,
@@ -1920,6 +1945,7 @@ const styles = StyleSheet.create({
     borderColor: '#F2C94C',
   },
   keywordSelectionText: {
+    flexShrink: 1,
     color: '#1E3A8A',
     fontSize: 14,
     fontWeight: '600',
@@ -2043,14 +2069,11 @@ const styles = StyleSheet.create({
     position: "absolute",
     top: 0,
     right: 0,
+    bottom: 0,
     left: 0,
-    height: CONFIRMATION_HEADER_HEIGHT,
   },
   confirmationTitle: {
-    position: "absolute",
-    top: 130,
-    right: 0,
-    left: 0,
+    width: "100%",
     color: colors.text.inverse,
     ...typography.body,
     fontWeight: "900",
@@ -2058,33 +2081,27 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
   confirmationExpiry: {
-    position: "absolute",
-    top: 167,
-    right: 0,
-    left: 0,
+    width: "100%",
+    marginTop: 6,
     color: colors.text.inverse,
     ...typography.subheading,
     lineHeight: 19,
     textAlign: "center",
   },
   summaryCard: {
-    position: "absolute",
-    top: 205,
-    alignSelf: "center",
-    width: 307,
-    maxWidth: "78.72%",
-    height: 132,
-    padding: 0,
+    width: "100%",
+    maxWidth: 340,
+    minHeight: 132,
+    marginTop: 18,
+    padding: 16,
     borderWidth: 0,
     borderRadius: radius["2xl"],
     backgroundColor: colors.surface.default,
     boxShadow: "none",
   },
   summaryProfileRow: {
-    position: "absolute",
-    top: 7,
-    left: 22,
-    height: 30,
+    width: "100%",
+    minHeight: 30,
     flexDirection: "row",
     alignItems: "center",
   },
@@ -2094,22 +2111,23 @@ const styles = StyleSheet.create({
     borderRadius: 15,
   },
   summaryName: {
-    maxWidth: 178,
+    minWidth: 0,
+    flex: 1,
     marginLeft: 8,
     color: colors.text.black,
     ...typography.subheading,
     lineHeight: 19,
   },
   summaryFlag: {
-    marginLeft: 12,
+    flexShrink: 0,
+    marginLeft: 8,
     color: colors.text.black,
     ...typography.subheading,
     lineHeight: 19,
   },
   summaryLine: {
-    position: "absolute",
-    left: 23,
-    right: 23,
+    width: "100%",
+    marginTop: 10,
     color: colors.text.secondary,
     ...typography.smallStrong,
     lineHeight: 15,
@@ -2118,33 +2136,33 @@ const styles = StyleSheet.create({
     fontWeight: "900",
   },
   summaryDate: {
-    top: 44,
+    marginTop: 13,
   },
   summaryTime: {
-    top: 68,
+    marginTop: 5,
   },
   summaryTags: {
-    position: "absolute",
-    top: 95,
-    left: 23,
-    height: 25,
+    width: "100%",
+    marginTop: 11,
     flexDirection: "row",
-    gap: 21,
+    flexWrap: "wrap",
+    gap: 8,
   },
   summaryTag: {
-    minWidth: 55,
-    maxWidth: 100,
-    height: 25,
     minHeight: 25,
-    paddingHorizontal: 6,
+    maxWidth: "100%",
+    flexShrink: 1,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
     borderRadius: radius.xs,
   },
   summaryTagText: {
+    flexShrink: 1,
     color: colors.text.secondary,
     ...typography.micro,
   },
   previewState: {
-    flex: 1,
+    minHeight: 100,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 20,
@@ -2173,12 +2191,10 @@ const styles = StyleSheet.create({
     fontWeight: "900",
   },
   goButton: {
-    position: "absolute",
-    top: 359,
+    marginTop: 20,
     alignSelf: "center",
     width: 159,
-    height: 25,
-    minHeight: 25,
+    minHeight: 32,
     alignItems: "center",
     justifyContent: "center",
     borderRadius: radius.pill,
@@ -2193,23 +2209,25 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   publishError: {
-    position: "absolute",
-    top: 393,
-    right: 28,
-    left: 28,
+    width: "100%",
+    maxWidth: 340,
+    marginTop: 8,
     color: colors.text.inverse,
     fontSize: 12,
     fontWeight: "700",
     lineHeight: 16,
     textAlign: "center",
   },
+  confirmationFooter: {
+    flexShrink: 0,
+    alignItems: "flex-start",
+    paddingHorizontal: 24,
+    paddingTop: 8,
+    backgroundColor: colors.brand.sky,
+  },
   backButton: {
-    position: "absolute",
-    top: 474,
-    left: 30,
     width: 110,
-    height: 25,
-    minHeight: 25,
+    minHeight: 32,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",

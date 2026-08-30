@@ -389,6 +389,11 @@ export default function ProfileScreen() {
     try {
       await saveAppMode(nextMode);
       setAppMode(nextMode);
+      // Remove the previous mode's screen before replacing the profile route so
+      // the native back gesture cannot reveal the old mode underneath it.
+      if (router.canDismiss()) {
+        router.dismissAll();
+      }
       router.replace(nextMode === "local" ? "/japanese" : "/foreigner");
     } catch {
       setSettingsSaveFailed(true);
