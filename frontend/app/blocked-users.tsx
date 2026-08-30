@@ -5,7 +5,37 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from
 import { StatusBar } from "expo-status-bar";
 import { Header, colors, radius } from "../components/ui";
 import { useAuth } from "../hooks/useAuth";
+import { loadLanguage, subscribeLanguage, type AppLanguage } from "../services/onboarding";
 import { listBlockedUsers, unblockUser, type BlockedUser } from "../services/safety";
+
+const COPY: Record<AppLanguage, {
+  title: string;
+  empty: string;
+  user: string;
+  unblock: string;
+  unblocking: string;
+  loadError: string;
+  unblockError: string;
+}> = {
+  ja: {
+    title: "ブロック中のユーザー",
+    empty: "ブロック中のユーザーはいません",
+    user: "ユーザー",
+    unblock: "解除",
+    unblocking: "解除中",
+    loadError: "ブロック一覧を読み込めませんでした。",
+    unblockError: "ブロックを解除できませんでした。",
+  },
+  en: {
+    title: "Blocked users",
+    empty: "No blocked users",
+    user: "User",
+    unblock: "Unblock",
+    unblocking: "Unblocking",
+    loadError: "The blocked-user list could not be loaded.",
+    unblockError: "The user could not be unblocked.",
+  },
+};
 
 export default function BlockedUsersScreen() {
   const router = useRouter();
@@ -14,6 +44,24 @@ export default function BlockedUsersScreen() {
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [language, setLanguage] = useState<AppLanguage>("ja");
+  const copy = COPY[language];
+
+  useEffect(() => {
+    let active = true;
+    const unsubscribe = subscribeLanguage((nextLanguage) => {
+      if (active) setLanguage(nextLanguage ?? "ja");
+    });
+    void loadLanguage().then((storedLanguage) => {
+      if (active) setLanguage(storedLanguage ?? "ja");
+    }).catch(() => {
+      if (active) setLanguage("ja");
+    });
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, []);
 
   const load = useCallback(async () => {
     const activeSession = getCurrentSession() ?? session;
@@ -23,11 +71,11 @@ export default function BlockedUsersScreen() {
     try {
       setItems(await listBlockedUsers(activeSession));
     } catch {
-      setError("ブロック一覧を読み込めませんでした。");
+      setError(copy.loadError);
     } finally {
       setLoading(false);
     }
-  }, [getCurrentSession, session]);
+  }, [copy.loadError, getCurrentSession, session]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -39,7 +87,7 @@ export default function BlockedUsersScreen() {
       await unblockUser(item.user_id, activeSession);
       setItems((current) => current.filter((candidate) => candidate.user_id !== item.user_id));
     } catch {
-      setError("ブロックを解除できませんでした。");
+      setError(copy.unblockError);
     } finally {
       setBusyId(null);
     }
@@ -48,17 +96,17 @@ export default function BlockedUsersScreen() {
   return (
     <View style={styles.screen}>
       <StatusBar style="light" />
-      <Header iconName="block" onBack={() => router.back()} title="ブロック中のユーザー" variant="hero" />
+      <Header iconName="block" onBack={() => router.back()} title={copy.title} variant="hero" />
       <ScrollView contentContainerStyle={styles.content}>
         {loading ? <ActivityIndicator color={colors.brand.sky} /> : null}
         {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
-        {!loading && items.length === 0 ? <Text style={styles.empty}>ブロック中のユーザーはいません</Text> : null}
+        {!loading && items.length === 0 ? <Text style={styles.empty}>{copy.empty}</Text> : null}
         {items.map((item) => (
           <View key={item.user_id} style={styles.row}>
             <MaterialIcons color={colors.text.muted} name="account-circle" size={40} />
-            <Text style={styles.name}>{item.name || "ユーザー"}</Text>
+            <Text style={styles.name}>{item.name || copy.user}</Text>
             <Pressable disabled={busyId === item.user_id} onPress={() => void unblock(item)} style={styles.unblock}>
-              <Text style={styles.unblockText}>{busyId === item.user_id ? "解除中" : "解除"}</Text>
+              <Text style={styles.unblockText}>{busyId === item.user_id ? copy.unblocking : copy.unblock}</Text>
             </Pressable>
           </View>
         ))}

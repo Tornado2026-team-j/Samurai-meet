@@ -14,7 +14,7 @@ import {
 import { StatusBar } from "expo-status-bar";
 import { Header, colors, opacity, radius, spacing, typography } from "../components/ui";
 import { useAuth } from "../hooks/useAuth";
-import { loadLanguage, type AppLanguage } from "../services/onboarding";
+import { loadLanguage, subscribeLanguage, type AppLanguage } from "../services/onboarding";
 import {
   listPasskeys,
   listSessions,
@@ -93,7 +93,10 @@ export default function SecurityScreen() {
   const copy = COPY[language];
 
   useEffect(() => {
-    void loadLanguage().then((value) => setLanguage(value ?? "ja"));
+    let active = true;
+    const unsubscribe = subscribeLanguage((nextLanguage) => { if (active) setLanguage(nextLanguage ?? "ja"); });
+    void loadLanguage().then((value) => { if (active) setLanguage(value ?? "ja"); }).catch(() => { if (active) setLanguage("ja"); });
+    return () => { active = false; unsubscribe(); };
   }, []);
 
   const load = useCallback(async (isRefresh = false) => {

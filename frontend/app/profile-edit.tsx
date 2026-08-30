@@ -10,6 +10,7 @@ import {
   loadLocalProfile,
   saveLocalProfile,
   serializeMonsterSeedForLegacyBio,
+  subscribeLanguage,
   type AppLanguage,
   type LocalProfile,
 } from "../services/onboarding";
@@ -38,6 +39,13 @@ export default function ProfileEditScreen() {
   const [loaded, setLoaded] = useState(false);
   const [saved, setSaved] = useState(false);
   const copy = COPY[language];
+
+  useEffect(() => {
+    const unsubscribe = subscribeLanguage((nextLanguage) => {
+      if (nextLanguage) setLanguage(nextLanguage);
+    });
+    return unsubscribe;
+  }, []);
 
   useEffect(() => {
     const activeSession = getCurrentSession() ?? session;
