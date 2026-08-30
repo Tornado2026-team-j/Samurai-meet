@@ -18,7 +18,7 @@
 
 - iOS募集画面の初期日時パース問題はISO内部値／JST固定化で修正し、自動テストを完了した。日時picker、過去時刻、日跨ぎ、公開・応募・通知遷移の実機E2Eは完了していない。
 - native Passkey、Secure Enclave／Android Keystore、端末移行、画像画面統合、削除reconciler、legacy画像移行、プロフィール編集UIとの完全同期、チャット／会合画面を完了していない。
-- QUIC／WebTransportのPoC、サーバー配送、0-RTT禁止、heartbeat失効、再接続・負荷試験を完了していない。
+- WebSocket配送・heartbeat失効・Chat Tokenローテーションはバックエンド実装済み・統合テスト済み。QUIC／WebTransportのPoC・サーバー配送・0-RTT禁止は未着手。Expo実機での再接続・負荷試験は手順書（`docs/features/chat-load-test.md`）はあるが未実施。
 - OSプッシュ通知、本人確認、評価、監査ログ、PostGIS化は未実装または未確定である。通報登録・ブロックAPIは実装済み（運営キューは未）。レート制限はIPベースHTTPとチャット送信のユーザー単位を実装済み。
 
 ## 既知の実装不整合

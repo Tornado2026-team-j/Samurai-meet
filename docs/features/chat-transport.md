@@ -230,11 +230,12 @@ MVP のリアルタイム配送は WebSocket（実装済み）で、同じ Chat 
 - 通信断・タイムアウト・一時的なサーバーエラー時は、同じ`client_message_id`で期限・回数を制限した自動再送ができる。（フロント側の受入条件）
 - 入力不正、認証失効、認可拒否などの永続的な失敗では自動再送しない。（フロント側の受入条件）
 - Chat Token、Refresh Token が URL、ログ、クラッシュレポートに出ない。
+- Expo 実機での再接続・失効伝播・トークンローテーションの負荷試験は [chat-load-test.md](chat-load-test.md) の手順書で実施する（ローンチ前 QA ゲート・未実施）。
 
 ## 10. 未決事項
 
 - QUIC上の実装形態（native QUIC または HTTP/3 WebTransport）とendpoint。
 - Expo Managed Workflow で利用できる native module とビルド方式。
-- Chat Token の期限、切り替え間隔、重複期間の負荷試験。Access Token の 1 分 Refresh とは別に決定する。
+- Chat Token の期限、切り替え間隔、重複期間の負荷試験。Access Token の 1 分 Refresh とは別に決定する。手順は [chat-load-test.md](chat-load-test.md) §3 シナリオ 3・4。
 - `token_seq` の管理単位は決定済み: 発行は `(session, chat)` 単位のDBカウンタ（`chat_token_sequences`）、接続維持中の巻き戻し拒否は接続単位のハイウォーターマーク。
 - MVPはWebSocketで確定。QUIC / WebTransport へ移行するか、両対応にするかの判断基準と時期。
