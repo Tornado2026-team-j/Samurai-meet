@@ -175,7 +175,7 @@ export default function JapaneseHomeScreen() {
           hasLoaded.current = true;
         }
       } catch (error) {
-        if (error instanceof Error && error.name === "AbortError") return;
+        if (error instanceof Error && error.name === "AbortError" && (cancelled || controller.signal.aborted)) return;
         if (!cancelled) {
 			setLoadError(copyRef.current.loadError);
         }

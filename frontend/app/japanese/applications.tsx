@@ -184,7 +184,7 @@ export default function JapaneseApplicationsScreen() {
           setLoadState("ready");
         }
       } catch (error) {
-        if (error instanceof Error && error.name === "AbortError") return;
+        if (error instanceof Error && error.name === "AbortError" && (cancelled || controller.signal.aborted)) return;
         if (!cancelled) {
           setLoadState(initialLoad ? "error" : "ready");
 			setLoadError(copyRef.current.loadError);
