@@ -1,6 +1,7 @@
 import { gcm } from "@noble/ciphers/aes.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { utf8ToBytes } from "@noble/hashes/utils.js";
+import { API_BASE_URL } from "./api-config";
 import { requestAPI } from "./api-client";
 import type { Session } from "./auth-contract";
 import { fromBase64URL, randomBytes, toBase64URL } from "./crypto";
@@ -64,14 +65,40 @@ export type ChatModerationResult = {
 };
 
 export type ChatReportReason =
-  | "offensive"
-  | "abuse"
-  | "sexual"
-  | "money"
-  | "external_contact"
-  | "dangerous_place"
-  | "no_show"
+  | "nuisance"
+  | "harassment"
+  | "impersonation"
+  | "inappropriate_photo"
+  | "dangerous"
   | "other";
+
+export type SafetyReportTargetType = "user" | "recruitment_card" | "message" | "photo";
+
+export type SafetyReport = {
+  id: string;
+  target_type: SafetyReportTargetType;
+  target_id: string;
+  reason: ChatReportReason;
+  comment: string;
+  status: "received" | "reviewing" | "actioned" | "dismissed";
+  created_at: string;
+};
+
+export type ChatTransportToken = {
+  chat_token: string;
+  expires_at: string;
+  transport: "websocket" | "webtransport";
+};
+
+export type ChatSocketFrame =
+  | { type: "auth.ok"; chat_id: string; token_expires_at: string }
+  | { type: "message.created"; message: EncryptedChatMessage }
+  | { type: "message.ack"; client_message_id: string; message: EncryptedChatMessage; duplicate: boolean }
+  | { type: "message.read"; user_id: string; last_message_sequence: number }
+  | { type: "typing"; user_id: string; state: "start" | "stop" }
+  | { type: "pong" }
+  | { type: "error"; code: string; message?: string }
+  | { type: "closing"; reason: string };
 
 function chatQuery(after?: number, limit?: number): string {
   const query = new URLSearchParams();
@@ -140,6 +167,88 @@ export async function markChatRead(
       signal,
     },
   );
+}
+
+export async function issueChatTransportToken(
+  chatID: string,
+  session: Session,
+  signal?: AbortSignal,
+): Promise<ChatTransportToken> {
+  const response = await requestAPI<DataResponse<ChatTransportToken>>(
+    `/chats/${encodeURIComponent(chatID)}/transport-token`,
+    session,
+    {
+      method: "POST",
+      body: JSON.stringify({ transport: "websocket" }),
+      signal,
+    },
+  );
+  if (!response.data || typeof response.data.chat_token !== "string") {
+    throw new Error("chat transport token response is invalid");
+  }
+  return response.data;
+}
+
+export function chatWebSocketURL(chatID: string, baseURL = API_BASE_URL): string {
+  const url = new URL(baseURL);
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  const basePath = url.pathname.replace(/\/+$/, "");
+  url.pathname = `${basePath}/ws/chats/${encodeURIComponent(chatID)}`;
+  url.search = "";
+  url.hash = "";
+  return url.toString();
+}
+
+export async function createSafetyReport(
+  session: Session,
+  input: {
+    target_type: SafetyReportTargetType;
+    target_id: string;
+    reason: ChatReportReason;
+    comment?: string;
+  },
+  signal?: AbortSignal,
+): Promise<SafetyReport> {
+  const response = await requestAPI<DataResponse<SafetyReport>>(
+    "/reports",
+    session,
+    {
+      method: "POST",
+      body: JSON.stringify({ ...input, comment: input.comment ?? "" }),
+      signal,
+    },
+  );
+  if (!response.data) throw new Error("report response is empty");
+  return response.data;
+}
+
+export async function blockUser(
+  userID: string,
+  session: Session,
+  signal?: AbortSignal,
+): Promise<void> {
+  await requestAPI<null>(
+    "/blocks",
+    session,
+    {
+      method: "POST",
+      body: JSON.stringify({ user_id: userID }),
+      signal,
+    },
+  );
+}
+
+export function parseChatSocketFrame(value: string): ChatSocketFrame | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object" || typeof (parsed as { type?: unknown }).type !== "string") {
+    return null;
+  }
+  return parsed as ChatSocketFrame;
 }
 
 export async function encryptChatPlaintext(

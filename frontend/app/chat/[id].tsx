@@ -20,10 +20,15 @@ import ChatBubble from "../../components/ChatBubble";
 import { useAuth } from "../../hooks/useAuth";
 import { APIError } from "../../services/api-client";
 import {
+  blockUser,
+  chatWebSocketURL,
+  createSafetyReport,
+  issueChatTransportToken,
   listChatMessages,
   listChats,
   markChatRead,
   moderateChatText,
+  parseChatSocketFrame,
   sendChatMessage,
   toChatMessageView,
   translateChatText,
@@ -33,7 +38,7 @@ import {
   type ChatReportReason,
   type ChatSummary,
 } from "../../services/chat";
-import { getMatch, type MatchView } from "../../services/matching";
+import { declineMatch, getMatch, type MatchView } from "../../services/matching";
 import { loadLanguage, subscribeLanguage, type AppLanguage } from "../../services/onboarding";
 import { formatTimeRange } from "../../utils/time";
 import type { MatchCategory } from "../../types/match";
@@ -87,11 +92,13 @@ const COPY = {
     confirm: "確定",
     close: "閉じる",
     reasonTitle: "理由を選択",
-    reportSubmitted: "通報内容を端末内に記録しました。運営API接続後に送信できます。",
-    blockedLocal: "このチャットはこの端末でブロック済みです。新しいメッセージは送信できません。",
+    reportSubmitted: "通報を送信しました。運営が内容を確認します。",
+    reportFailed: "通報を送信できませんでした。時間をおいて再試行してください。",
+    blockedLocal: "このユーザーをブロックしました。新しいメッセージは送信できません。",
+    blockFailed: "ブロックできませんでした。時間をおいて再試行してください。",
     declinedLocal: "案内を辞退済みとして扱っています。チャットは閲覧専用です。",
+    declineFailed: "この案内はチャット開始後のため、現在のAPIでは辞退を完了できません。acceptedマッチ用のキャンセルAPIが必要です。",
     readOnly: "この案内は完了済みのため、チャットは閲覧専用です。",
-    unsupportedAction: "この安全操作を保存するAPIはまだ未接続です。画面上では送信を停止します。",
     empty: "集合場所や時間を確認しましょう。",
     draftEmpty: "メッセージを入力してください。",
     draftTooLong: "メッセージは2000文字以内で入力してください。",
@@ -106,13 +113,11 @@ const COPY = {
     quickGate: "改札前で待ち合わせしましょう。",
     quickThanks: "ありがとうございます。よろしくお願いします。",
     reasons: {
-      offensive: "不快なメッセージ",
-      abuse: "差別・暴言",
-      sexual: "性的な発言",
-      money: "金銭要求",
-      external_contact: "外部SNS/連絡先への誘導",
-      dangerous_place: "危険な場所への誘導",
-      no_show: "相手が来ない・ドタキャン",
+      nuisance: "迷惑行為",
+      harassment: "差別・暴言・ハラスメント",
+      impersonation: "なりすまし",
+      inappropriate_photo: "不適切な写真",
+      dangerous: "危険・不安を感じる行動",
       other: "その他",
     },
     categories: {
@@ -154,11 +159,13 @@ const COPY = {
     confirm: "Confirm",
     close: "Close",
     reasonTitle: "Select a reason",
-    reportSubmitted: "Report saved on this device. It can be sent when the operations API is connected.",
-    blockedLocal: "This chat is blocked on this device. You cannot send new messages.",
+    reportSubmitted: "Report sent. Operations will review it.",
+    reportFailed: "Report could not be sent. Please try again later.",
+    blockedLocal: "This user is blocked. You cannot send new messages.",
+    blockFailed: "This user could not be blocked. Please try again later.",
     declinedLocal: "This guide is marked declined. The chat is read-only.",
+    declineFailed: "This guide is already in chat. The current API cannot complete a decline; an accepted-match cancel API is needed.",
     readOnly: "This guide is completed, so the chat is read-only.",
-    unsupportedAction: "The API for saving this safety action is not connected yet. Sending is stopped in this screen.",
     empty: "Confirm the meeting place and time.",
     draftEmpty: "Enter a message.",
     draftTooLong: "Messages must be 2000 characters or fewer.",
@@ -173,13 +180,11 @@ const COPY = {
     quickGate: "Let's meet in front of the ticket gates.",
     quickThanks: "Thank you. I look forward to it.",
     reasons: {
-      offensive: "Offensive message",
-      abuse: "Abuse or discrimination",
-      sexual: "Sexual comment",
-      money: "Money request",
-      external_contact: "External SNS/contact request",
-      dangerous_place: "Unsafe meeting place",
-      no_show: "No-show or last-minute cancel",
+      nuisance: "Nuisance behavior",
+      harassment: "Harassment or abuse",
+      impersonation: "Impersonation",
+      inappropriate_photo: "Inappropriate photo",
+      dangerous: "Dangerous or unsafe behavior",
       other: "Other",
     },
     categories: {
@@ -195,13 +200,11 @@ const COPY = {
 } as const;
 
 const REPORT_REASONS: ChatReportReason[] = [
-  "offensive",
-  "abuse",
-  "sexual",
-  "money",
-  "external_contact",
-  "dangerous_place",
-  "no_show",
+  "nuisance",
+  "harassment",
+  "impersonation",
+  "inappropriate_photo",
+  "dangerous",
   "other",
 ];
 
@@ -209,10 +212,23 @@ function latestSequence(messages: ChatMessageView[]): number {
   return messages.reduce((max, message) => Math.max(max, message.sequence), 0);
 }
 
+function mergeChatMessage(
+  current: ChatMessageView[],
+  incoming: ChatMessageView,
+): ChatMessageView[] {
+  const next = current.some((message) => message.id === incoming.id || message.client_message_id === incoming.client_message_id)
+    ? current.map((message) => (
+      message.id === incoming.id || message.client_message_id === incoming.client_message_id ? incoming : message
+    ))
+    : [...current, incoming];
+  return next.sort((left, right) => left.sequence - right.sequence);
+}
+
 export default function ChatDetailScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const scrollRef = useRef<ScrollView>(null);
+  const socketRef = useRef<WebSocket | null>(null);
   const { id } = useLocalSearchParams<{ id?: string | string[] }>();
   const chatID = Array.isArray(id) ? id[0] : id;
   const { getCurrentSession, refresh, session, status } = useAuth();
@@ -232,6 +248,7 @@ export default function ChatDetailScreen() {
   const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [locallyClosed, setLocallyClosed] = useState<"declined" | "blocked" | null>(null);
+  const [safetySubmitting, setSafetySubmitting] = useState(false);
   const copy = COPY[language ?? "ja"];
   const moderation = useMemo(() => moderateChatText(draft), [draft]);
   const validation = validateChatDraft(draft);
@@ -281,10 +298,11 @@ export default function ChatDetailScreen() {
           return { currentChat, currentMatch, page, userID: activeSession.user_id };
         }, controller.signal);
         if (!cancelled) {
+          const messageViews = result.page.items.map((message) => toChatMessageView(chatID, message, result.userID));
           setChat(result.currentChat);
           setMatch(result.currentMatch);
-          setMessages(result.page.items.map((message) => toChatMessageView(chatID, message, result.userID)));
-          const sequence = latestSequence(result.page.items.map((message) => toChatMessageView(chatID, message, result.userID)));
+          setMessages(messageViews);
+          const sequence = latestSequence(messageViews);
           if (sequence > 0) {
             void runWithSession((activeSession, signal) => markChatRead(chatID, sequence, activeSession, signal), controller.signal).catch(() => undefined);
           }
@@ -326,6 +344,66 @@ export default function ChatDetailScreen() {
   }, []);
 
   useEffect(() => load("initial"), [load]);
+
+  useEffect(() => {
+    if (!chatID || chat?.status !== "accepted" || locallyClosed) return undefined;
+    if (typeof WebSocket === "undefined") return undefined;
+
+    const controller = new AbortController();
+    let closed = false;
+    let socket: WebSocket | null = null;
+
+    const connect = async () => {
+      try {
+        const token = await runWithSession(
+          (activeSession, signal) => issueChatTransportToken(chatID, activeSession, signal),
+          controller.signal,
+        );
+        if (closed || controller.signal.aborted) return;
+
+        socket = new WebSocket(chatWebSocketURL(chatID));
+        socketRef.current = socket;
+        socket.onopen = () => {
+          socket?.send(JSON.stringify({ type: "auth", chat_token: token.chat_token }));
+        };
+        socket.onmessage = (event) => {
+          if (closed || !chatID) return;
+          const raw = typeof event.data === "string" ? event.data : String(event.data);
+          const frame = parseChatSocketFrame(raw);
+          if (!frame) return;
+
+          if (frame.type === "message.created" || frame.type === "message.ack") {
+            const activeSession = getCurrentSession() ?? session;
+            if (!activeSession) return;
+            const view = toChatMessageView(chatID, frame.message, activeSession.user_id);
+            setMessages((current) => mergeChatMessage(current, view));
+            if (!view.mine) {
+              void runWithSession(
+                (currentSession, signal) => markChatRead(chatID, view.sequence, currentSession, signal),
+                new AbortController().signal,
+              ).catch(() => undefined);
+            }
+          } else if (frame.type === "error" && frame.code === "blocked") {
+            setLocallyClosed("blocked");
+            setNotice(copy.blockedLocal);
+          }
+        };
+        socket.onclose = () => {
+          if (socketRef.current === socket) socketRef.current = null;
+        };
+      } catch {
+        // REST history and send remain available when realtime setup fails.
+      }
+    };
+
+    void connect();
+    return () => {
+      closed = true;
+      controller.abort();
+      if (socketRef.current === socket) socketRef.current = null;
+      socket?.close();
+    };
+  }, [chat?.status, chatID, copy.blockedLocal, getCurrentSession, locallyClosed, runWithSession, session]);
 
   useEffect(() => {
     if (messages.length === 0) return;
@@ -384,27 +462,81 @@ export default function ChatDetailScreen() {
     setConfirmAction(action);
   };
 
-  const confirmLocalAction = () => {
-    if (confirmAction === "decline") {
-      setLocallyClosed("declined");
-      setNotice(`${copy.declinedLocal} ${copy.unsupportedAction}`);
-      setConfirmAction(null);
-    } else if (confirmAction === "block") {
-      setLocallyClosed("blocked");
-      setNotice(`${copy.blockedLocal} ${copy.unsupportedAction}`);
-      setConfirmAction(null);
-    } else if (confirmAction === "account_report") {
+  const confirmSafetyAction = async () => {
+    const action = confirmAction;
+    if (!action || safetySubmitting) return;
+
+    if (action === "account_report") {
       setReportTarget({ kind: "account" });
       setConfirmAction(null);
-    } else if (confirmAction === "message_report") {
+      return;
+    }
+    if (action === "message_report") {
       setReportTarget((current) => current ?? { kind: "message", messageID: "" });
       setConfirmAction(null);
+      return;
+    }
+
+    setSafetySubmitting(true);
+    try {
+      if (action === "block") {
+        const blockedUserID = chat?.other_user_id;
+        if (!blockedUserID) throw new Error("missing_block_target");
+        await runWithSession(
+          (activeSession, signal) => blockUser(blockedUserID, activeSession, signal),
+          new AbortController().signal,
+        );
+        socketRef.current?.close();
+        setLocallyClosed("blocked");
+        setNotice(copy.blockedLocal);
+      } else {
+        const matchID = chat?.match_id ?? match?.id;
+        if (!matchID) throw new Error("missing_match");
+        await runWithSession(
+          (activeSession, signal) => declineMatch(matchID, activeSession, signal),
+          new AbortController().signal,
+        );
+        socketRef.current?.close();
+        setLocallyClosed("declined");
+        setNotice(copy.declinedLocal);
+      }
+      setConfirmAction(null);
+    } catch {
+      setNotice(action === "block" ? copy.blockFailed : copy.declineFailed);
+      setConfirmAction(null);
+    } finally {
+      setSafetySubmitting(false);
     }
   };
 
-  const submitReport = (reason: ChatReportReason) => {
-    setReportTarget(null);
-    setNotice(`${copy.reportSubmitted} ${copy.reasons[reason]}`);
+  const submitReport = async (reason: ChatReportReason) => {
+    const target = reportTarget;
+    if (!target || safetySubmitting) return;
+
+    const targetID = target.kind === "message" ? target.messageID : chat?.other_user_id;
+    if (!targetID) {
+      setReportTarget(null);
+      setNotice(copy.reportFailed);
+      return;
+    }
+
+    setSafetySubmitting(true);
+    try {
+      await runWithSession(
+        (activeSession, signal) => createSafetyReport(activeSession, {
+          target_type: target.kind === "message" ? "message" : "user",
+          target_id: targetID,
+          reason,
+        }, signal),
+        new AbortController().signal,
+      );
+      setReportTarget(null);
+      setNotice(`${copy.reportSubmitted} ${copy.reasons[reason]}`);
+    } catch {
+      setNotice(copy.reportFailed);
+    } finally {
+      setSafetySubmitting(false);
+    }
   };
 
   const confirmTitle = confirmAction === "decline"
@@ -660,8 +792,9 @@ export default function ChatDetailScreen() {
                 <Pressable
                   key={reason}
                   accessibilityRole="button"
-                  onPress={() => submitReport(reason)}
-                  style={({ pressed }) => [styles.reasonButton, pressed && styles.pressed]}
+                  disabled={safetySubmitting}
+                  onPress={() => void submitReport(reason)}
+                  style={({ pressed }) => [styles.reasonButton, safetySubmitting && styles.disabledPill, pressed && styles.pressed]}
                 >
                   <Text style={styles.reasonText}>{copy.reasons[reason]}</Text>
                 </Pressable>
@@ -690,16 +823,22 @@ export default function ChatDetailScreen() {
                   if (confirmAction === "message_report") setReportTarget(null);
                   setConfirmAction(null);
                 }}
+                disabled={safetySubmitting}
                 style={({ pressed }) => [styles.modalSecondaryButton, pressed && styles.pressed]}
               >
                 <Text style={styles.modalSecondaryText}>{copy.cancel}</Text>
               </Pressable>
               <Pressable
                 accessibilityRole="button"
-                onPress={confirmLocalAction}
-                style={({ pressed }) => [styles.modalPrimaryButton, pressed && styles.pressed]}
+                disabled={safetySubmitting}
+                onPress={() => void confirmSafetyAction()}
+                style={({ pressed }) => [styles.modalPrimaryButton, safetySubmitting && styles.sendButtonDisabled, pressed && styles.pressed]}
               >
-                <Text style={styles.modalPrimaryText}>{copy.confirm}</Text>
+                {safetySubmitting ? (
+                  <ActivityIndicator color="#ffffff" size="small" />
+                ) : (
+                  <Text style={styles.modalPrimaryText}>{copy.confirm}</Text>
+                )}
               </Pressable>
             </View>
           </View>

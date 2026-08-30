@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import {
+  blockUser,
+  chatWebSocketURL,
+  createSafetyReport,
   decryptChatMessage,
   encryptChatPlaintext,
+  issueChatTransportToken,
   listChatMessages,
   listChats,
   markChatRead,
@@ -60,6 +64,76 @@ describe("チャットAPIクライアント", () => {
     expect(requests[1]).toContain("/chats/chat-1/messages");
     expect(requests[1]).toContain("after=3");
     expect(requests[1]).toContain("limit=50");
+  });
+
+  it("WebSocket用Chat Tokenを発行し、URL queryへ載せない接続先を作る", async () => {
+    let requestedBody = "";
+    globalThis.fetch = (async (_input, init) => {
+      requestedBody = String(init?.body);
+      return new Response(JSON.stringify({
+        data: {
+          chat_token: "chat-jws",
+          expires_at: "2026-08-30T00:02:00Z",
+          transport: "websocket",
+        },
+      }), { status: 200 });
+    }) as typeof fetch;
+
+    await expect(issueChatTransportToken("chat-1", session)).resolves.toMatchObject({
+      chat_token: "chat-jws",
+      transport: "websocket",
+    });
+
+    expect(JSON.parse(requestedBody)).toEqual({ transport: "websocket" });
+    expect(chatWebSocketURL("chat-1", "https://example.com/api/v1")).toBe("wss://example.com/api/v1/ws/chats/chat-1");
+    expect(chatWebSocketURL("chat 1", "http://127.0.0.1:8080/api/v1")).toBe("ws://127.0.0.1:8080/api/v1/ws/chats/chat%201");
+  });
+
+  it("通報とブロックは#27の安全API契約を呼び出す", async () => {
+    const requests: { url: string; method: string; body: unknown }[] = [];
+    globalThis.fetch = (async (input, init) => {
+      const url = String(input);
+      requests.push({
+        url,
+        method: String(init?.method),
+        body: init?.body ? JSON.parse(String(init.body)) : null,
+      });
+      if (url.includes("/reports")) {
+        return new Response(JSON.stringify({
+          data: {
+            id: "report-1",
+            target_type: "message",
+            target_id: "message-1",
+            reason: "harassment",
+            comment: "",
+            status: "received",
+            created_at: "2026-08-30T00:00:00Z",
+          },
+        }), { status: 201 });
+      }
+      return new Response(null, { status: 204 });
+    }) as typeof fetch;
+
+    await expect(createSafetyReport(session, {
+      target_type: "message",
+      target_id: "message-1",
+      reason: "harassment",
+    })).resolves.toMatchObject({ id: "report-1" });
+    await expect(blockUser("user-2", session)).resolves.toBeUndefined();
+
+    expect(requests[0]).toMatchObject({
+      method: "POST",
+      body: {
+        target_type: "message",
+        target_id: "message-1",
+        reason: "harassment",
+        comment: "",
+      },
+    });
+    expect(requests[1]).toMatchObject({
+      method: "POST",
+      body: { user_id: "user-2" },
+    });
   });
 
   it("既読更新はlast_message_sequenceをPOSTする", async () => {
