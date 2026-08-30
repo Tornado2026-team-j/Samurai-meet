@@ -1,8 +1,8 @@
-# 機能仕様：チャット通信トークン（QUIC・予定）
+# 機能仕様：チャット通信トークン（transport token＋WebSocket 実装済み／QUIC 予定）
 
 ## 1. 位置づけ
 
-本書は将来のリアルタイム配送に向けた設計仕様であり、現行実装の完了報告ではありません。現行のチャットはRESTの履歴・暗号文送信・既読です。QUIC／WebTransport／WebSocketの配送クライアントとサーバーはまだ存在せず、`frontend/services/quic.ts` と `backend/internal/chat/quic.go` は未実装です。
+本書は将来のQUICリアルタイム配送に向けた設計仕様です。現行実装済みなのは、RESTの履歴・暗号文送信・既読、短命transport tokenの発行・検証、および**WebSocketによるリアルタイム配送サーバー**（`backend/internal/chat/websocket.go` / `hub.go`）です。QUIC／HTTP/3 WebTransportの配送はまだ設計段階で、`frontend/services/quic.ts` と `backend/internal/chat/quic.go`、フロントのWebSocketクライアント（`frontend/services/websocket.ts`）は未実装です。transport tokenは`transport=webtransport`も受理しますが、それを受けるWebTransportサーバーは存在しません（発行のみ通る）。
 
 将来は QUIC を標準 transport 候補とします。HTTP/3 WebTransportを使う場合もQUIC上の実装形態として扱い、WebSocketは自動採用しません。QUICは通信路のプロトコルであり、アプリケーションの認証・認可そのものではないため、QUIC / HTTP/3の暗号化通信上でチャット専用の短命トークンを別途検証します。
 
@@ -110,7 +110,7 @@ Chat Token は JWS 署名付き JWT とします。
 
 JWSは署名検証に成功しても、それだけで接続を許可しません。DBのセッション、ユーザー状態、チャット参加権限、ブロック、マッチ状態を毎回確認します。
 
-## 4. 発行 API（REST部品あり・既定値不整合）
+## 4. 発行 API（実装済み）
 
 ### `POST /chats/{chat_id}/transport-token`
 
@@ -134,9 +134,9 @@ Response（将来QUICを採用した場合の例）：
 }
 ```
 
-Chat TokenはRefresh Tokenで更新しません。期限前に、通常のREST APIで次のChat Tokenを取得する設計です。現行コードには発行部品がありますが、HTTP handlerの既定値は`quic`、サービス側の受理値は`websocket`または`webtransport`で一致していません。コード整合まで、このendpointを動作済みとみなしません。以下の`quic`は将来のQUIC採用時の設計例です。
+Chat TokenはRefresh Tokenで更新しません。期限前に、通常のREST APIで次のChat Tokenを取得する設計です。現行コードのHTTP handler既定値・サービス受理値はともに`websocket`で一致しており（`webtransport`も受理、それ以外は`ErrChatInvalidInput`）、このendpointは実装済み・WebSocket接続で動作確認済みです。上記Responseの`transport: "quic"`は将来のQUIC採用時の設計例で、現行の発行値は`websocket`です。
 
-将来のQUIC採用時はtransport-token requestで`transport=quic`を使う案ですが、現行の受理値との整合をコードで確定する必要があります。既存のREST履歴・送信・既読を現行経路とし、QUIC配送とQUICクライアントが未実装の間は`sequence` cursorによるRESTポーリングを使います。
+`transport=webtransport`でトークンを発行できますが、それを受けるWebTransportサーバーは未実装です。将来のQUIC採用時はtransport-token requestで`transport=quic`を使う案で、その際は受理値を追加します。既存のREST履歴・送信・既読とWebSocket配送を現行経路とし、QUICクライアントが未実装の間は`sequence` cursorによるRESTポーリングでWebSocketを補完します。
 
 ## 5. Chat Token の切り替え（QUIC配送実装時に追加）
 
