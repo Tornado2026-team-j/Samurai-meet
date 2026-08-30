@@ -12,11 +12,8 @@ import {
   View,
 } from "react-native";
 import type { AppLanguage, LocalProfile } from "../services/onboarding";
+import { Button, Pill, colors, opacity, radius, typography } from "./ui";
 
-const YELLOW = "#e7b454";
-const TEXT_GRAY = "#535353";
-const MUTED_GRAY = "#7d7d7d";
-const BORDER_GRAY = "#d4d4d4";
 const MAX_TAGS_PER_CATEGORY = 5;
 const MIN_TOTAL_TAGS = 3;
 const FREE_TEXT_LIMIT = 150;
@@ -367,7 +364,7 @@ export default function ProfileForm({
           maxLength={50}
           onChangeText={setName}
           placeholder={copy.namePlaceholder}
-          placeholderTextColor="#949494"
+          placeholderTextColor={colors.text.muted}
           returnKeyType="next"
           style={styles.input}
           value={name}
@@ -390,7 +387,7 @@ export default function ProfileForm({
           ) : (
             <Text style={styles.placeholderText}>{copy.nationalityPlaceholder}</Text>
           )}
-          <MaterialIcons color={TEXT_GRAY} name="keyboard-arrow-down" size={24} />
+          <MaterialIcons color={colors.text.secondary} name="keyboard-arrow-down" size={24} />
         </Pressable>
       </View>
 
@@ -426,7 +423,7 @@ export default function ProfileForm({
             multiline
             onChangeText={setFreeText}
             placeholder={copy.freeTextPlaceholder}
-            placeholderTextColor="#949494"
+            placeholderTextColor={colors.text.muted}
             style={[styles.input, styles.freeTextInput]}
             textAlignVertical="top"
             value={freeText}
@@ -447,19 +444,18 @@ export default function ProfileForm({
         </Text>
       ) : null}
 
-      <Pressable
-        accessibilityRole="button"
+      <Button
         disabled={submitting}
+        fullWidth
+        iconRight={<MaterialIcons color={colors.text.inverse} name="arrow-forward" size={20} />}
+        loading={submitting}
         onPress={() => void submit()}
-        style={({ pressed }) => [
-          styles.submitButton,
-          submitting && styles.disabled,
-          pressed && styles.pressed,
-        ]}
+        size="lg"
+        style={styles.submitButton}
+        textStyle={styles.submitText}
       >
-        <Text style={styles.submitText}>{submitting ? "..." : copy.submit}</Text>
-        {!submitting ? <MaterialIcons color="#ffffff" name="arrow-forward" size={20} /> : null}
-      </Pressable>
+        {copy.submit}
+      </Button>
 
       <Modal
         animationType="slide"
@@ -487,11 +483,11 @@ export default function ProfileForm({
                 onPress={() => setCountryPickerVisible(false)}
                 style={({ pressed }) => [styles.closeButton, pressed && styles.pressed]}
               >
-                <MaterialIcons color={TEXT_GRAY} name="close" size={24} />
+                <MaterialIcons color={colors.text.secondary} name="close" size={24} />
               </Pressable>
             </View>
             <View style={styles.countrySearchField}>
-              <MaterialIcons color={MUTED_GRAY} name="search" size={21} />
+              <MaterialIcons color={colors.text.subtle} name="search" size={21} />
               <TextInput
                 accessibilityLabel={copy.countrySearch}
                 autoCapitalize="none"
@@ -499,7 +495,7 @@ export default function ProfileForm({
                 clearButtonMode="while-editing"
                 onChangeText={setCountryQuery}
                 placeholder={copy.countrySearch}
-                placeholderTextColor="#949494"
+                placeholderTextColor={colors.text.muted}
                 style={styles.countrySearchInput}
                 value={countryQuery}
               />
@@ -534,7 +530,7 @@ export default function ProfileForm({
                       ) : null}
                     </View>
                     {selected ? (
-                      <MaterialIcons color={YELLOW} name="check-circle" size={22} />
+                      <MaterialIcons color={colors.brand.gold} name="check-circle" size={22} />
                     ) : null}
                   </Pressable>
                 );
@@ -573,24 +569,19 @@ function TagGroup({
           const disabled = maxReached && !selected;
 
           return (
-            <Pressable
+            <Pill
               key={tag.id}
               accessibilityRole="checkbox"
               accessibilityState={{ checked: selected, disabled }}
               disabled={disabled}
+              iconRight={selected ? <MaterialIcons color={colors.text.inverse} name="check" size={15} /> : null}
               onPress={() => onToggle(tag.id)}
-              style={({ pressed }) => [
-                styles.tagChip,
-                selected && styles.tagChipSelected,
-                disabled && styles.tagChipDisabled,
-                pressed && styles.pressed,
-              ]}
+              selected={selected}
+              style={styles.tagChip}
+              textStyle={[styles.tagChipText, selected && styles.tagChipTextSelected]}
             >
-              <Text style={[styles.tagChipText, selected && styles.tagChipTextSelected]}>
-                {tagLabel(tag, language)}
-              </Text>
-              {selected ? <MaterialIcons color="#ffffff" name="check" size={15} /> : null}
-            </Pressable>
+              {tagLabel(tag, language)}
+            </Pill>
           );
         })}
       </View>
@@ -607,20 +598,18 @@ const styles = StyleSheet.create({
     gap: 7,
   },
   label: {
-    color: TEXT_GRAY,
-    fontSize: 13,
-    fontWeight: "700",
-    letterSpacing: 0,
+    color: colors.text.secondary,
+    ...typography.caption,
   },
   input: {
     width: "100%",
     minHeight: 52,
     paddingHorizontal: 16,
     borderWidth: 1,
-    borderColor: BORDER_GRAY,
-    borderRadius: 8,
-    backgroundColor: "#ffffff",
-    color: TEXT_GRAY,
+    borderColor: colors.border.default,
+    borderRadius: radius.sm,
+    backgroundColor: colors.surface.default,
+    color: colors.text.secondary,
     fontSize: 15,
     letterSpacing: 0,
   },
@@ -632,25 +621,23 @@ const styles = StyleSheet.create({
     gap: 5,
   },
   monsterTitle: {
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
+    ...typography.subheading,
     fontSize: 17,
     fontWeight: "800",
-    letterSpacing: 0,
   },
   monsterDescription: {
-    color: MUTED_GRAY,
-    fontSize: 12,
+    color: colors.text.subtle,
+    ...typography.small,
+    fontWeight: "400",
     lineHeight: 18,
-    letterSpacing: 0,
   },
   tagGroup: {
     gap: 9,
   },
   tagGroupTitle: {
-    color: TEXT_GRAY,
-    fontSize: 13,
-    fontWeight: "700",
-    letterSpacing: 0,
+    color: colors.text.secondary,
+    ...typography.caption,
   },
   tagGrid: {
     flexDirection: "row",
@@ -664,30 +651,18 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     gap: 5,
-    borderWidth: 1,
-    borderColor: BORDER_GRAY,
-    borderRadius: 18,
-    backgroundColor: "#ffffff",
-  },
-  tagChipSelected: {
-    borderColor: YELLOW,
-    backgroundColor: YELLOW,
-  },
-  tagChipDisabled: {
-    opacity: 0.45,
+    borderRadius: radius.pill,
   },
   tagChipText: {
-    color: TEXT_GRAY,
-    fontSize: 13,
-    fontWeight: "700",
-    letterSpacing: 0,
+    color: colors.text.secondary,
+    ...typography.caption,
   },
   tagChipTextSelected: {
-    color: "#ffffff",
+    color: colors.text.inverse,
   },
   tagHint: {
     marginTop: -3,
-    color: MUTED_GRAY,
+    color: colors.text.subtle,
     fontSize: 11,
     letterSpacing: 0,
   },
@@ -700,7 +675,7 @@ const styles = StyleSheet.create({
     position: "absolute",
     right: 10,
     bottom: 8,
-    color: MUTED_GRAY,
+    color: colors.text.subtle,
     fontSize: 11,
     letterSpacing: 0,
   },
@@ -712,9 +687,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     borderWidth: 1,
-    borderColor: BORDER_GRAY,
-    borderRadius: 8,
-    backgroundColor: "#ffffff",
+    borderColor: colors.border.default,
+    borderRadius: radius.sm,
+    backgroundColor: colors.surface.default,
   },
   selectedCountry: {
     flex: 1,
@@ -725,25 +700,25 @@ const styles = StyleSheet.create({
   },
   selectedFlag: {
     width: 26,
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 20,
     letterSpacing: 0,
     textAlign: "center",
   },
   selectText: {
     flex: 1,
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 15,
     letterSpacing: 0,
   },
   placeholderText: {
     flex: 1,
-    color: "#949494",
+    color: colors.text.muted,
     fontSize: 15,
     letterSpacing: 0,
   },
   validation: {
-    color: "#b42318",
+    color: colors.state.danger,
     fontSize: 12,
     fontWeight: "600",
     letterSpacing: 0,
@@ -757,11 +732,10 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     gap: 9,
-    borderRadius: 8,
-    backgroundColor: YELLOW,
+    borderRadius: radius.sm,
   },
   submitText: {
-    color: "#ffffff",
+    color: colors.text.inverse,
     fontSize: 16,
     fontWeight: "800",
     letterSpacing: 0,
@@ -769,7 +743,7 @@ const styles = StyleSheet.create({
   modalBackdrop: {
     flex: 1,
     justifyContent: "flex-end",
-    backgroundColor: "rgba(31, 31, 31, 0.35)",
+    backgroundColor: colors.overlay.sheet,
   },
   backdropDismissArea: {
     flex: 1,
@@ -783,7 +757,7 @@ const styles = StyleSheet.create({
     paddingBottom: 28,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.default,
   },
   sheetHeader: {
     minHeight: 44,
@@ -792,10 +766,9 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
   },
   sheetTitle: {
-    color: TEXT_GRAY,
-    fontSize: 18,
+    color: colors.text.secondary,
+    ...typography.heading,
     fontWeight: "800",
-    letterSpacing: 0,
   },
   closeButton: {
     width: 40,
@@ -811,15 +784,15 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 8,
     borderWidth: 1,
-    borderColor: BORDER_GRAY,
-    borderRadius: 8,
-    backgroundColor: "#ffffff",
+    borderColor: colors.border.default,
+    borderRadius: radius.sm,
+    backgroundColor: colors.surface.default,
   },
   countrySearchInput: {
     flex: 1,
     minHeight: 44,
     padding: 0,
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 14,
     letterSpacing: 0,
   },
@@ -834,14 +807,14 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: BORDER_GRAY,
+    borderBottomColor: colors.border.default,
   },
   countryOptionSelected: {
     backgroundColor: "#fff9ec",
   },
   countryFlag: {
     width: 30,
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 22,
     letterSpacing: 0,
     textAlign: "center",
@@ -852,27 +825,27 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   countryName: {
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 15,
     fontWeight: "600",
     letterSpacing: 0,
   },
   countrySubname: {
-    color: MUTED_GRAY,
+    color: colors.text.subtle,
     fontSize: 12,
     letterSpacing: 0,
   },
   noCountries: {
     paddingVertical: 30,
-    color: MUTED_GRAY,
+    color: colors.text.subtle,
     fontSize: 14,
     letterSpacing: 0,
     textAlign: "center",
   },
   disabled: {
-    opacity: 0.55,
+    opacity: opacity.disabled,
   },
   pressed: {
-    opacity: 0.72,
+    opacity: opacity.pressed,
   },
 });
