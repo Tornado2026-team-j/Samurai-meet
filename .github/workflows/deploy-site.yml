@@ -32,12 +32,10 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: 'npm'
-          cache-dependency-path: 'site/package-lock.json'
 
       - name: Install dependencies
         working-directory: ./site
-        run: npm install
+        run: npm ci
 
       - name: Build site
         working-directory: ./site
