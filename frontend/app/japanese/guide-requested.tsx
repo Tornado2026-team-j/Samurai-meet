@@ -134,7 +134,7 @@ export default function JapaneseGuideRequestedScreen() {
       setMatch(result);
       setMatchLoadState("ready");
     } catch (error) {
-      if (error instanceof Error && error.name === "AbortError") return;
+      if (error instanceof Error && error.name === "AbortError" && signal?.aborted) return;
       setMatchLoadState("error");
       setMatchLoadError("failed");
     }

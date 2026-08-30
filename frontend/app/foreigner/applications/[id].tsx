@@ -205,7 +205,7 @@ export default function ForeignerApplicationDetailScreen() {
           setLoadState("ready");
         }
       } catch (error) {
-        if (error instanceof Error && error.name === "AbortError") return;
+        if (error instanceof Error && error.name === "AbortError" && (cancelled || controller.signal.aborted)) return;
         if (!cancelled) {
           setLoadState("error");
           setLoadError("failed");

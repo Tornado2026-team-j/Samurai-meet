@@ -174,7 +174,7 @@ export default function JapaneseMatchDetailScreen() {
           setLoadState("ready");
         }
       } catch (error) {
-        if (error instanceof Error && error.name === "AbortError") return;
+        if (error instanceof Error && error.name === "AbortError" && (cancelled || controller.signal.aborted)) return;
         if (!cancelled) {
           setLoadState("error");
           setLoadError(copyRef.current.loadError);
