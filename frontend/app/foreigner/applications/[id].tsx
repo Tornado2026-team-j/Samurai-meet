@@ -48,6 +48,7 @@ type DetailCopy = {
   processingAccept: string;
   processingReject: string;
   actionFailed: string;
+  openChat: string;
   status: {
     accepted: string;
     rejected: string;
@@ -74,6 +75,7 @@ const COPY: Record<AppLanguage, DetailCopy> = {
     processingAccept: "Choosing guide...",
     processingReject: "Declining...",
     actionFailed: "The application could not be processed. Check the latest status and try again.",
+    openChat: "Open chat",
     status: {
       accepted: "Guide chosen",
       rejected: "Application declined",
@@ -98,6 +100,7 @@ const COPY: Record<AppLanguage, DetailCopy> = {
     processingAccept: "案内役を選択しています…",
     processingReject: "応募を却下しています…",
     actionFailed: "応募を処理できませんでした。最新の状態を確認して、もう一度お試しください。",
+    openChat: "チャットを開く",
     status: {
       accepted: "案内役に決定しました",
       rejected: "応募を却下しました",
@@ -371,6 +374,20 @@ export default function ForeignerApplicationDetailScreen() {
           </View>
         ) : null}
 
+        {choseGuide ? (
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => router.push({
+              pathname: "/chat",
+              params: { matchId: application.id },
+            })}
+            style={({ pressed }) => [styles.chatButton, pressed && styles.pressed]}
+          >
+            <MaterialIcons color="#ffffff" name="chat-bubble-outline" size={21} />
+            <Text style={styles.chatButtonText}>{copy.openChat}</Text>
+          </Pressable>
+        ) : null}
+
         <Pressable
           accessibilityLabel={actionState === "accepting" ? copy.accepting : copy.accept}
           accessibilityRole="button"
@@ -603,6 +620,25 @@ const styles = StyleSheet.create({
     borderColor: YELLOW,
     borderRadius: 10,
     backgroundColor: YELLOW,
+  },
+  chatButton: {
+    width: "100%",
+    maxWidth: 326,
+    height: 46,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    marginBottom: 12,
+    borderRadius: 10,
+    backgroundColor: BLUE,
+  },
+  chatButtonText: {
+    color: "#ffffff",
+    fontSize: 15,
+    fontWeight: "900",
+    letterSpacing: 0,
+    lineHeight: 18,
   },
   primaryButtonText: {
     color: "#ffffff",
