@@ -240,3 +240,16 @@ MVP のリアルタイム配送は WebSocket（実装済み）で、同じ Chat 
 - Chat Token の期限、切り替え間隔、重複期間の負荷試験。Access Token の 1 分 Refresh とは別に決定する。手順は [chat-load-test.md](chat-load-test.md) §3 シナリオ 3・4。
 - `token_seq` の管理単位は決定済み: 発行は `(session, chat)` 単位のDBカウンタ（`chat_token_sequences`）、接続維持中の巻き戻し拒否は接続単位のハイウォーターマーク。
 - MVPはWebSocketで確定。QUIC / WebTransport へ移行するか、両対応にするかの判断基準と時期。
+
+## 11. QUIC 実装の確定方針
+
+リアルタイム配送の次実装は、独自ALPNを使う生QUICではなく、**HTTP/3 上の WebTransport** とする。WebTransport session は QUIC/TLS 1.3 で確立し、最初の reliable bidirectional stream に既存と同じ `auth` フレームを送る。Chat Token を URL query やログに載せない。
+
+- endpoint は `https://<chat-host>/api/v1/wt/chats/{chat_id}` とし、UDP 443 と TLS 1.3 を必須にする。
+- 初期版は reliable stream 1本だけを使う。datagram、0-RTT application data、状態変更を伴う early data は許可しない。
+- `aud`、`sub`、`sid`、`chat_id`、`jti`、`iat`、`exp`、`transport=webtransport`、DB session、match、block を接続時・heartbeat時に検証する。
+- `message.send`、`message.read`、token rotation、`client_message_id` 冪等性、`sequence` cursor 補完は WebSocket と同じ service 層を共有する。
+- Expo Go にはネイティブ WebTransport 実装を追加できない。iOS は Development Build / 本番ビルドに native module を含め、実機で UDP遮断・ネットワーク切替・失効・再接続を検証する。
+- WebSocket は移行期間の fallback に限定する。WebTransport 接続が利用可能な端末では新規接続を WebTransport 優先とし、恒久的な最終transportとして扱わない。
+
+`backend/pkg/transport/quic` の専用ALPN設定は将来の raw QUIC PoC 用の安全な制限値であり、プロダクトtransportを意味しない。raw QUIC はWebとの相互運用性を失うため、本機能の採用対象外とする。
