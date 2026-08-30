@@ -40,11 +40,10 @@
 | `0023_storage_cleanup_jobs.sql` | 退会後の暗号化画像ストレージ削除を再試行するジョブ |
 | `0024_recovery_delete_capability.sql` | Recovery後の削除capabilityと関連する安全な退会境界 |
 | `0025_notifications.sql` | 通知、既読時刻、応募・承認／辞退・暗号化チャット送信イベント |
-| `0026_match_withdrawal.sql` | 作業ツリーにある未コミット・未適用の変更。応募取り下げによる`matches.status = cancelled`を追加 |
+| `0026_match_withdrawal.sql` | 応募取り下げによる`matches.status = cancelled`を追加 |
+| `0027_reports.sql` | 通報の原票`reports`（対象種別・理由・任意コメント・運営ステータス） |
 
 注意: 現行のmigration runnerはSQLファイルを順番に正規化して実行し、`schema_migrations`へファイル名と正規化SQLのSHA-256 checksum、適用時刻を記録する。同じchecksumの適用済みmigrationはスキップし、PostgreSQL advisory lockで同時起動を直列化する。適用済みファイルの内容が変わった場合はchecksum mismatchで起動を停止する。適用済みmigrationを編集・置換してはいけない。DDL変更は新しい番号のSQLを追加する。
-
-`0026_match_withdrawal.sql`はこの文書更新時点で未追跡の作業中ファイルであり、本コミットには含めない。適用済みmigration一覧や本番DBの状態へ反映するのは、対応するGoコード・テストと一緒に正式コミットしてからとする。
 
 ## 3. 認証テーブル
 
@@ -210,7 +209,11 @@ Recovery Phraseで復号したMaster Keyの所有証明を一時的に受け付�
 
 現行のDBイメージはPostGISなしのため、距離判定はGoのHaversineで行う。正確な位置は検索レスポンスに含めない。
 
-未実装の業務テーブルは`reviews`、`identity_verifications`、`reports`、`audit_logs`であり、API実装時にmigration、PostgreSQL integration test、API仕様書、機能仕様書を同じ変更で更新する。
+`0027_reports.sql`で`reports`を追加した。
+
+- `reports`: `reporter_user_id`、`target_type`（`user` / `recruitment_card` / `message` / `photo`）、`target_id`、`reason`（6種の固定値）、任意`comment`（最大2000）、`status`（`received` / `reviewing` / `actioned` / `dismissed`）。`(reporter_user_id, target_type, target_id)`のうち`status IN ('received','reviewing')`の行を部分一意インデックスで1件に集約する。`blocks`の書き込みAPIも同じ`backend/internal/safety`が担当する（テーブルは`0019`の既存`blocks`）。
+
+未実装の業務テーブルは`reviews`、`identity_verifications`、`audit_logs`であり、API実装時にmigration、PostgreSQL integration test、API仕様書、機能仕様書を同じ変更で更新する。運営キュー用の`GET/PATCH /admin/reports`と`audit_logs`は`reports`の次の作業。
 
 ## 7. 削除・保持
 

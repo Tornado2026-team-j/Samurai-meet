@@ -21,12 +21,14 @@ import {
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { Button, Card, Pill, colors, opacity, radius, shadows, typography } from "../../components/ui";
 import { useAuth } from "../../hooks/useAuth";
 import { APIError } from "../../services/api-client";
 import { getCurrentCoordinates } from "../../services/location";
 import {
   loadLanguage,
   loadLocalProfile,
+  serializeMonsterSeedForLegacyBio,
   subscribeLanguage,
   type AppLanguage,
 } from "../../services/onboarding";
@@ -886,7 +888,7 @@ export default function SearchPreferencesScreen() {
         await updateMyProfile(activeSession, {
           name: localProfile.name,
           nationality_code: localProfile.nationalityCode,
-          bio: localProfile.bio,
+          bio: serializeMonsterSeedForLegacyBio(localProfile),
         });
       }
 
@@ -1020,22 +1022,20 @@ export default function SearchPreferencesScreen() {
         style={[styles.panel, { height: panelHeight }]}
       >
         {!isConfirmationVisible ? (
-          <Pressable
+          <Button
             accessibilityLabel={copy.backToHome}
-            accessibilityRole="button"
+            iconLeft={<MaterialIcons color={colors.brand.gold} name="arrow-back" size={16} />}
             onPress={() => {
               Keyboard.dismiss();
               router.back();
             }}
-            style={({ pressed }) => [
-              styles.menuBackButton,
-              { top: Math.max(insets.top + 4, 16) },
-              pressed && styles.pressed,
-            ]}
+            size="sm"
+            style={[styles.menuBackButton, { top: Math.max(insets.top + 4, 16) }]}
+            textStyle={styles.menuBackButtonText}
+            variant="secondary"
           >
-            <MaterialIcons color="#ffffff" name="arrow-back" size={16} />
-            <Text style={styles.menuBackButtonText}>{copy.back}</Text>
-          </Pressable>
+            {copy.back}
+          </Button>
         ) : null}
         <Animated.View
           accessibilityElementsHidden={isConfirmationVisible}
@@ -1062,7 +1062,7 @@ export default function SearchPreferencesScreen() {
                 onChangeText={setDescription}
                 onSubmitEditing={() => Keyboard.dismiss()}
                 placeholder={copy.activityPlaceholder}
-                placeholderTextColor={PLACEHOLDER_GRAY}
+                placeholderTextColor={colors.text.muted}
                 returnKeyType="done"
                 style={[styles.input, styles.descriptionInput]}
                 value={description}
@@ -1073,7 +1073,7 @@ export default function SearchPreferencesScreen() {
               <Text style={styles.label}>{copy.whereLabel}</Text>
               <View style={[styles.input, styles.locationField]}>
                 <MaterialIcons
-                  color={PLACEHOLDER_GRAY}
+                  color={colors.text.muted}
                   name="search"
                   size={27}
                   style={styles.locationSearchIcon}
@@ -1084,7 +1084,7 @@ export default function SearchPreferencesScreen() {
                   onChangeText={setLocation}
                   onSubmitEditing={() => Keyboard.dismiss()}
                 placeholder={copy.locationPlaceholder}
-                  placeholderTextColor={PLACEHOLDER_GRAY}
+                  placeholderTextColor={colors.text.muted}
                   returnKeyType="search"
                   style={styles.locationInput}
                   value={location}
@@ -1102,7 +1102,7 @@ export default function SearchPreferencesScreen() {
                 ]}
               >
                 <MaterialIcons
-                  color="#ffffff"
+                  color={colors.text.inverse}
                   name={useCurrentLocation ? "check-box" : "check-box-outline-blank"}
                   size={24}
                 />
@@ -1134,7 +1134,7 @@ export default function SearchPreferencesScreen() {
                     pressed && styles.pressed,
                   ]}
                 >
-                  <MaterialIcons color="#ffffff" name="calendar-today" size={25} />
+                  <MaterialIcons color={colors.text.inverse} name="calendar-today" size={25} />
                 </Pressable>
               </View>
             </View>
@@ -1152,11 +1152,11 @@ export default function SearchPreferencesScreen() {
                     pressed && styles.pressed,
                   ]}
                 >
-                  <MaterialIcons color={YELLOW} name="access-time" size={18} />
+                  <MaterialIcons color={colors.brand.gold} name="access-time" size={18} />
                   <Text style={styles.pickerValue}>
                     {`${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`}
                   </Text>
-                  <MaterialIcons color={YELLOW} name="expand-more" size={20} />
+                  <MaterialIcons color={colors.brand.gold} name="expand-more" size={20} />
                 </Pressable>
               </View>
             </View>
@@ -1178,7 +1178,7 @@ export default function SearchPreferencesScreen() {
                   ]}
                 >
                   <Text style={styles.pickerValue}>{formatDurationLabel(duration, language)}</Text>
-                  <MaterialIcons color={YELLOW} name="expand-more" size={20} />
+                  <MaterialIcons color={colors.brand.gold} name="expand-more" size={20} />
                 </Pressable>
               </View>
             </View>
@@ -1190,42 +1190,32 @@ export default function SearchPreferencesScreen() {
                   const selected = distance === option;
 
                   return (
-                    <Pressable
+                    <Pill
                       key={option}
                       accessibilityRole="radio"
                       accessibilityState={{ selected }}
                       onPress={() => setDistance(option as RecruitmentDistanceKm)}
-                      style={({ pressed }) => [
-                        styles.distanceButton,
-                        selected && styles.distanceButtonSelected,
-                        pressed && styles.pressed,
-                      ]}
+                      selected={selected}
+                      style={styles.distanceButton}
+                      textStyle={[styles.distanceText, selected && styles.distanceTextSelected]}
                     >
-                      <Text
-                        style={[
-                          styles.distanceText,
-                          selected && styles.distanceTextSelected,
-                        ]}
-                      >
-                        {option}km
-                      </Text>
-                    </Pressable>
+                      {`${option}km`}
+                    </Pill>
                   );
                 })}
               </View>
             </View>
 
-            <Pressable
-              accessibilityRole="button"
+            <Button
               disabled={previewStatus === "loading"}
               onPress={() => showConfirmation()}
-              style={({ pressed }) => [
-                styles.nextButton,
-                pressed && styles.pressed,
-              ]}
+              size="sm"
+              style={styles.nextButton}
+              textStyle={styles.nextText}
+              variant="secondary"
             >
-              <Text style={styles.nextText}>{copy.next}</Text>
-            </Pressable>
+              {copy.next}
+            </Button>
 
             {formError ? (
               <Text accessibilityRole="alert" style={styles.formError}>
@@ -1256,7 +1246,7 @@ export default function SearchPreferencesScreen() {
                 {copy.confirmationExpiry} {preview ? formatPreviewExpiry(preview, language) : copy.expiryFallback}
               </Text>
 
-              <View style={styles.summaryCard}>
+              <Card style={styles.summaryCard}>
                 {previewStatus === "loading" && (
                   <View style={styles.previewState}>
                     <ActivityIndicator color={BLUE} size="small" />
@@ -1266,16 +1256,9 @@ export default function SearchPreferencesScreen() {
                 {previewStatus === "error" && (
                   <View style={styles.previewState}>
                     <Text style={styles.previewError}>{previewError}</Text>
-                    <Pressable
-                      accessibilityRole="button"
-                      onPress={() => void loadPreview()}
-                      style={({ pressed }) => [
-                        styles.retryButton,
-                        pressed && styles.pressed,
-                      ]}
-                    >
-                      <Text style={styles.retryButtonText}>{copy.tryAgain}</Text>
-                    </Pressable>
+                    <Button onPress={() => void loadPreview()} size="sm" style={styles.retryButton} textStyle={styles.retryButtonText} variant="secondary">
+                      {copy.tryAgain}
+                    </Button>
                   </View>
                 )}
 
@@ -1283,91 +1266,41 @@ export default function SearchPreferencesScreen() {
                   <>
                     <View style={styles.summaryProfileRow}>
                       {preview.author.avatarUrl ? (
-                        <Image
-                          accessibilityLabel={`${preview.author.displayName}'s profile image`}
-                          source={{ uri: preview.author.avatarUrl }}
-                          style={styles.summaryAvatar}
-                        />
+                        <Image accessibilityLabel={`${preview.author.displayName}'s profile image`} source={{ uri: preview.author.avatarUrl }} style={styles.summaryAvatar} />
                       ) : (
-                        <MaterialIcons
-                          color={BORDER_GRAY}
-                          name="account-circle"
-                          size={30}
-                        />
+                        <MaterialIcons color={colors.border.default} name="account-circle" size={30} />
                       )}
-                      <Text numberOfLines={1} style={styles.summaryName}>
-                        {preview.author.displayName}
-                      </Text>
-                      <Text style={styles.summaryFlag}>
-                        {countryCodeToFlag(preview.author.countryCode)}
-                      </Text>
+                      <Text numberOfLines={1} style={styles.summaryName}>{preview.author.displayName}</Text>
+                      <Text style={styles.summaryFlag}>{countryCodeToFlag(preview.author.countryCode)}</Text>
                     </View>
-                    <Text
-                      numberOfLines={1}
-                      style={[styles.summaryLine, styles.summaryDate]}
-                    >
+                    <Text numberOfLines={1} style={[styles.summaryLine, styles.summaryDate]}>
                       <Text style={styles.summaryLabel}>{copy.summaryDate}</Text>
                       {`   ${formatRecruitmentDateForDisplay(preview.conditions.date, language)}`}
                     </Text>
                     <Text style={[styles.summaryLine, styles.summaryTime]}>
                       <Text style={styles.summaryLabel}>{copy.summaryTime}</Text>
-                      {`   ${formatTimeRange(
-                        preview.conditions.startTime,
-                        preview.conditions.durationHours,
-                      )}`}
+                      {`   ${formatTimeRange(preview.conditions.startTime, preview.conditions.durationHours)}`}
                     </Text>
                     <View style={styles.summaryTags}>
                       {selectedKeywords.map((tag) => (
-                        <View key={tag} style={styles.summaryTag}>
-                          <Text
-                            adjustsFontSizeToFit
-                            minimumFontScale={0.75}
-                            numberOfLines={1}
-                            style={styles.summaryTagText}
-                          >
-                            {translatePreviewTag(tag, language)}
-                          </Text>
-                        </View>
+                        <Pill key={tag} style={styles.summaryTag} textStyle={styles.summaryTagText} variant="primary">
+                          {translatePreviewTag(tag, language)}
+                        </Pill>
                       ))}
                     </View>
                   </>
                 )}
-              </View>
+              </Card>
 
               {previewStatus === "success" && preview ? (
                 <>
                   <Text style={styles.categorySelectionLabel}>{copy.categoryLabel}</Text>
-                  <View
-                    accessibilityLabel={copy.categoryLabel}
-                    accessibilityRole="radiogroup"
-                    style={styles.categorySelectionRow}
-                  >
+                  <View accessibilityLabel={copy.categoryLabel} accessibilityRole="radiogroup" style={styles.categorySelectionRow}>
                     {RECRUITMENT_CATEGORIES.map((category) => {
                       const selected = selectedCategory === category;
                       return (
-                        <Pressable
-                          key={category}
-                          accessibilityLabel={category}
-                          accessibilityRole="radio"
-                          accessibilityState={{ selected }}
-                          onPress={() => setSelectedCategory(category)}
-                          style={({ pressed }) => [
-                            styles.categorySelectionButton,
-                            selected && styles.categorySelectionButtonSelected,
-                            pressed && styles.pressed,
-                          ]}
-                        >
-                          <Text
-                            adjustsFontSizeToFit
-                            minimumFontScale={0.8}
-                            numberOfLines={1}
-                            style={[
-                              styles.categorySelectionText,
-                              selected && styles.categorySelectionTextSelected,
-                            ]}
-                          >
-                            {category}
-                          </Text>
+                        <Pressable key={category} accessibilityLabel={category} accessibilityRole="radio" accessibilityState={{ selected }} onPress={() => setSelectedCategory(category)} style={({ pressed }) => [styles.categorySelectionButton, selected && styles.categorySelectionButtonSelected, pressed && styles.pressed]}>
+                          <Text adjustsFontSizeToFit minimumFontScale={0.8} numberOfLines={1} style={[styles.categorySelectionText, selected && styles.categorySelectionTextSelected]}>{category}</Text>
                         </Pressable>
                       );
                     })}
@@ -1379,35 +1312,8 @@ export default function SearchPreferencesScreen() {
                     {preview.tags.map((tag) => {
                       const selected = selectedKeywords.includes(tag);
                       return (
-                        <Pressable
-                          key={tag}
-                          accessibilityLabel={translatePreviewTag(tag, language)}
-                          accessibilityRole="checkbox"
-                          accessibilityState={{ checked: selected }}
-                          onPress={() =>
-                            setSelectedKeywords((current) =>
-                              selected
-                                ? current.filter((keyword) => keyword !== tag)
-                                : [...current, tag],
-                            )
-                          }
-                          style={({ pressed }) => [
-                            styles.keywordSelectionButton,
-                            selected && styles.keywordSelectionButtonSelected,
-                            pressed && styles.pressed,
-                          ]}
-                        >
-                          <Text
-                            adjustsFontSizeToFit
-                            minimumFontScale={0.8}
-                            numberOfLines={1}
-                            style={[
-                              styles.keywordSelectionText,
-                              selected && styles.keywordSelectionTextSelected,
-                            ]}
-                          >
-                            {translatePreviewTag(tag, language)}
-                          </Text>
+                        <Pressable key={tag} accessibilityLabel={translatePreviewTag(tag, language)} accessibilityRole="checkbox" accessibilityState={{ checked: selected }} onPress={() => setSelectedKeywords((current) => selected ? current.filter((keyword) => keyword !== tag) : [...current, tag])} style={({ pressed }) => [styles.keywordSelectionButton, selected && styles.keywordSelectionButtonSelected, pressed && styles.pressed]}>
+                          <Text adjustsFontSizeToFit minimumFontScale={0.8} numberOfLines={1} style={[styles.keywordSelectionText, selected && styles.keywordSelectionTextSelected]}>{translatePreviewTag(tag, language)}</Text>
                         </Pressable>
                       );
                     })}
@@ -1415,24 +1321,9 @@ export default function SearchPreferencesScreen() {
                 </>
               ) : null}
 
-              <Pressable
-                accessibilityState={{
-                  disabled: previewStatus !== "success" || publishStatus === "publishing",
-                }}
-                accessibilityRole="button"
-                disabled={previewStatus !== "success" || publishStatus === "publishing"}
-                onPress={() => void publish()}
-                style={({ pressed }) => [
-                  styles.goButton,
-                  (previewStatus !== "success" || publishStatus === "publishing") &&
-                    styles.buttonDisabled,
-                  pressed && styles.pressed,
-                ]}
-              >
-                <Text style={styles.goButtonText}>
-                  {publishStatus === "publishing" ? copy.publishing : copy.go}
-                </Text>
-              </Pressable>
+              <Button accessibilityState={{ disabled: previewStatus !== "success" || publishStatus === "publishing" }} disabled={previewStatus !== "success" || publishStatus === "publishing"} onPress={() => void publish()} size="sm" style={styles.goButton} textStyle={styles.goButtonText}>
+                {publishStatus === "publishing" ? copy.publishing : copy.go}
+              </Button>
 
               {publishError ? (
                 <Text accessibilityRole="alert" style={styles.publishError}>
@@ -1440,16 +1331,18 @@ export default function SearchPreferencesScreen() {
                 </Text>
               ) : null}
 
-              <Pressable
-                accessibilityLabel="Back to search filters"
-                accessibilityRole="button"
-                onPress={showFilters}
-                style={({ pressed }) => [styles.backButton, pressed && styles.pressed]}
-              >
-                <MaterialIcons color={YELLOW} name="arrow-back" size={18} />
-                <Text style={styles.backButtonText}>{copy.backToFilters}</Text>
-              </Pressable>
             </ScrollView>
+            <Button
+              accessibilityLabel="Back to search filters"
+              iconLeft={<MaterialIcons color={colors.brand.gold} name="arrow-back" size={18} />}
+              onPress={showFilters}
+              size="sm"
+              style={styles.backButton}
+              textStyle={styles.backButtonText}
+              variant="secondary"
+            >
+              {copy.back}
+            </Button>
           </Animated.View>
         )}
 
@@ -1828,14 +1721,14 @@ const styles = StyleSheet.create({
   },
   screen: {
     flex: 1,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.screen,
   },
   panel: {
     width: "100%",
     overflow: "hidden",
-    backgroundColor: BLUE,
-    borderBottomLeftRadius: 50,
-    borderBottomRightRadius: 50,
+    backgroundColor: colors.brand.sky,
+    borderBottomLeftRadius: radius.header,
+    borderBottomRightRadius: radius.header,
   },
   menuBackButton: {
     position: "absolute",
@@ -1843,20 +1736,22 @@ const styles = StyleSheet.create({
     zIndex: 2,
     width: 76,
     height: 30,
+    minHeight: 30,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: 5,
     borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.82)",
-    borderRadius: 15,
-    backgroundColor: "rgba(0, 0, 0, 0.08)",
+    borderColor: colors.border.default,
+    borderRadius: radius.pill,
+    backgroundColor: colors.surface.default,
+    ...shadows.action,
   },
   menuBackButtonText: {
-    color: "#ffffff",
+    color: colors.brand.gold,
     fontSize: 11,
     fontWeight: "900",
-    letterSpacing: 0.4,
+    letterSpacing: 0,
     lineHeight: 14,
   },
   compactContent: {
@@ -1883,8 +1778,9 @@ const styles = StyleSheet.create({
     height: 30,
     justifyContent: "center",
     overflow: "hidden",
-    borderRadius: 20,
-    backgroundColor: "#ffffff",
+    borderRadius: radius["2xl"],
+    backgroundColor: colors.surface.default,
+    ...shadows.control,
   },
   compactSearchIcon: {
     position: "absolute",
@@ -1893,10 +1789,9 @@ const styles = StyleSheet.create({
   compactSearchPlaceholder: {
     paddingRight: 8,
     paddingLeft: 45.34,
-    color: PLACEHOLDER_GRAY,
-    fontSize: 12,
+    color: colors.text.muted,
+    ...typography.small,
     fontWeight: "400",
-    letterSpacing: 0,
     lineHeight: 15,
   },
   compactNotificationIcon: {
@@ -1920,10 +1815,8 @@ const styles = StyleSheet.create({
     top: 108,
     right: 0,
     left: 0,
-    color: "#ffffff",
-    fontSize: 16,
-    fontWeight: "900",
-    letterSpacing: 0,
+    color: colors.text.inverse,
+    ...typography.subheading,
     lineHeight: 19,
     textAlign: "center",
   },
@@ -1939,10 +1832,9 @@ const styles = StyleSheet.create({
     top: 130,
     right: 0,
     left: 0,
-    color: "#ffffff",
-    fontSize: 15,
+    color: colors.text.inverse,
+    ...typography.body,
     fontWeight: "900",
-    letterSpacing: 0,
     lineHeight: 18,
     textAlign: "center",
   },
@@ -1951,10 +1843,8 @@ const styles = StyleSheet.create({
     top: 167,
     right: 0,
     left: 0,
-    color: "#ffffff",
-    fontSize: 16,
-    fontWeight: "900",
-    letterSpacing: 0,
+    color: colors.text.inverse,
+    ...typography.subheading,
     lineHeight: 19,
     textAlign: "center",
   },
@@ -1965,8 +1855,11 @@ const styles = StyleSheet.create({
     width: 307,
     maxWidth: "78.72%",
     height: 132,
-    borderRadius: 20,
-    backgroundColor: "#ffffff",
+    padding: 0,
+    borderWidth: 0,
+    borderRadius: radius["2xl"],
+    backgroundColor: colors.surface.default,
+    boxShadow: "none",
   },
   summaryProfileRow: {
     position: "absolute",
@@ -1984,28 +1877,22 @@ const styles = StyleSheet.create({
   summaryName: {
     maxWidth: 178,
     marginLeft: 8,
-    color: "#000000",
-    fontSize: 16,
-    fontWeight: "900",
-    letterSpacing: 0,
+    color: colors.text.black,
+    ...typography.subheading,
     lineHeight: 19,
   },
   summaryFlag: {
     marginLeft: 12,
-    color: "#000000",
-    fontSize: 16,
-    fontWeight: "900",
-    letterSpacing: 0,
+    color: colors.text.black,
+    ...typography.subheading,
     lineHeight: 19,
   },
   summaryLine: {
     position: "absolute",
     left: 23,
     right: 23,
-    color: TEXT_GRAY,
-    fontSize: 12,
-    fontWeight: "900",
-    letterSpacing: 0,
+    color: colors.text.secondary,
+    ...typography.smallStrong,
     lineHeight: 15,
   },
   summaryLabel: {
@@ -2029,20 +1916,13 @@ const styles = StyleSheet.create({
     minWidth: 55,
     maxWidth: 100,
     height: 25,
+    minHeight: 25,
     paddingHorizontal: 6,
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 1,
-    borderColor: BLUE,
-    borderRadius: 5,
-    backgroundColor: "#ffffff",
+    borderRadius: radius.xs,
   },
   summaryTagText: {
-    color: TEXT_GRAY,
-    fontSize: 10,
-    fontWeight: "700",
-    letterSpacing: 0,
-    lineHeight: 12,
+    color: colors.text.secondary,
+    ...typography.micro,
   },
   previewState: {
     flex: 1,
@@ -2052,29 +1932,26 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   previewError: {
-    color: TEXT_GRAY,
-    fontSize: 12,
-    fontWeight: "700",
-    letterSpacing: 0,
+    color: colors.text.secondary,
+    ...typography.small,
     lineHeight: 15,
     textAlign: "center",
   },
   retryButton: {
     minWidth: 82,
     height: 25,
+    minHeight: 25,
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
-    borderColor: BLUE,
-    borderRadius: 20,
-    backgroundColor: "#ffffff",
+    borderColor: colors.brand.sky,
+    borderRadius: radius.pill,
+    backgroundColor: colors.surface.default,
   },
   retryButtonText: {
-    color: BLUE,
-    fontSize: 10,
+    color: colors.brand.sky,
+    ...typography.micro,
     fontWeight: "900",
-    letterSpacing: 0,
-    lineHeight: 12,
   },
   goButton: {
     position: "absolute",
@@ -2082,14 +1959,15 @@ const styles = StyleSheet.create({
     alignSelf: "center",
     width: 159,
     height: 25,
+    minHeight: 25,
     alignItems: "center",
     justifyContent: "center",
-    borderRadius: 20,
-    backgroundColor: YELLOW,
-    boxShadow: "0 4px 2px rgba(0, 0, 0, 0.25)",
+    borderRadius: radius.pill,
+    backgroundColor: colors.brand.gold,
+    ...shadows.action,
   },
   goButtonText: {
-    color: "#ffffff",
+    color: colors.text.inverse,
     fontSize: 15,
     fontWeight: "900",
     letterSpacing: 0,
@@ -2100,7 +1978,7 @@ const styles = StyleSheet.create({
     top: 393,
     right: 28,
     left: 28,
-    color: "#ffffff",
+    color: colors.text.inverse,
     fontSize: 12,
     fontWeight: "700",
     lineHeight: 16,
@@ -2110,28 +1988,28 @@ const styles = StyleSheet.create({
     position: "absolute",
     top: 474,
     left: 30,
-    minWidth: 164,
-    height: 38,
-    paddingHorizontal: 14,
+    width: 110,
+    height: 25,
+    minHeight: 25,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: 8,
     borderWidth: 1,
-    borderColor: BORDER_GRAY,
-    borderRadius: 20,
-    backgroundColor: "#ffffff",
-    boxShadow: "0 4px 2px rgba(0, 0, 0, 0.25)",
+    borderColor: colors.border.default,
+    borderRadius: radius.pill,
+    backgroundColor: colors.surface.default,
+    ...shadows.action,
   },
   backButtonText: {
-    color: YELLOW,
+    color: colors.brand.gold,
     fontSize: 15,
     fontWeight: "900",
     letterSpacing: 0,
     lineHeight: 18,
   },
   buttonDisabled: {
-    opacity: 0.55,
+    opacity: opacity.disabled,
   },
   content: {
     position: "absolute",
@@ -2146,26 +2024,24 @@ const styles = StyleSheet.create({
     height: 577,
   },
   label: {
-    color: "#ffffff",
-    fontSize: 15,
+    color: colors.text.inverse,
+    ...typography.body,
     fontWeight: "900",
-    letterSpacing: 0,
     lineHeight: 18,
     textAlign: "center",
   },
   input: {
-    borderRadius: 20,
-    backgroundColor: "#ffffff",
-    color: TEXT_GRAY,
+    borderRadius: radius["2xl"],
+    backgroundColor: colors.surface.default,
+    color: colors.text.secondary,
     fontSize: 13,
     fontWeight: "400",
     letterSpacing: 0,
-    boxShadow: "0 4px 4px rgba(0, 0, 0, 0.25)",
+    ...shadows.control,
   },
   pickerValue: {
-    color: TEXT_GRAY,
-    fontSize: 13,
-    fontWeight: "700",
+    color: colors.text.secondary,
+    ...typography.caption,
     lineHeight: 17,
   },
   descriptionGroup: {
@@ -2198,7 +2074,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     borderWidth: 1,
-    borderColor: BORDER_GRAY,
+    borderColor: colors.border.default,
   },
   locationSearchIcon: {
     position: "absolute",
@@ -2211,7 +2087,7 @@ const styles = StyleSheet.create({
     paddingRight: 12,
     paddingBottom: 0,
     paddingLeft: 57,
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 13,
     fontWeight: "400",
     letterSpacing: 0,
@@ -2226,10 +2102,9 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   currentLocationText: {
-    color: "#ffffff",
-    fontSize: 15,
+    color: colors.text.inverse,
+    ...typography.body,
     fontWeight: "900",
-    letterSpacing: 0,
     lineHeight: 18,
   },
   dateGroup: {
@@ -2258,7 +2133,7 @@ const styles = StyleSheet.create({
     paddingBottom: 0,
     paddingLeft: 18,
     borderWidth: 1,
-    borderColor: BORDER_GRAY,
+    borderColor: colors.border.default,
   },
   calendarButton: {
     width: 43,
@@ -2290,10 +2165,10 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingHorizontal: 18,
     borderWidth: 1,
-    borderColor: BORDER_GRAY,
-    borderRadius: 20,
-    backgroundColor: "#ffffff",
-    boxShadow: "0 4px 4px rgba(0, 0, 0, 0.25)",
+    borderColor: colors.border.default,
+    borderRadius: radius["2xl"],
+    backgroundColor: colors.surface.default,
+    ...shadows.control,
   },
   durationGroup: {
     position: "absolute",
@@ -2315,10 +2190,10 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingHorizontal: 18,
     borderWidth: 1,
-    borderColor: BORDER_GRAY,
-    borderRadius: 20,
-    backgroundColor: "#ffffff",
-    boxShadow: "0 4px 4px rgba(0, 0, 0, 0.25)",
+    borderColor: colors.border.default,
+    borderRadius: radius["2xl"],
+    backgroundColor: colors.surface.default,
+    ...shadows.control,
   },
   distanceGroup: {
     position: "absolute",
@@ -2339,27 +2214,28 @@ const styles = StyleSheet.create({
   distanceButton: {
     width: 70,
     height: 25,
+    minHeight: 25,
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
-    borderColor: BORDER_GRAY,
-    borderRadius: 20,
-    backgroundColor: "#ffffff",
+    borderColor: colors.border.default,
+    borderRadius: radius.pill,
+    backgroundColor: colors.surface.default,
   },
   distanceButtonSelected: {
-    borderColor: YELLOW,
-    backgroundColor: YELLOW,
-    boxShadow: "0 4px 2px rgba(0, 0, 0, 0.25)",
+    borderColor: colors.brand.gold,
+    backgroundColor: colors.brand.gold,
+    ...shadows.action,
   },
   distanceText: {
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 15,
     fontWeight: "900",
     letterSpacing: 0,
     lineHeight: 18,
   },
   distanceTextSelected: {
-    color: "#ffffff",
+    color: colors.text.inverse,
   },
   nextButton: {
     position: "absolute",
@@ -2367,16 +2243,17 @@ const styles = StyleSheet.create({
     alignSelf: "center",
     width: 110,
     height: 25,
+    minHeight: 25,
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
-    borderColor: BORDER_GRAY,
-    borderRadius: 20,
-    backgroundColor: "#ffffff",
-    boxShadow: "0 4px 2px rgba(0, 0, 0, 0.25)",
+    borderColor: colors.border.default,
+    borderRadius: radius.pill,
+    backgroundColor: colors.surface.default,
+    ...shadows.action,
   },
   nextText: {
-    color: YELLOW,
+    color: colors.brand.gold,
     fontSize: 15,
     fontWeight: "900",
     letterSpacing: 0,
@@ -2387,7 +2264,7 @@ const styles = StyleSheet.create({
     top: 520,
     right: 14,
     left: 14,
-    color: "#ffffff",
+    color: colors.text.inverse,
     fontSize: 11,
     fontWeight: "700",
     lineHeight: 14,
@@ -2403,7 +2280,7 @@ const styles = StyleSheet.create({
     paddingTop: 8,
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.default,
   },
   languageLoading: {
     flex: 1,

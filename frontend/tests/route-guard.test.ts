@@ -8,6 +8,7 @@ import {
 test("認証が必要な画面と公開画面を区別する", () => {
   expect(isProtectedRoute("/foreigner")).toBe(true);
   expect(isProtectedRoute("/foreigner/applications/application-1")).toBe(true);
+  expect(isProtectedRoute("/chat/chat-1")).toBe(true);
   expect(isProtectedRoute("/japanese/matches/match-1")).toBe(true);
   expect(isProtectedRoute("/profile?from=menu")).toBe(true);
   expect(isProtectedRoute("/recruitments/mine")).toBe(true);

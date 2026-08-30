@@ -30,6 +30,7 @@ const COPY = {
     checking: "Checking application status...",
     refresh: "Refresh status",
     refreshing: "Refreshing...",
+    openChat: "Open chat",
     home: "Back to home",
   },
   ja: {
@@ -47,6 +48,7 @@ const COPY = {
     checking: "マッチング状態を確認中です。",
     refresh: "状態を更新",
     refreshing: "更新中…",
+    openChat: "チャットを開く",
     home: "ホームに戻る",
   },
 } as const;
@@ -173,6 +175,19 @@ export default function JapaneseGuideRequestedScreen() {
                 <Text accessibilityRole={matchLoadError ? "alert" : undefined} style={styles.matchStatusText}>
                   {statusMessage}
                 </Text>
+                {matched ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => router.push({
+                      pathname: "/chat",
+                      params: { matchId: currentMatchID },
+                    })}
+                    style={({ pressed }) => [styles.chatButton, pressed && styles.pressed]}
+                  >
+                    <MaterialIcons color="#ffffff" name="chat-bubble-outline" size={21} />
+                    <Text style={styles.chatButtonText}>{copy.openChat}</Text>
+                  </Pressable>
+                ) : null}
                 <Pressable
                   accessibilityLabel={matchLoadState === "loading" ? copy.refreshing : copy.refresh}
                   accessibilityRole="button"
@@ -283,6 +298,24 @@ const styles = StyleSheet.create({
     borderColor: YELLOW,
     borderRadius: 10,
     backgroundColor: YELLOW,
+  },
+  chatButton: {
+    width: 258,
+    height: 44,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    marginTop: 16,
+    borderRadius: 10,
+    backgroundColor: HEADER_BLUE,
+  },
+  chatButtonText: {
+    color: "#ffffff",
+    fontSize: 15,
+    fontWeight: "900",
+    letterSpacing: 0,
+    lineHeight: 18,
   },
   homeButtonText: {
     color: "#ffffff",

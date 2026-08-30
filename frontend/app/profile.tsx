@@ -52,7 +52,9 @@ const COPY = {
     loading: "プロフィールを読み込んでいます…",
     name: "名前",
     nationality: "国籍",
-    bio: "自己紹介",
+    skills: "得意なこと",
+    interests: "好きなこと",
+    monsterNote: "好きなこと・得意なことメモ",
     notSet: "未設定",
     myRecruitments: "自分の募集を管理",
     myRecruitmentsDescription: "公開中・下書き・終了した募集と応募者を確認できます。",
@@ -120,7 +122,9 @@ const COPY = {
     loading: "Loading profile…",
     name: "Name",
     nationality: "Nationality",
-    bio: "Bio",
+    skills: "Skills",
+    interests: "Interests",
+    monsterNote: "Skills and interests note",
     notSet: "Not set",
     myRecruitments: "Manage my recruitments",
     myRecruitmentsDescription: "Review your open, draft, and closed recruitments and applicants.",
@@ -184,6 +188,65 @@ const COPY = {
     resetDeviceError: "Device data could not be reset. Please try again.",
   },
 } as const;
+
+const TAG_LABELS: Record<AppLanguage, Record<string, string>> = {
+  ja: {
+    english_conversation: "英語で話す",
+    photography: "写真を撮る",
+    directions: "道案内",
+    food_guiding: "グルメ案内",
+    history: "歴史を説明する",
+    cafe_hunting: "カフェ探し",
+    hidden_spots: "穴場紹介",
+    shopping: "買い物に付き合う",
+    conversation: "人と話す",
+    planning: "スケジュールを考える",
+    other: "その他",
+    food: "グルメ",
+    cafes: "カフェ",
+    shrines_temples: "神社・寺",
+    anime: "アニメ",
+    games: "ゲーム",
+    fashion: "ファッション",
+    music: "音楽",
+    nature: "自然",
+    night_views: "夜景",
+    walking: "散歩",
+    traditional_culture: "伝統文化",
+    photos: "写真",
+  },
+  en: {
+    english_conversation: "Speaking English",
+    photography: "Taking photos",
+    directions: "Giving directions",
+    food_guiding: "Food guiding",
+    history: "Explaining history",
+    cafe_hunting: "Finding cafes",
+    hidden_spots: "Hidden spots",
+    shopping: "Shopping together",
+    conversation: "Conversation",
+    planning: "Planning routes",
+    other: "Other",
+    food: "Food",
+    cafes: "Cafes",
+    shrines_temples: "Shrines and temples",
+    anime: "Anime",
+    games: "Games",
+    fashion: "Fashion",
+    music: "Music",
+    nature: "Nature",
+    night_views: "Night views",
+    walking: "Walking",
+    traditional_culture: "Traditional culture",
+    photos: "Photography",
+  },
+} as const;
+
+function formatTags(tags: string[], language: AppLanguage): string {
+  return tags
+    .map((tag) => TAG_LABELS[language][tag] ?? tag)
+    .join(" / ");
+}
 
 export default function ProfileScreen() {
   const router = useRouter();
@@ -493,7 +556,11 @@ export default function ProfileScreen() {
   const displayedProfile = profile ?? {
     name: "",
     nationalityCode: "",
-    bio: "",
+    monsterSeed: {
+      skillTags: [],
+      interestTags: [],
+      freeText: "",
+    },
     completed: false,
     identityVerificationChoice: null,
   };
@@ -530,8 +597,18 @@ export default function ProfileScreen() {
           value={displayedProfile.nationalityCode || copy.notSet}
         />
         <ProfileRow
-          label={copy.bio}
-          value={displayedProfile.bio || copy.notSet}
+          label={copy.skills}
+          value={formatTags(displayedProfile.monsterSeed.skillTags, language) || copy.notSet}
+          multiline
+        />
+        <ProfileRow
+          label={copy.interests}
+          value={formatTags(displayedProfile.monsterSeed.interestTags, language) || copy.notSet}
+          multiline
+        />
+        <ProfileRow
+          label={copy.monsterNote}
+          value={displayedProfile.monsterSeed.freeText || copy.notSet}
           multiline
         />
 

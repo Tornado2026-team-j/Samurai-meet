@@ -1,8 +1,6 @@
 import { useState } from "react";
 import { MaterialIcons } from "@expo/vector-icons";
 import {
-  ActivityIndicator,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -11,12 +9,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import type { AppLanguage } from "../services/onboarding-contract";
-
-const BLUE = "#5ec5f5";
-const YELLOW = "#e7b454";
-const TEXT_GRAY = "#535353";
-const MUTED_GRAY = "#7d7d7d";
-const BORDER_GRAY = "#d4d4d4";
+import { Button, colors, opacity, radius, typography } from "./ui";
 
 type IdentityVerificationPromptProps = {
   language: AppLanguage;
@@ -85,7 +78,7 @@ export default function IdentityVerificationPrompt({
       >
         <View style={[styles.hero, { paddingTop: Math.max(insets.top, 20) }]}>
           <View style={styles.shieldCircle}>
-            <MaterialIcons color="#ffffff" name="verified-user" size={58} />
+            <MaterialIcons color={colors.text.inverse} name="verified-user" size={58} />
           </View>
           <Text style={styles.eyebrow}>{copy.eyebrow}</Text>
           <Text style={styles.title}>{copy.title}</Text>
@@ -99,11 +92,11 @@ export default function IdentityVerificationPrompt({
 
             <View style={styles.assuranceList}>
               <View style={styles.assuranceRow}>
-                <MaterialIcons color={BLUE} name="lock-outline" size={22} />
+                <MaterialIcons color={colors.brand.sky} name="lock-outline" size={22} />
                 <Text style={styles.assuranceText}>{copy.privacy}</Text>
               </View>
               <View style={styles.assuranceRow}>
-                <MaterialIcons color={MUTED_GRAY} name="info-outline" size={22} />
+                <MaterialIcons color={colors.text.subtle} name="info-outline" size={22} />
                 <Text style={styles.assuranceText}>{copy.caution}</Text>
               </View>
             </View>
@@ -116,42 +109,29 @@ export default function IdentityVerificationPrompt({
           </View>
 
           <View style={styles.actions}>
-            <Pressable
-              accessibilityRole="button"
+            <Button
               disabled={pendingAction !== null}
+              iconLeft={<MaterialIcons color={colors.text.inverse} name="verified-user" size={21} />}
+              loading={pendingAction === "proceed"}
               onPress={() => void run("proceed", onProceed)}
-              style={({ pressed }) => [
-                styles.primaryButton,
-                pendingAction !== null && styles.disabled,
-                pressed && styles.pressed,
-              ]}
+              size="lg"
+              style={styles.primaryButton}
+              textStyle={styles.primaryButtonText}
             >
-              {pendingAction === "proceed" ? (
-                <ActivityIndicator color="#ffffff" />
-              ) : (
-                <>
-                  <MaterialIcons color="#ffffff" name="verified-user" size={21} />
-                  <Text style={styles.primaryButtonText}>{copy.proceed}</Text>
-                </>
-              )}
-            </Pressable>
+              {copy.proceed}
+            </Button>
 
-            <Pressable
-              accessibilityRole="button"
+            <Button
               disabled={pendingAction !== null}
+              loading={pendingAction === "later"}
               onPress={() => void run("later", onLater)}
-              style={({ pressed }) => [
-                styles.secondaryButton,
-                pendingAction !== null && styles.disabled,
-                pressed && styles.pressed,
-              ]}
+              size="lg"
+              style={styles.secondaryButton}
+              textStyle={styles.secondaryButtonText}
+              variant="secondary"
             >
-              {pendingAction === "later" ? (
-                <ActivityIndicator color={TEXT_GRAY} />
-              ) : (
-                <Text style={styles.secondaryButtonText}>{copy.later}</Text>
-              )}
-            </Pressable>
+              {copy.later}
+            </Button>
           </View>
         </View>
       </ScrollView>
@@ -162,7 +142,7 @@ export default function IdentityVerificationPrompt({
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.screen,
   },
   scrollContent: {
     flexGrow: 1,
@@ -176,7 +156,7 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     borderBottomLeftRadius: 44,
     borderBottomRightRadius: 44,
-    backgroundColor: BLUE,
+    backgroundColor: colors.brand.sky,
   },
   shieldCircle: {
     width: 106,
@@ -197,11 +177,8 @@ const styles = StyleSheet.create({
     letterSpacing: 0,
   },
   title: {
-    color: "#ffffff",
-    fontSize: 27,
-    fontWeight: "900",
-    lineHeight: 34,
-    letterSpacing: 0,
+    color: colors.text.inverse,
+    ...typography.title1,
     textAlign: "center",
   },
   subtitle: {
@@ -225,18 +202,15 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
   },
   recommendation: {
-    color: TEXT_GRAY,
-    fontSize: 18,
-    fontWeight: "900",
-    lineHeight: 24,
-    letterSpacing: 0,
+    color: colors.text.secondary,
+    ...typography.heading,
   },
   description: {
     marginTop: 10,
-    color: TEXT_GRAY,
-    fontSize: 13,
+    color: colors.text.secondary,
+    ...typography.caption,
+    fontWeight: "400",
     lineHeight: 21,
-    letterSpacing: 0,
   },
   assuranceList: {
     marginTop: 20,
@@ -249,14 +223,14 @@ const styles = StyleSheet.create({
   },
   assuranceText: {
     flex: 1,
-    color: MUTED_GRAY,
-    fontSize: 12,
+    color: colors.text.subtle,
+    ...typography.small,
+    fontWeight: "400",
     lineHeight: 19,
-    letterSpacing: 0,
   },
   error: {
     marginTop: 16,
-    color: "#b42318",
+    color: colors.state.danger,
     fontSize: 12,
     lineHeight: 18,
     letterSpacing: 0,
@@ -274,11 +248,10 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     gap: 9,
-    borderRadius: 8,
-    backgroundColor: YELLOW,
+    borderRadius: radius.sm,
   },
   primaryButtonText: {
-    color: "#ffffff",
+    color: colors.text.inverse,
     fontSize: 16,
     fontWeight: "800",
     letterSpacing: 0,
@@ -289,20 +262,20 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
-    borderColor: BORDER_GRAY,
-    borderRadius: 8,
-    backgroundColor: "#ffffff",
+    borderColor: colors.border.default,
+    borderRadius: radius.sm,
+    backgroundColor: colors.surface.default,
   },
   secondaryButtonText: {
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 15,
     fontWeight: "700",
     letterSpacing: 0,
   },
   disabled: {
-    opacity: 0.55,
+    opacity: opacity.disabled,
   },
   pressed: {
-    opacity: 0.72,
+    opacity: opacity.pressed,
   },
 });

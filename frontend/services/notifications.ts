@@ -92,6 +92,10 @@ type NotificationCopy = {
 
 export type NotificationNavigation =
   | {
+      pathname: "/chat/[id]";
+      params: { id: string };
+    }
+  | {
       pathname: "/foreigner/applications/[id]";
       params: { id: string; recruitmentId?: string };
     }
@@ -125,6 +129,11 @@ export function getNotificationNavigation(
       return {
         pathname: "/japanese/guide-requested",
         params: { matchId: targetID },
+      };
+    case "new_message":
+      return {
+        pathname: "/chat/[id]",
+        params: { id: targetID },
       };
     default:
       return null;

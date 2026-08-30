@@ -1,16 +1,14 @@
 # 実装状態
 
 - 実装済み: Google OAuth、pre-auth、Passkey、session/refresh、v2 client root-key envelope、端末固有Key-Bの公開鍵登録・proof、暗号文画像API、退会API。
-- 実装済み: プロフィール取得・自己紹介を含む更新API、募集カードの作成・検索・更新・終了、関心・承認・完了、最新位置保存。
-- 実装済み: acceptedマッチ向けRESTチャット（暗号文、既読、冪等再送、短命Chat Token）、会合セッション、短期のBluetooth／位置推測補助値API。
+- 実装済み: プロフィール取得・自己紹介を含む更新API、募集カードの作成・検索・更新・終了、関心・承認・完了、最新位置保存、通報登録（`reports`）とブロックの作成・一覧・解除。
+- 実装済み: acceptedマッチ向けチャット（REST + WebSocketリアルタイム配送。暗号文のみ、既読、冪等再送、短命Chat Token、接続中のセッション/ブロック/マッチheartbeat。単一APIインスタンス前提のプロセス内ハブ）、会合セッション、短期のBluetooth／位置推測補助値API。
 - 実装済み: 通知の永続化・一覧・未読管理、応募／承認／辞退／暗号化チャット送信からの通知生成、通知画面のAPI接続。
-- 未完了: Web Passkeyの実機E2E、端末画像の画面統合、削除reconciler、legacy画像移行、native Passkey実機、プロフィール編集・チャットのフロント接続、QUIC配送、ネイティブBluetooth測定、評価、Stripe Identity連携。募集公開・検索・応募・承認／辞退、募集管理・応募履歴・応募取り下げ、通知遷移のフロント接続コードと自動テストは実装済み。日時初期パース問題はISO/JST化で解消済みだが、iOS実機の全通しE2Eは未確認。通知はアプリ内RESTまででOSプッシュは未実装。
+- 未完了: Web Passkeyの実機E2E、端末画像の画面統合、削除reconciler、legacy画像移行、native Passkey実機、プロフィール編集・チャットのフロント接続、チャット配送の複数インスタンス対応（`LISTEN/NOTIFY`）とChat Token接続中ローテーション、ネイティブBluetooth測定、評価、Stripe Identity連携。募集公開・検索・応募・承認／辞退のフロント接続は完了。
 
-マッチングの距離判定はPostGISなしのGo Haversineで実装している。募集の利用日・壁時計は`Asia/Tokyo`固定で正規化し、絶対時刻はUTCで扱う。件数増加時のPostGIS化、APIレート制限、QUIC配送はバックログに残す。
+マッチングの距離判定はPostGISなしのGo Haversineで実装している。募集の利用日・壁時計は`Asia/Tokyo`固定で正規化し、絶対時刻はUTCで扱う。件数増加時のPostGIS化、APIレート制限、チャット配送の複数インスタンス対応はバックログに残す。
 
 通常のネイティブAPI接続先は`https://samurai-meet.disnana.com/api/v1`であり、LANの8080へ自動切替しない。Expo Goではnative Passkeyやhardware-backed storageを検証できず、Development Build／ストアビルドで別途確認する。
-
-なお、chat transport tokenはHTTP handlerの既定値`quic`とサービス側の受理値`websocket`／`webtransport`が一致していない。QUIC配送やtoken endpointを実装済みとして扱わず、コード整合後に再検証する。
 
 詳細と完了定義は [docs/ai/plans/backlog.md](../docs/ai/plans/backlog.md) を正とします。
 

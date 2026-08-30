@@ -16,6 +16,7 @@ export {
   parseAppMode,
   parseLanguage,
   parseLocalProfile,
+  serializeMonsterSeedForLegacyBio,
 } from "./onboarding-contract";
 export type {
   AppMode,

@@ -86,7 +86,7 @@ match: pending -> accepted -> completed
 
 募集カードの公開には名前・国コードが揃ったプロフィールが必要です。作成・更新の成功レスポンスは `{ "data": { ...card } }`、検索は `{ "data": [ ...card ] }` です。カードのレスポンスには正確な緯度・経度を含めず、現在地を使った場合だけ `distance_band`（`within_1_km` / `within_3_km` / `within_5_km`）を返します。
 
-外国人側の募集確認に入る前に、`POST /api/v1/recruitments/classify`が入力文をGeminiへ送って案内カテゴリを決めます。クライアントはAPIキーを保持しません。応答は`Food`、`Places`、`Activity`、`Other`以外を受け入れず、未設定・障害・契約外応答ではカテゴリを推測して公開せず、明示的なエラーにします。
+外国人側の募集確認に入る前に、`POST /api/v1/recruitments/classify`が入力文をGeminiへ送り、`Food`、`Places`、`Activity`、`Other`の案内カテゴリと最大5件の短いキーワード候補を返します。クライアントはAPIキーを保持せず、公開前にカテゴリ・候補キーワードを選び直せます。応答が契約外、未設定、またはGemini障害の場合はカテゴリを推測して公開せず、明示的なエラーにします。
 
 検索条件は `keyword`（複数可）、`available_date`、`start_time`、`end_time`、`radius_km`（1/3/5）、`verified_only`、`latitude`、`longitude`、`limit`（最大50）です。緯度経度を省略した場合は、期限内の `user_locations` を使います。位置がない場合はキーワード・日時検索として扱い、位置による絞り込みは行いません。
 

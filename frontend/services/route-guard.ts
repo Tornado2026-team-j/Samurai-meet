@@ -1,6 +1,7 @@
 export type AuthRouteStatus = "loading" | "signed_out" | "pre_auth" | "signed_in";
 
 const PROTECTED_ROUTE_ROOTS = [
+  "/chat",
   "/foreigner",
   "/japanese",
   "/profile",

@@ -23,22 +23,28 @@
 
 ## 3. 実装分担
 
-| 処理 | 言語 / 場所 |
-| --- | --- |
-| 通報・ブロック画面 | TypeScript / TSX |
-| API 入力・対象権限・遮断判定 | Go |
-| 画像・本文の検査連携 | Go + 専用検査サービスの検討 |
-| 運営キュー・状態更新 | Go / 管理画面 |
-| 原票・処理履歴 | PostgreSQL / SQL |
+| 処理 | 言語 / 場所 | 状態 |
+| --- | --- | --- |
+| 通報・ブロック画面 | TypeScript / TSX | 未 |
+| API 入力・対象権限・遮断判定 | Go（`backend/internal/safety`、`backend/internal/httpapi/safety.go`） | 実装済み |
+| 画像・本文の検査連携 | Go + 専用検査サービスの検討 | 未 |
+| 運営キュー・状態更新 | Go / 管理画面 | 未（`reports.status`列は用意済み） |
+| 原票・処理履歴 | PostgreSQL / SQL（`0027_reports.sql`、既存`blocks`） | `reports` 実装済み、`audit_logs` 未 |
 
 ## 4. API / DB
 
-- `POST /reports`
-- `GET /me/blocks`
-- `POST /blocks`
-- `DELETE /blocks/{user_id}`（解除を許可する場合）
+実装済み（すべて Access Token 必須）:
+
+- `POST /reports` — body `{target_type, target_id, reason, comment?}`。`target_type` は `user` / `recruitment_card` / `message` / `photo`、`reason` は `nuisance` / `harassment` / `impersonation` / `inappropriate_photo` / `dangerous` / `other`。`comment` は最大2000。同一通報者×同一対象で未処理の通報がある場合は既存の通報を返す（201）。自分自身・存在しないユーザーの通報は拒否。
+- `GET /me/blocks` — 自分がブロックした相手の一覧（`user_id`, `name`, `created_at`）。
+- `POST /blocks` — body `{user_id}`。冪等（204）。
+- `DELETE /blocks/{user_id}` — 解除（204、未ブロックは404）。
+
+未実装:
+
 - 運営用：`GET /admin/reports`、`PATCH /admin/reports/{id}`
-- テーブル：`reports`、`blocks`、`audit_logs`
+- `audit_logs` テーブルと管理者操作の記録
+- ブロック時に既存のpending match・関心を自動で拒否/非表示にする処理（現状は新規の関心送信だけを`matching`が遮断）
 
 ## 5. 運営処理
 
@@ -58,11 +64,11 @@
 
 ## 7. 受け入れ条件
 
-- ユーザー、カード、メッセージ、写真を通報できる。
-- ブロック後に相手のカードとチャットが表示されない。
-- 通報が運営キューへ登録される。
-- 管理者の処理履歴が改ざん困難な監査ログに残る。
-- 停止ユーザーがトークンを使って業務 API を利用できない。
+- ユーザー、カード、メッセージ、写真を通報できる。（API実装済み・`TestSafetyReportAndBlock`）
+- ブロック後に相手のカードとチャットが表示されない。（`matching` / `chat` の読み取りが`blocks`を参照。新規関心の遮断はテスト済み。既存match/カード非表示のフロント反映は未）
+- 通報が運営キューへ登録される。（`reports`行として登録。運営キューUIは未）
+- 管理者の処理履歴が改ざん困難な監査ログに残る。（未・`audit_logs`）
+- 停止ユーザーがトークンを使って業務 API を利用できない。（既存のセッション判定で担保）
 
 ## 8. 要確認
 

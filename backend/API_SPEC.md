@@ -423,7 +423,7 @@ Request body:
 
 `POST /api/v1/recruitments/classify`
 
-募集確認前に、認証済みユーザーが入力した`description`を送ります。サーバーだけが`GEMINI_API_KEY`を使用して`gemini-3.1-flash-lite`へ分類を依頼し、`{ "data": { "category": "Food" | "Places" | "Activity" | "Other" } }`を返します。モバイルアプリはGeminiキーを保持しません。分類不能・モデル応答が契約外・Gemini障害時は公開へ進ませず、`502 recruitment_classification_failed`を返します。ユーザーごとは2秒に1回までで、超過時は`429 recruitment_classification_rate_limited`です。APIキー未設定は`503 recruitment_classification_unavailable`です。
+募集確認前に、認証済みユーザーが入力した`description`を送ります。サーバーだけが`GEMINI_API_KEY`を使用して`gemini-3.1-flash-lite`へ分類を依頼し、`{ "data": { "category": "Food" | "Places" | "Activity" | "Other", "keywords": ["short keyword"] } }`を返します。`keywords`は最大5件の候補で、クライアントはカテゴリ・候補キーワードを公開前に選び直せます。モバイルアプリはGeminiキーを保持しません。分類不能・モデル応答が契約外・Gemini障害時は公開へ進ませず、`502 recruitment_classification_failed`を返します。ユーザーごとは2秒に1回までで、超過時は`429 recruitment_classification_rate_limited`です。APIキー未設定は`503 recruitment_classification_unavailable`です。
 
 `POST /api/v1/recruitments`
 
@@ -474,7 +474,7 @@ Request body:
 
 `accepted`前のチャットAPIはありません。カードは承認後も`matched`として残り、所有者が閉じるか期限切れになるまで追加の関心を受け付けます。
 
-### 6.7 チャット（REST MVP実装済み。フロント接続・リアルタイム配送は未実施）
+### 6.7 チャット（REST + WebSocket配送 実装済み。フロント接続は未実施）
 
 チャットは`accepted`になったマッチに対して遅延作成されます。`completed`後は履歴の取得と既読更新だけを許可し、新規送信・transport token発行は停止します。ブロック関係がある場合はチャットの存在を推測できないよう404相当で拒否します。
 
@@ -484,7 +484,8 @@ Request body:
 | GET | `/api/v1/chats/{id}/messages?after=0&limit=50` | Access Token | 暗号化メッセージ履歴。最大100件 |
 | POST | `/api/v1/chats/{id}/messages` | Access Token | 暗号化メッセージ送信 |
 | POST | `/api/v1/chats/{id}/read` | Access Token | `last_message_sequence`まで既読 |
-| POST | `/api/v1/chats/{id}/transport-token` | Access Token | チャットtransport用短命Chat Token発行（配送実装は未完了） |
+| POST | `/api/v1/chats/{id}/transport-token` | Access Token | WebSocket/WebTransport用短命Chat Token発行 |
+| GET | `/api/v1/ws/chats/{id}` | Chat Token（接続後の認証フレーム） | リアルタイム配送のWebSocket |
 
 送信bodyは次の形式です。
 
@@ -500,9 +501,9 @@ Request body:
 
 サーバーは`ciphertext`を復号せず、平文本文・検索用プレビュー・暗号鍵を受け付けません。`client_message_id`は送信者とチャット単位で一意で、同じIDの再送は元のメッセージを返します。暗号文は復号前128KiBまでです。履歴は`sequence`をcursorにして再接続時に補完します。
 
-transport tokenはAccess Token・Refresh Tokenと別audience（`samurai-meet-chat`）で、対象chat・session・transportだけに束縛した2分のJWSです。現行サービスが受け付ける`transport`は`websocket`または`webtransport`ですが、HTTP handlerの既定値は`auth.ChatTransportQUIC`（`quic`）で一致していません。この不整合をコードで解消するまで、transport-tokenの既定経路を動作済みとみなしません。現行のチャット配送はRESTの履歴取得・送信・既読とし、QUIC / WebTransport / WebSocketのリアルタイム配送、TLS接続、heartbeatは未実装です。実装時はQUIC / TLS 1.3が通信路の暗号化・完全性を担い、JWSがアプリケーション層の認証・認可・接続管理を担います。Refresh Tokenを将来のtransportのURLやメッセージへ送ってはいけません。
+transport tokenはAccess Token・Refresh Tokenと別audience（`samurai-meet-chat`）で、対象chat・session・transportだけに束縛した2分のJWSです。Refresh TokenをWebSocket、WebTransport、URL queryへ送ってはいけません。
 
-QUICのパケット損失時の再送はtransport層が行います。アプリケーション層で送信結果が不明な場合は、同じ`client_message_id`で期限・回数を制限した指数バックオフ再送を行い、サーバーの一意制約・冪等処理で二重登録を防ぎます。入力不正、認証失効、認可拒否などの4xxでは自動再送しません。0-RTTではメッセージ送信・既読更新などの状態変更を受け付けません。
+`GET /api/v1/ws/chats/{id}` へ接続後、クライアントは5秒以内に `{"type":"auth","chat_token":"<JWS>"}` を送ります（Chat TokenをURL queryに載せない）。サーバーは token・セッション・マッチ・ブロック・チャット状態を検証し `{"type":"auth.ok",…}` を返します。以後のフレームは `message.send` / `message.read` / `typing.start` / `typing.stop` / `ping`（client→server）、`message.created` / `message.ack` / `message.read` / `typing` / `pong` / `error` / `closing`（server→client）。`message.send` は REST の送信と同じ冪等性・バリデーション（暗号文のみ、128KiBまで）で、REST経由の送信・既読も接続中の相手へ配送されます。接続中は20秒間隔のheartbeatでセッション・マッチ・ブロックを再確認し、失効時は `closing` を送って切断します。配送は現状**単一APIインスタンス前提**（プロセス内ハブ）で、複数インスタンス対応の `LISTEN/NOTIFY` fan-out と接続中のChat Tokenローテーション（`token_seq`）は次の作業です。
 
 ### 6.8 会合セッション・Bluetooth／位置推測の補助（バックエンド実装済み。実測はクライアント）
 
@@ -542,9 +543,20 @@ DBには会合中の参加者ごと・方式ごとに最新1件だけを保持�
 
 通知は応募、承認・辞退、暗号化チャットメッセージの作成と同じDBトランザクションで保存します。`event_key`で冪等化し、一覧はユーザー本人の通知だけを返します。通知本文はクライアントが言語別に生成し、チャットの平文・暗号文・鍵は通知へ保存しません。現在のクライアントはExpo画面からこの一覧と既読APIを利用します。これはアプリ内通知であり、`expo-notifications`等によるOSプッシュ通知は未実装です。
 
-### 6.10 未実装業務API
+### 6.10 通報・ブロック（実装済み）
 
-本人確認（Stripe Identity等）、評価、ブロック・通報登録、QUICリアルタイム配送、チャット内写真送信は引き続き予定です。Stripe Identityを採用する場合も、Stripe Webhookの署名検証・イベント冪等性・対象ユーザー紐付けが成功するまで`identity_status=verified`へ遷移させません。画像平文、Key-A、Key-B、Recovery Key、Refresh TokenをAPIログへ出さない不変条件は全機能に適用します。
+| Method | Path | 認証 | 用途 |
+| --- | --- | --- | --- |
+| POST | `/api/v1/reports` | Access Token | 通報の登録 |
+| GET | `/api/v1/me/blocks` | Access Token | 自分がブロックした相手の一覧 |
+| POST | `/api/v1/blocks` | Access Token | ユーザーをブロック（冪等、204） |
+| DELETE | `/api/v1/blocks/{user_id}` | Access Token | ブロック解除（204、未ブロックは404） |
+
+通報bodyは`{"target_type","target_id","reason","comment"}`。`target_type`は`user` / `recruitment_card` / `message` / `photo`、`reason`は`nuisance` / `harassment` / `impersonation` / `inappropriate_photo` / `dangerous` / `other`、`comment`は任意で最大1000 Unicode（サーバー上限2000）。自分自身・存在しないユーザーへの通報は拒否します。同一通報者×同一対象で未処理（`received` / `reviewing`）の通報がある場合は、新規作成せず既存の通報を`data`に入れて201で返します。通報者情報は対象者へ返しません。ブロックは`0019`の`blocks`テーブルを使い、`matching` / `chat` が既にアクセス制御で参照しています。運営キュー（`GET/PATCH /admin/reports`）と`audit_logs`は次の作業です。
+
+### 6.11 未実装業務API
+
+本人確認（Stripe Identity等）、評価、チャット内写真送信、通報の運営キューは引き続き予定です。Stripe Identityを採用する場合も、Stripe Webhookの署名検証・イベント冪等性・対象ユーザー紐付けが成功するまで`identity_status=verified`へ遷移させません。画像平文、Key-A、Key-B、Recovery Key、Refresh TokenをAPIログへ出さない不変条件は全機能に適用します。
 
 ## 7. クライアント更新手順
 

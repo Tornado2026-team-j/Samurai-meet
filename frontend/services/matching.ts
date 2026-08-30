@@ -350,6 +350,21 @@ export function rejectMatch(
   return updateMatch(matchId, "reject", session, signal);
 }
 
+export async function declineMatch(
+  matchId: string,
+  session: Session,
+  signal?: AbortSignal,
+): Promise<RecruitmentInterest> {
+  try {
+    return await withdrawRecruitmentInterest(matchId, session, signal);
+  } catch (error) {
+    if (error instanceof APIError && (error.status === 403 || error.code === "invalid_matching_state")) {
+      return rejectMatch(matchId, session, signal);
+    }
+    throw error;
+  }
+}
+
 export async function withdrawRecruitmentInterest(
   matchId: string,
   session: Session,
