@@ -480,7 +480,7 @@ Request body:
 | GET | `/api/v1/chats/{id}/messages?after=0&limit=50` | Access Token | 暗号化メッセージ履歴。最大100件 |
 | POST | `/api/v1/chats/{id}/messages` | Access Token | 暗号化メッセージ送信 |
 | POST | `/api/v1/chats/{id}/read` | Access Token | `last_message_sequence`まで既読 |
-| POST | `/api/v1/chats/{id}/transport-token` | Access Token | WebSocket/WebTransport用短命Chat Token発行 |
+| POST | `/api/v1/chats/{id}/transport-token` | Access Token | WebSocket用短命Chat Token発行（`transport`は省略時・明示ともに`websocket`のみ。他値は400） |
 | GET | `/api/v1/ws/chats/{id}` | Chat Token（接続後の認証フレーム） | リアルタイム配送のWebSocket |
 
 送信bodyは次の形式です。

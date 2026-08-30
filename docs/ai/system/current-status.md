@@ -11,7 +11,7 @@
 - 募集・マッチングの外国人／日本人画面からAPIを呼ぶ実装、募集管理・応募履歴・応募取り下げ、表示言語に依存しない通知遷移が存在する。日時入力はISO内部値と `Asia/Tokyo` 固定へ更新し、自動テストで確認済み。表示言語と利用モードは別の保存設定で、2026-08-29にiPhone上の表示言語即時切替を確認した。募集作成から通知遷移・応募取消・ログアウト後の戻る操作までを同一手順で確認するiOS実機全通しE2Eは未確認である。
 - 通知のDB永続化、一覧・既読API、応募／承認／辞退／暗号化チャット送信に伴う通知生成、外国人／日本人の通知画面・未読バッジ。
 - 通知は現時点でアプリ内REST通知であり、`expo-notifications`等によるOSプッシュ通知は未実装。
-- チャットは暗号文のREST送信・履歴取得・既読更新・短命transport token発行の部品まで。QUIC、WebTransport、WebSocketによるリアルタイム配送とチャット画面は未実装。
+- チャットは暗号文のREST送信・履歴取得・既読更新・短命transport token発行に加え、WebSocketによるリアルタイム配送（`internal/chat/websocket.go`、単一APIインスタンス前提のプロセス内ハブ、統合テスト `TestChatWebSocketDelivery`）を実装済み。transport tokenが発行する `transport` は `websocket` のみ（`webtransport` / `quic` は終端サーバーが無いため400で拒否）。QUIC／WebTransport配送、複数インスタンス対応の `LISTEN/NOTIFY` fan-out、`token_seq` ローテーション、チャット画面のフロント接続は未実装。
 - 募集の利用日・壁時計は現在 `Asia/Tokyo` 固定で正規化する方針。DB/APIの絶対時刻はUTCとして扱う。
 
 ## 未完了・本番承認不可
@@ -23,7 +23,7 @@
 
 ## 既知の実装不整合
 
-`POST /api/v1/chats/{id}/transport-token` は、HTTP handlerが既定値として `quic` を渡す一方、現行のチャットサービスが受け付ける値は `websocket` または `webtransport` である。したがって、現状の既定経路はコードを整合させるまで動作確認済みとみなさない。ドキュメント上もQUIC配送を実装済みとは扱わない。
+（解消済み）`POST /api/v1/chats/{id}/transport-token` のHTTP handler既定値とサービス受理値の不整合は修正済み。現在はhandler既定値・サービス受理値ともに `websocket` で一致し、`websocket` のみを発行する（`webtransport` / `quic` は終端サーバーが未実装のため `ErrChatInvalidInput` で拒否）。QUIC／WebTransport配送は引き続き実装済みとは扱わない。
 
 ## 接続先・Expo実行環境
 

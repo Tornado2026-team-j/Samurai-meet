@@ -338,7 +338,11 @@ func (s *Service) IssueTransportToken(ctx context.Context, userID, sessionID, ch
 	if transport == "" {
 		transport = "websocket"
 	}
-	if transport != "websocket" && transport != "webtransport" {
+	// Only WebSocket delivery exists today. `webtransport` / `quic` are
+	// reserved for a future transport and are rejected until a server that
+	// terminates them ships, so a Chat Token is never issued for a path that
+	// nothing serves.
+	if transport != "websocket" {
 		return TransportToken{}, ErrChatInvalidInput
 	}
 	access, err := s.loadChat(ctx, userID, chatID, false)
