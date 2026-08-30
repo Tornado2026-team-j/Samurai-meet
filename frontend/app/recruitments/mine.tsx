@@ -61,6 +61,8 @@ const COPY = {
     keywords: "キーワード（カンマ区切り）", keywordsInput: "キーワード", radius: "公開範囲",
     location: "場所表示名", people: "募集人数（1〜10人）",
     jstHint: "日時はサーバーと同じJST（Asia/Tokyo）で保存されます。", save: "保存", saving: "保存中…",
+    filters: { all: "すべて", open: "公開中", draft: "下書き", expired: "期限切れ", closed: "終了済み" },
+    noFilteredRecruitments: "この状態の募集はありません。",
     recruitmentStatus: { draft: "下書き", open: "公開中", matched: "マッチ済み", closed: "終了", expired: "期限切れ", completed: "完了" },
     matchStatus: { pending: "応募を確認中", accepted: "承認済み", rejected: "却下", cancelled: "応募取り下げ", blocked: "利用不可", expired: "期限切れ", completed: "完了" },
   },
@@ -80,6 +82,8 @@ const COPY = {
     keywords: "Keywords (comma separated)", keywordsInput: "Keywords", radius: "Visibility range",
     location: "Location name", people: "People needed (1–10)",
     jstHint: "Times are saved in JST (Asia/Tokyo), the same time zone used by the server.", save: "Save", saving: "Saving…",
+    filters: { all: "All", open: "Open", draft: "Draft", expired: "Expired", closed: "Finished" },
+    noFilteredRecruitments: "No recruitments match this status.",
     recruitmentStatus: { draft: "Draft", open: "Open", matched: "Matched", closed: "Closed", expired: "Expired", completed: "Completed" },
     matchStatus: { pending: "Pending review", accepted: "Accepted", rejected: "Declined", cancelled: "Withdrawn", blocked: "Unavailable", expired: "Expired", completed: "Completed" },
   },
@@ -96,6 +100,25 @@ type EditDraft = {
   participant_limit: string;
   visibility_radius_km: 1 | 3 | 5;
 };
+
+type RecruitmentFilter = "all" | "open" | "draft" | "expired" | "closed";
+
+const RECRUITMENT_FILTERS: RecruitmentFilter[] = ["all", "open", "draft", "expired", "closed"];
+
+function matchesRecruitmentFilter(recruitment: Recruitment, filter: RecruitmentFilter): boolean {
+  switch (filter) {
+    case "all":
+      return true;
+    case "open":
+      return recruitment.status === "open" || recruitment.status === "matched";
+    case "draft":
+      return recruitment.status === "draft";
+    case "expired":
+      return recruitment.status === "expired";
+    case "closed":
+      return recruitment.status === "closed" || recruitment.status === "completed";
+  }
+}
 
 function recruitmentStatusColor(status: Recruitment["status"]): string {
   if (status === "open" || status === "matched") return "#168df0";
@@ -126,6 +149,7 @@ export default function MyRecruitmentsScreen() {
   const [language, setLanguage] = useState<AppLanguage | null>(null);
   const [recruitments, setRecruitments] = useState<Recruitment[]>([]);
   const [applications, setApplications] = useState<MatchView[]>([]);
+  const [recruitmentFilter, setRecruitmentFilter] = useState<RecruitmentFilter>("all");
   const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading");
   const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -240,6 +264,11 @@ export default function MyRecruitmentsScreen() {
     }
     return grouped;
   }, [applications]);
+
+  const filteredRecruitments = useMemo(
+    () => recruitments.filter((recruitment) => matchesRecruitmentFilter(recruitment, recruitmentFilter)),
+    [recruitmentFilter, recruitments],
+  );
 
   const startEditing = (recruitment: Recruitment) => {
     if (!canEdit(recruitment)) return;
@@ -384,6 +413,34 @@ export default function MyRecruitmentsScreen() {
         showsVerticalScrollIndicator={false}
       >
         <Text style={styles.intro}>{copy.intro}</Text>
+        <ScrollView
+          contentContainerStyle={styles.filterContent}
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.filterScroll}
+        >
+          {RECRUITMENT_FILTERS.map((filter) => {
+            const selected = recruitmentFilter === filter;
+            return (
+              <Pressable
+                key={filter}
+                accessibilityLabel={copy.filters[filter]}
+                accessibilityRole="tab"
+                accessibilityState={{ selected }}
+                onPress={() => setRecruitmentFilter(filter)}
+                style={({ pressed }) => [
+                  styles.filterButton,
+                  selected && styles.filterButtonSelected,
+                  pressed && styles.pressed,
+                ]}
+              >
+                <Text style={[styles.filterButtonText, selected && styles.filterButtonTextSelected]}>
+                  {copy.filters[filter]}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
         {operationError ? <Text accessibilityRole="alert" style={styles.operationError}>{operationError}</Text> : null}
 
         {loadState === "loading" ? (
@@ -423,7 +480,12 @@ export default function MyRecruitmentsScreen() {
                 <MaterialIcons color={MUTED_GRAY} name="post-add" size={38} />
                 <Text style={styles.stateText}>{copy.empty}</Text>
               </View>
-            ) : recruitments.map((recruitment) => {
+            ) : filteredRecruitments.length === 0 ? (
+              <View style={styles.statePanel}>
+                <MaterialIcons color={MUTED_GRAY} name="filter-list" size={38} />
+                <Text style={styles.stateText}>{copy.noFilteredRecruitments}</Text>
+              </View>
+            ) : filteredRecruitments.map((recruitment) => {
           const ownedApplications = applicationsByRecruitment.get(recruitment.id) ?? [];
           const editable = canEdit(recruitment);
           const closable = canClose(recruitment);
@@ -535,14 +597,17 @@ export default function MyRecruitmentsScreen() {
               showsVerticalScrollIndicator={false}
               style={styles.modalScrollView}
             >
-              <Pressable onPress={() => undefined} style={styles.editorPanel}>
+              <Pressable onPress={() => Keyboard.dismiss()} style={styles.editorPanel}>
               <View style={styles.editorHeader}>
                 <Text style={styles.editorTitle}>{copy.editTitle}</Text>
-                <Pressable
-                  accessibilityLabel={copy.closeEditor}
-                  accessibilityRole="button"
-                  disabled={saving}
-                  onPress={closeEditor}
+                  <Pressable
+                    accessibilityLabel={copy.closeEditor}
+                    accessibilityRole="button"
+                    disabled={saving}
+                    onPress={() => {
+                      Keyboard.dismiss();
+                      closeEditor();
+                    }}
                   style={({ pressed }) => [styles.closeIcon, pressed && styles.pressed]}
                 >
                   <MaterialIcons color={TEXT_GRAY} name="close" size={22} />
@@ -560,7 +625,10 @@ export default function MyRecruitmentsScreen() {
                         accessibilityRole="button"
                         accessibilityState={{ selected: editDraft.category === category }}
                         disabled={saving}
-                        onPress={() => setEditDraft((current) => current ? { ...current, category } : current)}
+                        onPress={() => {
+                          Keyboard.dismiss();
+                          setEditDraft((current) => current ? { ...current, category } : current);
+                        }}
                         style={({ pressed }) => [
                           styles.categoryChoice,
                           editDraft.category === category && styles.categoryChoiceSelected,
@@ -658,7 +726,10 @@ export default function MyRecruitmentsScreen() {
                         accessibilityRole="button"
                         accessibilityState={{ selected: editDraft.visibility_radius_km === radius }}
                         disabled={saving}
-                        onPress={() => setEditDraft((current) => current ? { ...current, visibility_radius_km: radius } : current)}
+                        onPress={() => {
+                          Keyboard.dismiss();
+                          setEditDraft((current) => current ? { ...current, visibility_radius_km: radius } : current);
+                        }}
                         style={({ pressed }) => [
                           styles.radiusChoice,
                           editDraft.visibility_radius_km === radius && styles.radiusChoiceSelected,
@@ -677,7 +748,10 @@ export default function MyRecruitmentsScreen() {
                       accessibilityLabel={copy.cancel}
                       accessibilityRole="button"
                       disabled={saving}
-                      onPress={closeEditor}
+                      onPress={() => {
+                        Keyboard.dismiss();
+                        closeEditor();
+                      }}
                       style={({ pressed }) => [styles.cancelButton, pressed && styles.pressed]}
                     >
                       <Text style={styles.cancelText}>{copy.cancel}</Text>
@@ -687,7 +761,10 @@ export default function MyRecruitmentsScreen() {
                       accessibilityRole="button"
                       accessibilityState={{ busy: saving, disabled: saving }}
                       disabled={saving}
-                      onPress={() => void saveEditing()}
+                      onPress={() => {
+                        Keyboard.dismiss();
+                        void saveEditing();
+                      }}
                       style={({ pressed }) => [styles.saveButton, saving && styles.disabled, pressed && styles.pressed]}
                     >
                       {saving ? <ActivityIndicator color="#ffffff" size="small" /> : null}
@@ -721,6 +798,12 @@ const styles = StyleSheet.create({
   headerTitle: { color: "#ffffff", fontSize: 22, fontWeight: "800" },
   content: { alignItems: "center", paddingHorizontal: 18, paddingTop: 22, gap: 14 },
   intro: { alignSelf: "stretch", color: MUTED_GRAY, fontSize: 13, lineHeight: 19, textAlign: "center" },
+  filterScroll: { alignSelf: "stretch" },
+  filterContent: { gap: 8, paddingHorizontal: 2 },
+  filterButton: { minHeight: 36, alignItems: "center", justifyContent: "center", paddingHorizontal: 14, borderWidth: 1, borderColor: BORDER_GRAY, borderRadius: 18, backgroundColor: "#ffffff" },
+  filterButtonSelected: { borderColor: BLUE, backgroundColor: SOFT_BLUE },
+  filterButtonText: { color: TEXT_GRAY, fontSize: 13, fontWeight: "800" },
+  filterButtonTextSelected: { color: BLUE },
   operationError: { alignSelf: "stretch", color: "#b42318", fontSize: 13, fontWeight: "700", lineHeight: 19, textAlign: "center" },
   statePanel: { minHeight: 180, width: "100%", alignItems: "center", justifyContent: "center", gap: 12, paddingHorizontal: 20 },
   inlineError: { width: "100%", alignItems: "center", gap: 8, paddingHorizontal: 20 },
