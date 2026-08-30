@@ -29,6 +29,6 @@ flowchart TD
 | P0 | Native hardware posture | iOS Secure Enclave / Android Keystore | Expo Goと本番nativeを区別し、hardware-backed/attestation可否を画面と監査へ反映 |
 | P1 | Go admin panel | 認証・監査・運用権限設計 | 公開APIと別listenerまたは別serviceで、管理者認証、監査ログ、危険操作の再認証、運用分離を実機・障害時も検証 |
 | P1 | Recovery Codes | client-owned root key v2 | 8個程度のone-time auth recovery codeをhashのみ保存し、phrase復号能力と分離 |
-| P1 | Chat transport | 業務API | WebSocket配送を実装済み（別audience Chat Token、first-frame認証、20秒heartbeatでセッション/ブロック/マッチ失効、単一インスタンスのin-memoryハブ）。残: 複数インスタンスの`LISTEN/NOTIFY` fan-out、接続中のChat Tokenローテーション（`token_seq`）、Expo実機での再接続負荷試験 |
+| P1 | Chat transport | 業務API | WebSocket配送を実装済み（別audience Chat Token、first-frame認証、20秒heartbeatでセッション/ブロック/マッチ失効、単一インスタンスのin-memoryハブ、fan-out除外はソケット単位でマルチデバイス整合）。残: 複数インスタンスの`LISTEN/NOTIFY` fan-out、接続中のChat Tokenローテーション（`token_seq`）、Expo実機での再接続負荷試験 |
 
 各項目は実装前に脅威、API契約、migration、observability、rollback、E2E受入条件をPR本文へ記載する。

@@ -298,13 +298,13 @@ func (s *Service) revalidateConnection(ctx context.Context, c *wsConn) error {
 func (s *Service) handleSend(c *wsConn, frame inboundFrame) {
 	ctx, cancel := context.WithTimeout(context.Background(), wsOpTimeout)
 	defer cancel()
-	message, created, err := s.SendMessage(ctx, c.userID, c.chatID, SendMessageInput{
+	message, created, err := s.sendMessage(ctx, c.userID, c.chatID, SendMessageInput{
 		ClientMessageID: frame.ClientMessageID,
 		Ciphertext:      frame.Ciphertext,
 		Nonce:           frame.Nonce,
 		Algorithm:       frame.Algorithm,
 		KeyVersion:      frame.KeyVersion,
-	}, time.Now())
+	}, time.Now(), c)
 	if err != nil {
 		s.replyError(c, wsErrorCode(err), "message rejected")
 		if errors.Is(err, ErrChatNotAvailable) || errors.Is(err, ErrChatBlocked) || errors.Is(err, ErrChatClosed) || errors.Is(err, ErrChatForbidden) {
@@ -312,18 +312,20 @@ func (s *Service) handleSend(c *wsConn, frame inboundFrame) {
 		}
 		return
 	}
-	// SendMessage already fanned message.created out to the other participant.
+	// sendMessage already fanned message.created out to every other socket on
+	// the chat, including this sender's other devices.
 	c.enqueue(mustFrame(ackFrame{Type: serverFrameMessageAck, ClientMessageID: message.ClientMessageID, Message: message, Duplicate: !created}))
 }
 
 func (s *Service) handleRead(c *wsConn, frame inboundFrame) {
 	ctx, cancel := context.WithTimeout(context.Background(), wsOpTimeout)
 	defer cancel()
-	if err := s.MarkRead(ctx, c.userID, c.chatID, frame.LastMessageSequence, time.Now()); err != nil {
+	if err := s.markRead(ctx, c.userID, c.chatID, frame.LastMessageSequence, time.Now(), c); err != nil {
 		s.replyError(c, wsErrorCode(err), "read rejected")
 		return
 	}
-	// MarkRead already fanned the receipt out to the other participant.
+	// markRead already fanned the receipt out to every other socket on the
+	// chat, including this reader's other devices.
 }
 
 func (s *Service) broadcastTyping(c *wsConn, state string) {

@@ -216,11 +216,18 @@ func (s *Service) ListMessages(ctx context.Context, userID, chatID string, after
 	return page, nil
 }
 
-// SendMessage stores one ciphertext message. It is idempotent on
-// (chat, sender, client_message_id): a repeated client_message_id returns the
-// original row with created=false. When a new row is stored, the other
-// participant's live WebSocket connections receive a message.created frame.
+// SendMessage stores one ciphertext message from a REST caller. It is
+// idempotent on (chat, sender, client_message_id): a repeated client_message_id
+// returns the original row with created=false. When a new row is stored, every
+// live WebSocket connection on the chat receives a message.created frame.
 func (s *Service) SendMessage(ctx context.Context, userID, chatID string, input SendMessageInput, now time.Time) (Message, bool, error) {
+	return s.sendMessage(ctx, userID, chatID, input, now, nil)
+}
+
+// sendMessage is the shared implementation. origin is the socket that issued
+// the send (nil for REST); it is the only connection excluded from the
+// message.created fan-out, so the sender's other devices stay in sync.
+func (s *Service) sendMessage(ctx context.Context, userID, chatID string, input SendMessageInput, now time.Time, origin *wsConn) (Message, bool, error) {
 	if err := validateMessageInput(input); err != nil {
 		return Message{}, false, err
 	}
@@ -287,7 +294,7 @@ func (s *Service) SendMessage(ctx context.Context, userID, chatID string, input 
 		return Message{}, false, err
 	}
 	if isNew && s.hub != nil {
-		s.hub.broadcastExceptUser(access.ChatID, userID, mustFrame(messageFrame{Type: serverFrameMessageCreated, Message: message}))
+		s.hub.broadcastExcept(access.ChatID, origin, mustFrame(messageFrame{Type: serverFrameMessageCreated, Message: message}))
 	}
 	return message, isNew, nil
 }
@@ -301,7 +308,16 @@ func (s *Service) notificationActorNameTx(ctx context.Context, tx *sql.Tx, userI
 	return strings.TrimSpace(name), err
 }
 
+// MarkRead advances the caller's read watermark from a REST caller and fans
+// the receipt out to every live socket on the chat.
 func (s *Service) MarkRead(ctx context.Context, userID, chatID string, sequence int64, now time.Time) error {
+	return s.markRead(ctx, userID, chatID, sequence, now, nil)
+}
+
+// markRead is the shared implementation. origin is the socket that issued the
+// read (nil for REST) and is the only connection excluded from the receipt
+// fan-out, so the reader's other devices also advance their read watermark.
+func (s *Service) markRead(ctx context.Context, userID, chatID string, sequence int64, now time.Time, origin *wsConn) error {
 	if sequence <= 0 {
 		return ErrChatInvalidInput
 	}
@@ -325,7 +341,7 @@ func (s *Service) MarkRead(ctx context.Context, userID, chatID string, sequence 
 		return err
 	}
 	if s.hub != nil {
-		s.hub.broadcastExceptUser(access.ChatID, userID, mustFrame(readFrame{Type: serverFrameMessageRead, UserID: userID, LastMessageSequence: sequence}))
+		s.hub.broadcastExcept(access.ChatID, origin, mustFrame(readFrame{Type: serverFrameMessageRead, UserID: userID, LastMessageSequence: sequence}))
 	}
 	return nil
 }

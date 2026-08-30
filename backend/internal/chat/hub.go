@@ -58,13 +58,35 @@ func (h *Hub) connectionCount(chatID, userID string) int {
 }
 
 // broadcastExceptUser delivers payload to every socket on the chat whose user
-// is not exceptUserID. A socket whose buffer is full is dropped: it will
-// reconcile over REST on reconnect.
+// is not exceptUserID. It is used for ephemeral, per-user signals such as
+// typing indicators, where the sender's own devices must not echo the event.
+// A socket whose buffer is full is dropped: it will reconcile over REST on
+// reconnect.
 func (h *Hub) broadcastExceptUser(chatID, exceptUserID string, payload []byte) {
 	h.mu.RLock()
 	targets := make([]*wsConn, 0, len(h.rooms[chatID]))
 	for c := range h.rooms[chatID] {
 		if c.userID != exceptUserID {
+			targets = append(targets, c)
+		}
+	}
+	h.mu.RUnlock()
+	for _, c := range targets {
+		c.enqueue(payload)
+	}
+}
+
+// broadcastExcept delivers payload to every socket on the chat except the one
+// that originated the action (exceptConn, which may be nil for a REST-driven
+// action). Excluding a single socket rather than the whole user means the
+// sender's other devices still receive durable events such as message.created
+// and read receipts, which is required for multi-device consistency. A socket
+// whose buffer is full is dropped: it will reconcile over REST on reconnect.
+func (h *Hub) broadcastExcept(chatID string, exceptConn *wsConn, payload []byte) {
+	h.mu.RLock()
+	targets := make([]*wsConn, 0, len(h.rooms[chatID]))
+	for c := range h.rooms[chatID] {
+		if c != exceptConn {
 			targets = append(targets, c)
 		}
 	}

@@ -57,14 +57,14 @@ MVP のリアルタイム配送は WebSocket。QUIC / HTTP/3 WebTransport は将
 
 | type | 用途 |
 | --- | --- |
-| `message.created` | 相手が送信したメッセージ。`message` に REST と同じ形の暗号文メッセージ |
-| `message.ack` | 自分の送信の確定。`message`, `duplicate`（再送で既存を返した場合 true） |
-| `message.read` | 相手の既読。`user_id`, `last_message_sequence` |
+| `message.created` | 新規メッセージ。`message` に REST と同じ形の暗号文メッセージ。送信操作を発行したソケット**以外**の、そのチャットの全ソケットへ配送する（相手の端末に加え、送信者自身の他端末も含む） |
+| `message.ack` | 自分の送信の確定。送信を発行したソケットにだけ返す。`message`, `duplicate`（再送で既存を返した場合 true） |
+| `message.read` | 既読の前進。`user_id`, `last_message_sequence`。既読操作を発行したソケット以外の全ソケットへ配送する（相手の端末＋既読した本人の他端末） |
 | `typing` | `user_id`, `state`（`start` / `stop`） |
 | `error` | `code`, `message`。回復不能な `code`（`blocked` / `chat_not_available` / `chat_closed` / `forbidden`）の後は `closing` が続く |
 | `closing` | `reason`。サーバーが接続を閉じる直前に一度だけ送る |
 
-送信メッセージには `client_message_id` を付け、再送されても二重登録しません（`message.send` は既存の REST `SendMessage` と同じ冪等性）。`message.created` / `message.read` は REST 経由の送信・既読でも接続中の相手へ配送されます。
+送信メッセージには `client_message_id` を付け、再送されても二重登録しません（`message.send` は既存の REST `SendMessage` と同じ冪等性）。`message.created` / `message.read` は REST 経由の送信・既読でも接続中の全ソケットへ配送されます。配送の除外はユーザー単位ではなくソケット単位のため、同一ユーザーが複数端末で接続していても、送信・既読を行っていない他端末は更新を受け取れます（`typing` だけは自端末のエコーを避けるためユーザー単位で除外）。
 
 ## 5. 切断・再接続
 

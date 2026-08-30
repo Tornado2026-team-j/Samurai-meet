@@ -127,6 +127,29 @@ func TestChatWebSocketDelivery(t *testing.T) {
 		t.Fatalf("duplicate ack = %v", dup)
 	}
 
+	// the sender's other device receives message.created (socket-level, not
+	// user-level, fan-out exclusion).
+	requesterSecondDevice := dialChat(t, ctx, wsURL, chatToken(t, ctx, chatService, requesterID, requesterSession.SessionID, chatID, now))
+	defer requesterSecondDevice.CloseNow()
+	writeFrameJSON(t, ctx, requesterConn, map[string]any{
+		"type": "message.send", "client_message_id": "cmid-multi-device",
+		"ciphertext": ciphertext, "nonce": nonce, "algorithm": "AES-256-GCM", "key_version": "v1",
+	})
+	if ack := readFrameJSON(t, ctx, requesterConn); ack["type"] != "message.ack" || ack["duplicate"] != false {
+		t.Fatalf("multi-device ack = %v", ack)
+	}
+	otherDevice := readFrameJSON(t, ctx, requesterSecondDevice)
+	if otherDevice["type"] != "message.created" {
+		t.Fatalf("sender other device frame = %v", otherDevice)
+	}
+	if otherDevice["message"].(map[string]any)["client_message_id"] != "cmid-multi-device" {
+		t.Fatalf("sender other device message = %v", otherDevice["message"])
+	}
+	// drain the owner's copy so the block assertions below start from a clean queue
+	if created := readFrameJSON(t, ctx, ownerConn); created["type"] != "message.created" {
+		t.Fatalf("owner multi-device copy = %v", created)
+	}
+
 	// a block cuts delivery off
 	if _, err := database.ExecContext(ctx, `INSERT INTO blocks (blocker_user_id,blocked_user_id,created_at) VALUES ($1,$2,$3)`, ownerID, requesterID, stamp); err != nil {
 		t.Fatal(err)
