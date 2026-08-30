@@ -85,8 +85,6 @@ export async function clearLanguage(): Promise<void> {
   notifyLanguageListeners(null);
 }
 
-// Screens keep their already-loaded data when the display language changes.
-// This only updates copy and avoids a navigation-triggered list reload.
 export function subscribeLanguage(listener: (language: AppLanguage | null) => void): () => void {
   languageListeners.add(listener);
   return () => languageListeners.delete(listener);

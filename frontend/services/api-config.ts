@@ -19,12 +19,6 @@ export const API_BASE_URL = (
   configuredApiBaseURL || defaultAPIBaseURL(runtimeLocation, process.env.NODE_ENV)
 ).replace(/\/+$/, "");
 
-/**
- * A local API and the Web Passkey page must use the same backend/database.
- * When only the API override is supplied, derive the page origin from it so a
- * development bootstrap cannot accidentally be sent to the production page.
- * An explicit Web origin remains authoritative for a separately hosted page.
- */
 const derivedWebAppOrigin = originFromAPIBaseURL(API_BASE_URL) ?? DEFAULT_WEB_APP_ORIGIN;
 
 export const WEB_APP_ORIGIN = (configuredWebAppOrigin || derivedWebAppOrigin).replace(/\/+$/, "");

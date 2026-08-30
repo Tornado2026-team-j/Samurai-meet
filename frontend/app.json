@@ -14,14 +14,19 @@
       "expo-secure-store",
       "expo-web-browser",
       "expo-font",
-      "react-native-libsodium",
       [
         "expo-location",
         {
           "locationWhenInUsePermission": "Samurai Meet uses your location to find nearby recruitments."
         }
       ],
-      "@react-native-community/datetimepicker"
+      "@react-native-community/datetimepicker",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Samurai Meet uses your photo library to upload memories."
+        }
+      ]
     ]
   }
 }

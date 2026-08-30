@@ -1,8 +1,4 @@
-export type MatchCategory =
-  | "Food"
-  | "Places"
-  | "Activity"
-  | "Other";
+export type MatchCategory = "Food" | "Places" | "Activity" | "Other";
 
 export type MatchCardData = {
   id: string;

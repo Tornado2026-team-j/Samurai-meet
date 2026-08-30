@@ -1,14 +1,7 @@
 import type { Session } from "./auth-contract";
-import { APIError, requestAPI } from "./api-client";
-import type { MatchCardData, MatchCategory } from "../types/match";
+import { requestAPI, APIError } from "./api-client";
 
-export type RecruitmentStatus =
-  | "draft"
-  | "open"
-  | "matched"
-  | "closed"
-  | "expired"
-  | "completed";
+export type MatchCategory = "Food" | "Places" | "Activity" | "Other";
 
 export type MatchStatus =
   | "pending"
@@ -34,60 +27,8 @@ export type Recruitment = {
   description: string;
   visibility_radius_km: 1 | 3 | 5;
   distance_band?: string;
-  status: RecruitmentStatus;
+  status: string;
   expires_at: string;
-  created_at: string;
-  updated_at: string;
-};
-
-export type RecruitmentCreateRequest = {
-  category: MatchCategory;
-  available_date: string;
-  start_time: string;
-  end_time: string;
-  timezone: string;
-  keywords: string[];
-  description: string;
-  visibility_radius_km: 1 | 3 | 5;
-  latitude?: number;
-  longitude?: number;
-  location_accuracy_m?: number;
-  status: Extract<RecruitmentStatus, "draft" | "open" | "closed">;
-};
-
-export type RecruitmentUpdateRequest = {
-  category?: MatchCategory;
-  available_date?: string;
-  start_time?: string;
-  end_time?: string;
-  timezone?: string;
-  keywords?: string[];
-  description?: string;
-  visibility_radius_km?: 1 | 3 | 5;
-  latitude?: number;
-  longitude?: number;
-  location_accuracy_m?: number;
-  clear_location?: boolean;
-  status?: Extract<RecruitmentStatus, "draft" | "open" | "closed">;
-};
-
-export type RecruitmentSearchParams = {
-  keywords?: string[];
-  availableDate?: string;
-  startTime?: string;
-  endTime?: string;
-  radiusKm?: 1 | 3 | 5;
-  verifiedOnly?: boolean;
-  latitude?: number;
-  longitude?: number;
-  limit?: number;
-};
-
-export type RecruitmentInterest = {
-  id: string;
-  recruitment_id: string;
-  status: MatchStatus;
-  matched_at?: string;
   created_at: string;
   updated_at: string;
 };
@@ -101,188 +42,18 @@ export type MatchParticipant = {
   likes_count: number;
 };
 
-export type MatchView = RecruitmentInterest & {
+export type MatchView = {
+  id: string;
+  recruitment_id: string;
+  status: MatchStatus;
+  matched_at?: string;
   other_user: MatchParticipant;
   recruitment: Recruitment;
-};
-
-export type MatchListParams = {
-  role?: "all" | "owner" | "requester";
-  status?: MatchStatus;
-  limit?: number;
-};
-
-export type Coordinates = {
-  latitude: number;
-  longitude: number;
-  accuracy_m: number;
-  captured_at?: string;
+  created_at: string;
+  updated_at: string;
 };
 
 type DataResponse<T> = { data?: T };
-
-function requireArrayData<T>(response: DataResponse<T[]>, resource: string): T[] {
-  if (!Array.isArray(response.data)) {
-    throw new Error(`${resource} response is invalid`);
-  }
-  return response.data;
-}
-
-function appendQueryPart(parts: string[], key: string, value: string | number | boolean) {
-  parts.push(`${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`);
-}
-
-function recruitmentQuery(params: RecruitmentSearchParams): string {
-  const parts: string[] = [];
-  for (const keyword of params.keywords ?? []) {
-    const normalizedKeyword = keyword.trim();
-    if (normalizedKeyword) appendQueryPart(parts, "keyword", normalizedKeyword);
-  }
-  if (params.availableDate) appendQueryPart(parts, "available_date", params.availableDate);
-  if (params.startTime) appendQueryPart(parts, "start_time", params.startTime);
-  if (params.endTime) appendQueryPart(parts, "end_time", params.endTime);
-  if (params.radiusKm !== undefined) appendQueryPart(parts, "radius_km", params.radiusKm);
-  if (params.verifiedOnly !== undefined) appendQueryPart(parts, "verified_only", params.verifiedOnly);
-  if (params.latitude !== undefined) appendQueryPart(parts, "latitude", params.latitude);
-  if (params.longitude !== undefined) appendQueryPart(parts, "longitude", params.longitude);
-  if (params.limit !== undefined) appendQueryPart(parts, "limit", params.limit);
-  return parts.length > 0 ? `?${parts.join("&")}` : "";
-}
-
-function matchQuery(params: MatchListParams): string {
-  const parts: string[] = [];
-  if (params.role) appendQueryPart(parts, "role", params.role);
-  if (params.status) appendQueryPart(parts, "status", params.status);
-  if (params.limit !== undefined) appendQueryPart(parts, "limit", params.limit);
-  return parts.length > 0 ? `?${parts.join("&")}` : "";
-}
-
-export async function searchRecruitments(
-  session: Session,
-  params: RecruitmentSearchParams = {},
-  signal?: AbortSignal,
-): Promise<Recruitment[]> {
-  const response = await requestAPI<DataResponse<Recruitment[]>>(
-    `/recruitments${recruitmentQuery(params)}`,
-    session,
-    { method: "GET", signal },
-  );
-  return requireArrayData(response, "recruitments");
-}
-
-export async function createRecruitment(
-  session: Session,
-  input: RecruitmentCreateRequest,
-  signal?: AbortSignal,
-): Promise<Recruitment> {
-  const response = await requestAPI<DataResponse<Recruitment>>(
-    "/recruitments",
-    session,
-    { method: "POST", body: JSON.stringify(input), signal },
-  );
-  if (!response.data) throw new Error("recruitment response is empty");
-  return response.data;
-}
-
-export async function getRecruitment(
-  recruitmentId: string,
-  session: Session,
-  signal?: AbortSignal,
-): Promise<Recruitment> {
-  const response = await requestAPI<DataResponse<Recruitment>>(
-    `/recruitments/${encodeURIComponent(recruitmentId)}`,
-    session,
-    { method: "GET", signal },
-  );
-  if (!response.data) throw new Error("recruitment response is empty");
-  return response.data;
-}
-
-export async function listMyRecruitments(
-  session: Session,
-  signal?: AbortSignal,
-): Promise<Recruitment[]> {
-  const response = await requestAPI<DataResponse<Recruitment[]>>(
-    "/recruitments/mine",
-    session,
-    { method: "GET", signal },
-  );
-  return requireArrayData(response, "my recruitments");
-}
-
-export async function updateRecruitment(
-  recruitmentId: string,
-  session: Session,
-  patch: RecruitmentUpdateRequest,
-  signal?: AbortSignal,
-): Promise<Recruitment> {
-  const response = await requestAPI<DataResponse<Recruitment>>(
-    `/recruitments/${encodeURIComponent(recruitmentId)}`,
-    session,
-    { method: "PATCH", body: JSON.stringify(patch), signal },
-  );
-  if (!response.data) throw new Error("recruitment response is empty");
-  return response.data;
-}
-
-export async function closeRecruitment(
-  recruitmentId: string,
-  session: Session,
-  signal?: AbortSignal,
-): Promise<void> {
-  await requestAPI<null>(
-    `/recruitments/${encodeURIComponent(recruitmentId)}`,
-    session,
-    { method: "DELETE", signal },
-  );
-}
-
-export async function sendRecruitmentInterest(
-  recruitmentId: string,
-  session: Session,
-  signal?: AbortSignal,
-): Promise<RecruitmentInterest | null> {
-  try {
-    const response = await requestAPI<DataResponse<RecruitmentInterest>>(
-      `/recruitments/${encodeURIComponent(recruitmentId)}/interest`,
-      session,
-      { method: "POST", signal },
-    );
-    return response.data ?? null;
-  } catch (error) {
-    if (error instanceof APIError && error.status === 409 && error.code === "interest_already_sent") {
-      const existing = error.data;
-      if (isRecruitmentInterest(existing)) return existing;
-    }
-    throw error;
-  }
-}
-
-function isRecruitmentInterest(value: unknown): value is RecruitmentInterest {
-  if (!value || typeof value !== "object") return false;
-  const candidate = value as Record<string, unknown>;
-  return typeof candidate.id === "string"
-    && candidate.id.length > 0
-    && typeof candidate.recruitment_id === "string"
-    && candidate.recruitment_id.length > 0
-    && typeof candidate.status === "string"
-    && ["pending", "accepted", "rejected", "cancelled", "blocked", "expired", "completed"].includes(candidate.status)
-    && typeof candidate.created_at === "string"
-    && typeof candidate.updated_at === "string";
-}
-
-export async function listMatches(
-  session: Session,
-  params: MatchListParams = {},
-  signal?: AbortSignal,
-): Promise<MatchView[]> {
-  const response = await requestAPI<DataResponse<MatchView[]>>(
-    `/matches${matchQuery(params)}`,
-    session,
-    { method: "GET", signal },
-  );
-  return requireArrayData(response, "matches");
-}
 
 export async function getMatch(
   matchId: string,
@@ -298,166 +69,18 @@ export async function getMatch(
   return response.data;
 }
 
-async function updateMatch(
+export async function completeMatch(
   matchId: string,
-  action: "accept" | "reject" | "complete",
   session: Session,
   signal?: AbortSignal,
-): Promise<RecruitmentInterest> {
-  const response = await requestAPI<DataResponse<RecruitmentInterest>>(
-    `/matches/${encodeURIComponent(matchId)}/${action}`,
+): Promise<{ id: string; status: MatchStatus; updated_at: string }> {
+  const response = await requestAPI<DataResponse<{ id: string; status: MatchStatus; updated_at: string }>>(
+    `/matches/${encodeURIComponent(matchId)}/complete`,
     session,
     { method: "POST", signal },
   );
-  if (!response.data) throw new Error("match response is empty");
+  if (!response.data) throw new Error("match complete response is empty");
   return response.data;
 }
 
-export function acceptMatch(
-  matchId: string,
-  session: Session,
-  signal?: AbortSignal,
-): Promise<RecruitmentInterest> {
-  return updateMatch(matchId, "accept", session, signal);
-}
-
-export function rejectMatch(
-  matchId: string,
-  session: Session,
-  signal?: AbortSignal,
-): Promise<RecruitmentInterest> {
-  return updateMatch(matchId, "reject", session, signal);
-}
-
-export async function withdrawRecruitmentInterest(
-  matchId: string,
-  session: Session,
-  signal?: AbortSignal,
-): Promise<RecruitmentInterest> {
-  const response = await requestAPI<DataResponse<RecruitmentInterest>>(
-    `/matches/${encodeURIComponent(matchId)}/withdraw`,
-    session,
-    { method: "POST", signal },
-  );
-  if (!response.data) throw new Error("match response is empty");
-  return response.data;
-}
-
-export function completeMatch(
-  matchId: string,
-  session: Session,
-  signal?: AbortSignal,
-): Promise<RecruitmentInterest> {
-  return updateMatch(matchId, "complete", session, signal);
-}
-
-export async function updateCurrentLocation(
-  coordinates: Coordinates,
-  session: Session,
-  signal?: AbortSignal,
-): Promise<void> {
-  await requestAPI<null>("/me/location", session, {
-    method: "POST",
-    body: JSON.stringify(coordinates),
-    signal,
-  });
-}
-
-const COUNTRY_NAMES: Record<string, string> = {
-  AU: "Australia",
-  BR: "Brazil",
-  CA: "Canada",
-  CN: "China",
-  DE: "Germany",
-  ES: "Spain",
-  FR: "France",
-  GB: "United Kingdom",
-  HK: "Hong Kong",
-  ID: "Indonesia",
-  IN: "India",
-  IT: "Italy",
-  JP: "Japan",
-  KR: "South Korea",
-  MX: "Mexico",
-  MY: "Malaysia",
-  PH: "Philippines",
-  SG: "Singapore",
-  TH: "Thailand",
-  TW: "Taiwan",
-  US: "United States",
-  VN: "Vietnam",
-};
-
-function countryCodeToFlag(countryCode: string): string {
-  const normalizedCode = countryCode.trim().toUpperCase();
-  if (!/^[A-Z]{2}$/.test(normalizedCode)) return "";
-  return String.fromCodePoint(
-    ...[...normalizedCode].map((character) => character.charCodeAt(0) + 127397),
-  );
-}
-
-function parseDateOnly(value: string): Date | null {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
-  if (!match) return null;
-  const year = Number(match[1]);
-  const month = Number(match[2]);
-  const day = Number(match[3]);
-  const parsed = new Date(Date.UTC(year, month - 1, day));
-  return parsed.getUTCFullYear() === year &&
-      parsed.getUTCMonth() === month - 1 &&
-      parsed.getUTCDate() === day
-    ? parsed
-    : null;
-}
-
-function formatRecruitmentDate(value: string): { card: string; detail: string } {
-  const parsed = parseDateOnly(value);
-  if (!parsed) return { card: value, detail: value };
-  const month = parsed.toLocaleDateString("en-US", { month: "long", timeZone: "UTC" });
-  const shortMonth = parsed.toLocaleDateString("en-US", { month: "short", timeZone: "UTC" });
-  const weekday = parsed.toLocaleDateString("en-US", { weekday: "short", timeZone: "UTC" });
-  const day = parsed.getUTCDate();
-  const year = parsed.getUTCFullYear();
-  return {
-    card: `${month},${day} ${year}`,
-    detail: `${shortMonth} ${day}, ${year} (${weekday})`,
-  };
-}
-
-function formatExpiry(value: string): string {
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return value;
-  return `${parsed.getUTCFullYear()}/${String(parsed.getUTCMonth() + 1).padStart(2, "0")}/${String(parsed.getUTCDate()).padStart(2, "0")}`;
-}
-
-function uniqueTags(recruitment: Recruitment): string[] {
-  const tags = [
-    ...recruitment.keywords.map((keyword) => keyword.trim()).filter(Boolean),
-  ];
-  if (tags.length === 0) tags.push(recruitment.category);
-  return [...new Set(tags)].slice(0, 3);
-}
-
-export function recruitmentToMatchCard(recruitment: Recruitment): MatchCardData {
-  const dates = formatRecruitmentDate(recruitment.available_date);
-  const tags = uniqueTags(recruitment);
-  const detailTags = [...new Set([...tags, recruitment.category])].slice(0, 5);
-  const countryCode = recruitment.nationality_code.trim().toUpperCase();
-
-  return {
-    id: recruitment.id,
-    category: recruitment.category,
-    authorName: recruitment.author_name || "Samurai Meet user",
-    countryFlag: countryCodeToFlag(countryCode),
-    countryName: COUNTRY_NAMES[countryCode] ?? countryCode,
-    rating: recruitment.rating,
-    date: dates.card,
-    detailDate: dates.detail,
-    startTime: recruitment.start_time,
-    durationHours: recruitment.duration_hours,
-    tags,
-    detailTags,
-    expiresAt: formatExpiry(recruitment.expires_at),
-    description: recruitment.description,
-  };
-}
+export { APIError };

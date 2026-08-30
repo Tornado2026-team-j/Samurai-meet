@@ -46,13 +46,6 @@ async function isExpiredAccessTokenResponse(response: Response): Promise<boolean
   }
 }
 
-/**
- * Sends an authenticated request, refreshing a rotating access token once
- * when the server explicitly reports that the access token is invalid.
- *
- * The caller's Session object is updated before the retry so device-proof
- * requests and the AuthProvider keep using the same current credentials.
- */
 export async function fetchWithAutoRefresh(
   path: string,
   session: Session,
@@ -64,8 +57,6 @@ export async function fetchWithAutoRefresh(
     return response;
   }
 
-  // Keep the ordinary API client free of React Native auth module loading on
-  // startup. The auth module is needed only after an expired access token.
   const { refreshSession } = await import("./auth");
   const next = await refreshSession(session);
   if (next.user_id !== session.user_id) {

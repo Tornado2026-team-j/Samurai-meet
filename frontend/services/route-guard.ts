@@ -6,6 +6,7 @@ const PROTECTED_ROUTE_ROOTS = [
   "/profile",
   "/recruitments",
   "/tabs",
+  "/match-result",
 ] as const;
 
 function normalizePathname(pathname: string): string {

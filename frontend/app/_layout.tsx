@@ -32,9 +32,6 @@ function RootNavigator() {
     const shouldReset = shouldResetSignedOutNavigation(previousStatus.current, status);
     previousStatus.current = status;
     if (!shouldReset) return;
-
-    // Keep this reset above individual screens so a screen-level replace
-    // cannot unmount the logout cleanup before the old stack is removed.
     router.dismissAll();
     router.replace("/");
   }, [router, status]);

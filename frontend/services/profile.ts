@@ -13,12 +13,6 @@ export type RemoteProfile = {
   updated_at?: string;
 };
 
-export type ProfilePatch = {
-  name?: string;
-  nationality_code?: string;
-  bio?: string;
-};
-
 type ProfileResponse = { data?: RemoteProfile };
 
 export async function getMyProfile(
@@ -26,20 +20,6 @@ export async function getMyProfile(
   signal?: AbortSignal,
 ): Promise<RemoteProfile> {
   const response = await requestAPI<ProfileResponse>("/me", session, { method: "GET", signal });
-  if (!response.data) throw new Error("profile response is empty");
-  return response.data;
-}
-
-export async function updateMyProfile(
-  session: Session,
-  patch: ProfilePatch,
-  signal?: AbortSignal,
-): Promise<RemoteProfile> {
-  const response = await requestAPI<ProfileResponse>("/me/profile", session, {
-    method: "PATCH",
-    body: JSON.stringify(patch),
-    signal,
-  });
   if (!response.data) throw new Error("profile response is empty");
   return response.data;
 }
