@@ -4,6 +4,7 @@ import { useRouter } from "expo-router";
 import {
   ActivityIndicator,
   Alert,
+  Keyboard,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -519,15 +520,20 @@ export default function MyRecruitmentsScreen() {
         visible={Boolean(editing && editDraft)}
       >
         <KeyboardAvoidingView
-          behavior={Platform.OS === "ios" ? "padding" : undefined}
-          style={styles.modalBackdrop}
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          keyboardVerticalOffset={0}
+          style={styles.modalKeyboardAvoiding}
         >
-          <ScrollView
-            automaticallyAdjustKeyboardInsets
-            contentContainerStyle={[styles.modalContent, { paddingBottom: insets.bottom + 24 }]}
-            keyboardShouldPersistTaps="handled"
-          >
-            <View style={styles.editorPanel}>
+          <Pressable onPress={Keyboard.dismiss} style={styles.modalBackdrop}>
+            <ScrollView
+              automaticallyAdjustKeyboardInsets
+              contentContainerStyle={[styles.modalContent, { paddingBottom: insets.bottom + 24, paddingTop: insets.top + 16 }]}
+              keyboardDismissMode="on-drag"
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+              style={styles.modalScrollView}
+            >
+              <Pressable onPress={() => undefined} style={styles.editorPanel}>
               <View style={styles.editorHeader}>
                 <Text style={styles.editorTitle}>{copy.editTitle}</Text>
                 <Pressable
@@ -667,8 +673,9 @@ export default function MyRecruitmentsScreen() {
                   </View>
                 </>
               ) : null}
-            </View>
-          </ScrollView>
+              </Pressable>
+            </ScrollView>
+          </Pressable>
         </KeyboardAvoidingView>
       </Modal>
     </View>
@@ -723,7 +730,9 @@ const styles = StyleSheet.create({
   applicationAction: { fontSize: 12, fontWeight: "800" },
   disabled: { opacity: 0.6 },
   pressed: { opacity: 0.72 },
+  modalKeyboardAvoiding: { flex: 1 },
   modalBackdrop: { flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0, 0, 0, 0.3)" },
+  modalScrollView: { flex: 1 },
   modalContent: { flexGrow: 1, justifyContent: "flex-end" },
   editorPanel: { gap: 10, padding: 20, borderTopLeftRadius: 26, borderTopRightRadius: 26, backgroundColor: "#ffffff" },
   editorHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 4 },

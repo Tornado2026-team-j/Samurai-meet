@@ -32,10 +32,13 @@ func classifyRecruitment(service *classification.Service, sessions *auth.Session
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_recruitment_classification_request"})
 			return
 		}
-		category, err := service.Classify(r.Context(), claims.Subject, strings.TrimSpace(input.Description))
+		result, err := service.ClassifyWithKeywords(r.Context(), claims.Subject, strings.TrimSpace(input.Description))
 		switch {
 		case err == nil:
-			writeJSON(w, http.StatusOK, map[string]any{"data": map[string]string{"category": category}})
+			writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{
+				"category": result.Category,
+				"keywords": result.Keywords,
+			}})
 		case errors.Is(err, classification.ErrInvalidInput):
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_recruitment_classification_request"})
 		case errors.Is(err, classification.ErrRateLimited):

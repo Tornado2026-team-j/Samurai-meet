@@ -13,6 +13,7 @@ import {
   Modal,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -41,6 +42,7 @@ import {
   recruitmentDateTimeToInstant,
   shiftRecruitmentDate,
   JST_TIME_ZONE,
+  type RecruitmentSelection,
   type RecruitmentScheduleIssue,
 } from "../../services/recruitment";
 import type {
@@ -48,6 +50,7 @@ import type {
   RecruitmentDraft,
   RecruitmentPreview,
 } from "../../types/recruitment";
+import type { MatchCategory } from "../../types/match";
 import { formatTimeRange } from "../../utils/time";
 
 const BLUE = "#5ec5f5";
@@ -59,6 +62,12 @@ const COLLAPSED_HEADER_HEIGHT = 156;
 const EXPANDED_HEADER_HEIGHT = 653;
 const CONFIRMATION_HEADER_HEIGHT = 542;
 const EXPANSION_DURATION = 360;
+const RECRUITMENT_CATEGORIES: readonly MatchCategory[] = [
+  "Food",
+  "Places",
+  "Activity",
+  "Other",
+];
 
 const RECRUITMENT_COPY = {
   en: {
@@ -88,6 +97,9 @@ const RECRUITMENT_COPY = {
     next: "NEXT",
     confirmationTitle: "Is everything correct?",
     confirmationExpiry: "Visible until the event ends:",
+    categoryLabel: "Guide category",
+    keywordLabel: "Suggested keywords",
+    keywordHint: "Tap a keyword to select or remove it.",
     tryAgain: "TRY AGAIN",
     summaryDate: "Date",
     summaryTime: "Time",
@@ -167,6 +179,9 @@ const RECRUITMENT_COPY = {
     next: "次へ",
     confirmationTitle: "この内容でよろしいですか？",
     confirmationExpiry: "イベント終了まで公開されます：",
+    categoryLabel: "案内カテゴリー",
+    keywordLabel: "キーワード候補",
+    keywordHint: "タップしてキーワードを選択・解除できます。",
     tryAgain: "再試行",
     summaryDate: "日付",
     summaryTime: "時間",
@@ -476,6 +491,8 @@ export default function SearchPreferencesScreen() {
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [publishStatus, setPublishStatus] = useState<PublishStatus>("idle");
   const [publishError, setPublishError] = useState<string | null>(null);
+  const [selectedCategory, setSelectedCategory] = useState<MatchCategory | null>(null);
+  const [selectedKeywords, setSelectedKeywords] = useState<string[]>([]);
   const previewRequestRef = useRef<AbortController | null>(null);
   const panelHeight = useMemo(
     () => new Animated.Value(COLLAPSED_HEADER_HEIGHT),
@@ -818,6 +835,8 @@ export default function SearchPreferencesScreen() {
 
       if (previewRequestRef.current === controller) {
         setPreview(personalizedResult);
+        setSelectedCategory(personalizedResult.category);
+        setSelectedKeywords(personalizedResult.tags);
         setPreviewStatus("success");
       }
     } catch (error) {
@@ -880,7 +899,17 @@ export default function SearchPreferencesScreen() {
         }
       }
 
-      await publishRecruitment(draft, preview, activeSession, coordinates);
+      const selection: RecruitmentSelection | undefined = selectedCategory
+        ? { category: selectedCategory, keywords: selectedKeywords }
+        : undefined;
+      await publishRecruitment(
+        draft,
+        preview,
+        activeSession,
+        coordinates,
+        undefined,
+        selection,
+      );
       router.replace("/foreigner");
     } catch (error) {
       const localMessage = recruitmentInputMessage(error, language);
@@ -1216,123 +1245,211 @@ export default function SearchPreferencesScreen() {
               },
             ]}
           >
-            <Text style={styles.confirmationTitle}>{copy.confirmationTitle}</Text>
-            <Text style={styles.confirmationExpiry}>
-              {copy.confirmationExpiry} {preview ? formatPreviewExpiry(preview, language) : copy.expiryFallback}
-            </Text>
+            <ScrollView
+              contentContainerStyle={styles.confirmationScrollContent}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator
+              style={styles.confirmationScroll}
+            >
+              <Text style={styles.confirmationTitle}>{copy.confirmationTitle}</Text>
+              <Text style={styles.confirmationExpiry}>
+                {copy.confirmationExpiry} {preview ? formatPreviewExpiry(preview, language) : copy.expiryFallback}
+              </Text>
 
-            <View style={styles.summaryCard}>
-              {previewStatus === "loading" && (
-                <View style={styles.previewState}>
-                  <ActivityIndicator color={BLUE} size="small" />
-                </View>
-              )}
-
-              {previewStatus === "error" && (
-                <View style={styles.previewState}>
-                  <Text style={styles.previewError}>{previewError}</Text>
-                  <Pressable
-                    accessibilityRole="button"
-                    onPress={() => void loadPreview()}
-                    style={({ pressed }) => [
-                      styles.retryButton,
-                      pressed && styles.pressed,
-                    ]}
-                  >
-                    <Text style={styles.retryButtonText}>{copy.tryAgain}</Text>
-                  </Pressable>
-                </View>
-              )}
-
-              {previewStatus === "success" && preview && (
-                <>
-                  <View style={styles.summaryProfileRow}>
-                    {preview.author.avatarUrl ? (
-                      <Image
-                        accessibilityLabel={`${preview.author.displayName}'s profile image`}
-                        source={{ uri: preview.author.avatarUrl }}
-                        style={styles.summaryAvatar}
-                      />
-                    ) : (
-                      <MaterialIcons
-                        color={BORDER_GRAY}
-                        name="account-circle"
-                        size={30}
-                      />
-                    )}
-                    <Text numberOfLines={1} style={styles.summaryName}>
-                      {preview.author.displayName}
-                    </Text>
-                    <Text style={styles.summaryFlag}>
-                      {countryCodeToFlag(preview.author.countryCode)}
-                    </Text>
+              <View style={styles.summaryCard}>
+                {previewStatus === "loading" && (
+                  <View style={styles.previewState}>
+                    <ActivityIndicator color={BLUE} size="small" />
                   </View>
-                  <Text
-                    numberOfLines={1}
-                    style={[styles.summaryLine, styles.summaryDate]}
+                )}
+
+                {previewStatus === "error" && (
+                  <View style={styles.previewState}>
+                    <Text style={styles.previewError}>{previewError}</Text>
+                    <Pressable
+                      accessibilityRole="button"
+                      onPress={() => void loadPreview()}
+                      style={({ pressed }) => [
+                        styles.retryButton,
+                        pressed && styles.pressed,
+                      ]}
+                    >
+                      <Text style={styles.retryButtonText}>{copy.tryAgain}</Text>
+                    </Pressable>
+                  </View>
+                )}
+
+                {previewStatus === "success" && preview && (
+                  <>
+                    <View style={styles.summaryProfileRow}>
+                      {preview.author.avatarUrl ? (
+                        <Image
+                          accessibilityLabel={`${preview.author.displayName}'s profile image`}
+                          source={{ uri: preview.author.avatarUrl }}
+                          style={styles.summaryAvatar}
+                        />
+                      ) : (
+                        <MaterialIcons
+                          color={BORDER_GRAY}
+                          name="account-circle"
+                          size={30}
+                        />
+                      )}
+                      <Text numberOfLines={1} style={styles.summaryName}>
+                        {preview.author.displayName}
+                      </Text>
+                      <Text style={styles.summaryFlag}>
+                        {countryCodeToFlag(preview.author.countryCode)}
+                      </Text>
+                    </View>
+                    <Text
+                      numberOfLines={1}
+                      style={[styles.summaryLine, styles.summaryDate]}
+                    >
+                      <Text style={styles.summaryLabel}>{copy.summaryDate}</Text>
+                      {`   ${formatRecruitmentDateForDisplay(preview.conditions.date, language)}`}
+                    </Text>
+                    <Text style={[styles.summaryLine, styles.summaryTime]}>
+                      <Text style={styles.summaryLabel}>{copy.summaryTime}</Text>
+                      {`   ${formatTimeRange(
+                        preview.conditions.startTime,
+                        preview.conditions.durationHours,
+                      )}`}
+                    </Text>
+                    <View style={styles.summaryTags}>
+                      {selectedKeywords.map((tag) => (
+                        <View key={tag} style={styles.summaryTag}>
+                          <Text
+                            adjustsFontSizeToFit
+                            minimumFontScale={0.75}
+                            numberOfLines={1}
+                            style={styles.summaryTagText}
+                          >
+                            {translatePreviewTag(tag, language)}
+                          </Text>
+                        </View>
+                      ))}
+                    </View>
+                  </>
+                )}
+              </View>
+
+              {previewStatus === "success" && preview ? (
+                <>
+                  <Text style={styles.categorySelectionLabel}>{copy.categoryLabel}</Text>
+                  <View
+                    accessibilityLabel={copy.categoryLabel}
+                    accessibilityRole="radiogroup"
+                    style={styles.categorySelectionRow}
                   >
-                    <Text style={styles.summaryLabel}>{copy.summaryDate}</Text>
-                    {`   ${formatRecruitmentDateForDisplay(preview.conditions.date, language)}`}
-                  </Text>
-                  <Text style={[styles.summaryLine, styles.summaryTime]}>
-                    <Text style={styles.summaryLabel}>{copy.summaryTime}</Text>
-                    {`   ${formatTimeRange(
-                      preview.conditions.startTime,
-                      preview.conditions.durationHours,
-                    )}`}
-                  </Text>
-                  <View style={styles.summaryTags}>
-                    {preview.tags.map((tag) => (
-                      <View key={tag} style={styles.summaryTag}>
-                        <Text
-                          adjustsFontSizeToFit
-                          minimumFontScale={0.75}
-                          numberOfLines={1}
-                          style={styles.summaryTagText}
+                    {RECRUITMENT_CATEGORIES.map((category) => {
+                      const selected = selectedCategory === category;
+                      return (
+                        <Pressable
+                          key={category}
+                          accessibilityLabel={category}
+                          accessibilityRole="radio"
+                          accessibilityState={{ selected }}
+                          onPress={() => setSelectedCategory(category)}
+                          style={({ pressed }) => [
+                            styles.categorySelectionButton,
+                            selected && styles.categorySelectionButtonSelected,
+                            pressed && styles.pressed,
+                          ]}
                         >
-                          {translatePreviewTag(tag, language)}
-                        </Text>
-                      </View>
-                    ))}
+                          <Text
+                            adjustsFontSizeToFit
+                            minimumFontScale={0.8}
+                            numberOfLines={1}
+                            style={[
+                              styles.categorySelectionText,
+                              selected && styles.categorySelectionTextSelected,
+                            ]}
+                          >
+                            {category}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+
+                  <Text style={styles.keywordSelectionLabel}>{copy.keywordLabel}</Text>
+                  <Text style={styles.keywordSelectionHint}>{copy.keywordHint}</Text>
+                  <View style={styles.keywordSelectionRow}>
+                    {preview.tags.map((tag) => {
+                      const selected = selectedKeywords.includes(tag);
+                      return (
+                        <Pressable
+                          key={tag}
+                          accessibilityLabel={translatePreviewTag(tag, language)}
+                          accessibilityRole="checkbox"
+                          accessibilityState={{ checked: selected }}
+                          onPress={() =>
+                            setSelectedKeywords((current) =>
+                              selected
+                                ? current.filter((keyword) => keyword !== tag)
+                                : [...current, tag],
+                            )
+                          }
+                          style={({ pressed }) => [
+                            styles.keywordSelectionButton,
+                            selected && styles.keywordSelectionButtonSelected,
+                            pressed && styles.pressed,
+                          ]}
+                        >
+                          <Text
+                            adjustsFontSizeToFit
+                            minimumFontScale={0.8}
+                            numberOfLines={1}
+                            style={[
+                              styles.keywordSelectionText,
+                              selected && styles.keywordSelectionTextSelected,
+                            ]}
+                          >
+                            {translatePreviewTag(tag, language)}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
                   </View>
                 </>
-              )}
-            </View>
+              ) : null}
 
-            <Pressable
-              accessibilityState={{
-                disabled: previewStatus !== "success" || publishStatus === "publishing",
-              }}
-              accessibilityRole="button"
-              disabled={previewStatus !== "success" || publishStatus === "publishing"}
-              onPress={() => void publish()}
-              style={({ pressed }) => [
-                styles.goButton,
-                (previewStatus !== "success" || publishStatus === "publishing") &&
-                  styles.buttonDisabled,
-                pressed && styles.pressed,
-              ]}
-            >
-              <Text style={styles.goButtonText}>
-                {publishStatus === "publishing" ? copy.publishing : copy.go}
-              </Text>
-            </Pressable>
+              <Pressable
+                accessibilityState={{
+                  disabled: previewStatus !== "success" || publishStatus === "publishing",
+                }}
+                accessibilityRole="button"
+                disabled={previewStatus !== "success" || publishStatus === "publishing"}
+                onPress={() => void publish()}
+                style={({ pressed }) => [
+                  styles.goButton,
+                  (previewStatus !== "success" || publishStatus === "publishing") &&
+                    styles.buttonDisabled,
+                  pressed && styles.pressed,
+                ]}
+              >
+                <Text style={styles.goButtonText}>
+                  {publishStatus === "publishing" ? copy.publishing : copy.go}
+                </Text>
+              </Pressable>
 
-            {publishError ? (
-              <Text accessibilityRole="alert" style={styles.publishError}>
-                {publishError}
-              </Text>
-            ) : null}
+              {publishError ? (
+                <Text accessibilityRole="alert" style={styles.publishError}>
+                  {publishError}
+                </Text>
+              ) : null}
 
-            <Pressable
-              accessibilityLabel="Back to search filters"
-              accessibilityRole="button"
-              onPress={showFilters}
-              style={({ pressed }) => [styles.backButton, pressed && styles.pressed]}
-            >
-              <MaterialIcons color={YELLOW} name="arrow-back" size={18} />
-              <Text style={styles.backButtonText}>{copy.backToFilters}</Text>
-            </Pressable>
+              <Pressable
+                accessibilityLabel="Back to search filters"
+                accessibilityRole="button"
+                onPress={showFilters}
+                style={({ pressed }) => [styles.backButton, pressed && styles.pressed]}
+              >
+                <MaterialIcons color={YELLOW} name="arrow-back" size={18} />
+                <Text style={styles.backButtonText}>{copy.backToFilters}</Text>
+              </Pressable>
+            </ScrollView>
           </Animated.View>
         )}
 
@@ -1635,6 +1752,80 @@ export default function SearchPreferencesScreen() {
 }
 
 const styles = StyleSheet.create({
+  confirmationScrollContent: {
+    paddingBottom: 24,
+  },
+  confirmationScroll: {
+    flex: 1,
+  },
+  categorySelectionLabel: {
+    color: '#1E3A8A',
+    fontSize: 15,
+    fontWeight: '700',
+    marginBottom: 8,
+  },
+  categorySelectionRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 16,
+  },
+  categorySelectionButton: {
+    backgroundColor: '#FFF7CC',
+    borderColor: '#F2C94C',
+    borderRadius: 16,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  categorySelectionButtonSelected: {
+    backgroundColor: '#1E3A8A',
+    borderColor: '#1E3A8A',
+  },
+  categorySelectionText: {
+    color: '#1E3A8A',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  categorySelectionTextSelected: {
+    color: '#FFFFFF',
+  },
+  keywordSelectionLabel: {
+    color: '#1E3A8A',
+    fontSize: 15,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  keywordSelectionHint: {
+    color: '#6B7280',
+    fontSize: 13,
+    marginBottom: 8,
+  },
+  keywordSelectionRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  keywordSelectionButton: {
+    backgroundColor: '#FFFFFF',
+    borderColor: '#1E3A8A',
+    borderRadius: 16,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  keywordSelectionButtonSelected: {
+    backgroundColor: '#F2C94C',
+    borderColor: '#F2C94C',
+  },
+  keywordSelectionText: {
+    color: '#1E3A8A',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  keywordSelectionTextSelected: {
+    color: '#1E3A8A',
+  },
   screen: {
     flex: 1,
     backgroundColor: "#ffffff",

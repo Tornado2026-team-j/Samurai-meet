@@ -15,10 +15,22 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 const DefaultModel = "gemini-3.1-flash-lite"
 const PlaceholderAPIKey = "CHANGE_ME_GEMINI_API_KEY"
+
+const (
+	maxClassificationKeywords     = 5
+	maxClassificationKeywordRunes = 40
+)
+
+type ClassificationResult struct {
+	Category string
+	Keywords []string
+}
 
 var (
 	ErrUnavailable  = errors.New("recruitment classification is unavailable")
@@ -59,47 +71,64 @@ func (s *Service) Available() bool {
 }
 
 func (s *Service) Classify(ctx context.Context, userID, description string) (string, error) {
+	result, err := s.ClassifyWithKeywords(ctx, userID, description)
+	return result.Category, err
+}
+
+func (s *Service) ClassifyWithKeywords(ctx context.Context, userID, description string) (ClassificationResult, error) {
 	description = strings.TrimSpace(description)
 	if len(description) == 0 || len(description) > 2_000 {
-		return "", ErrInvalidInput
+		return ClassificationResult{}, ErrInvalidInput
 	}
 	if !s.Available() {
-		return "", ErrUnavailable
+		return ClassificationResult{}, ErrUnavailable
 	}
 	if !s.allow(userID, time.Now()) {
-		return "", ErrRateLimited
+		return ClassificationResult{}, ErrRateLimited
 	}
 
 	body, err := json.Marshal(map[string]any{
-		"systemInstruction": map[string]any{"parts": []map[string]string{{"text": "Classify the recruitment request into exactly one category. Reply with only one exact token: Food, Places, Activity, or Other. Food is eating, drinking, restaurants, cooking, or food markets. Places is visiting locations, sightseeing, culture, history, museums, temples, neighborhoods, or shopping. Activity is a physical, recreational, or participatory activity. Other is only for requests that do not fit the first three."}}},
+		"systemInstruction": map[string]any{"parts": []map[string]string{{"text": "Classify the recruitment request into exactly one category and generate up to five short search keywords. Reply with only strict JSON using exactly these fields: category and keywords. category must be exactly Food, Places, Activity, or Other. keywords must be a JSON array of short, safe, useful strings, with no empty strings, control characters, or explanations. Food is eating, drinking, restaurants, cooking, or food markets. Places is visiting locations, sightseeing, culture, history, museums, temples, neighborhoods, or shopping. Activity is a physical, recreational, or participatory activity. Other is only for requests that do not fit the first three."}}},
 		"contents":          []map[string]any{{"role": "user", "parts": []map[string]string{{"text": description}}}},
-		"generationConfig":  map[string]any{"temperature": 0, "maxOutputTokens": 8, "responseMimeType": "text/plain"},
+		"generationConfig": map[string]any{
+			"temperature":      0,
+			"maxOutputTokens":  64,
+			"responseMimeType": "application/json",
+			"responseSchema": map[string]any{
+				"type": "OBJECT",
+				"properties": map[string]any{
+					"category": map[string]any{"type": "STRING", "enum": []string{"Food", "Places", "Activity", "Other"}},
+					"keywords": map[string]any{"type": "ARRAY", "items": map[string]any{"type": "STRING"}},
+				},
+				"required": []string{"category", "keywords"},
+			},
+		},
 	})
 	if err != nil {
-		return "", ErrUpstream
+		return ClassificationResult{}, ErrUpstream
 	}
 
 	requestURL := fmt.Sprintf("%s/v1beta/models/%s:generateContent", s.endpoint, url.PathEscape(s.model))
 	parsedURL, err := url.Parse(requestURL)
 	if err != nil {
-		return "", ErrUpstream
+		return ClassificationResult{}, ErrUpstream
 	}
 	query := parsedURL.Query()
 	query.Set("key", s.apiKey)
 	parsedURL.RawQuery = query.Encode()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, parsedURL.String(), bytes.NewReader(body))
 	if err != nil {
-		return "", ErrUpstream
+		return ClassificationResult{}, ErrUpstream
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
-		return "", ErrUpstream
+		return ClassificationResult{}, ErrUpstream
 	}
 	defer resp.Body.Close()
 	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 	if err != nil || resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return "", ErrUpstream
+		return ClassificationResult{}, ErrUpstream
 	}
 
 	var response struct {
@@ -112,15 +141,77 @@ func (s *Service) Classify(ctx context.Context, userID, description string) (str
 		} `json:"candidates"`
 	}
 	if err := json.Unmarshal(responseBody, &response); err != nil || len(response.Candidates) != 1 || len(response.Candidates[0].Content.Parts) != 1 {
-		return "", ErrUpstream
+		return ClassificationResult{}, ErrUpstream
 	}
-	category := strings.TrimSpace(response.Candidates[0].Content.Parts[0].Text)
+	result, err := parseClassificationJSON(response.Candidates[0].Content.Parts[0].Text)
+	if err != nil {
+		return ClassificationResult{}, ErrUpstream
+	}
+	return result, nil
+}
+
+func parseClassificationJSON(text string) (ClassificationResult, error) {
+	var payload struct {
+		Category json.RawMessage `json:"category"`
+		Keywords json.RawMessage `json:"keywords"`
+	}
+	decoder := json.NewDecoder(strings.NewReader(text))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&payload); err != nil {
+		return ClassificationResult{}, err
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return ClassificationResult{}, errors.New("classification response has trailing data")
+		}
+		return ClassificationResult{}, err
+	}
+	if len(payload.Category) == 0 || len(payload.Keywords) == 0 || string(bytes.TrimSpace(payload.Keywords)) == "null" {
+		return ClassificationResult{}, errors.New("classification response is incomplete")
+	}
+
+	var category string
+	if err := json.Unmarshal(payload.Category, &category); err != nil {
+		return ClassificationResult{}, err
+	}
+	category = strings.TrimSpace(category)
 	switch category {
 	case "Food", "Places", "Activity", "Other":
-		return category, nil
 	default:
-		return "", ErrUpstream
+		return ClassificationResult{}, errors.New("unsupported classification category")
 	}
+
+	var keywords []string
+	if err := json.Unmarshal(payload.Keywords, &keywords); err != nil {
+		return ClassificationResult{}, err
+	}
+	if len(keywords) > maxClassificationKeywords {
+		return ClassificationResult{}, errors.New("too many classification keywords")
+	}
+	normalized := make([]string, 0, len(keywords))
+	seen := make(map[string]struct{}, len(keywords))
+	for _, keyword := range keywords {
+		keyword = strings.TrimSpace(keyword)
+		if keyword == "" || !utf8.ValidString(keyword) || utf8.RuneCountInString(keyword) > maxClassificationKeywordRunes {
+			return ClassificationResult{}, errors.New("invalid classification keyword")
+		}
+		for _, r := range keyword {
+			if unicode.IsControl(r) {
+				return ClassificationResult{}, errors.New("invalid classification keyword")
+			}
+		}
+		key := strings.ToLower(keyword)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		normalized = append(normalized, keyword)
+	}
+	if len(normalized) == 0 {
+		normalized = []string{"Experience"}
+	}
+	return ClassificationResult{Category: category, Keywords: normalized}, nil
 }
 
 func (s *Service) allow(userID string, now time.Time) bool {

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/auth"
+	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/classification"
 )
 
 func TestClassifyRecruitmentHandler(t *testing.T) {
@@ -48,6 +49,41 @@ func TestClassifyRecruitmentHandler(t *testing.T) {
 		classifyRecruitment(nil, sessions).ServeHTTP(res, req)
 
 		assertClassificationError(t, res, http.StatusServiceUnavailable, "recruitment_classification_unavailable")
+	})
+
+	t.Run("authenticated POST returns category and generated keywords", func(t *testing.T) {
+		gemini := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodPost || r.URL.Query().Get("key") != "test-key" {
+				t.Fatalf("Gemini request = %s %s", r.Method, r.URL.String())
+			}
+			_, _ = w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"{\"category\":\"Food\",\"keywords\":[\"ramen\",\"大阪\"]}"}]}}]}`))
+		}))
+		defer gemini.Close()
+
+		service := classification.NewGeminiWithClient("test-key", classification.DefaultModel, gemini.URL, gemini.Client())
+		req, sessions := newAuthenticatedClassificationRequest(t)
+		res := httptest.NewRecorder()
+
+		classifyRecruitment(service, sessions).ServeHTTP(res, req)
+
+		if res.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d; body = %s", res.Code, http.StatusOK, res.Body.String())
+		}
+		var payload struct {
+			Data struct {
+				Category string   `json:"category"`
+				Keywords []string `json:"keywords"`
+			} `json:"data"`
+		}
+		if err := json.NewDecoder(res.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode classification response: %v; body = %s", err, res.Body.String())
+		}
+		if payload.Data.Category != "Food" {
+			t.Fatalf("category = %q, want Food", payload.Data.Category)
+		}
+		if len(payload.Data.Keywords) != 2 || payload.Data.Keywords[0] != "ramen" || payload.Data.Keywords[1] != "大阪" {
+			t.Fatalf("keywords = %#v, want [ramen 大阪]", payload.Data.Keywords)
+		}
 	})
 }
 
