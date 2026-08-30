@@ -173,6 +173,27 @@ describe("募集プレビュー", () => {
     expect(request.keywords).toEqual(["temple", "sightseeing"]);
   });
 
+  it("下書き保存は過去日時を保持し、公開時だけ過去日時を拒否する", () => {
+    const preview = buildRecruitmentPreview(draft, "Food");
+    const pastDraft = { ...draft, date: "2026-08-25" };
+    const now = new Date("2026-08-26T00:00:00.000Z");
+
+    expect(
+      buildRecruitmentCreateRequest(
+        pastDraft,
+        preview,
+        now,
+        undefined,
+        undefined,
+        undefined,
+        "draft",
+      ),
+    ).toMatchObject({ status: "draft", available_date: "2026-08-25" });
+    expect(() => buildRecruitmentCreateRequest(pastDraft, preview, now)).toThrow(
+      "recruitment_date_in_past",
+    );
+  });
+
   it("日付をまたぐ公開時刻を送信前に拒否する", () => {
 	const preview = buildRecruitmentPreview({ ...draft, date: "2026-08-27" }, "Food");
 

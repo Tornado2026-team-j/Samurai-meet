@@ -10,6 +10,7 @@ import {
   Easing,
   Image,
   Keyboard,
+  KeyboardAvoidingView,
   Modal,
   Platform,
   Pressable,
@@ -17,11 +18,13 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { Button, Card, Pill, colors, opacity, radius, shadows, typography } from "../../components/ui";
+import DismissKeyboardView from "../../components/DismissKeyboardView";
+import { Button, Card, Pill, colors, opacity, radius, shadows, spacing, typography } from "../../components/ui";
 import ForeignerHomeScreen from "../foreigner";
 import { useAuth } from "../../hooks/useAuth";
 import { APIError } from "../../services/api-client";
@@ -48,6 +51,7 @@ import {
   parseRecruitmentDateInput,
   publishRecruitment,
   recruitmentDateTimeToInstant,
+  saveRecruitmentDraft,
   shiftRecruitmentDate,
   JST_TIME_ZONE,
   type RecruitmentSelection,
@@ -113,6 +117,10 @@ const RECRUITMENT_COPY = {
     tryAgain: "TRY AGAIN",
     summaryDate: "Date",
     summaryTime: "Time",
+    saveDraft: "SAVE DRAFT",
+    savingDraft: "Saving draft...",
+    draftSaved: "Draft saved.",
+    draftSaveFailed: "The draft could not be saved. Please try again.",
     publishing: "Publishing...",
     go: "GO!",
     backToFilters: "Back to search filters",
@@ -204,6 +212,10 @@ const RECRUITMENT_COPY = {
     tryAgain: "再試行",
     summaryDate: "日付",
     summaryTime: "時間",
+    saveDraft: "下書き保存",
+    savingDraft: "下書き保存中…",
+    draftSaved: "下書きを保存しました。",
+    draftSaveFailed: "下書きを保存できませんでした。もう一度お試しください。",
     publishing: "公開中…",
     go: "公開する",
     backToFilters: "募集条件に戻る",
@@ -260,6 +272,7 @@ const RECRUITMENT_COPY = {
 
 type PreviewStatus = "idle" | "loading" | "success" | "error";
 type PublishStatus = "idle" | "publishing";
+type DraftSaveStatus = "idle" | "saving" | "saved";
 type ScheduleWarning = {
   issue: RecruitmentScheduleIssue;
   suggestedDate: string;
@@ -482,6 +495,7 @@ function countryCodeToFlag(countryCode: string): string {
 export default function SearchPreferencesScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { height: windowHeight } = useWindowDimensions();
   const { getCurrentSession, refresh, session, status } = useAuth();
   const { query } = useLocalSearchParams<{ query?: string | string[] }>();
   const initialQuery = Array.isArray(query) ? query[0] : query;
@@ -524,6 +538,9 @@ export default function SearchPreferencesScreen() {
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [publishStatus, setPublishStatus] = useState<PublishStatus>("idle");
   const [publishError, setPublishError] = useState<string | null>(null);
+  const [draftSaveStatus, setDraftSaveStatus] = useState<DraftSaveStatus>("idle");
+  const [draftSaveError, setDraftSaveError] = useState<string | null>(null);
+  const [savedDraftID, setSavedDraftID] = useState<string | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<MatchCategory | null>(null);
   const [selectedKeywords, setSelectedKeywords] = useState<string[]>([]);
   const previewRequestRef = useRef<AbortController | null>(null);
@@ -552,6 +569,15 @@ export default function SearchPreferencesScreen() {
     return nextMaximum;
   }, [minimumDate]);
   const copy = RECRUITMENT_COPY[language];
+  const pickerLocale = language === "ja" ? "ja-JP" : "en-US";
+  const expandedPanelHeight = Math.min(
+    EXPANDED_HEADER_HEIGHT,
+    Math.max(COLLAPSED_HEADER_HEIGHT, windowHeight),
+  );
+  const confirmationPanelHeight = Math.min(
+    CONFIRMATION_HEADER_HEIGHT,
+    Math.max(COLLAPSED_HEADER_HEIGHT, windowHeight),
+  );
 
   useEffect(() => {
     let active = true;
@@ -580,7 +606,7 @@ export default function SearchPreferencesScreen() {
       Animated.timing(panelHeight, {
         duration: EXPANSION_DURATION,
         easing: Easing.out(Easing.cubic),
-        toValue: EXPANDED_HEADER_HEIGHT,
+        toValue: expandedPanelHeight,
         useNativeDriver: false,
       }),
       Animated.timing(compactContentOpacity, {
@@ -626,6 +652,7 @@ export default function SearchPreferencesScreen() {
     compactContentTranslateY,
     contentOpacity,
     contentTranslateY,
+    expandedPanelHeight,
     panelHeight,
   ]);
 
@@ -909,6 +936,8 @@ export default function SearchPreferencesScreen() {
 
     Keyboard.dismiss();
     void loadPreview(draft);
+    setDraftSaveStatus("idle");
+    setDraftSaveError(null);
     confirmationOpacity.setValue(0);
     confirmationTranslateY.setValue(14);
     setIsConfirmationVisible(true);
@@ -918,7 +947,7 @@ export default function SearchPreferencesScreen() {
         Animated.timing(panelHeight, {
           duration: 300,
           easing: Easing.out(Easing.cubic),
-          toValue: CONFIRMATION_HEADER_HEIGHT,
+          toValue: confirmationPanelHeight,
           useNativeDriver: false,
         }),
         Animated.timing(contentOpacity, {
@@ -1037,7 +1066,12 @@ export default function SearchPreferencesScreen() {
   };
 
   const publish = async () => {
-    if (publishStatus === "publishing" || previewStatus !== "success" || !preview) {
+    if (
+      publishStatus === "publishing" ||
+      draftSaveStatus === "saving" ||
+      previewStatus !== "success" ||
+      !preview
+    ) {
       return;
     }
 
@@ -1087,7 +1121,9 @@ export default function SearchPreferencesScreen() {
         coordinates,
         undefined,
         selection,
+        savedDraftID ?? undefined,
       );
+      setSavedDraftID(null);
       router.replace("/foreigner");
     } catch (error) {
       const localMessage = recruitmentInputMessage(error, language);
@@ -1129,6 +1165,71 @@ export default function SearchPreferencesScreen() {
     }
   };
 
+  const saveDraft = async () => {
+    if (draftSaveStatus === "saving" || previewStatus !== "success" || !preview) {
+      return;
+    }
+
+    Keyboard.dismiss();
+    setDraftSaveStatus("saving");
+    setDraftSaveError(null);
+    let saved = false;
+    const draft = createDraft();
+
+    try {
+      const scheduleIssue = getRecruitmentScheduleIssue(draft);
+      if (scheduleIssue === "recruitment_must_end_same_day") {
+        openScheduleWarning(draft, scheduleIssue, true);
+        return;
+      }
+
+      if (status !== "signed_in") {
+        throw new Error("not_signed_in");
+      }
+      await refresh();
+      const activeSession = getCurrentSession();
+      if (!activeSession) {
+        throw new Error("not_signed_in");
+      }
+
+      const coordinates = selectedLocationCoordinates ?? await resolveWhereCoordinates();
+      if (!coordinates) {
+        setDraftSaveError(RECRUITMENT_COPY[language].locationRequired);
+        return;
+      }
+
+      const selection: RecruitmentSelection = {
+        category: selectedCategory ?? preview.category,
+        keywords: selectedKeywords,
+      };
+      const savedRecruitment = await saveRecruitmentDraft(
+        draft,
+        preview,
+        activeSession,
+        coordinates,
+        undefined,
+        selection,
+        savedDraftID ?? undefined,
+      );
+      setSavedDraftID(savedRecruitment.id);
+      setDraftSaveStatus("saved");
+      saved = true;
+    } catch (error) {
+      const localMessage = recruitmentInputMessage(error, language);
+      if (error instanceof APIError && error.code === "missing_or_invalid_access_token") {
+        setDraftSaveError(RECRUITMENT_COPY[language].expiredSession);
+      } else if (error instanceof Error && error.message === "not_signed_in") {
+        setDraftSaveError(RECRUITMENT_COPY[language].notSignedIn);
+      } else {
+        setDraftSaveError(localMessage ?? RECRUITMENT_COPY[language].draftSaveFailed);
+      }
+    } finally {
+      if (!saved) {
+        setDraftSaveStatus("idle");
+      }
+    }
+  };
+
   const showFilters = () => {
     previewRequestRef.current?.abort();
     setScheduleWarning(null);
@@ -1137,7 +1238,7 @@ export default function SearchPreferencesScreen() {
       Animated.timing(panelHeight, {
         duration: 300,
         easing: Easing.out(Easing.cubic),
-        toValue: EXPANDED_HEADER_HEIGHT,
+        toValue: expandedPanelHeight,
         useNativeDriver: false,
       }),
       Animated.timing(confirmationOpacity, {
@@ -1186,31 +1287,47 @@ export default function SearchPreferencesScreen() {
         accessibilityLabel={copy.backToHome}
         accessibilityRole="button"
         onPress={closeToHome}
-        style={[
-          styles.homeDismissLayer,
-          { top: isConfirmationVisible ? CONFIRMATION_HEADER_HEIGHT : EXPANDED_HEADER_HEIGHT },
-        ]}
+        style={styles.homeDismissLayer}
       />
       <StatusBar style="light" />
 
       <Animated.View
         style={[styles.panel, { height: panelHeight }]}
       >
-        <Animated.View
-          accessibilityElementsHidden={isConfirmationVisible}
-          importantForAccessibility={
-            isConfirmationVisible ? "no-hide-descendants" : "auto"
-          }
-          style={[
-            styles.content,
-            {
-              opacity: contentOpacity,
-              pointerEvents: isConfirmationVisible ? "none" : "auto",
-              top: Math.max(insets.top + 10, 41),
-              transform: [{ translateY: contentTranslateY }],
-            },
-          ]}
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          keyboardVerticalOffset={0}
+          style={styles.formKeyboardAvoiding}
         >
+          <DismissKeyboardView style={styles.formDismissLayer}>
+            <ScrollView
+              automaticallyAdjustKeyboardInsets
+              contentContainerStyle={[
+                styles.formScrollContent,
+                {
+                  paddingBottom: Math.max(insets.bottom + 24, 40),
+                  paddingTop: Math.max(insets.top + 10, 41),
+                },
+              ]}
+              keyboardDismissMode="on-drag"
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator
+              style={styles.formScroll}
+            >
+              <Animated.View
+                accessibilityElementsHidden={isConfirmationVisible}
+                importantForAccessibility={
+                  isConfirmationVisible ? "no-hide-descendants" : "auto"
+                }
+                pointerEvents={isConfirmationVisible ? "none" : "auto"}
+                style={[
+                  styles.content,
+                  {
+                    opacity: contentOpacity,
+                    transform: [{ translateY: contentTranslateY }],
+                  },
+                ]}
+              >
           <View style={styles.form}>
             <View style={styles.descriptionGroup}>
               <Text style={styles.label}>{copy.activityLabel}</Text>
@@ -1350,8 +1467,8 @@ export default function SearchPreferencesScreen() {
               <Text style={styles.label}>{copy.startTimeLabel}</Text>
               <View style={styles.timeRow}>
                 <Pressable
-                  accessibilityLabel="Start time"
-                  accessibilityHint="Opens the time picker. Times can be selected in five-minute intervals."
+                  accessibilityLabel={copy.startTimeAccessibilityLabel}
+                  accessibilityHint={copy.startTimeAccessibilityHint}
                   accessibilityRole="button"
                   onPress={openTimePicker}
                   style={({ pressed }) => [
@@ -1482,8 +1599,11 @@ export default function SearchPreferencesScreen() {
                 {formError}
               </Text>
             ) : null}
-          </View>
-        </Animated.View>
+              </View>
+              </Animated.View>
+            </ScrollView>
+          </DismissKeyboardView>
+        </KeyboardAvoidingView>
 
         {isConfirmationVisible && (
           <Animated.View
@@ -1536,6 +1656,10 @@ export default function SearchPreferencesScreen() {
                       <Text numberOfLines={1} style={styles.summaryName}>{preview.author.displayName}</Text>
                       <Text style={styles.summaryFlag}>{countryCodeToFlag(preview.author.countryCode)}</Text>
                     </View>
+                    <Text style={[styles.summaryLine, styles.summaryCategory]}>
+                      <Text style={styles.summaryLabel}>{copy.categoryLabel}</Text>
+                      {`   ${selectedCategory ?? preview.category}`}
+                    </Text>
                     <Text numberOfLines={1} style={[styles.summaryLine, styles.summaryDate]}>
                       <Text style={styles.summaryLabel}>{copy.summaryDate}</Text>
                       {`   ${formatRecruitmentDateForDisplay(preview.conditions.date, language)}`}
@@ -1584,7 +1708,55 @@ export default function SearchPreferencesScreen() {
                 </>
               ) : null}
 
-              <Button accessibilityState={{ disabled: previewStatus !== "success" || publishStatus === "publishing" }} disabled={previewStatus !== "success" || publishStatus === "publishing"} onPress={() => void publish()} size="sm" style={styles.goButton} textStyle={styles.goButtonText}>
+              <Button
+                accessibilityLabel={draftSaveStatus === "saving" ? copy.savingDraft : copy.saveDraft}
+                accessibilityState={{
+                  disabled:
+                    previewStatus !== "success" ||
+                    publishStatus === "publishing" ||
+                    draftSaveStatus === "saving",
+                  busy: draftSaveStatus === "saving",
+                }}
+                disabled={
+                  previewStatus !== "success" ||
+                  publishStatus === "publishing" ||
+                  draftSaveStatus === "saving"
+                }
+                loading={draftSaveStatus === "saving"}
+                onPress={() => void saveDraft()}
+                size="sm"
+                style={styles.draftButton}
+                textStyle={styles.draftButtonText}
+                variant="secondary"
+              >
+                {copy.saveDraft}
+              </Button>
+              {draftSaveStatus === "saved" ? (
+                <Text style={styles.draftSaved}>{copy.draftSaved}</Text>
+              ) : null}
+              {draftSaveError ? (
+                <Text accessibilityRole="alert" style={styles.draftSaveError}>
+                  {draftSaveError}
+                </Text>
+              ) : null}
+
+              <Button
+                accessibilityState={{
+                  disabled:
+                    previewStatus !== "success" ||
+                    publishStatus === "publishing" ||
+                    draftSaveStatus === "saving",
+                }}
+                disabled={
+                  previewStatus !== "success" ||
+                  publishStatus === "publishing" ||
+                  draftSaveStatus === "saving"
+                }
+                onPress={() => void publish()}
+                size="sm"
+                style={styles.goButton}
+                textStyle={styles.goButtonText}
+              >
                 {publishStatus === "publishing" ? copy.publishing : copy.go}
               </Button>
 
@@ -1602,7 +1774,7 @@ export default function SearchPreferencesScreen() {
               ]}
             >
               <Button
-                accessibilityLabel="Back to search filters"
+                accessibilityLabel={copy.backToFilters}
                 iconLeft={<MaterialIcons color={colors.brand.gold} name="arrow-back" size={18} />}
                 onPress={showFilters}
                 size="sm"
@@ -1707,7 +1879,7 @@ export default function SearchPreferencesScreen() {
         >
           <View style={styles.modalBackdrop}>
             <Pressable
-              accessibilityLabel="Close date picker"
+              accessibilityLabel={copy.closeDatePicker}
               onPress={() => setDatePickerVisible(false)}
               style={StyleSheet.absoluteFillObject}
             />
@@ -1737,7 +1909,7 @@ export default function SearchPreferencesScreen() {
               <DateTimePicker
                 accentColor={BLUE}
                 display="spinner"
-                locale="en-US"
+                 locale={pickerLocale}
                 maximumDate={maximumDate}
                 minimumDate={minimumDate}
                 mode="date"
@@ -1761,7 +1933,7 @@ export default function SearchPreferencesScreen() {
         >
           <View style={styles.modalBackdrop}>
             <Pressable
-              accessibilityLabel="Close time picker"
+              accessibilityLabel={copy.closeTimePicker}
               onPress={() => setTimePickerVisible(false)}
               style={StyleSheet.absoluteFillObject}
             />
@@ -1779,19 +1951,20 @@ export default function SearchPreferencesScreen() {
                 >
                   <Text style={styles.pickerCancelText}>{copy.pickerCancel}</Text>
                 </Pressable>
-                <Text style={styles.pickerTitle}>Choose start time</Text>
+                <Text style={styles.pickerTitle}>{copy.pickerTimeTitle}</Text>
                 <Pressable
                   accessibilityRole="button"
                   onPress={() => commitTime(pickerTime)}
                   style={styles.pickerHeaderButton}
                 >
-                  <Text style={styles.pickerDoneText}>Done</Text>
+                  <Text style={styles.pickerDoneText}>{copy.pickerDone}</Text>
                 </Pressable>
               </View>
               <DateTimePicker
                 accentColor={BLUE}
                 display="spinner"
                 is24Hour
+                 locale={pickerLocale}
                 minuteInterval={5}
                 mode="time"
                 onChange={handleTimePickerChange}
@@ -1813,7 +1986,7 @@ export default function SearchPreferencesScreen() {
       >
         <View style={styles.modalBackdrop}>
           <Pressable
-            accessibilityLabel="Close schedule warning"
+            accessibilityLabel={copy.closeScheduleWarning}
             onPress={editSchedule}
             style={StyleSheet.absoluteFillObject}
           />
@@ -1962,10 +2135,12 @@ const styles = StyleSheet.create({
   },
   homeDismissLayer: {
     position: "absolute",
+    top: 0,
     right: 0,
     bottom: 0,
     left: 0,
     zIndex: 1,
+    backgroundColor: colors.brand.sky,
   },
   panel: {
     width: "100%",
@@ -2138,6 +2313,9 @@ const styles = StyleSheet.create({
   summaryDate: {
     marginTop: 13,
   },
+  summaryCategory: {
+    marginTop: 10,
+  },
   summaryTime: {
     marginTop: 5,
   },
@@ -2201,6 +2379,37 @@ const styles = StyleSheet.create({
     backgroundColor: colors.brand.gold,
     ...shadows.action,
   },
+  draftButton: {
+    alignSelf: "center",
+    width: "100%",
+    maxWidth: 340,
+    minHeight: 40,
+    marginTop: spacing.xl,
+    borderColor: colors.brand.gold,
+    borderRadius: radius.pill,
+  },
+  draftButtonText: {
+    color: colors.brand.gold,
+    fontSize: 14,
+    fontWeight: "900",
+    lineHeight: 18,
+  },
+  draftSaved: {
+    width: "100%",
+    maxWidth: 340,
+    marginTop: spacing.sm,
+    color: colors.text.inverse,
+    ...typography.small,
+    textAlign: "center",
+  },
+  draftSaveError: {
+    width: "100%",
+    maxWidth: 340,
+    marginTop: spacing.sm,
+    color: colors.text.inverse,
+    ...typography.small,
+    textAlign: "center",
+  },
   goButtonText: {
     color: colors.text.inverse,
     fontSize: 15,
@@ -2249,16 +2458,26 @@ const styles = StyleSheet.create({
     opacity: opacity.disabled,
   },
   content: {
-    position: "absolute",
-    top: 41,
-    right: 0,
-    left: 0,
+    width: "100%",
+    alignItems: "center",
+  },
+  formKeyboardAvoiding: {
+    flex: 1,
+  },
+  formDismissLayer: {
+    flex: 1,
+  },
+  formScroll: {
+    flex: 1,
+  },
+  formScrollContent: {
+    flexGrow: 1,
     alignItems: "center",
   },
   form: {
     width: 340,
     maxWidth: "87.18%",
-    height: 577,
+    height: 674,
   },
   label: {
     color: colors.text.inverse,

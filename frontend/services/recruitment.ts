@@ -2,6 +2,7 @@ import { buildRecruitmentPreview } from "../mocks/recruitment";
 import type { Session } from "./auth-contract";
 import {
   createRecruitment,
+  updateRecruitment,
   type Coordinates,
   type RecruitmentCreateRequest,
 } from "./matching";
@@ -391,6 +392,7 @@ export function buildRecruitmentCreateRequest(
   timezone = JST_TIME_ZONE,
   coordinates?: Coordinates | null,
   selection?: RecruitmentSelection,
+  status: Extract<RecruitmentCreateRequest["status"], "draft" | "open"> = "open",
 ): RecruitmentCreateRequest {
   void timezone;
   const description = draft.activity.trim();
@@ -398,7 +400,9 @@ export function buildRecruitmentCreateRequest(
     throw new Error("invalid_recruitment_description");
   }
   const scheduleIssue = getRecruitmentScheduleIssue(draft, now);
-  if (scheduleIssue) throw new Error(scheduleIssue);
+  if (scheduleIssue === "recruitment_must_end_same_day" || (scheduleIssue === "recruitment_date_in_past" && status === "open")) {
+    throw new Error(scheduleIssue);
+  }
 
   const availableDate = normalizeRecruitmentDate(draft.date);
   const startMinutes = timeToMinutes(draft.startTime);
@@ -427,7 +431,7 @@ export function buildRecruitmentCreateRequest(
     location_name: draft.location.trim(),
     participant_limit: draft.participantLimit,
     visibility_radius_km: draft.distanceKm,
-    status: "open",
+    status,
   };
 
   if (coordinates) {
@@ -445,17 +449,41 @@ export async function publishRecruitment(
   coordinates?: Coordinates | null,
   signal?: AbortSignal,
   selection?: RecruitmentSelection,
+  existingRecruitmentID?: string,
 ) {
-  return createRecruitment(
-    session,
-    buildRecruitmentCreateRequest(
-      draft,
-      preview,
-      new Date(),
-      undefined,
-      coordinates,
-      selection,
-    ),
-    signal,
+  const input = buildRecruitmentCreateRequest(
+    draft,
+    preview,
+    new Date(),
+    undefined,
+    coordinates,
+    selection,
+    "open",
   );
+  return existingRecruitmentID
+    ? updateRecruitment(existingRecruitmentID, session, input, signal)
+    : createRecruitment(session, input, signal);
+}
+
+export async function saveRecruitmentDraft(
+  draft: RecruitmentDraft,
+  preview: RecruitmentPreview,
+  session: Session,
+  coordinates?: Coordinates | null,
+  signal?: AbortSignal,
+  selection?: RecruitmentSelection,
+  existingRecruitmentID?: string,
+) {
+  const input = buildRecruitmentCreateRequest(
+    draft,
+    preview,
+    new Date(),
+    undefined,
+    coordinates,
+    selection,
+    "draft",
+  );
+  return existingRecruitmentID
+    ? updateRecruitment(existingRecruitmentID, session, input, signal)
+    : createRecruitment(session, input, signal);
 }

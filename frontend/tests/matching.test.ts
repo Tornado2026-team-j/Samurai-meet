@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
+import { buildRecruitmentPreview } from "../mocks/recruitment";
 import {
 	closeRecruitment,
 	classifyRecruitmentDescription,
@@ -11,6 +12,7 @@ import {
   updateRecruitment,
   withdrawRecruitmentInterest,
 } from "../services/matching";
+import { saveRecruitmentDraft } from "../services/recruitment";
 import type { Recruitment, RecruitmentInterest } from "../services/matching";
 
 const originalFetch = globalThis.fetch;
@@ -103,6 +105,39 @@ describe("募集APIクライアント", () => {
       status: "open",
       latitude: 35.68,
     });
+  });
+
+  it("下書き保存はdraft状態でPOSTし、保存済みIDはPATCHで更新する", async () => {
+    const requested: Array<{ url: string; init?: RequestInit }> = [];
+    globalThis.fetch = (async (input, init) => {
+      requested.push({ url: String(input), init });
+      return new Response(JSON.stringify({ data: { ...recruitment, status: "draft" } }), { status: 200 });
+    }) as typeof fetch;
+
+    const draft = {
+      activity: "I want to eat takoyaki with a local guide",
+      location: "Osaka,Umeda",
+      useCurrentLocation: false,
+      date: "2099-08-27",
+      startTime: "18:00",
+      durationHours: 2,
+      participantLimit: 1,
+      distanceKm: 3 as const,
+    };
+    const preview = buildRecruitmentPreview(draft, "Food");
+    const coordinates = { latitude: 35.68, longitude: 139.76, accuracy_m: 12 };
+
+    await saveRecruitmentDraft(draft, preview, session, coordinates);
+    await saveRecruitmentDraft(draft, preview, session, coordinates, undefined, undefined, "recruitment-1");
+
+    expect(requested).toHaveLength(2);
+    const createRequest = requested[0]!;
+    const updateRequest = requested[1]!;
+    expect(createRequest.init?.method).toBe("POST");
+    expect(JSON.parse(String(createRequest.init?.body))).toMatchObject({ status: "draft" });
+    expect(updateRequest.init?.method).toBe("PATCH");
+    expect(updateRequest.url).toContain("/recruitments/recruitment-1");
+    expect(JSON.parse(String(updateRequest.init?.body))).toMatchObject({ status: "draft" });
   });
 
 	it("募集内容をサーバーのGemini分類APIへ送り、4カテゴリだけを受け取る", async () => {
