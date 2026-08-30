@@ -1,11 +1,12 @@
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { ActivityIndicator, Image, Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { StatusBar } from "expo-status-bar";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "../../hooks/useAuth";
 import { APIError } from "../../services/api-client";
-import { getMatch, type MatchView } from "../../services/matching";
+import { getMatch, listMatches, type MatchView } from "../../services/matching";
 import { loadLanguage, subscribeLanguage } from "../../services/onboarding";
 import type { AppLanguage } from "../../services/onboarding-contract";
 
@@ -55,14 +56,21 @@ const COPY = {
 
 export default function JapaneseGuideRequestedScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const { getCurrentSession, refresh, session, status } = useAuth();
-  const { matchId } = useLocalSearchParams<{ matchId?: string | string[] }>();
+  const { matchId, recruitmentId } = useLocalSearchParams<{
+    matchId?: string | string[];
+    recruitmentId?: string | string[];
+  }>();
   const currentMatchID = Array.isArray(matchId) ? matchId[0] : matchId;
+  const currentRecruitmentID = Array.isArray(recruitmentId) ? recruitmentId[0] : recruitmentId;
   const [match, setMatch] = useState<MatchView | null>(null);
   const [matchLoadState, setMatchLoadState] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [matchLoadError, setMatchLoadError] = useState<MatchLoadErrorKey | null>(null);
   const [language, setLanguage] = useState<AppLanguage>("en");
   const copy = COPY[language];
+  const authRef = useRef({ getCurrentSession, refresh, session, status });
+  authRef.current = { getCurrentSession, refresh, session, status };
 
   useEffect(() => {
     let active = true;
@@ -83,8 +91,9 @@ export default function JapaneseGuideRequestedScreen() {
   const loadMatch = useCallback(async (signal?: AbortSignal) => {
     if (!currentMatchID) return;
 
-    const activeSession = getCurrentSession() ?? session;
-    if (status !== "signed_in" || !activeSession) {
+    const auth = authRef.current;
+    const activeSession = auth.getCurrentSession() ?? auth.session;
+    if (auth.status !== "signed_in" || !activeSession) {
       setMatchLoadState("error");
       setMatchLoadError("loginRequired");
       return;
@@ -93,36 +102,50 @@ export default function JapaneseGuideRequestedScreen() {
     setMatchLoadState("loading");
     setMatchLoadError(null);
     try {
-      const loadWithSession = (currentSession: typeof activeSession) => getMatch(
-        currentMatchID,
-        currentSession,
-        signal,
-      );
+      const loadWithSession = async (currentSession: typeof activeSession) => {
+        try {
+          return await getMatch(currentMatchID, currentSession, signal);
+        } catch (error) {
+          if (!(error instanceof APIError) || error.status !== 404) throw error;
+          const requesterMatches = await listMatches(
+            currentSession,
+            { role: "requester", limit: 50 },
+            signal,
+          );
+          const fallback = requesterMatches.find((item) =>
+            item.id === currentMatchID
+            || item.recruitment.id === currentMatchID
+            || item.recruitment.id === currentRecruitmentID,
+          );
+          if (!fallback) throw error;
+          return fallback;
+        }
+      };
       let result: MatchView;
       try {
         result = await loadWithSession(activeSession);
       } catch (error) {
         if (!(error instanceof APIError) || error.status !== 401) throw error;
-        await refresh();
-        const refreshedSession = getCurrentSession();
+        await auth.refresh();
+        const refreshedSession = auth.getCurrentSession();
         if (!refreshedSession) throw error;
         result = await loadWithSession(refreshedSession);
       }
       setMatch(result);
       setMatchLoadState("ready");
     } catch (error) {
-      if (error instanceof Error && error.name === "AbortError") return;
+      if (error instanceof Error && error.name === "AbortError" && signal?.aborted) return;
       setMatchLoadState("error");
       setMatchLoadError("failed");
     }
-  }, [currentMatchID, getCurrentSession, refresh, session, status]);
+  }, [currentMatchID, currentRecruitmentID]);
 
   useEffect(() => {
     if (!currentMatchID) return;
     const controller = new AbortController();
     void loadMatch(controller.signal);
     return () => controller.abort();
-  }, [currentMatchID, loadMatch]);
+  }, [currentMatchID, loadMatch, status]);
 
   const matched = match?.status === "accepted" || match?.status === "completed";
   const unavailable = match?.status === "rejected"
@@ -145,21 +168,28 @@ export default function JapaneseGuideRequestedScreen() {
     <View style={styles.screen}>
       <StatusBar style="light" />
 
-      <View style={styles.canvas}>
-        <View style={styles.header}>
-          <Text style={styles.headerTitle}>
-            {matched
-              ? copy.matchedTitle
-              : match?.status === "cancelled"
-                ? copy.withdrawnTitle
-              : unavailable
-                ? copy.unavailableTitle
-                : copy.waitingTitle}
-          </Text>
-        </View>
+      <ScrollView
+        contentContainerStyle={[
+          styles.scrollContent,
+          { paddingBottom: insets.bottom + 24 },
+        ]}
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={styles.canvas}>
+          <View style={styles.header}>
+            <Text style={styles.headerTitle}>
+              {matched
+                ? copy.matchedTitle
+                : match?.status === "cancelled"
+                  ? copy.withdrawnTitle
+                  : unavailable
+                    ? copy.unavailableTitle
+                    : copy.waitingTitle}
+            </Text>
+          </View>
 
-        <View style={styles.main}>
-          <View style={styles.mainContent}>
+          <View style={styles.main}>
+            <View style={styles.mainContent}>
             <View style={styles.illustrationStage}>
               <View style={styles.illustrationCircle} />
               <Image
@@ -212,17 +242,18 @@ export default function JapaneseGuideRequestedScreen() {
               </View>
             ) : null}
 
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => router.replace("/japanese")}
-              style={({ pressed }) => [styles.homeButton, pressed && styles.pressed]}
-            >
-              <MaterialIcons color="#ffffff" name="home" size={21} />
-              <Text style={styles.homeButtonText}>{copy.home}</Text>
-            </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => router.replace("/japanese")}
+                style={({ pressed }) => [styles.homeButton, pressed && styles.pressed]}
+              >
+                <MaterialIcons color="#ffffff" name="home" size={21} />
+                <Text style={styles.homeButtonText}>{copy.home}</Text>
+              </Pressable>
+            </View>
           </View>
         </View>
-      </View>
+      </ScrollView>
     </View>
   );
 }
@@ -230,14 +261,17 @@ export default function JapaneseGuideRequestedScreen() {
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
+    backgroundColor: "#ffffff",
+  },
+  scrollContent: {
+    flexGrow: 1,
     alignItems: "center",
     backgroundColor: "#ffffff",
   },
   canvas: {
-    position: "relative",
     width: "100%",
     maxWidth: 390,
-    minHeight: "100%",
+    flexGrow: 1,
     backgroundColor: "#ffffff",
   },
   header: {

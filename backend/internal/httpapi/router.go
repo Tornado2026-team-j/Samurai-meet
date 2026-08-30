@@ -8,6 +8,7 @@ import (
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/account"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/auth"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/chat"
+	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/classification"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/image"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/keys"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/matching"
@@ -20,28 +21,29 @@ import (
 const APIV1Prefix = "/api/v1"
 
 type RouterOptions struct {
-	Environment         string
-	AllowExpoGoRedirect bool
-	DevClientOrigin     string
-	ClientOrigin        string
-	OAuthLogin          *auth.OAuthLoginService
-	PreAuth             *auth.PreAuthService
-	Sessions            *auth.SessionService
-	SessionHandoffs     *auth.SessionHandoffService
-	PasskeyBootstraps   *auth.PasskeyBootstrapService
-	Recovery            *keys.RecoveryService
-	Passkeys            *auth.PasskeyService
-	KeyEnvelopes        *keys.Service
-	Devices             *keys.DeviceService
-	DeviceTransfers     *keys.DeviceTransferService
-	Images              *image.Service
-	Accounts            *account.Service
-	Profiles            *profileuser.Service
-	Matching            *matching.Service
-	Chats               *chat.Service
-	Meetings            *meeting.Service
-	Notifications       *notification.Service
-	Safety              *safety.Service
+	Environment           string
+	AllowExpoGoRedirect   bool
+	DevClientOrigin       string
+	ClientOrigin          string
+	OAuthLogin            *auth.OAuthLoginService
+	PreAuth               *auth.PreAuthService
+	Sessions              *auth.SessionService
+	SessionHandoffs       *auth.SessionHandoffService
+	PasskeyBootstraps     *auth.PasskeyBootstrapService
+	Recovery              *keys.RecoveryService
+	Passkeys              *auth.PasskeyService
+	KeyEnvelopes          *keys.Service
+	Devices               *keys.DeviceService
+	DeviceTransfers       *keys.DeviceTransferService
+	Images                *image.Service
+	Accounts              *account.Service
+	Profiles              *profileuser.Service
+	Matching              *matching.Service
+	RecruitmentClassifier *classification.Service
+	Chats                 *chat.Service
+	Meetings              *meeting.Service
+	Notifications         *notification.Service
+	Safety                *safety.Service
 }
 
 func NewRouter() http.Handler { return NewRouterWithOptions(RouterOptions{}) }
@@ -120,6 +122,7 @@ func NewRouterWithOptions(o RouterOptions) http.Handler {
 		m.HandleFunc(APIV1Prefix+"/me/profile", patchProfile(o.Profiles, o.Sessions))
 	}
 	if o.Sessions != nil && o.Matching != nil {
+		m.HandleFunc(recruitmentPath+"/classify", classifyRecruitment(o.RecruitmentClassifier, o.Sessions))
 		m.HandleFunc(recruitmentPath, recruitmentCollection(o.Matching, o.Sessions))
 		m.HandleFunc(recruitmentPath+"/mine", ownedRecruitmentCollection(o.Matching, o.Sessions))
 		m.HandleFunc(recruitmentPath+"/", recruitmentItem(o.Matching, o.Sessions))

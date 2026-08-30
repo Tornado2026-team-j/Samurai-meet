@@ -23,11 +23,13 @@ type Config struct {
 	Database            DatabaseConfig
 	ImageStorage        ImageStorageConfig
 	GoogleOIDC          GoogleOIDCConfig
+	Gemini              GeminiConfig
 	WebAuthn            WebAuthnConfig
 	JWS                 JWSConfig
 }
 
 type GoogleOIDCConfig struct{ ClientID, ClientSecret, RedirectURI string }
+type GeminiConfig struct{ APIKey, Model string }
 type WebAuthnConfig struct{ RPID, RPOrigin, RPDisplayName string }
 type JWSConfig struct{ SigningKey, KeyID, VerifyKeys, Issuer, Audience string }
 
@@ -171,6 +173,7 @@ func Load() Config {
 			MaxUploadBytes:               intValueOrDefault("IMAGE_MAX_UPLOAD_BYTES", 20*1024*1024),
 		},
 		GoogleOIDC: GoogleOIDCConfig{os.Getenv("GOOGLE_CLIENT_ID"), os.Getenv("GOOGLE_CLIENT_SECRET"), os.Getenv("GOOGLE_REDIRECT_URI")},
+		Gemini:     GeminiConfig{os.Getenv("GEMINI_API_KEY"), valueOrDefault("GEMINI_MODEL", "gemini-3.1-flash-lite")},
 		WebAuthn:   WebAuthnConfig{valueOrDefault("WEBAUTHN_RP_ID", "localhost"), valueOrDefault("WEBAUTHN_RP_ORIGIN", "http://localhost:8081"), valueOrDefault("WEBAUTHN_RP_DISPLAY_NAME", "Samurai Meet")},
 		JWS:        JWSConfig{os.Getenv("JWS_SIGNING_KEY"), valueOrDefault("JWS_KEY_ID", "v1"), os.Getenv("JWS_VERIFY_KEYS"), valueOrDefault("JWS_ISSUER", "samurai-meet-api"), valueOrDefault("JWS_AUDIENCE", "samurai-meet-mobile")},
 	}
