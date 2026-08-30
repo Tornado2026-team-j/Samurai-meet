@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import {
-  closeRecruitment,
+	closeRecruitment,
+	classifyRecruitmentDescription,
   createRecruitment,
   listMatches,
   listMyRecruitments,
@@ -69,7 +70,7 @@ describe("募集APIクライアント", () => {
     expect(requestedURL).toContain("limit=50");
   });
 
-  it("募集作成のPOST bodyにバックエンド契約をそのまま渡す", async () => {
+	it("募集作成のPOST bodyにバックエンド契約をそのまま渡す", async () => {
     let requestedInit: RequestInit | undefined;
     globalThis.fetch = (async (_input, init) => {
       requestedInit = init;
@@ -89,7 +90,7 @@ describe("募集APIクライアント", () => {
       longitude: 139.76,
       location_accuracy_m: 20,
       status: "open",
-    });
+	});
 
     expect(requestedInit?.method).toBe("POST");
     expect(JSON.parse(String(requestedInit?.body))).toMatchObject({
@@ -99,6 +100,21 @@ describe("募集APIクライアント", () => {
       latitude: 35.68,
     });
   });
+
+	it("募集内容をサーバーのGemini分類APIへ送り、4カテゴリだけを受け取る", async () => {
+		let requestedURL = "";
+		let requestedInit: RequestInit | undefined;
+		globalThis.fetch = (async (input, init) => {
+			requestedURL = String(input);
+			requestedInit = init;
+			return new Response(JSON.stringify({ data: { category: "Places" } }), { status: 200 });
+		}) as typeof fetch;
+
+		await expect(classifyRecruitmentDescription("Please show me a temple.", session)).resolves.toBe("Places");
+		expect(requestedURL).toContain("/recruitments/classify");
+		expect(requestedInit?.method).toBe("POST");
+		expect(JSON.parse(String(requestedInit?.body))).toEqual({ description: "Please show me a temple." });
+	});
 
   it("応募履歴はrequester roleで送信済み・承認済みを取得する", async () => {
     let requestedURL = "";

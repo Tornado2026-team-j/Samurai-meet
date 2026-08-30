@@ -55,6 +55,10 @@ export type RecruitmentCreateRequest = {
   status: Extract<RecruitmentStatus, "draft" | "open" | "closed">;
 };
 
+type RecruitmentClassificationResponse = {
+  data?: { category?: unknown };
+};
+
 export type RecruitmentUpdateRequest = {
   category?: MatchCategory;
   available_date?: string;
@@ -196,6 +200,23 @@ export async function getRecruitment(
   );
   if (!response.data) throw new Error("recruitment response is empty");
   return response.data;
+}
+
+export async function classifyRecruitmentDescription(
+  description: string,
+  session: Session,
+  signal?: AbortSignal,
+): Promise<MatchCategory> {
+  const response = await requestAPI<RecruitmentClassificationResponse>(
+    "/recruitments/classify",
+    session,
+    { method: "POST", body: JSON.stringify({ description }), signal },
+  );
+  const category = response.data?.category;
+  if (category === "Food" || category === "Places" || category === "Activity" || category === "Other") {
+    return category;
+  }
+  throw new Error("recruitment classification response is invalid");
 }
 
 export async function listMyRecruitments(

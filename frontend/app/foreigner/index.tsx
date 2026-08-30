@@ -89,6 +89,8 @@ export default function ForeignerHomeScreen() {
   const searchInputRef = useRef<TextInput>(null);
   const initialLoadStartedRef = useRef(false);
   const copy = COPY[language ?? "en"];
+  const copyRef = useRef(copy);
+  copyRef.current = copy;
   const pendingApplications = useMemo(
     () => applications.filter((application) => application.status === "pending"),
     [applications],
@@ -111,7 +113,7 @@ export default function ForeignerHomeScreen() {
           setApplications([]);
           setLoading(false);
           setRefreshing(false);
-          setLoadError(copy.signInRequired);
+          setLoadError(copyRef.current.signInRequired);
         }
         return;
       }
@@ -143,9 +145,9 @@ export default function ForeignerHomeScreen() {
         }
         if (!cancelled) setApplications(result);
       } catch (error) {
-        if (error instanceof Error && error.name === "AbortError") return;
+        if (error instanceof Error && error.name === "AbortError" && (cancelled || controller.signal.aborted)) return;
         if (!cancelled) {
-          setLoadError(copy.loadError);
+          setLoadError(copyRef.current.loadError);
         }
       } finally {
         if (!cancelled) {
@@ -160,7 +162,10 @@ export default function ForeignerHomeScreen() {
       cancelled = true;
       controller.abort();
     };
-  }, [copy.loadError, copy.signInRequired, getCurrentSession, refresh, session, status]);
+  }, [getCurrentSession, refresh, session, status]);
+
+  const loadApplicationsRef = useRef(loadApplications);
+  loadApplicationsRef.current = loadApplications;
 
   useEffect(() => {
     let active = true;
@@ -179,11 +184,11 @@ export default function ForeignerHomeScreen() {
   }, []);
 
   useEffect(() => {
-    if (initialLoadStartedRef.current) return;
+    if (status === "loading" || initialLoadStartedRef.current) return;
 
     initialLoadStartedRef.current = true;
-    return loadApplications("initial");
-  }, [loadApplications]);
+    return loadApplicationsRef.current("initial");
+  }, [status]);
 
   const openSearchPreferences = () => {
     searchInputRef.current?.blur();

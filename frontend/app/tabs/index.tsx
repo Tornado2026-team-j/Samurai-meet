@@ -13,6 +13,7 @@ import {
   Modal,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -43,6 +44,7 @@ import {
   recruitmentDateTimeToInstant,
   shiftRecruitmentDate,
   JST_TIME_ZONE,
+  type RecruitmentSelection,
   type RecruitmentScheduleIssue,
 } from "../../services/recruitment";
 import type {
@@ -50,6 +52,7 @@ import type {
   RecruitmentDraft,
   RecruitmentPreview,
 } from "../../types/recruitment";
+import type { MatchCategory } from "../../types/match";
 import { formatTimeRange } from "../../utils/time";
 
 const BLUE = "#5ec5f5";
@@ -61,6 +64,12 @@ const COLLAPSED_HEADER_HEIGHT = 156;
 const EXPANDED_HEADER_HEIGHT = 653;
 const CONFIRMATION_HEADER_HEIGHT = 542;
 const EXPANSION_DURATION = 360;
+const RECRUITMENT_CATEGORIES: readonly MatchCategory[] = [
+  "Food",
+  "Places",
+  "Activity",
+  "Other",
+];
 
 const RECRUITMENT_COPY = {
   en: {
@@ -90,6 +99,9 @@ const RECRUITMENT_COPY = {
     next: "NEXT",
     confirmationTitle: "Is everything correct?",
     confirmationExpiry: "Visible until the event ends:",
+    categoryLabel: "Guide category",
+    keywordLabel: "Suggested keywords",
+    keywordHint: "Tap a keyword to select or remove it.",
     tryAgain: "TRY AGAIN",
     summaryDate: "Date",
     summaryTime: "Time",
@@ -124,6 +136,9 @@ const RECRUITMENT_COPY = {
       "The selected duration crosses midnight. Choose an earlier time or shorter duration.",
     invalidDetails: "Check the recruitment details.",
     previewError: "Preview could not be prepared. Please try again.",
+		classificationUnavailable: "Automatic category selection is not available yet. Please try again later.",
+		classificationRateLimited: "Please wait a moment before checking the category again.",
+		classificationFailed: "We could not determine a guide category. Please reword the activity and try again.",
     requestTimeout:
       "The server request timed out. Check your connection and try again.",
     expiredSession: "Your session expired. Sign in again on this API environment.",
@@ -166,6 +181,9 @@ const RECRUITMENT_COPY = {
     next: "次へ",
     confirmationTitle: "この内容でよろしいですか？",
     confirmationExpiry: "イベント終了まで公開されます：",
+    categoryLabel: "案内カテゴリー",
+    keywordLabel: "キーワード候補",
+    keywordHint: "タップしてキーワードを選択・解除できます。",
     tryAgain: "再試行",
     summaryDate: "日付",
     summaryTime: "時間",
@@ -200,6 +218,9 @@ const RECRUITMENT_COPY = {
       "所要時間が日付をまたぎます。早い時刻または短い所要時間を選択してください。",
     invalidDetails: "募集内容を確認してください。",
     previewError: "プレビューを作成できませんでした。もう一度お試しください。",
+		classificationUnavailable: "案内カテゴリの自動判定を準備中です。しばらくしてからもう一度お試しください。",
+		classificationRateLimited: "カテゴリを再判定する前に少しお待ちください。",
+		classificationFailed: "案内カテゴリを判定できませんでした。したいことを少し言い換えてもう一度お試しください。",
     requestTimeout:
       "サーバーへのリクエストがタイムアウトしました。接続を確認してもう一度お試しください。",
     expiredSession: "セッションの有効期限が切れました。このAPI環境で再度ログインしてください。",
@@ -255,6 +276,21 @@ function recruitmentInputMessage(
     default:
       return null;
   }
+}
+
+function recruitmentPreviewMessage(error: unknown, language: AppLanguage): string {
+	const copy = RECRUITMENT_COPY[language];
+	if (!(error instanceof APIError)) return copy.previewError;
+	switch (error.code) {
+		case "recruitment_classification_unavailable":
+			return copy.classificationUnavailable;
+		case "recruitment_classification_rate_limited":
+			return copy.classificationRateLimited;
+		case "recruitment_classification_failed":
+			return copy.classificationFailed;
+		default:
+			return copy.previewError;
+	}
 }
 
 function safeParseRecruitmentDate(value: string, fallback: Date): Date {
@@ -457,6 +493,8 @@ export default function SearchPreferencesScreen() {
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [publishStatus, setPublishStatus] = useState<PublishStatus>("idle");
   const [publishError, setPublishError] = useState<string | null>(null);
+  const [selectedCategory, setSelectedCategory] = useState<MatchCategory | null>(null);
+  const [selectedKeywords, setSelectedKeywords] = useState<string[]>([]);
   const previewRequestRef = useRef<AbortController | null>(null);
   const panelHeight = useMemo(
     () => new Animated.Value(COLLAPSED_HEADER_HEIGHT),
@@ -776,9 +814,12 @@ export default function SearchPreferencesScreen() {
     setPublishError(null);
     setPreviewStatus("loading");
 
-    try {
-      const result = await createRecruitmentPreview(draft, controller.signal);
-      const activeSession = getCurrentSession() ?? session;
+	try {
+		const activeSession = getCurrentSession() ?? session;
+		if (!activeSession) {
+			throw new Error("not_signed_in");
+		}
+		const result = await createRecruitmentPreview(draft, activeSession, controller.signal);
       const localProfile = activeSession
         ? await loadLocalProfile(activeSession.user_id)
         : null;
@@ -796,6 +837,8 @@ export default function SearchPreferencesScreen() {
 
       if (previewRequestRef.current === controller) {
         setPreview(personalizedResult);
+        setSelectedCategory(personalizedResult.category);
+        setSelectedKeywords(personalizedResult.tags);
         setPreviewStatus("success");
       }
     } catch (error) {
@@ -804,7 +847,7 @@ export default function SearchPreferencesScreen() {
       }
 
       if (previewRequestRef.current === controller) {
-        setPreviewError(RECRUITMENT_COPY[language].previewError);
+		setPreviewError(recruitmentPreviewMessage(error, language));
         setPreviewStatus("error");
       }
     } finally {
@@ -858,7 +901,17 @@ export default function SearchPreferencesScreen() {
         }
       }
 
-      await publishRecruitment(draft, preview, activeSession, coordinates);
+      const selection: RecruitmentSelection | undefined = selectedCategory
+        ? { category: selectedCategory, keywords: selectedKeywords }
+        : undefined;
+      await publishRecruitment(
+        draft,
+        preview,
+        activeSession,
+        coordinates,
+        undefined,
+        selection,
+      );
       router.replace("/foreigner");
     } catch (error) {
       const localMessage = recruitmentInputMessage(error, language);
@@ -1182,100 +1235,103 @@ export default function SearchPreferencesScreen() {
               },
             ]}
           >
-            <Text style={styles.confirmationTitle}>{copy.confirmationTitle}</Text>
-            <Text style={styles.confirmationExpiry}>
-              {copy.confirmationExpiry} {preview ? formatPreviewExpiry(preview, language) : copy.expiryFallback}
-            </Text>
+            <ScrollView
+              contentContainerStyle={styles.confirmationScrollContent}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator
+              style={styles.confirmationScroll}
+            >
+              <Text style={styles.confirmationTitle}>{copy.confirmationTitle}</Text>
+              <Text style={styles.confirmationExpiry}>
+                {copy.confirmationExpiry} {preview ? formatPreviewExpiry(preview, language) : copy.expiryFallback}
+              </Text>
 
-            <Card style={styles.summaryCard}>
-              {previewStatus === "loading" && (
-                <View style={styles.previewState}>
-                  <ActivityIndicator color={BLUE} size="small" />
-                </View>
-              )}
-
-              {previewStatus === "error" && (
-                <View style={styles.previewState}>
-                  <Text style={styles.previewError}>{previewError}</Text>
-                  <Button
-                    onPress={() => void loadPreview()}
-                    size="sm"
-                    style={styles.retryButton}
-                    textStyle={styles.retryButtonText}
-                    variant="secondary"
-                  >
-                    {copy.tryAgain}
-                  </Button>
-                </View>
-              )}
-
-              {previewStatus === "success" && preview && (
-                <>
-                  <View style={styles.summaryProfileRow}>
-                    {preview.author.avatarUrl ? (
-                      <Image
-                        accessibilityLabel={`${preview.author.displayName}'s profile image`}
-                        source={{ uri: preview.author.avatarUrl }}
-                        style={styles.summaryAvatar}
-                      />
-                    ) : (
-                      <MaterialIcons
-                        color={colors.border.default}
-                        name="account-circle"
-                        size={30}
-                      />
-                    )}
-                    <Text numberOfLines={1} style={styles.summaryName}>
-                      {preview.author.displayName}
-                    </Text>
-                    <Text style={styles.summaryFlag}>
-                      {countryCodeToFlag(preview.author.countryCode)}
-                    </Text>
+              <Card style={styles.summaryCard}>
+                {previewStatus === "loading" && (
+                  <View style={styles.previewState}>
+                    <ActivityIndicator color={BLUE} size="small" />
                   </View>
-                  <Text
-                    numberOfLines={1}
-                    style={[styles.summaryLine, styles.summaryDate]}
-                  >
-                    <Text style={styles.summaryLabel}>{copy.summaryDate}</Text>
-                    {`   ${formatRecruitmentDateForDisplay(preview.conditions.date, language)}`}
-                  </Text>
-                  <Text style={[styles.summaryLine, styles.summaryTime]}>
-                    <Text style={styles.summaryLabel}>{copy.summaryTime}</Text>
-                    {`   ${formatTimeRange(
-                      preview.conditions.startTime,
-                      preview.conditions.durationHours,
-                    )}`}
-                  </Text>
-                  <View style={styles.summaryTags}>
-                    {preview.tags.map((tag) => (
-                      <Pill key={tag} style={styles.summaryTag} textStyle={styles.summaryTagText} variant="primary">
-                        {translatePreviewTag(tag, language)}
-                      </Pill>
-                    ))}
+                )}
+
+                {previewStatus === "error" && (
+                  <View style={styles.previewState}>
+                    <Text style={styles.previewError}>{previewError}</Text>
+                    <Button onPress={() => void loadPreview()} size="sm" style={styles.retryButton} textStyle={styles.retryButtonText} variant="secondary">
+                      {copy.tryAgain}
+                    </Button>
+                  </View>
+                )}
+
+                {previewStatus === "success" && preview && (
+                  <>
+                    <View style={styles.summaryProfileRow}>
+                      {preview.author.avatarUrl ? (
+                        <Image accessibilityLabel={`${preview.author.displayName}'s profile image`} source={{ uri: preview.author.avatarUrl }} style={styles.summaryAvatar} />
+                      ) : (
+                        <MaterialIcons color={colors.border.default} name="account-circle" size={30} />
+                      )}
+                      <Text numberOfLines={1} style={styles.summaryName}>{preview.author.displayName}</Text>
+                      <Text style={styles.summaryFlag}>{countryCodeToFlag(preview.author.countryCode)}</Text>
+                    </View>
+                    <Text numberOfLines={1} style={[styles.summaryLine, styles.summaryDate]}>
+                      <Text style={styles.summaryLabel}>{copy.summaryDate}</Text>
+                      {`   ${formatRecruitmentDateForDisplay(preview.conditions.date, language)}`}
+                    </Text>
+                    <Text style={[styles.summaryLine, styles.summaryTime]}>
+                      <Text style={styles.summaryLabel}>{copy.summaryTime}</Text>
+                      {`   ${formatTimeRange(preview.conditions.startTime, preview.conditions.durationHours)}`}
+                    </Text>
+                    <View style={styles.summaryTags}>
+                      {selectedKeywords.map((tag) => (
+                        <Pill key={tag} style={styles.summaryTag} textStyle={styles.summaryTagText} variant="primary">
+                          {translatePreviewTag(tag, language)}
+                        </Pill>
+                      ))}
+                    </View>
+                  </>
+                )}
+              </Card>
+
+              {previewStatus === "success" && preview ? (
+                <>
+                  <Text style={styles.categorySelectionLabel}>{copy.categoryLabel}</Text>
+                  <View accessibilityLabel={copy.categoryLabel} accessibilityRole="radiogroup" style={styles.categorySelectionRow}>
+                    {RECRUITMENT_CATEGORIES.map((category) => {
+                      const selected = selectedCategory === category;
+                      return (
+                        <Pressable key={category} accessibilityLabel={category} accessibilityRole="radio" accessibilityState={{ selected }} onPress={() => setSelectedCategory(category)} style={({ pressed }) => [styles.categorySelectionButton, selected && styles.categorySelectionButtonSelected, pressed && styles.pressed]}>
+                          <Text adjustsFontSizeToFit minimumFontScale={0.8} numberOfLines={1} style={[styles.categorySelectionText, selected && styles.categorySelectionTextSelected]}>{category}</Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+
+                  <Text style={styles.keywordSelectionLabel}>{copy.keywordLabel}</Text>
+                  <Text style={styles.keywordSelectionHint}>{copy.keywordHint}</Text>
+                  <View style={styles.keywordSelectionRow}>
+                    {preview.tags.map((tag) => {
+                      const selected = selectedKeywords.includes(tag);
+                      return (
+                        <Pressable key={tag} accessibilityLabel={translatePreviewTag(tag, language)} accessibilityRole="checkbox" accessibilityState={{ checked: selected }} onPress={() => setSelectedKeywords((current) => selected ? current.filter((keyword) => keyword !== tag) : [...current, tag])} style={({ pressed }) => [styles.keywordSelectionButton, selected && styles.keywordSelectionButtonSelected, pressed && styles.pressed]}>
+                          <Text adjustsFontSizeToFit minimumFontScale={0.8} numberOfLines={1} style={[styles.keywordSelectionText, selected && styles.keywordSelectionTextSelected]}>{translatePreviewTag(tag, language)}</Text>
+                        </Pressable>
+                      );
+                    })}
                   </View>
                 </>
-              )}
-            </Card>
+              ) : null}
 
-            <Button
-              accessibilityState={{
-                disabled: previewStatus !== "success" || publishStatus === "publishing",
-              }}
-              disabled={previewStatus !== "success" || publishStatus === "publishing"}
-              onPress={() => void publish()}
-              size="sm"
-              style={styles.goButton}
-              textStyle={styles.goButtonText}
-            >
-              {publishStatus === "publishing" ? copy.publishing : copy.go}
-            </Button>
+              <Button accessibilityState={{ disabled: previewStatus !== "success" || publishStatus === "publishing" }} disabled={previewStatus !== "success" || publishStatus === "publishing"} onPress={() => void publish()} size="sm" style={styles.goButton} textStyle={styles.goButtonText}>
+                {publishStatus === "publishing" ? copy.publishing : copy.go}
+              </Button>
 
-            {publishError ? (
-              <Text accessibilityRole="alert" style={styles.publishError}>
-                {publishError}
-              </Text>
-            ) : null}
+              {publishError ? (
+                <Text accessibilityRole="alert" style={styles.publishError}>
+                  {publishError}
+                </Text>
+              ) : null}
 
+            </ScrollView>
             <Button
               accessibilityLabel="Back to search filters"
               iconLeft={<MaterialIcons color={colors.brand.gold} name="arrow-back" size={18} />}
@@ -1589,6 +1645,80 @@ export default function SearchPreferencesScreen() {
 }
 
 const styles = StyleSheet.create({
+  confirmationScrollContent: {
+    paddingBottom: 24,
+  },
+  confirmationScroll: {
+    flex: 1,
+  },
+  categorySelectionLabel: {
+    color: '#1E3A8A',
+    fontSize: 15,
+    fontWeight: '700',
+    marginBottom: 8,
+  },
+  categorySelectionRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 16,
+  },
+  categorySelectionButton: {
+    backgroundColor: '#FFF7CC',
+    borderColor: '#F2C94C',
+    borderRadius: 16,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  categorySelectionButtonSelected: {
+    backgroundColor: '#1E3A8A',
+    borderColor: '#1E3A8A',
+  },
+  categorySelectionText: {
+    color: '#1E3A8A',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  categorySelectionTextSelected: {
+    color: '#FFFFFF',
+  },
+  keywordSelectionLabel: {
+    color: '#1E3A8A',
+    fontSize: 15,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  keywordSelectionHint: {
+    color: '#6B7280',
+    fontSize: 13,
+    marginBottom: 8,
+  },
+  keywordSelectionRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  keywordSelectionButton: {
+    backgroundColor: '#FFFFFF',
+    borderColor: '#1E3A8A',
+    borderRadius: 16,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  keywordSelectionButtonSelected: {
+    backgroundColor: '#F2C94C',
+    borderColor: '#F2C94C',
+  },
+  keywordSelectionText: {
+    color: '#1E3A8A',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  keywordSelectionTextSelected: {
+    color: '#1E3A8A',
+  },
   screen: {
     flex: 1,
     backgroundColor: colors.surface.screen,
@@ -1856,7 +1986,7 @@ const styles = StyleSheet.create({
   },
   backButton: {
     position: "absolute",
-    top: 491,
+    top: 474,
     left: 30,
     width: 110,
     height: 25,
@@ -1864,7 +1994,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 12,
+    gap: 8,
     borderWidth: 1,
     borderColor: colors.border.default,
     borderRadius: radius.pill,

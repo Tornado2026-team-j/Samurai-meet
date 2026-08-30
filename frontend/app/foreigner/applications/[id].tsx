@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import {
@@ -130,6 +130,8 @@ export default function ForeignerApplicationDetailScreen() {
   const [bottomActionsHeight, setBottomActionsHeight] = useState(0);
   const [language, setLanguage] = useState<AppLanguage>("en");
   const copy = COPY[language];
+  const authRef = useRef({ getCurrentSession, refresh, session, status });
+  authRef.current = { getCurrentSession, refresh, session, status };
 
   useEffect(() => {
     let active = true;
@@ -154,8 +156,9 @@ export default function ForeignerApplicationDetailScreen() {
     let cancelled = false;
 
     const load = async () => {
-      const activeSession = getCurrentSession() ?? session;
-      if (!applicationId || status !== "signed_in" || !activeSession) {
+      const auth = authRef.current;
+      const activeSession = auth.getCurrentSession() ?? auth.session;
+      if (!applicationId || auth.status !== "signed_in" || !activeSession) {
         if (!cancelled) {
           setLoadState("error");
           setLoadError("loginRequired");
@@ -190,8 +193,8 @@ export default function ForeignerApplicationDetailScreen() {
             return await loadWithSession(activeSession);
           } catch (error) {
             if (!(error instanceof APIError) || error.status !== 401) throw error;
-            await refresh();
-            const refreshedSession = getCurrentSession();
+            await auth.refresh();
+            const refreshedSession = auth.getCurrentSession();
             if (!refreshedSession) throw error;
             return loadWithSession(refreshedSession);
           }
@@ -202,7 +205,7 @@ export default function ForeignerApplicationDetailScreen() {
           setLoadState("ready");
         }
       } catch (error) {
-        if (error instanceof Error && error.name === "AbortError") return;
+        if (error instanceof Error && error.name === "AbortError" && (cancelled || controller.signal.aborted)) return;
         if (!cancelled) {
           setLoadState("error");
           setLoadError("failed");
@@ -215,7 +218,7 @@ export default function ForeignerApplicationDetailScreen() {
       cancelled = true;
       controller.abort();
     };
-  }, [applicationId, getCurrentSession, refresh, recruitmentID, session, status]);
+  }, [applicationId, recruitmentID, status]);
 
   if (!application) {
     return (

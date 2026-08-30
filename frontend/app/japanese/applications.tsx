@@ -120,6 +120,8 @@ export default function JapaneseApplicationsScreen() {
   const initialLoadStarted = useRef(false);
   const hasLoaded = useRef(false);
   const copy = COPY[language];
+	const copyRef = useRef(copy);
+	copyRef.current = copy;
 
   useEffect(() => {
     let active = true;
@@ -148,7 +150,7 @@ export default function JapaneseApplicationsScreen() {
           setApplications([]);
           setRefreshing(false);
           setLoadState("error");
-          setLoadError(copy.loginRequired);
+			setLoadError(copyRef.current.loginRequired);
         }
         return;
       }
@@ -182,10 +184,10 @@ export default function JapaneseApplicationsScreen() {
           setLoadState("ready");
         }
       } catch (error) {
-        if (error instanceof Error && error.name === "AbortError") return;
+        if (error instanceof Error && error.name === "AbortError" && (cancelled || controller.signal.aborted)) return;
         if (!cancelled) {
           setLoadState(initialLoad ? "error" : "ready");
-          setLoadError(copy.loadError);
+			setLoadError(copyRef.current.loadError);
         }
       } finally {
         if (!cancelled) setRefreshing(false);
@@ -197,7 +199,7 @@ export default function JapaneseApplicationsScreen() {
       cancelled = true;
       controller.abort();
     };
-  }, [copy.loadError, copy.loginRequired, getCurrentSession, refresh, session, status]);
+	}, [getCurrentSession, refresh, session, status]);
 
   const loadApplicationsRef = useRef(loadApplications);
   loadApplicationsRef.current = loadApplications;
@@ -208,10 +210,13 @@ export default function JapaneseApplicationsScreen() {
     return loadApplicationsRef.current();
   }, [status]);
 
-  const openApplication = (matchID: string) => {
+  const openApplication = (application: MatchView) => {
     router.push({
       pathname: "/japanese/guide-requested",
-      params: { matchId: matchID },
+      params: {
+        matchId: application.id,
+        recruitmentId: application.recruitment.id,
+      },
     });
   };
 
@@ -334,7 +339,7 @@ export default function JapaneseApplicationsScreen() {
                   <Pressable
                     accessibilityLabel={`${application.other_user.name || copy.userFallback}${copy.detailLabelSuffix}`}
                     accessibilityRole="button"
-                    onPress={() => openApplication(application.id)}
+                    onPress={() => openApplication(application)}
                     style={({ pressed }) => [styles.cardMain, pressed && styles.pressed]}
                   >
                     <View style={styles.cardHeader}>
