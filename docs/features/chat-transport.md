@@ -219,7 +219,11 @@ MVP のリアルタイム配送は WebSocket（実装済み）で、同じ Chat 
 - 通常の Access Token で Chat Token を取得できる。（実装済み）
 - Chat Token をプロフィール、Recovery、Key-B、他のチャットへ利用できない。（`aud` / `chat_id` / `transport` 束縛で実装済み）
 - 期限前に次の Chat Token をRESTで取得できる。（実装済み）
-- セッション失効、ブロック、マッチ終了後にチャット接続が閉じる。（heartbeatで実装済み・統合テスト `TestChatWebSocketDelivery`）
+- セッション失効、ブロック、マッチ終了後にチャット接続が閉じる。（実装済み・統合テスト）
+  - ブロックは送信経路とheartbeatの両方で検知し、`error(blocked)` → `closing(blocked)`（`TestChatWebSocketDelivery`）。
+  - セッション失効はheartbeatで検知し `closing(forbidden)`（`TestChatWebSocketClosesOnSessionRevoke`）。失効していない相手側の接続は維持される。
+  - マッチ `completed` / `cancelled` はheartbeatで検知し、両参加者へ `closing(chat_not_available)`（`TestChatWebSocketClosesOnMatchCompletion`）。`completed` 後は履歴・既読のみで、送信・WS・transport-token は不可。
+  - heartbeat はアクティブ接続の `sessions.last_seen_at` を前進させる（`TestChatWebSocketHeartbeatKeepsSessionWarm`）。
 - 0-RTT でメッセージ送信などの状態変更ができない。（WebSocketは1-RTT。QUIC採用時に再確認）
 - 古い token の接続巻き戻し拒否（`token_seq`）は未実装。接続確立時のみ token を検証し、維持はセッションheartbeatで担保。
 - 通信断・タイムアウト・一時的なサーバーエラー時は、同じ`client_message_id`で期限・回数を制限した自動再送ができる。（フロント側の受入条件）

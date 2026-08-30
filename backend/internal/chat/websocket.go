@@ -29,6 +29,23 @@ var (
 	wsHeartbeatInterval = 20 * time.Second
 )
 
+// SetRealtimePacingForTest overrides the ping and heartbeat intervals and
+// returns a function that restores the previous values. It lets an integration
+// test in another package exercise heartbeat-driven revocation (session revoke,
+// match end, block) without waiting out the 20-second production interval.
+// Production code never calls it; tests run serially so the global write is
+// safe.
+func SetRealtimePacingForTest(ping, heartbeat time.Duration) (restore func()) {
+	prevPing, prevHeartbeat := wsPingInterval, wsHeartbeatInterval
+	if ping > 0 {
+		wsPingInterval = ping
+	}
+	if heartbeat > 0 {
+		wsHeartbeatInterval = heartbeat
+	}
+	return func() { wsPingInterval, wsHeartbeatInterval = prevPing, prevHeartbeat }
+}
+
 // wsConn is one authenticated WebSocket participant on a chat. All socket
 // writes go through writePump; readPump is the only reader. Any goroutine can
 // call stop exactly once to begin teardown; writePump then flushes what is

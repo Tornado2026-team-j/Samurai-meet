@@ -113,6 +113,7 @@ WebSocket配送は現状**単一APIインスタンス前提のin-memoryハブ**�
 - 既読状態が相手へ反映される。
 - ブロック後は新規メッセージを送受信できない。
 - 送信レート上限を超えると REST は 429、WebSocket は `rate_limited` エラーフレームで拒否し、接続は維持される（統合テスト `TestChatSendRateLimit`）。
+- セッション失効・マッチ終了（`completed`/`cancelled`）を heartbeat で検知し `closing` を送って切断する（統合テスト `TestChatWebSocketClosesOnSessionRevoke` / `TestChatWebSocketClosesOnMatchCompletion`）。失効していない相手側の接続は維持される。
 
 ## 9. 要確認
 
