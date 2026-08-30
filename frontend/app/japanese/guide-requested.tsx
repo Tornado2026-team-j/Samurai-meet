@@ -1,11 +1,11 @@
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { ActivityIndicator, Image, Pressable, StyleSheet, Text, View } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { useAuth } from "../../hooks/useAuth";
 import { APIError } from "../../services/api-client";
-import { getMatch, type MatchView } from "../../services/matching";
+import { getMatch, listMatches, type MatchView } from "../../services/matching";
 import { loadLanguage, subscribeLanguage } from "../../services/onboarding";
 import type { AppLanguage } from "../../services/onboarding-contract";
 
@@ -56,13 +56,19 @@ const COPY = {
 export default function JapaneseGuideRequestedScreen() {
   const router = useRouter();
   const { getCurrentSession, refresh, session, status } = useAuth();
-  const { matchId } = useLocalSearchParams<{ matchId?: string | string[] }>();
+  const { matchId, recruitmentId } = useLocalSearchParams<{
+    matchId?: string | string[];
+    recruitmentId?: string | string[];
+  }>();
   const currentMatchID = Array.isArray(matchId) ? matchId[0] : matchId;
+  const currentRecruitmentID = Array.isArray(recruitmentId) ? recruitmentId[0] : recruitmentId;
   const [match, setMatch] = useState<MatchView | null>(null);
   const [matchLoadState, setMatchLoadState] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [matchLoadError, setMatchLoadError] = useState<MatchLoadErrorKey | null>(null);
   const [language, setLanguage] = useState<AppLanguage>("en");
   const copy = COPY[language];
+  const authRef = useRef({ getCurrentSession, refresh, session, status });
+  authRef.current = { getCurrentSession, refresh, session, status };
 
   useEffect(() => {
     let active = true;
@@ -83,8 +89,9 @@ export default function JapaneseGuideRequestedScreen() {
   const loadMatch = useCallback(async (signal?: AbortSignal) => {
     if (!currentMatchID) return;
 
-    const activeSession = getCurrentSession() ?? session;
-    if (status !== "signed_in" || !activeSession) {
+    const auth = authRef.current;
+    const activeSession = auth.getCurrentSession() ?? auth.session;
+    if (auth.status !== "signed_in" || !activeSession) {
       setMatchLoadState("error");
       setMatchLoadError("loginRequired");
       return;
@@ -93,18 +100,32 @@ export default function JapaneseGuideRequestedScreen() {
     setMatchLoadState("loading");
     setMatchLoadError(null);
     try {
-      const loadWithSession = (currentSession: typeof activeSession) => getMatch(
-        currentMatchID,
-        currentSession,
-        signal,
-      );
+      const loadWithSession = async (currentSession: typeof activeSession) => {
+        try {
+          return await getMatch(currentMatchID, currentSession, signal);
+        } catch (error) {
+          if (!(error instanceof APIError) || error.status !== 404) throw error;
+          const requesterMatches = await listMatches(
+            currentSession,
+            { role: "requester", limit: 50 },
+            signal,
+          );
+          const fallback = requesterMatches.find((item) =>
+            item.id === currentMatchID
+            || item.recruitment.id === currentMatchID
+            || item.recruitment.id === currentRecruitmentID,
+          );
+          if (!fallback) throw error;
+          return fallback;
+        }
+      };
       let result: MatchView;
       try {
         result = await loadWithSession(activeSession);
       } catch (error) {
         if (!(error instanceof APIError) || error.status !== 401) throw error;
-        await refresh();
-        const refreshedSession = getCurrentSession();
+        await auth.refresh();
+        const refreshedSession = auth.getCurrentSession();
         if (!refreshedSession) throw error;
         result = await loadWithSession(refreshedSession);
       }
@@ -115,14 +136,14 @@ export default function JapaneseGuideRequestedScreen() {
       setMatchLoadState("error");
       setMatchLoadError("failed");
     }
-  }, [currentMatchID, getCurrentSession, refresh, session, status]);
+  }, [currentMatchID, currentRecruitmentID]);
 
   useEffect(() => {
     if (!currentMatchID) return;
     const controller = new AbortController();
     void loadMatch(controller.signal);
     return () => controller.abort();
-  }, [currentMatchID, loadMatch]);
+  }, [currentMatchID, loadMatch, status]);
 
   const matched = match?.status === "accepted" || match?.status === "completed";
   const unavailable = match?.status === "rejected"

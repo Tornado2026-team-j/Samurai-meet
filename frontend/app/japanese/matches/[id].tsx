@@ -244,7 +244,7 @@ export default function JapaneseMatchDetailScreen() {
       if (interest?.id) {
         router.push({
           pathname: "/japanese/guide-requested",
-          params: { matchId: interest.id },
+          params: { matchId: interest.id, recruitmentId: interest.recruitment_id },
         });
       } else {
         router.push("/japanese/guide-requested");
