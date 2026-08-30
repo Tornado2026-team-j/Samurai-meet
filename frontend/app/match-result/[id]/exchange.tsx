@@ -22,14 +22,15 @@ const BORDER_GRAY = "#e4e4e4";
 const SOFT_BLUE = "#eff8ff";
 
 // TODO: Replace mock monsters with real data from monsters API
-const MOCK_MY_MONSTER = { emoji: "🐉", name: "Fire Dragon", color: "#ff6b6b" };
-const MOCK_THEIR_MONSTER = { emoji: "🦋", name: "Mystic Butterfly", color: "#9775fa" };
+const MOCK_MY_MONSTER = { emoji: "🐳", name: "Blue Monster", color: "#5ec5f5" };
+const MOCK_THEIR_MONSTER = { emoji: "🐷", name: "Pink Monster", color: "#f58eaa" }; 
 
 const COPY = {
   ja: {
     title: "モンスターを交換",
     back: "戻る",
     exchanging: "モンスターを交換中…",
+    wait: "少々お待ちください。",
     myMonster: "あなたのモンスター",
     theirMonster: "相手のモンスター",
     completeTitle: "モンスターを交換しました！",
@@ -42,6 +43,7 @@ const COPY = {
     title: "Exchange Monsters",
     back: "Back",
     exchanging: "Exchanging Monsters...",
+    wait: "Please wait a moment.",
     myMonster: "Your monster",
     theirMonster: "Their monster",
     completeTitle: "Monster exchanged!",
@@ -167,6 +169,13 @@ export default function ExchangeScreen() {
       </View>
 
       <View style={styles.exchangeStage}>
+        {!exchangeDone ? (
+          <>
+            <Text style={styles.exchangingText}>{copy.exchanging}</Text>
+            <Text style={styles.waitText}>{copy.wait}</Text>
+          </>
+        ) : null}
+
         <View style={styles.monsterRow}>
           {/* My monster (left, moves right) */}
           <Animated.View
@@ -187,7 +196,7 @@ export default function ExchangeScreen() {
           {/* Center arrow */}
           <Animated.View style={[styles.arrowContainer, { opacity: arrowOpacity }]}>
             <MaterialIcons
-              color={exchangeDone ? YELLOW : BLUE}
+              color={YELLOW}
               name={exchangeDone ? "cached" : "sync"}
               size={32}
             />
@@ -209,10 +218,6 @@ export default function ExchangeScreen() {
             <Text style={styles.monsterName}>{MOCK_THEIR_MONSTER.name}</Text>
           </Animated.View>
         </View>
-
-        {!exchangeDone ? (
-          <Text style={styles.exchangingText}>{copy.exchanging}</Text>
-        ) : null}
       </View>
 
       {/* Completion modal */}
@@ -254,45 +259,49 @@ const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: "#ffffff" },
   loadingScreen: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#ffffff" },
   header: {
-    minHeight: 108,
+    minHeight: 156,
     flexDirection: "row",
     alignItems: "flex-end",
+    justifyContent: "center",
     paddingHorizontal: 20,
-    paddingBottom: 18,
+    paddingBottom: 24,
     backgroundColor: BLUE,
-    borderBottomLeftRadius: 36,
-    borderBottomRightRadius: 36,
+    borderBottomLeftRadius: 50,
+    borderBottomRightRadius: 50,
   },
-  backButton: { width: 34, height: 34, alignItems: "center", justifyContent: "center", marginRight: 12 },
-  headerTitle: { color: "#ffffff", fontSize: 22, fontWeight: "800" },
+  backButton: { position: "absolute", left: 20, bottom: 20, width: 34, height: 34, alignItems: "center", justifyContent: "center", opacity: 0 },
+  headerTitle: { color: "#ffffff", fontSize: 20, fontWeight: "900" },
   exchangeStage: {
     flex: 1,
     alignItems: "center",
-    justifyContent: "center",
     paddingHorizontal: 24,
-    gap: 40,
   },
   monsterRow: {
+    width: "100%",
+    height: 317,
+    marginTop: 66,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 20,
+    gap: 8,
+    borderRadius: 160,
+    backgroundColor: "#fff7e6",
   },
-  monsterContainer: { alignItems: "center", gap: 10 },
-  monsterLabel: { color: MUTED_GRAY, fontSize: 12, fontWeight: "700" },
+  monsterContainer: { alignItems: "center", gap: 4 },
+  monsterLabel: { display: "none" },
   monsterCard: {
-    width: 100,
-    height: 100,
+    width: 112,
+    height: 150,
     alignItems: "center",
     justifyContent: "center",
-    borderWidth: 3,
-    borderRadius: 50,
-    backgroundColor: SOFT_BLUE,
+    borderWidth: 0,
+    backgroundColor: "transparent",
   },
-  monsterEmoji: { fontSize: 42 },
-  monsterName: { color: TEXT_GRAY, fontSize: 13, fontWeight: "800", textAlign: "center" },
-  arrowContainer: { alignItems: "center", justifyContent: "center" },
-  exchangingText: { color: BLUE, fontSize: 16, fontWeight: "800", textAlign: "center" },
+  monsterEmoji: { fontSize: 82 },
+  monsterName: { display: "none" },
+  arrowContainer: { alignItems: "center", justifyContent: "center", marginHorizontal: -2 },
+  exchangingText: { marginTop: 30, color: "#000000", fontSize: 24, fontWeight: "900", textAlign: "center" },
+  waitText: { marginTop: 19, color: "#8e8e93", fontSize: 18, fontWeight: "900", textAlign: "center" },
   modalBackdrop: {
     flex: 1,
     alignItems: "center",
@@ -304,40 +313,43 @@ const styles = StyleSheet.create({
     width: "100%",
     maxWidth: 340,
     alignItems: "center",
-    gap: 14,
+    gap: 16,
     padding: 28,
-    borderWidth: 1,
-    borderColor: "#cfe9f7",
-    borderRadius: 20,
+    borderRadius: 28,
     backgroundColor: "#ffffff",
+    shadowColor: "#24556b",
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.18,
+    shadowRadius: 24,
+    elevation: 8,
   },
   completeIconCircle: {
-    width: 72,
-    height: 72,
+    width: 76,
+    height: 76,
     alignItems: "center",
     justifyContent: "center",
-    borderRadius: 36,
-    backgroundColor: "#eef8f2",
+    borderRadius: 38,
+    backgroundColor: "#fff7e6",
   },
-  completeTitle: { color: TEXT_GRAY, fontSize: 20, fontWeight: "900", textAlign: "center" },
-  completeDescription: { color: MUTED_GRAY, fontSize: 14, lineHeight: 21, textAlign: "center" },
+  completeTitle: { color: "#000000", fontSize: 22, fontWeight: "900", textAlign: "center" },
+  completeDescription: { color: "#8e8e93", fontSize: 15, lineHeight: 22, textAlign: "center" },
   storageButton: {
     width: "100%",
     minHeight: 46,
     alignItems: "center",
     justifyContent: "center",
-    borderWidth: 1,
+    borderWidth: 2,
     borderColor: BLUE,
-    borderRadius: 10,
+    borderRadius: 14,
     backgroundColor: "#ffffff",
   },
-  storageButtonText: { color: BLUE, fontSize: 14, fontWeight: "800" },
+  storageButtonText: { color: BLUE, fontSize: 15, fontWeight: "900" },
   reviewButton: {
     width: "100%",
-    minHeight: 46,
+    minHeight: 48,
     alignItems: "center",
     justifyContent: "center",
-    borderRadius: 10,
+    borderRadius: 14,
     backgroundColor: YELLOW,
   },
   reviewButtonText: { color: "#ffffff", fontSize: 14, fontWeight: "900" },
