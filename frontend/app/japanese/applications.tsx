@@ -120,6 +120,8 @@ export default function JapaneseApplicationsScreen() {
   const initialLoadStarted = useRef(false);
   const hasLoaded = useRef(false);
   const copy = COPY[language];
+	const copyRef = useRef(copy);
+	copyRef.current = copy;
 
   useEffect(() => {
     let active = true;
@@ -148,7 +150,7 @@ export default function JapaneseApplicationsScreen() {
           setApplications([]);
           setRefreshing(false);
           setLoadState("error");
-          setLoadError(copy.loginRequired);
+			setLoadError(copyRef.current.loginRequired);
         }
         return;
       }
@@ -185,7 +187,7 @@ export default function JapaneseApplicationsScreen() {
         if (error instanceof Error && error.name === "AbortError") return;
         if (!cancelled) {
           setLoadState(initialLoad ? "error" : "ready");
-          setLoadError(copy.loadError);
+			setLoadError(copyRef.current.loadError);
         }
       } finally {
         if (!cancelled) setRefreshing(false);
@@ -197,7 +199,7 @@ export default function JapaneseApplicationsScreen() {
       cancelled = true;
       controller.abort();
     };
-  }, [copy.loadError, copy.loginRequired, getCurrentSession, refresh, session, status]);
+	}, [getCurrentSession, refresh, session, status]);
 
   const loadApplicationsRef = useRef(loadApplications);
   loadApplicationsRef.current = loadApplications;

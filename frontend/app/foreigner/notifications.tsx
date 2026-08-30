@@ -207,6 +207,8 @@ export default function ForeignerNotificationsScreen() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const initialLoadStartedRef = useRef(false);
   const copy = COPY[language ?? "en"];
+	const copyRef = useRef(copy);
+	copyRef.current = copy;
   const loadNotifications = useCallback((mode: "initial" | "refresh" = "refresh") => {
     const controller = new AbortController();
     let cancelled = false;
@@ -218,7 +220,7 @@ export default function ForeignerNotificationsScreen() {
           setNotificationRecords([]);
           setLoading(false);
           setRefreshing(false);
-          setLoadError(copy.signInRequired);
+			setLoadError(copyRef.current.signInRequired);
         }
         return;
       }
@@ -246,7 +248,7 @@ export default function ForeignerNotificationsScreen() {
       } catch (error) {
         if (error instanceof Error && error.name === "AbortError") return;
         if (!cancelled) {
-          setLoadError(copy.loadError);
+			setLoadError(copyRef.current.loadError);
         }
       } finally {
         if (!cancelled) {
@@ -261,7 +263,7 @@ export default function ForeignerNotificationsScreen() {
       cancelled = true;
       controller.abort();
     };
-  }, [copy.loadError, copy.signInRequired, getCurrentSession, refresh, session, status]);
+	}, [getCurrentSession, refresh, session, status]);
 
   useEffect(() => {
     let active = true;
@@ -280,11 +282,11 @@ export default function ForeignerNotificationsScreen() {
   }, []);
 
   useEffect(() => {
-    if (initialLoadStartedRef.current) return;
+		if (status === "loading" || initialLoadStartedRef.current) return;
 
     initialLoadStartedRef.current = true;
     return loadNotifications("initial");
-  }, [loadNotifications]);
+	}, [loadNotifications, status]);
 
   const notifications = useMemo(() => {
     const now = new Date();

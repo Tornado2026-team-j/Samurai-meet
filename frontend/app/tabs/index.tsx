@@ -122,6 +122,9 @@ const RECRUITMENT_COPY = {
       "The selected duration crosses midnight. Choose an earlier time or shorter duration.",
     invalidDetails: "Check the recruitment details.",
     previewError: "Preview could not be prepared. Please try again.",
+		classificationUnavailable: "Automatic category selection is not available yet. Please try again later.",
+		classificationRateLimited: "Please wait a moment before checking the category again.",
+		classificationFailed: "We could not determine a guide category. Please reword the activity and try again.",
     requestTimeout:
       "The server request timed out. Check your connection and try again.",
     expiredSession: "Your session expired. Sign in again on this API environment.",
@@ -198,6 +201,9 @@ const RECRUITMENT_COPY = {
       "所要時間が日付をまたぎます。早い時刻または短い所要時間を選択してください。",
     invalidDetails: "募集内容を確認してください。",
     previewError: "プレビューを作成できませんでした。もう一度お試しください。",
+		classificationUnavailable: "案内カテゴリの自動判定を準備中です。しばらくしてからもう一度お試しください。",
+		classificationRateLimited: "カテゴリを再判定する前に少しお待ちください。",
+		classificationFailed: "案内カテゴリを判定できませんでした。したいことを少し言い換えてもう一度お試しください。",
     requestTimeout:
       "サーバーへのリクエストがタイムアウトしました。接続を確認してもう一度お試しください。",
     expiredSession: "セッションの有効期限が切れました。このAPI環境で再度ログインしてください。",
@@ -253,6 +259,21 @@ function recruitmentInputMessage(
     default:
       return null;
   }
+}
+
+function recruitmentPreviewMessage(error: unknown, language: AppLanguage): string {
+	const copy = RECRUITMENT_COPY[language];
+	if (!(error instanceof APIError)) return copy.previewError;
+	switch (error.code) {
+		case "recruitment_classification_unavailable":
+			return copy.classificationUnavailable;
+		case "recruitment_classification_rate_limited":
+			return copy.classificationRateLimited;
+		case "recruitment_classification_failed":
+			return copy.classificationFailed;
+		default:
+			return copy.previewError;
+	}
 }
 
 function safeParseRecruitmentDate(value: string, fallback: Date): Date {
@@ -774,9 +795,12 @@ export default function SearchPreferencesScreen() {
     setPublishError(null);
     setPreviewStatus("loading");
 
-    try {
-      const result = await createRecruitmentPreview(draft, controller.signal);
-      const activeSession = getCurrentSession() ?? session;
+	try {
+		const activeSession = getCurrentSession() ?? session;
+		if (!activeSession) {
+			throw new Error("not_signed_in");
+		}
+		const result = await createRecruitmentPreview(draft, activeSession, controller.signal);
       const localProfile = activeSession
         ? await loadLocalProfile(activeSession.user_id)
         : null;
@@ -802,7 +826,7 @@ export default function SearchPreferencesScreen() {
       }
 
       if (previewRequestRef.current === controller) {
-        setPreviewError(RECRUITMENT_COPY[language].previewError);
+		setPreviewError(recruitmentPreviewMessage(error, language));
         setPreviewStatus("error");
       }
     } finally {

@@ -1,7 +1,8 @@
-import { buildMockRecruitmentPreview } from "../mocks/recruitment";
+import { buildRecruitmentPreview } from "../mocks/recruitment";
 import type { Session } from "./auth-contract";
 import {
   createRecruitment,
+	classifyRecruitmentDescription,
   type Coordinates,
   type RecruitmentCreateRequest,
 } from "./matching";
@@ -11,51 +12,27 @@ import type {
 } from "../types/recruitment";
 
 export type RecruitmentPreviewProvider = {
-  createPreview: (
-    draft: RecruitmentDraft,
-    signal?: AbortSignal,
-  ) => Promise<RecruitmentPreview>;
+	createPreview: (
+		draft: RecruitmentDraft,
+		session: Session,
+		signal?: AbortSignal,
+	) => Promise<RecruitmentPreview>;
+};
+const geminiPreviewProvider: RecruitmentPreviewProvider = {
+	async createPreview(draft, session, signal) {
+		const category = await classifyRecruitmentDescription(draft.activity, session, signal);
+		return buildRecruitmentPreview(draft, category);
+	},
 };
 
-function abortError(): Error {
-  const error = new Error("The preview request was cancelled.");
-  error.name = "AbortError";
-  return error;
-}
-
-function wait(duration: number, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal?.aborted) {
-      reject(abortError());
-      return;
-    }
-
-    const timeout = setTimeout(resolve, duration);
-    signal?.addEventListener(
-      "abort",
-      () => {
-        clearTimeout(timeout);
-        reject(abortError());
-      },
-      { once: true },
-    );
-  });
-}
-
-const mockPreviewProvider: RecruitmentPreviewProvider = {
-  async createPreview(draft, signal) {
-    await wait(420, signal);
-    return buildMockRecruitmentPreview(draft);
-  },
-};
-
-const previewProvider: RecruitmentPreviewProvider = mockPreviewProvider;
+const previewProvider: RecruitmentPreviewProvider = geminiPreviewProvider;
 
 export function createRecruitmentPreview(
-  draft: RecruitmentDraft,
-  signal?: AbortSignal,
+	draft: RecruitmentDraft,
+	session: Session,
+	signal?: AbortSignal,
 ): Promise<RecruitmentPreview> {
-  return previewProvider.createPreview(draft, signal);
+	return previewProvider.createPreview(draft, session, signal);
 }
 
 export const JST_TIME_ZONE = "Asia/Tokyo";

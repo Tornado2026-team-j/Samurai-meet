@@ -87,6 +87,8 @@ export default function JapaneseHomeScreen() {
     "all",
   );
   const copy = COPY[language ?? "ja"];
+	const copyRef = useRef(copy);
+	copyRef.current = copy;
   const filteredMatches = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase();
 
@@ -117,7 +119,7 @@ export default function JapaneseHomeScreen() {
         if (!cancelled) {
           setLoading(false);
           setRefreshing(false);
-          setLoadError(copy.signInRequired);
+			setLoadError(copyRef.current.signInRequired);
         }
         return;
       }
@@ -175,7 +177,7 @@ export default function JapaneseHomeScreen() {
       } catch (error) {
         if (error instanceof Error && error.name === "AbortError") return;
         if (!cancelled) {
-          setLoadError(copy.loadError);
+			setLoadError(copyRef.current.loadError);
         }
       } finally {
         if (!cancelled) {
@@ -190,7 +192,7 @@ export default function JapaneseHomeScreen() {
       cancelled = true;
       controller.abort();
     };
-  }, [copy.loadError, copy.signInRequired, getCurrentSession, refresh, session, status, submittedQuery]);
+	}, [getCurrentSession, refresh, session, status, submittedQuery]);
 
   useEffect(() => {
     let active = true;

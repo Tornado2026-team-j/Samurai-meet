@@ -421,6 +421,10 @@ Request body:
 
 #### 募集カード
 
+`POST /api/v1/recruitments/classify`
+
+募集確認前に、認証済みユーザーが入力した`description`を送ります。サーバーだけが`GEMINI_API_KEY`を使用して`gemini-3.1-flash-lite`へ分類を依頼し、`{ "data": { "category": "Food" | "Places" | "Activity" | "Other" } }`を返します。モバイルアプリはGeminiキーを保持しません。分類不能・モデル応答が契約外・Gemini障害時は公開へ進ませず、`502 recruitment_classification_failed`を返します。ユーザーごとは2秒に1回までで、超過時は`429 recruitment_classification_rate_limited`です。APIキー未設定は`503 recruitment_classification_unavailable`です。
+
 `POST /api/v1/recruitments`
 
 Request body:

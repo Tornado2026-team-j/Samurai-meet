@@ -7,25 +7,6 @@ import { calculateFinishTime } from "../utils/time";
 
 const JST_TIME_ZONE = "Asia/Tokyo";
 
-const CATEGORY_RULES: ReadonlyArray<{
-  pattern: RegExp;
-  category: MatchCategory;
-}> = [
-  {
-    pattern: /food|eat|restaurant|dinner|lunch|takoyaki|sushi|ramen/i,
-    category: "Food",
-  },
-  {
-    pattern:
-      /place|heritage|historic|temple|shrine|castle|traditional|culture|museum|gallery|art/i,
-    category: "Places",
-  },
-  {
-    pattern: /activity|sport|hike|hiking|walk|cycling|outdoor/i,
-    category: "Activity",
-  },
-];
-
 const TAG_RULES: ReadonlyArray<{ pattern: RegExp; tag: string }> = [
   { pattern: /takoyaki/i, tag: "Takoyaki" },
   { pattern: /anime|manga/i, tag: "Anime" },
@@ -52,13 +33,6 @@ function extractMockTags(activity: string): string[] {
   }
 
   return tags.slice(0, 2);
-}
-
-function classifyMockActivity(activity: string): MatchCategory {
-  return (
-    CATEGORY_RULES.find(({ pattern }) => pattern.test(activity))?.category ??
-    "Other"
-  );
 }
 
 function formatExpiry(draft: RecruitmentDraft): string {
@@ -90,12 +64,13 @@ function formatExpiry(draft: RecruitmentDraft): string {
   return `${date} at ${calculateFinishTime(draft.startTime, draft.durationHours)}`;
 }
 
-export function buildMockRecruitmentPreview(
-  draft: RecruitmentDraft,
+export function buildRecruitmentPreview(
+	draft: RecruitmentDraft,
+	category: MatchCategory,
 ): RecruitmentPreview {
-  return {
-    previewId: "mock-recruitment-preview",
-    category: classifyMockActivity(draft.activity),
+	return {
+		previewId: "mock-recruitment-preview",
+		category,
     tags: extractMockTags(draft.activity),
     expiresAt: formatExpiry(draft),
     author: {

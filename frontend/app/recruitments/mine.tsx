@@ -132,6 +132,8 @@ export default function MyRecruitmentsScreen() {
   const initialLoadStarted = useRef(false);
   const hasLoaded = useRef(false);
   const copy = COPY[language ?? "ja"];
+	const copyRef = useRef(copy);
+	copyRef.current = copy;
 
   useEffect(() => {
     let active = true;
@@ -161,7 +163,7 @@ export default function MyRecruitmentsScreen() {
           setApplications([]);
           setRefreshing(false);
           setLoadState("error");
-          setLoadError(copy.loginRequired);
+			setLoadError(copyRef.current.loginRequired);
         }
         return;
       }
@@ -201,7 +203,7 @@ export default function MyRecruitmentsScreen() {
         if (error instanceof Error && error.name === "AbortError") return;
         if (!cancelled) {
           setLoadState(initialLoad ? "error" : "ready");
-          setLoadError(copy.loadError);
+			setLoadError(copyRef.current.loadError);
         }
       } finally {
         if (!cancelled) setRefreshing(false);
@@ -213,7 +215,7 @@ export default function MyRecruitmentsScreen() {
       cancelled = true;
       controller.abort();
     };
-  }, [copy.loadError, copy.loginRequired, getCurrentSession, refresh, session, status]);
+	}, [getCurrentSession, refresh, session, status]);
 
   const loadManagementRef = useRef(loadManagement);
   loadManagementRef.current = loadManagement;
