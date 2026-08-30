@@ -2,7 +2,7 @@
 
 ## 現在の実装状態
 
-現行のバックエンドはRESTのチャット一覧・暗号文メッセージ送信・履歴・既読、短命transport token、および**WebSocketによるリアルタイム配送**（`backend/internal/chat/websocket.go`、単一APIインスタンス前提）を持つ。チャット画面の接続と再接続制御はフロント側で未実装。QUIC／WebTransportは将来の標準候補で、以下のQUIC項目は将来仕様である。
+現行のバックエンドはRESTのチャット一覧・暗号文メッセージ送信・履歴・既読、短命transport token、および**WebSocketによるリアルタイム配送**（`backend/internal/chat/websocket.go`）を持つ。複数APIインスタンス構成は PostgreSQL `LISTEN/NOTIFY` fan-out（`backend/internal/chat/cluster.go`）で対応済み。チャット画面の接続と再接続制御はフロント側で未実装。QUIC／WebTransportは将来の標準候補で、以下のQUIC項目は将来仕様である。
 
 ## 1. 対象
 
@@ -20,7 +20,8 @@
 | 接続状態 | `frontend/hooks/useChatTransport.ts` | TypeScript |
 | QUIC クライアント（予定） | `frontend/services/quic.ts`（未実装） | TypeScript + native module |
 | API・履歴 | `frontend/services/api.ts` | TypeScript |
-| 接続認証・配送・順序確定 | `backend/internal/chat/websocket.go` / `backend/internal/chat/hub.go` | Go（WebSocket配送 実装済み。単一インスタンス前提） |
+| 接続認証・配送・順序確定 | `backend/internal/chat/websocket.go` / `backend/internal/chat/hub.go` | Go（WebSocket配送 実装済み） |
+| 複数インスタンス配送 | `backend/internal/chat/cluster.go` | Go（PostgreSQL `LISTEN/NOTIFY` fan-out 実装済み） |
 | QUIC配送（将来） | `backend/internal/chat/quic.go`（未実装） | Go（標準候補） |
 | 保存・取得・既読 | `backend/internal/chat/service.go` / `backend/internal/httpapi/chat.go` | Go（REST実装済み） |
 
@@ -29,6 +30,7 @@
 - `matches.status = accepted` の参加者だけが利用できる。
 - ブロックまたは運営停止された場合は送受信を停止する。
 - マッチ成立前の自由チャットは提供しない。
+- メッセージ送信はユーザー単位のトークンバケットでレート制限する（REST/WebSocket 共通、`chat.Service` 層で実施）。既定は容量15・補充60/分（`CHAT_SEND_BURST` / `CHAT_SEND_REFILL_PER_MINUTE`）。超過時は REST が `429 chat_rate_limited` ＋ `Retry-After`、WebSocket が `{"type":"error","code":"rate_limited","retry_after_seconds":N}`（接続は維持し、`closing` は送らない）。
 - 将来のリアルタイム配送は QUIC（HTTP/3 WebTransportを含む）を標準候補とし、`aud = samurai-meet-chat` のChat Tokenだけを利用する。現行はRESTである。
 - Refresh Tokenを将来のtransportへ送信しない。
 
@@ -42,7 +44,7 @@ MVP のリアルタイム配送は WebSocket。QUIC / HTTP/3 WebTransport は将
 {"type":"auth","chat_token":"<JWS>"}
 ```
 
-サーバーは Chat Token（`aud=samurai-meet-chat`、`chat_id` 一致、`transport=websocket`）とセッション有効性・マッチ・ブロック・チャット状態を検証し、`{"type":"auth.ok","chat_id":"…","token_expires_at":"…"}` を返します。失敗時は `{"type":"error","code":"…"}` の後に接続を閉じます。
+サーバーは Chat Token（`aud=samurai-meet-chat`、`chat_id` 一致、`transport=websocket`）とセッション有効性・マッチ・ブロック・チャット状態を検証し、`{"type":"auth.ok","chat_id":"…","token_seq":N,"token_expires_at":"…"}` を返します。失敗時は `{"type":"error","code":"…"}` の後に接続を閉じます。接続維持中は `token.renew` で Chat Token をローテーションでき（`token_seq` は前進のみ）、期限までに更新しないと heartbeat が `closing(token_expired)` で切断します。
 
 ### クライアント → サーバー
 
@@ -52,19 +54,21 @@ MVP のリアルタイム配送は WebSocket。QUIC / HTTP/3 WebTransport は将
 | `message.read` | `last_message_sequence` |
 | `typing.start` / `typing.stop` | なし |
 | `ping` | なし（`pong` が返る） |
+| `token.renew` | `chat_token`（期限前に取得した新しい Chat Token。`token.renewed` または `error` が返る） |
 
 ### サーバー → クライアント
 
 | type | 用途 |
 | --- | --- |
-| `message.created` | 相手が送信したメッセージ。`message` に REST と同じ形の暗号文メッセージ |
-| `message.ack` | 自分の送信の確定。`message`, `duplicate`（再送で既存を返した場合 true） |
-| `message.read` | 相手の既読。`user_id`, `last_message_sequence` |
+| `message.created` | 新規メッセージ。`message` に REST と同じ形の暗号文メッセージ。送信操作を発行したソケット**以外**の、そのチャットの全ソケットへ配送する（相手の端末に加え、送信者自身の他端末も含む） |
+| `message.ack` | 自分の送信の確定。送信を発行したソケットにだけ返す。`message`, `duplicate`（再送で既存を返した場合 true） |
+| `message.read` | 既読の前進。`user_id`, `last_message_sequence`。既読操作を発行したソケット以外の全ソケットへ配送する（相手の端末＋既読した本人の他端末） |
 | `typing` | `user_id`, `state`（`start` / `stop`） |
-| `error` | `code`, `message`。回復不能な `code`（`blocked` / `chat_not_available` / `chat_closed` / `forbidden`）の後は `closing` が続く |
-| `closing` | `reason`。サーバーが接続を閉じる直前に一度だけ送る |
+| `token.renewed` | `token_seq`, `token_expires_at`。`token.renew` 成功時。接続の期限がここまで前進する |
+| `error` | `code`, `message`。回復不能な `code`（`blocked` / `chat_not_available` / `forbidden`）の後は `closing` が続く。`rate_limited`（`retry_after_seconds` を伴う）/ `stale_token` / `invalid_token` は一時的で `closing` は続かない |
+| `closing` | `reason`。サーバーが接続を閉じる直前に一度だけ送る。`token_expired` は期限までに `token.renew` されなかった場合 |
 
-送信メッセージには `client_message_id` を付け、再送されても二重登録しません（`message.send` は既存の REST `SendMessage` と同じ冪等性）。`message.created` / `message.read` は REST 経由の送信・既読でも接続中の相手へ配送されます。
+送信メッセージには `client_message_id` を付け、再送されても二重登録しません（`message.send` は既存の REST `SendMessage` と同じ冪等性）。`message.created` / `message.read` は REST 経由の送信・既読でも接続中の全ソケットへ配送されます。配送の除外はユーザー単位ではなくソケット単位のため、同一ユーザーが複数端末で接続していても、送信・既読を行っていない他端末は更新を受け取れます（`typing` だけは自端末のエコーを避けるためユーザー単位で除外）。
 
 ## 5. 切断・再接続
 
@@ -97,11 +101,13 @@ QUICの理由、JWS claimの検証、heartbeat、失敗時の自動再送、WebS
 - `POST /matches/{id}/meeting`
 - `GET|POST /meetings/{id}/proximity`
 - QUIC endpoint：将来、環境ごとに設定する（`chat_id`単位。HTTP/3 WebTransportの場合はHTTPS URLとして提供）
-- テーブル：`matches`、`chat_threads`、`messages`、`chat_read_states`、`photos`
+- テーブル：`matches`、`chat_threads`、`messages`、`chat_read_states`、`chat_token_sequences`、`chat_message_deletions`、`photos`
 
 RESTのメッセージ送信は`accepted`マッチの参加者だけが利用でき、本文ではなくBase64URLのAES-256-GCM暗号文を保存します。`client_message_id`で再送を冪等化し、WebSocket未接続・再接続直後は`sequence` cursorで`GET /chats/{id}/messages?after=`を使って補完します。サーバーは暗号文を復号しません。
 
-WebSocket配送は現状**単一APIインスタンス前提のin-memoryハブ**（`hub.go`）です。複数インスタンスで動かす場合は、A で送ったメッセージが B の接続へ届きません。PostgreSQL `LISTEN/NOTIFY` によるfan-out（chat-transport.md §6）が次の作業で、それまではチャット配送を1インスタンスに寄せるか、クライアントのRESTポーリングで許容します。
+保持期間（既定180日・`CHAT_MESSAGE_RETENTION_DAYS`）を過ぎたメッセージは6時間ごとのスイープで`deleted_at`を打ち、暗号文・nonceを消去し、`chat_message_deletions`へ監査行を残します。以後は履歴・未読数・配送のいずれにも現れません。
+
+WebSocketの配送はプロセス内ハブ（`hub.go`）で行い、複数インスタンス構成では PostgreSQL `LISTEN/NOTIFY` fan-out（`cluster.go`）が各インスタンスの `message.created` / `message.read` / `typing` を他インスタンスのローカルソケットへ再配送します。NOTIFY のペイロードは `sequence` などの最小情報だけで、受信側が暗号文行を DB から再取得します（8000 byte 上限内）。発行元インスタンスのイベントは自分では再配送しません。NOTIFY 取りこぼし時はクライアントが再接続時に `sequence` cursor で REST 補完します。単一インスタンス運用では `StartClusterFanout` を呼ばなければ NOTIFY を出しません。`LISTEN` 用に専用のプールコネクションを1本占有します。
 
 ## 8. 受け入れ条件
 
@@ -111,14 +117,16 @@ WebSocket配送は現状**単一APIインスタンス前提のin-memoryハブ**�
 - 同じ送信操作を再試行しても二重メッセージにならない。
 - 既読状態が相手へ反映される。
 - ブロック後は新規メッセージを送受信できない。
+- 送信レート上限を超えると REST は 429、WebSocket は `rate_limited` エラーフレームで拒否し、接続は維持される（統合テスト `TestChatSendRateLimit`）。
+- セッション失効・マッチ終了（`completed`/`cancelled`）を heartbeat で検知し `closing` を送って切断する（統合テスト `TestChatWebSocketClosesOnSessionRevoke` / `TestChatWebSocketClosesOnMatchCompletion`）。失効していない相手側の接続は維持される。
+- 保持期間を過ぎたメッセージは暗号文が消去され、履歴・未読・配送から除外され、削除監査が残る（統合テスト `TestChatMessageRetentionPurge`）。
 
 ## 9. 要確認
 
-- メッセージの保存期間と削除後の監査ログ。
+- メッセージの保存期間の**具体日数**（実装は完了。既定180日・`CHAT_MESSAGE_RETENTION_DAYS`で調整、期限超過で暗号文消去＋`chat_message_deletions`へ監査。最終日数は運用・法務判断）。
 - E2EE の採用範囲と通報時の検査方法。
 - 既読を相手へ必ず通知するか。
 - タイピング表示、通知、オフライン送信の MVP 対象可否。
-- Expo実機での再接続負荷・失効確認（バックエンドのWebSocket配送は実装済み・統合テスト済み）。
+- Expo実機での再接続負荷・失効確認は [chat-load-test.md](chat-load-test.md) の手順書で実施する（ローンチ前QAゲート。バックエンドのWebSocket配送・失効・ローテーションは実装済み・統合テスト済み）。
 - 複数APIインスタンス構成にするタイミングと、その際の `LISTEN/NOTIFY` fan-out 実装。
-- Chat Token（2分TTL）の接続中ローテーション（`token_seq`）。現状は接続確立時のみ検証し、接続維持はセッション有効性のheartbeatに委ねている。
 - 将来QUICを採用する場合の、パケット損失、0-RTTリプレイ、JWSの期限・世代再利用、メッセージ自動再送の上限とバックオフ。
