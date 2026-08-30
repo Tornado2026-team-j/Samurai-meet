@@ -90,12 +90,13 @@ MVP のリアルタイム配送は WebSocket。QUIC / HTTP/3 WebTransport は将
 
 ## 6. 暗号化
 
-- E2EE を採用する範囲は要確認だが、採用する場合は TypeScript / native crypto でクライアント暗号化する。
-- API へは平文本文ではなく暗号化 payload、nonce、key version を送る。
-- Go API は配送・権限・保存を担当し、暗号鍵を持たない設計を優先する。
+- 現行のチャット本文キーは `frontend/services/chat.ts` の `chatKey(chatID)` が公開される `chat_id` から導出するため、暗号文を送っていても**厳密な E2EE とは扱わない**。サーバーは現在復号していないが、`chat_id` を知るサーバーが同じ導出を再現できるためである。
+- 厳密な E2EE の成立には、チャットIDから導出しない端末間の鍵共有（Key-B／X25519等）と、鍵ローテーション・新規端末参加・失効の契約が先に必要である。この不足を埋めるためにサーバーへ復号鍵や平文を送る変更は行わない。
+- API へは平文本文ではなく暗号化 payload、nonce、key version を送る。Go API は配送・権限・保存を担当し、暗号鍵を持たない境界を維持する。
+- 厳密 E2EE と、サーバーで平文を必要とする自動モデレーション／翻訳は同時には成立しない。現行のサーバーGemini処理は募集分類だけであり、チャット本文・画像のModeration／翻訳には使わない。将来必要な場合は、クライアント処理またはユーザーが明示的に通報したデータだけを対象にする別途同意・復号境界を設計する。
 - QUIC / TLS 1.3が通信路の暗号化・完全性を担い、Chat Token（JWS）がチャット単位の認証・認可・接続管理を担う、という構成は将来仕様である。JWSの署名を通信路暗号化の代わりにしない。
 - 0-RTTでは状態変更を受け付けず、JWSの期限・対象chat・セッション・token世代と`client_message_id`の冪等性でリプレイと重複登録を抑止する。
-- 暗号化方式、鍵共有、検索・通報時の扱いはセキュリティレビューで確定する。
+- 暗号化方式、端末間鍵共有、検索・通報時の扱いはセキュリティレビューで確定する。厳密 E2EE を採用するまでは、現在のチャット暗号を E2EE の証拠として表示・文書化してはならない。
 
 QUICの理由、JWS claimの検証、heartbeat、失敗時の自動再送、WebSocketを例外採用する条件は [チャット通信トークン仕様](chat-transport.md) に従います。
 
@@ -114,9 +115,9 @@ QUICの理由、JWS claimの検証、heartbeat、失敗時の自動再送、WebS
 - QUIC endpoint：将来、環境ごとに設定する（`chat_id`単位。HTTP/3 WebTransportの場合はHTTPS URLとして提供）
 - テーブル：`matches`、`chat_threads`、`messages`、`chat_read_states`、`chat_token_sequences`、`chat_message_deletions`、`chat_attachments`、`photos`
 
-RESTのメッセージ送信・`transport-token`発行・WebSocket接続は`accepted`マッチの参加者だけが利用できます。`completed`マッチは一覧・履歴・既読のみで、送信と接続は`chat_not_available`で拒否されます。本文ではなくBase64URLのAES-256-GCM暗号文を保存します。`client_message_id`で再送を冪等化し、WebSocket未接続・再接続直後は`sequence` cursorで`GET /chats/{id}/messages?after=`を使って補完します。サーバーは暗号文を復号しません。
+RESTのメッセージ送信・`transport-token`発行・WebSocket接続は`accepted`マッチの参加者だけが利用できます。`completed`マッチは一覧・履歴・既読のみで、送信と接続は`chat_not_available`で拒否されます。本文ではなくBase64URLのAES-256-GCM暗号文を保存します。`client_message_id`で再送を冪等化し、WebSocket未接続・再接続直後は`sequence` cursorで`GET /chats/{id}/messages?after=`を使って補完します。サーバーは暗号文を復号しませんが、現行キー導出は厳密E2EEを満たさないため、この点を安全性の根拠にしてはなりません。
 
-写真添付は2段階です。まず`POST /chats/{id}/attachments`へAES-256-GCM暗号文をraw bodyでアップロードし（メタは`X-Chat-Attachment-*`ヘッダ）、次に`POST /chats/{id}/messages`の`attachment_id`で1つのメッセージへ結び付けます。参照できるのは同一チャットで自分がアップロードした未参照の添付だけです。`GET /messages`とWebSocketの`message.created` / `message.ack`は、添付付きメッセージに`attachment`オブジェクトを含めます。サーバーは画像鍵を持たず、`nonce` / `algorithm` / `key_version`を不透明メタデータとして保存するだけで、EXIF除去はクライアントの責務です。暗号文上限は`IMAGE_MAX_UPLOAD_BYTES`（既定20MiB）、許可MIMEは`image/jpeg` / `image/png` / `image/webp` / `application/octet-stream`。メッセージから参照されない添付は約24時間後にスイープで削除します。取得は`accepted`/`completed`マッチの参加者のみ、ブロック時は不可です。詳細は [写真仕様](photos.md)。
+写真添付は2段階です。まず`POST /chats/{id}/attachments`へAES-256-GCM暗号文をraw bodyでアップロードし（メタは`X-Chat-Attachment-*`ヘッダ）、次に`POST /chats/{id}/messages`の`attachment_id`で1つのメッセージへ結び付けます。参照できるのは同一チャットで自分がアップロードした未参照の添付だけです。`GET /messages`とWebSocketの`message.created` / `message.ack`は、添付付きメッセージに`attachment`オブジェクトを含めます。サーバーは画像鍵を持たず、`nonce` / `algorithm` / `key_version`を不透明メタデータとして保存するだけで、EXIF除去はクライアントの責務です。暗号文上限は`IMAGE_MAX_UPLOAD_BYTES`（既定20MiB）、許可MIMEは`image/jpeg` / `image/png` / `image/webp` / `application/octet-stream`。メッセージから参照されない添付は約24時間後にスイープで削除します。取得は`accepted`/`completed`マッチの参加者のみ、ブロック時は不可です。なお、添付の鍵生成・相手への共有とクライアントの送受信UIは未実装であり、現行の本文キー導出と組み合わせて厳密E2EEとは扱いません。詳細は [写真仕様](photos.md)。
 
 保持期間（既定180日・`CHAT_MESSAGE_RETENTION_DAYS`）を過ぎたメッセージは6時間ごとのスイープで`deleted_at`を打ち、暗号文・nonceを消去し、`chat_message_deletions`へ監査行を残します。写真添付が結び付いている場合は同じスイープで添付行も`deleted_at`を打ち（取得エンドポイントは即座に404）、次の添付スイープが暗号文BLOBと行を削除します。以後は履歴・未読数・配送のいずれにも現れません。
 
@@ -126,7 +127,7 @@ WebSocketの配送はプロセス内ハブ（`hub.go`）で行い、複数イン
 
 - マッチ成立後だけチャット画面へ入れる。
 - `completed` マッチではチャット画面は履歴閲覧・既読のみ（入力欄を無効化し、WebSocket 接続と `transport-token` 取得を行わない）。
-- WebSocket接続中の相手へメッセージがリアルタイム配送される（バックエンド実装済み・統合テスト済み。フロント接続は未）。
+- WebSocket接続中の相手へメッセージがリアルタイム配送される（バックエンド実装済み・統合テスト済み。フロントは初回接続経路のみで、再接続・token更新は未実装）。
 - WebSocket切断後に再接続すると未同期メッセージを `sequence` cursor で取得できる（フロント側の受入条件）。
 - 同じ送信操作を再試行しても二重メッセージにならない。
 - 既読状態が相手へ反映される。
@@ -138,7 +139,7 @@ WebSocketの配送はプロセス内ハブ（`hub.go`）で行い、複数イン
 ## 9. 要確認
 
 - メッセージの保存期間の**具体日数**（実装は完了。既定180日・`CHAT_MESSAGE_RETENTION_DAYS`で調整、期限超過で暗号文消去＋`chat_message_deletions`へ監査。最終日数は運用・法務判断）。
-- E2EE の採用範囲と通報時の検査方法。
+- 厳密 E2EE の鍵共有・ローテーション・端末失効と、通報時の検査方法。サーバーAIによる本文／画像Moderation・翻訳は、厳密E2EEを維持する限り現行境界へ追加しない。
 - 既読を相手へ必ず通知するか。
 - タイピング表示、通知、オフライン送信の MVP 対象可否。
 - Expo実機での再接続負荷・失効確認は [chat-load-test.md](chat-load-test.md) の手順書で実施する（ローンチ前QAゲート。バックエンドのWebSocket配送・失効・ローテーションは実装済み・統合テスト済み）。

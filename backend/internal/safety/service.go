@@ -18,7 +18,7 @@ import (
 var (
 	ErrInvalidReport  = errors.New("invalid report")
 	ErrInvalidBlock   = errors.New("invalid block")
-	ErrTargetNotFound = errors.New("target user not found")
+	ErrTargetNotFound = errors.New("report target not found")
 	ErrSelfBlock      = errors.New("cannot block yourself")
 	ErrBlockNotFound  = errors.New("block not found")
 )
@@ -84,17 +84,15 @@ func (s *Service) CreateReport(ctx context.Context, reporterID string, input Rep
 	if !utf8.ValidString(input.Comment) || utf8.RuneCountInString(input.Comment) > maxReportComment {
 		return Report{}, ErrInvalidReport
 	}
-	if input.TargetType == "user" {
-		if input.TargetID == reporterID {
-			return Report{}, ErrInvalidReport
-		}
-		exists, err := s.userExists(ctx, input.TargetID)
-		if err != nil {
-			return Report{}, err
-		}
-		if !exists {
-			return Report{}, ErrTargetNotFound
-		}
+	if input.TargetType == "user" && input.TargetID == reporterID {
+		return Report{}, ErrInvalidReport
+	}
+	reportable, err := s.reportTargetExists(ctx, reporterID, input.TargetType, input.TargetID)
+	if err != nil {
+		return Report{}, err
+	}
+	if !reportable {
+		return Report{}, ErrTargetNotFound
 	}
 
 	id, err := randomID()
@@ -203,6 +201,78 @@ func (s *Service) userExists(ctx context.Context, userID string) (bool, error) {
 	var exists bool
 	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM users WHERE id=$1 AND status='active')`, userID).Scan(&exists)
 	return exists, err
+}
+
+// reportTargetExists applies object-level authorization before a report is
+// persisted. Reports are intentionally accepted for objects the reporter can
+// reasonably have seen, but never for arbitrary IDs outside that scope.
+//
+// We return the same false result for an unknown object and an unauthorized
+// object so this endpoint does not become an object-existence oracle.
+func (s *Service) reportTargetExists(ctx context.Context, reporterID, targetType, targetID string) (bool, error) {
+	switch targetType {
+	case "user":
+		return s.userExists(ctx, targetID)
+	case "recruitment_card":
+		var exists bool
+		err := s.db.QueryRowContext(ctx, `
+			SELECT EXISTS(
+				SELECT 1
+				FROM recruitment_cards r
+				WHERE r.id=$1
+				  AND r.owner_user_id<>$2
+				  AND (
+						r.status IN ('open','matched')
+						OR EXISTS(
+							SELECT 1 FROM matches m
+							WHERE m.card_id=r.id
+							  AND (m.owner_user_id=$2 OR m.requester_user_id=$2)
+						)
+				  )
+				  AND NOT EXISTS(
+					SELECT 1 FROM blocks b
+					WHERE (b.blocker_user_id=$2 AND b.blocked_user_id=r.owner_user_id)
+					   OR (b.blocker_user_id=r.owner_user_id AND b.blocked_user_id=$2)
+				  )
+			)`, targetID, reporterID).Scan(&exists)
+		return exists, err
+	case "message":
+		var exists bool
+		err := s.db.QueryRowContext(ctx, `
+			SELECT EXISTS(
+				SELECT 1
+				FROM messages msg
+				JOIN chat_threads c ON c.id=msg.chat_id
+				JOIN matches m ON m.id=c.match_id
+				WHERE msg.id=$1
+				  AND msg.deleted_at IS NULL
+				  AND (m.owner_user_id=$2 OR m.requester_user_id=$2)
+			)`, targetID, reporterID).Scan(&exists)
+		return exists, err
+	case "photo":
+		var exists bool
+		err := s.db.QueryRowContext(ctx, `
+			SELECT EXISTS(
+				SELECT 1
+				FROM photos p
+				WHERE p.id=$1
+				  AND p.owner_user_id<>$2
+				  AND p.visibility='profile'
+				  AND p.deleted_at IS NULL
+				  AND EXISTS(SELECT 1 FROM users u WHERE u.id=p.owner_user_id AND u.status='active')
+				UNION ALL
+				SELECT 1
+				FROM chat_attachments a
+				JOIN chat_threads c ON c.id=a.chat_id
+				JOIN matches m ON m.id=c.match_id
+				WHERE a.id=$1
+				  AND a.deleted_at IS NULL
+				  AND (m.owner_user_id=$2 OR m.requester_user_id=$2)
+			)`, targetID, reporterID).Scan(&exists)
+		return exists, err
+	default:
+		return false, nil
+	}
 }
 
 func randomID() (string, error) {

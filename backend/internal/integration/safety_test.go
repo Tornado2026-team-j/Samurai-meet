@@ -102,3 +102,100 @@ func TestSafetyReportAndBlock(t *testing.T) {
 		t.Fatalf("second Unblock error = %v, want ErrBlockNotFound", err)
 	}
 }
+
+func TestSafetyReportTargetAuthorization(t *testing.T) {
+	database := openIsolatedDatabase(t)
+	ctx := context.Background()
+	now := time.Date(2026, time.August, 27, 10, 0, 0, 0, time.UTC)
+	stamp := now.Format(time.RFC3339Nano)
+
+	reporterID := randomID(t)
+	targetID := randomID(t)
+	outsiderID := randomID(t)
+	for _, u := range []struct{ id, google string }{
+		{reporterID, "target-auth-reporter-" + reporterID},
+		{targetID, "target-auth-owner-" + targetID},
+		{outsiderID, "target-auth-outsider-" + outsiderID},
+	} {
+		if _, err := database.ExecContext(ctx, `
+			INSERT INTO users (id,google_subject_id,display_name,status,created_at,updated_at)
+			VALUES ($1,$2,$3,'active',$4,$4)`, u.id, u.google, "User "+u.id[:6], stamp); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	cardID := randomID(t)
+	if _, err := database.ExecContext(ctx, `
+		INSERT INTO recruitment_cards (id,owner_user_id,category,available_date,start_time,end_time,timezone,visibility_radius_km,status,expires_at,created_at,updated_at)
+		VALUES ($1,$2,'Food','2026-08-28','18:00','20:00','Asia/Tokyo',3,'matched',$3,$4,$4)`,
+		cardID, targetID, now.Add(24*time.Hour).Format(time.RFC3339Nano), stamp); err != nil {
+		t.Fatal(err)
+	}
+	closedCardID := randomID(t)
+	if _, err := database.ExecContext(ctx, `
+		INSERT INTO recruitment_cards (id,owner_user_id,category,available_date,start_time,end_time,timezone,visibility_radius_km,status,expires_at,created_at,updated_at)
+		VALUES ($1,$2,'Food','2026-08-28','18:00','20:00','Asia/Tokyo',3,'closed',$3,$4,$4)`,
+		closedCardID, targetID, now.Add(24*time.Hour).Format(time.RFC3339Nano), stamp); err != nil {
+		t.Fatal(err)
+	}
+	matchID := randomID(t)
+	if _, err := database.ExecContext(ctx, `
+		INSERT INTO matches (id,card_id,requester_user_id,owner_user_id,status,matched_at,created_at,updated_at)
+		VALUES ($1,$2,$3,$4,'accepted',$5,$5,$5)`, matchID, cardID, reporterID, targetID, stamp); err != nil {
+		t.Fatal(err)
+	}
+	chatID := randomID(t)
+	if _, err := database.ExecContext(ctx, `
+		INSERT INTO chat_threads (id,match_id,created_at,updated_at) VALUES ($1,$2,$3,$3)`, chatID, matchID, stamp); err != nil {
+		t.Fatal(err)
+	}
+	messageID := randomID(t)
+	if _, err := database.ExecContext(ctx, `
+		INSERT INTO messages (id,chat_id,sender_user_id,client_message_id,ciphertext,nonce,algorithm,key_version,created_at)
+		VALUES ($1,$2,$3,$4,$5,$6,'AES-256-GCM','chat-mvp-v1',$7)`,
+		messageID, chatID, targetID, randomID(t), "ciphertext", "nonce", stamp); err != nil {
+		t.Fatal(err)
+	}
+	photoID := randomID(t)
+	if _, err := database.ExecContext(ctx, `
+		INSERT INTO photos (id,owner_user_id,visibility,storage_path,cipher_sha256,nonce,algorithm,key_version,wrapped_image_key,wrapping_algorithm,created_at)
+		VALUES ($1,$2,'profile',$3,'hash','nonce','AES-256-GCM','v1','wrapped','RSA-OAEP-SHA256',$4)`,
+		photoID, targetID, "report-target-"+photoID, stamp); err != nil {
+		t.Fatal(err)
+	}
+	privatePhotoID := randomID(t)
+	if _, err := database.ExecContext(ctx, `
+		INSERT INTO photos (id,owner_user_id,visibility,storage_path,cipher_sha256,nonce,algorithm,key_version,wrapped_image_key,wrapping_algorithm,created_at)
+		VALUES ($1,$2,'private',$3,'hash','nonce','AES-256-GCM','v1','wrapped','RSA-OAEP-SHA256',$4)`,
+		privatePhotoID, targetID, "report-target-private-"+privatePhotoID, stamp); err != nil {
+		t.Fatal(err)
+	}
+
+	svc := safety.NewService(database)
+	for _, target := range []struct{ kind, id string }{
+		{"recruitment_card", cardID},
+		{"message", messageID},
+		{"photo", photoID},
+	} {
+		if _, err := svc.CreateReport(ctx, reporterID, safety.ReportInput{
+			TargetType: target.kind, TargetID: target.id, Reason: "other",
+		}, now); err != nil {
+			t.Fatalf("authorized %s report error = %v", target.kind, err)
+		}
+	}
+
+	for _, target := range []struct{ reporter, kind, id string }{
+		{outsiderID, "message", messageID},
+		{outsiderID, "photo", privatePhotoID},
+		{outsiderID, "recruitment_card", closedCardID},
+		{reporterID, "message", randomID(t)},
+		{reporterID, "photo", randomID(t)},
+		{reporterID, "recruitment_card", randomID(t)},
+	} {
+		if _, err := svc.CreateReport(ctx, target.reporter, safety.ReportInput{
+			TargetType: target.kind, TargetID: target.id, Reason: "other",
+		}, now); !errors.Is(err, safety.ErrTargetNotFound) {
+			t.Fatalf("unauthorized/unknown %s report error = %v, want ErrTargetNotFound", target.kind, err)
+		}
+	}
+}

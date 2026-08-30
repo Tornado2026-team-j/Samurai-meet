@@ -570,11 +570,13 @@ DBには会合中の参加者ごと・方式ごとに最新1件だけを保持�
 | POST | `/api/v1/blocks` | Access Token | ユーザーをブロック（冪等、204） |
 | DELETE | `/api/v1/blocks/{user_id}` | Access Token | ブロック解除（204、未ブロックは404） |
 
-通報bodyは`{"target_type","target_id","reason","comment"}`。`target_type`は`user` / `recruitment_card` / `message` / `photo`、`reason`は`nuisance` / `harassment` / `impersonation` / `inappropriate_photo` / `dangerous` / `other`、`comment`は任意で最大1000 Unicode（サーバー上限2000）。自分自身・存在しないユーザーへの通報は拒否します。同一通報者×同一対象で未処理（`received` / `reviewing`）の通報がある場合は、新規作成せず既存の通報を`data`に入れて201で返します。通報者情報は対象者へ返しません。ブロックは`0019`の`blocks`テーブルを使い、`matching` / `chat` が既にアクセス制御で参照しています。運営キュー（`GET/PATCH /admin/reports`）と`audit_logs`は次の作業です。
+通報bodyは`{"target_type","target_id","reason","comment"}`。`target_type`は`user` / `recruitment_card` / `message` / `photo`、`reason`は`nuisance` / `harassment` / `impersonation` / `inappropriate_photo` / `dangerous` / `other`、`comment`は任意で最大2000 Unicode。自分自身・存在しない対象・報告者が閲覧権限を持たない対象への通報は拒否します。メッセージはチャット参加者、募集カードは公開中または報告者が参加したマッチ、写真は公開プロフィール画像または報告者が参加するチャット添付だけを対象にできます。未知対象と権限外対象は同じ`target_not_found`系の応答へ畳み込み、対象存在の推測に使えないようにします。同一通報者×同一対象で未処理（`received` / `reviewing`）の通報がある場合は、新規作成せず既存の通報を`data`に入れて201で返します。通報者情報は対象者へ返しません。ブロックは`0019`の`blocks`テーブルを使い、`matching` / `chat` が既にアクセス制御で参照しています。運営キュー（`GET/PATCH /admin/reports`）と`audit_logs`は次の作業です。
+
+チャット本文・チャット添付は暗号文のまま保存し、サーバーAIのModeration／翻訳は実行しません。`frontend/services/chat.ts`の現行本文キーは`chat_id`から導出されるため、サーバーが現在復号していないことだけでは厳密E2EEの証明になりません。厳密E2EEを成立させる端末間鍵共有・ローテーション・通報時の明示的同意境界が確定するまで、サーバーへ平文または復号鍵を追加してはなりません。
 
 ### 6.11 未実装業務API
 
-本人確認（Stripe Identity等）、評価、チャット内写真送信、通報の運営キューは引き続き予定です。Stripe Identityを採用する場合も、Stripe Webhookの署名検証・イベント冪等性・対象ユーザー紐付けが成功するまで`identity_status=verified`へ遷移させません。画像平文、Key-A、Key-B、Recovery Key、Refresh TokenをAPIログへ出さない不変条件は全機能に適用します。
+本人確認（Stripe Identity等）、評価、チャット添付のクライアント送受信UI、通報の運営キューは引き続き予定です。バックエンドのチャット添付暗号文保存APIと保持期間スイープは実装済みですが、現行チャット本文キー導出および添付鍵共有は厳密E2EEの完成契約ではありません。Stripe Identityを採用する場合も、Stripe Webhookの署名検証・イベント冪等性・対象ユーザー紐付けが成功するまで`identity_status=verified`へ遷移させません。画像平文、Key-A、Key-B、Recovery Key、Refresh TokenをAPIログへ出さない不変条件は全機能に適用します。
 
 ## 7. クライアント更新手順
 
