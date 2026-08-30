@@ -86,7 +86,7 @@ export type DeviceTransfer = {
   target_public_key_fingerprint: string;
   wrapped_master_key?: string;
   wrapping_algorithm?: string;
-  status: 'pending' | 'approved' | 'completed' | 'rejected' | 'expired';
+  status: 'pending' | 'approved' | 'completed' | 'rejected' | 'expired' | 'cancelled';
   expires_at: string;
   created_at: string;
   approved_at?: string;
@@ -819,6 +819,13 @@ export async function getDeviceTransferForTarget(session: Session, transferID: s
   const bundle = await ensureDeviceAgreementKey(session);
   const response = await deviceRequest<DeviceTransferResponse>(session, bundle.device, 'GET', `/me/device-transfers/${encodeURIComponent(transferID)}`);
   return parseDeviceTransferResponse(response);
+}
+
+/** Cancels the target device's pending or approved transfer request. */
+export async function cancelDeviceTransfer(session: Session, transferID: string): Promise<void> {
+  const device = await ensureDeviceKeyB(session);
+  await deviceRequest<unknown>(session, device, 'DELETE', `/me/device-transfers/${encodeURIComponent(transferID)}`);
+  await deleteDeviceStoredItem(deviceTransferDraftStorageKey(session.user_id));
 }
 
 export async function completeDeviceTransfer(session: Session, transferID: string): Promise<void> {

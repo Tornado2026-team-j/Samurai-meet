@@ -248,39 +248,42 @@ func TestDeviceRouteIsRegisteredWhenServiceUnavailable(t *testing.T) {
 
 func TestProtectedHandlersRejectMissingAccessToken(t *testing.T) {
 	tests := map[string]http.Handler{
-		"logout all":        logoutAllSessions(nil),
-		"sessions":          listSessions(nil),
-		"revoke session":    revokeSession(nil),
-		"handoff start":     sessionHandoffStart(nil, nil, "development", false),
-		"register options":  passkeyRegisterOptions(nil, nil, nil),
-		"register verify":   passkeyRegisterVerify(nil, nil, nil),
-		"reauth options":    passkeyReauthOptions(nil, nil),
-		"reauth verify":     passkeyReauthVerify(nil, nil),
-		"passkey list":      passkeyList(nil, nil),
-		"passkey remove":    passkeyRemove(nil, nil),
-		"key envelope":      keyEnvelopeList(nil, nil),
-		"key envelope item": keyEnvelopeItem(nil, nil),
-		"devices":           deviceRegistrations(nil, nil),
-		"upload photo":      uploadPhoto(nil, nil, nil),
-		"owned photo":       ownedPhoto(nil, nil, nil),
-		"delete account":    deleteAccount(account.NewService(nil, nil), nil),
-		"profile":           getProfile(nil, nil),
-		"profile patch":     patchProfile(nil, nil),
-		"recruitments":      recruitmentCollection(nil, nil),
-		"recruitment item":  recruitmentItem(nil, nil),
-		"matches":           matchCollection(nil, nil),
-		"match action":      matchAction(nil, nil),
-		"location":          updateLocation(nil, nil),
-		"notifications":     notificationCollection(nil, nil),
-		"notification item": notificationItem(nil, nil),
+		"logout all":                 logoutAllSessions(nil),
+		"logout other":               logoutOtherSessions(nil),
+		"sessions":                   listSessions(nil),
+		"revoke session":             revokeSession(nil),
+		"handoff start":              sessionHandoffStart(nil, nil, "development", false),
+		"register options":           passkeyRegisterOptions(nil, nil, nil),
+		"register verify":            passkeyRegisterVerify(nil, nil, nil),
+		"reauth options":             passkeyReauthOptions(nil, nil),
+		"reauth verify":              passkeyReauthVerify(nil, nil),
+		"passkey list":               passkeyList(nil, nil),
+		"passkey remove":             passkeyRemove(nil, nil),
+		"key envelope":               keyEnvelopeList(nil, nil),
+		"key envelope item":          keyEnvelopeItem(nil, nil),
+		"devices":                    deviceRegistrations(nil, nil),
+		"device transfer collection": deviceTransferCollection(nil, nil, nil),
+		"device transfer cancel":     deviceTransferItem(nil, nil, nil),
+		"upload photo":               uploadPhoto(nil, nil, nil),
+		"owned photo":                ownedPhoto(nil, nil, nil),
+		"delete account":             deleteAccount(account.NewService(nil, nil), nil),
+		"profile":                    getProfile(nil, nil),
+		"profile patch":              patchProfile(nil, nil),
+		"recruitments":               recruitmentCollection(nil, nil),
+		"recruitment item":           recruitmentItem(nil, nil),
+		"matches":                    matchCollection(nil, nil),
+		"match action":               matchAction(nil, nil),
+		"location":                   updateLocation(nil, nil),
+		"notifications":              notificationCollection(nil, nil),
+		"notification item":          notificationItem(nil, nil),
 	}
 	for name, handler := range tests {
 		t.Run(name, func(t *testing.T) {
 			method := http.MethodGet
-			if name == "logout all" || name == "handoff start" || name == "register verify" || name == "reauth verify" || name == "upload photo" || name == "delete account" || name == "profile patch" || name == "recruitments" || name == "match action" || name == "location" || name == "notification item" {
+			if name == "logout all" || name == "logout other" || name == "handoff start" || name == "register verify" || name == "reauth verify" || name == "upload photo" || name == "delete account" || name == "profile patch" || name == "recruitments" || name == "match action" || name == "location" || name == "notification item" {
 				method = http.MethodPost
 			}
-			if name == "delete account" {
+			if name == "delete account" || name == "device transfer cancel" {
 				method = http.MethodDelete
 			}
 			req := httptest.NewRequest(method, "/", nil)

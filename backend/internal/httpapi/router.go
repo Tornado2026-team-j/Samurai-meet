@@ -72,6 +72,7 @@ func NewRouterWithOptions(o RouterOptions) http.Handler {
 		m.HandleFunc(APIV1Prefix+"/auth/refresh", refreshSession(o.Sessions))
 		m.HandleFunc(APIV1Prefix+"/auth/logout", logoutSession(o.Sessions))
 		m.HandleFunc(APIV1Prefix+"/auth/logout-all", logoutAllSessions(o.Sessions))
+		m.HandleFunc(APIV1Prefix+"/me/sessions/logout-other", logoutOtherSessions(o.Sessions))
 		m.HandleFunc(APIV1Prefix+"/me/sessions", listSessions(o.Sessions))
 		m.HandleFunc(APIV1Prefix+"/me/sessions/", revokeSession(o.Sessions))
 	}

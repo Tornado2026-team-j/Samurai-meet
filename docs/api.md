@@ -116,6 +116,7 @@ reauthは既存sessionのユーザーに対するPasskey assertionを検証し�
 | POST | `/api/v1/auth/refresh` | Refresh body | 実装済み |
 | POST | `/api/v1/auth/logout` | Access Token | 実装済み |
 | POST | `/api/v1/auth/logout-all` | Access Token | 実装済み |
+| POST | `/api/v1/me/sessions/logout-other` | Access Token + 直近Passkey（現在の`sid`を除外） | 現在端末を残して他端末のsessionとRefresh Tokenを失効 |
 | GET | `/api/v1/me/sessions` | Access Token | 実装済み |
 | DELETE | `/api/v1/me/sessions/{session_id}` | Access Token | 実装済み |
 
@@ -129,6 +130,8 @@ Refresh request:
 ```
 
 互換のため`refresh_request_id`も受理する。Access TokenはHS256 JWS-JWTで1分、sessionは絶対90日・アイドル30日。Refresh Tokenは32byte乱数で、DBにはhashだけを保存する。更新ごとにrotationし、同じrequest IDだけ30秒再送可能。別request IDの使用済みtokenはreuseとしてsession family全体を失効し、409を返す。
+
+`POST /api/v1/me/sessions/logout-other`は直近Passkey認証を要求する。Access Tokenのclaimsにある現在の`sid`と同じuser_idのsessionを除外し、他のsessionと紐づくRefresh Tokenだけを失効する。成功は204で、同じ要求の再送は安全なno-opとする。有効Access Tokenだけでは実行できない。現在端末を含む全失効とPasskey交換を行う緊急認証ローテーションは未実装であり、現行reauth契約では代替しない。受入条件と状態遷移は [backend/TODO.md](../backend/TODO.md) に固定する。
 
 ### プロフィール（バックエンド実装済み・編集UIの完全同期は未完了）
 
@@ -252,10 +255,13 @@ Chat Tokenの発行部品はAccess TokenやRefresh Tokenと別audienceのJWSで�
 | GET | `/api/v1/me/device-transfers/{id}` | Access Token + 直近Passkey + 対象端末proof | 対象端末が包み済みMaster Keyを取得 |
 | POST | `/api/v1/me/device-transfers/{id}/approve` | Access Token + 直近Passkey + 旧端末proof | ユーザー確認済みのopaque envelopeを登録 |
 | POST | `/api/v1/me/device-transfers/{id}/complete` | Access Token + 直近Passkey + 対象端末proof | 新端末の復号・保存完了を通知 |
+| DELETE | `/api/v1/me/device-transfers/{id}` | Access Token + 直近Passkey + 対象端末proof | 申請者がpending/未受取approvedをキャンセル |
 
 作成bodyは`target_device_id`、`target_key_version`、`target_public_key`、`verification_code`です。コードの平文はDBへ保存せず、サーバーはtarget公開鍵の差し替えを承認bodyから受け付けません。approve bodyの`wrapped_master_key`はX25519 + HKDF-SHA256 + AES-256-GCMのopaque envelopeで、APIは形式と宛先公開鍵だけを検証します。コードは端末間の取り違え防止用であり、サーバー侵害への対抗にはユーザーがfingerprintを照合するかQR/OOBで公開鍵を直接確認する必要があります。
 
 移行要求は15分で失効し、ユーザーごとの同時保留数を制限します。GETは`pending`中にwrapped値を返さず、`approved`または`completed`の対象端末にだけ返します。Access Tokenだけ、別ユーザーのdevice ID、期限切れ・再利用・不一致proofでは移行できません。
+
+キャンセルは申請者の同一user_idと対象device_id、直近Passkey、対象端末proofを検証し、`pending`または未受取の`approved`だけを`cancelled`へ遷移させる。`completed`、`rejected`、`expired`、`cancelled`は409で拒否し、成功時だけwrapped envelopeを消去して204を返す。二重送信は状態遷移条件で拒否する。
 
 v2のRecovery envelopeは24語Recovery Phraseのentropyを端末内でArgon2id + HKDF-SHA256に通してMaster KeyをAES-256-GCMで包みます。phrase自体、Master Key、Key-B平文はAPIへ送信しません。root-key protocolはv2だけを受け付けます。`/me/key-envelopes/{key_version}`で旧versionを指定した要求は`410 legacy_key_version_disabled`、移行後に旧envelopeしかないアカウントのRecovery challengeは`409 recovery_not_configured`です。pre-release migration `0022_disable_legacy_root_keys.sql`で旧envelopeと旧Key-B materialを削除するため、古い開発アカウントはv2鍵登録をやり直してください。Recovery成功後は新しいPhraseを表示し、ユーザー確認後にenvelopeを保存します。保存に失敗した場合は端末内のpending materialを残し、成功時だけ旧Phraseを無効化します。
 

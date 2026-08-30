@@ -18,6 +18,7 @@ import {
   acceptDeviceTransfer,
   approveDeviceTransfer,
   beginDeviceTransfer,
+  cancelDeviceTransfer,
   getDeviceTransferForTarget,
   listDeviceTransfers,
   listRegisteredDevices,
@@ -28,7 +29,7 @@ import {
   type DeviceTransferDraft,
   type RegisteredDevice,
 } from "../services/key-management";
-import { loadLanguage, type AppLanguage } from "../services/onboarding";
+import { loadLanguage, subscribeLanguage, type AppLanguage } from "../services/onboarding";
 
 const COPY = {
   ja: {
@@ -58,6 +59,8 @@ const COPY = {
     processing: "処理中...",
     error: "端末引き継ぎを完了できませんでした。コードと通信状況を確認してください。",
     pending: "旧端末の承認を待っています。",
+    cancel: "この引き継ぎをキャンセル",
+    cancelled: "この引き継ぎをキャンセルしました。",
   },
   en: {
     title: "Transfer device",
@@ -86,6 +89,8 @@ const COPY = {
     processing: "Processing...",
     error: "The device transfer could not be completed. Check the code and connection.",
     pending: "Waiting for approval on the old device.",
+    cancel: "Cancel this transfer",
+    cancelled: "This transfer was cancelled.",
   },
 } as const;
 
@@ -106,15 +111,20 @@ export default function DeviceTransferScreen() {
   const copy = COPY[language];
 
   useEffect(() => {
+    let active = true;
+    const unsubscribe = subscribeLanguage((nextLanguage) => { if (active) setLanguage(nextLanguage ?? "ja"); });
+    void loadLanguage().then((storedLanguage) => { if (active) setLanguage(storedLanguage ?? "ja"); }).catch(() => { if (active) setLanguage("ja"); });
+    return () => { active = false; unsubscribe(); };
+  }, []);
+
+  useEffect(() => {
     const userId = session?.user_id;
     if (!userId) return;
     void Promise.all([
-      loadLanguage(),
       loadDeviceTransferDraft(userId),
       loadStoredDeviceKeyB(userId),
       loadStoredKeyA(userId),
-    ]).then(([storedLanguage, storedDraft, device, keyA]) => {
-      setLanguage(storedLanguage ?? "ja");
+    ]).then(([storedDraft, device, keyA]) => {
       setDraft(storedDraft);
       setCurrentDeviceId(device?.deviceID ?? null);
       setHasSourceKey(Boolean(keyA));
@@ -173,6 +183,24 @@ export default function DeviceTransferScreen() {
       setHasSourceKey(true);
       setTargetTransfer({ ...current, status: "completed" });
       setMessage(copy.received);
+    } catch {
+      setError(copy.error);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const cancelTransfer = async () => {
+    if (!draft || busy || (targetTransfer && targetTransfer.status !== "pending" && targetTransfer.status !== "approved")) return;
+    setBusy("cancel");
+    setError(null);
+    setMessage(null);
+    try {
+      const activeSession = await verify();
+      await cancelDeviceTransfer(activeSession, draft.transferID);
+      setDraft(null);
+      setTargetTransfer((current) => current ? { ...current, status: "cancelled" } : null);
+      setMessage(copy.cancelled);
     } catch {
       setError(copy.error);
     } finally {
@@ -245,6 +273,9 @@ export default function DeviceTransferScreen() {
               <ValueRow label={copy.code} onCopy={() => void copyValue(draft.verificationCode)} value={draft.verificationCode} copyLabel={copy.copy} prominent />
               <Text style={styles.note}>{copy.waiting}</Text>
               {targetTransfer?.status !== "completed" ? <PrimaryButton busy={busy === "receive"} label={copy.receive} onPress={() => void receiveTransfer()} /> : null}
+              {(!targetTransfer || targetTransfer.status === "pending" || targetTransfer.status === "approved") ? (
+                <SecondaryButton busy={busy === "cancel"} label={copy.cancel} onPress={() => void cancelTransfer()} />
+              ) : null}
             </>
           )}
         </Section>

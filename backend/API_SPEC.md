@@ -257,10 +257,13 @@ Request（新クライアントは`request_id`を使用。互換のため`refres
 | --- | --- | --- |
 | POST | `/api/v1/auth/logout` | 現在のsessionとそのRefresh Tokenを失効 |
 | POST | `/api/v1/auth/logout-all` | ユーザーの全sessionを失効 |
+| POST | `/api/v1/me/sessions/logout-other` | Access Token + 直近Passkey。claimsの現在sidを残して、同一ユーザーの他sessionとRefresh Tokenを失効 |
 | GET | `/api/v1/me/sessions` | 有効なsession一覧。token値は返さない |
 | DELETE | `/api/v1/me/sessions/{session_id}` | 所有者の指定sessionを失効 |
 
 失効後のAccess Tokenは署名が正しくても、DBのsession確認で拒否されます。
+
+`logout-other`は直近Passkey認証を要求し、有効Access Tokenだけでは実行できない。Access Tokenの現在sessionを残し、他端末の失効だけをtransactionで行う。同じ要求の再送はno-opとする。現在端末を含む全session失効、Passkey再認証、新Passkey登録、旧Passkey失効、新session/Token発行を一つにした緊急認証ローテーションは未実装であり、現行reauthやPasskey登録で代替しない。受入条件・状態遷移・未実装理由は [backend/TODO.md](TODO.md) に記録する。
 
 ## 6. Client root-key envelope・画像・退会
 

@@ -110,6 +110,30 @@ func logoutAllSessions(service *auth.SessionService) http.HandlerFunc {
 	}
 }
 
+func logoutOtherSessions(service *auth.SessionService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims, ok := accessClaims(r, service)
+		if !ok {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing_or_invalid_access_token"})
+			return
+		}
+		if r.Method != http.MethodPost {
+			w.Header().Set("Allow", http.MethodPost)
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		if !requireRecentPasskey(r, service, claims) {
+			writeRecentPasskeyRequired(w)
+			return
+		}
+		if err := service.RevokeOther(r.Context(), claims.Subject, claims.SessionID, "logout_other_sessions", time.Now()); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "logout_other_sessions_failed"})
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
 func listSessions(service *auth.SessionService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		claims, ok := accessClaims(r, service)

@@ -19,6 +19,7 @@ import {
   listPasskeys,
   listSessions,
   removePasskey,
+  revokeOtherSessions,
   revokeSession,
   type PasskeySummary,
   type SessionSummary,
@@ -46,6 +47,11 @@ const COPY = {
     loadError: "セキュリティ情報を読み込めませんでした。",
     actionError: "操作を完了できませんでした。もう一度お試しください。",
     retry: "再試行",
+    revokeOthers: "この端末以外を一斉ログアウト",
+    revokeOthersTitle: "この端末以外をログアウトしますか？",
+    revokeOthersMessage: "現在の端末はログインしたまま、他のすべての端末をログアウトします。",
+    revokeOthersConfirm: "ログアウトする",
+    revokeOthersDone: "この端末以外をログアウトしました。",
   },
   en: {
     title: "Security",
@@ -68,6 +74,11 @@ const COPY = {
     loadError: "Security details could not be loaded.",
     actionError: "The action could not be completed. Please try again.",
     retry: "Retry",
+    revokeOthers: "Sign out all other devices",
+    revokeOthersTitle: "Sign out all other devices?",
+    revokeOthersMessage: "This keeps the current device signed in and signs out every other device.",
+    revokeOthersConfirm: "Sign out devices",
+    revokeOthersDone: "All other devices were signed out.",
   },
 } as const;
 
@@ -90,6 +101,7 @@ export default function SecurityScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const copy = COPY[language];
 
   useEffect(() => {
@@ -104,6 +116,7 @@ export default function SecurityScreen() {
     if (!activeSession) return;
     isRefresh ? setRefreshing(true) : setLoading(true);
     setError(null);
+    setNotice(null);
     try {
       const [nextSessions, nextPasskeys] = await Promise.all([
         listSessions(activeSession),
@@ -132,6 +145,33 @@ export default function SecurityScreen() {
     try {
       await revokeSession(item.id, activeSession);
       setSessions((current) => current.filter((candidate) => candidate.id !== item.id));
+    } catch {
+      setError(copy.actionError);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const confirmRevokeOtherSessions = () => {
+    if (busyId) return;
+    Alert.alert(copy.revokeOthersTitle, copy.revokeOthersMessage, [
+      { text: copy.cancel, style: "cancel" },
+      { text: copy.revokeOthersConfirm, style: "destructive", onPress: () => void revokeOtherSessionsNow() },
+    ]);
+  };
+
+  const revokeOtherSessionsNow = async () => {
+    if (busyId) return;
+    setBusyId("other-sessions");
+    setError(null);
+    setNotice(null);
+    try {
+      const verified = await continuePasskey(language);
+      const activeSession = getCurrentSession() ?? session;
+      if (!verified || !activeSession) throw new Error("passkey reauthentication failed");
+      await revokeOtherSessions(activeSession);
+      setSessions((current) => current.filter((item) => item.current));
+      setNotice(copy.revokeOthersDone);
     } catch {
       setError(copy.actionError);
     } finally {
@@ -176,6 +216,14 @@ export default function SecurityScreen() {
         {!loading ? (
           <>
             <SectionTitle icon="devices" title={copy.sessions} />
+            <Pressable
+              accessibilityRole="button"
+              disabled={Boolean(busyId)}
+              onPress={confirmRevokeOtherSessions}
+              style={({ pressed }) => [styles.bulkAction, Boolean(busyId) && styles.disabled, pressed && !busyId && styles.pressed]}
+            >
+              {busyId === "other-sessions" ? <ActivityIndicator color={colors.state.danger} size="small" /> : <Text style={styles.bulkActionText}>{copy.revokeOthers}</Text>}
+            </Pressable>
             {sessions.length === 0 ? <Text style={styles.empty}>{copy.empty}</Text> : sessions.map((item) => (
               <View key={item.id} style={styles.item}>
                 <View style={styles.itemBody}>
@@ -209,6 +257,7 @@ export default function SecurityScreen() {
             {passkeys.length === 1 ? <Text style={styles.note}>{copy.lastPasskey}</Text> : null}
           </>
         ) : null}
+        {notice ? <Text accessibilityLiveRegion="polite" style={styles.notice}>{notice}</Text> : null}
         {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
         {error && !loading ? <Pressable onPress={() => void load()} style={styles.retry}><Text style={styles.retryText}>{copy.retry}</Text></Pressable> : null}
       </ScrollView>
@@ -245,9 +294,12 @@ const styles = StyleSheet.create({
   id: { color: colors.text.muted, ...typography.micro },
   action: { minWidth: 78, minHeight: 40, alignItems: "center", justifyContent: "center", paddingHorizontal: spacing.md, borderWidth: 1, borderColor: colors.border.danger, borderRadius: radius.pill, backgroundColor: colors.surface.default },
   actionText: { color: colors.state.danger, ...typography.captionStrong },
+  bulkAction: { minHeight: 46, alignItems: "center", justifyContent: "center", paddingHorizontal: spacing.lg, borderWidth: 1, borderColor: colors.border.danger, borderRadius: radius.pill, backgroundColor: colors.surface.default },
+  bulkActionText: { color: colors.state.danger, ...typography.captionStrong },
   note: { color: colors.text.subtle, ...typography.small, lineHeight: 18 },
   empty: { paddingVertical: spacing.xl, color: colors.text.muted, ...typography.caption, textAlign: "center" },
   error: { color: colors.state.danger, ...typography.caption, textAlign: "center" },
+  notice: { color: colors.state.success, ...typography.caption, textAlign: "center" },
   retry: { minHeight: 44, alignItems: "center", justifyContent: "center", borderRadius: radius.pill, backgroundColor: colors.brand.sky },
   retryText: { color: colors.text.inverse, ...typography.captionStrong },
   disabled: { opacity: opacity.disabled },

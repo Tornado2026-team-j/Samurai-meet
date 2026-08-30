@@ -14,6 +14,19 @@
 - 募集日時の壁時計は`Asia/Tokyo`固定、絶対時刻はUTC。通常のネイティブ接続先はproduction domainで、LAN URLは明示設定時だけ使う。通知はアプリ内RESTまでで、OSプッシュは未実装。
 - chat transport tokenはhandler既定値・サービス受理値ともに`websocket`で一致し、`websocket`のみ発行する（`webtransport`／`quic`は終端サーバー未実装のため400で拒否）。WebSocket配送は実装済みだが、QUIC／HTTP/3 WebTransport配送の実装完了は意味しない。
 
+## 緊急認証ローテーション（未実装）
+
+侵害疑い時に全セッション・全Refresh Tokenを本人の現在セッションも含めて失効し、Passkey再認証後に新しいPasskeyと新しいセッション／Tokenだけで復帰する緊急ローテーションは、現行契約のままでは安全に実装できないため、UI/APIを追加していない。
+
+受入条件は次のとおりとする。
+
+- 同一ユーザーの現在セッション、user/device ID、ブラウザのCSRF/Origin、ネイティブのdevice proofを検証し、Passkey再認証と一回限りのoperation IDを要求する。
+- 状態を `idle -> passkey_reauth_started -> new_passkey_registered -> all_old_sessions_revoked -> new_session_issued -> old_passkey_revoked -> active` とし、各遷移を監査イベントへ記録する。秘密情報、assertion、Token、鍵素材は監査ログへ残さない。
+- 新Passkeyの登録・検証・保存が完了するまで旧Passkeyと旧セッションを失効させない。全旧session/refresh familyの失効と、新session・Access/Refresh Tokenの発行はtransactionまたは再試行可能なoperation状態で整合させ、成功時は新Token組だけを有効にする。
+- 同じoperation IDの再送は同じ安全な結果を返し、異なるoperationの並行実行、二重発行、旧Tokenによる復帰を拒否する。途中失敗時は旧資格情報で再認証を再開でき、旧Passkeyを先に失効させた後の復旧不能状態を作らない。
+
+未実装理由は、現行のreauthが既存sessionの `last_passkey_at` 更新だけで新しいsession/Tokenを発行せず、現行のPasskey登録も同じsessionへ資格情報を追加するだけで旧Passkey失効・全session失効・新Token発行を一つの契約として提供していないためである。まず専用のrotation operation、Passkey登録ceremony、監査イベント、原子的なsession/token切替契約を設計・テストしてから実装する。
+
 ## フロント追従時に引き継ぐ課題（今回の変更対象外）
 
 1. **プロフィール編集UI**
