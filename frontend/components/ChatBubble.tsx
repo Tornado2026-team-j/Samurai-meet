@@ -1,12 +1,7 @@
 import { useState } from "react";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { Pressable, StyleSheet, Text, View } from "react-native";
-
-const BLUE = "#5ec5f5";
-const YELLOW = "#e7b454";
-const TEXT_GRAY = "#535353";
-const MUTED_GRAY = "#949494";
-const BORDER_GRAY = "#e4e4e4";
+import { Button, colors, radius, typography } from "./ui";
 
 type ChatBubbleProps = {
   text: string;
@@ -60,7 +55,7 @@ export default function ChatBubble({
         >
           {encryptedFallback ? (
             <View style={styles.encryptedLine}>
-              <MaterialIcons color={mine ? "#ffffff" : MUTED_GRAY} name="lock" size={16} />
+              <MaterialIcons color={mine ? colors.text.inverse : colors.text.muted} name="lock" size={16} />
               <Text style={[styles.messageText, mine ? styles.messageTextMine : styles.messageTextOther]}>
                 {text}
               </Text>
@@ -73,31 +68,35 @@ export default function ChatBubble({
         </Pressable>
         {actionsVisible ? (
           <View style={[styles.actionRow, mine ? styles.actionRowMine : styles.actionRowOther]}>
-            <Pressable
+            <Button
               accessibilityLabel={translateLabel}
-              accessibilityRole="button"
+              iconLeft={<MaterialIcons color={colors.text.secondary} name="translate" size={18} />}
               onPress={() => {
                 onTranslate();
                 setActionsVisible(false);
               }}
-              style={({ pressed }) => [styles.smallAction, pressed && styles.pressed]}
+              size="sm"
+              style={styles.smallAction}
+              textStyle={styles.smallActionText}
+              variant="secondary"
             >
-              <MaterialIcons color={TEXT_GRAY} name="translate" size={18} />
-              <Text style={styles.smallActionText}>{translateLabel}</Text>
-            </Pressable>
+              {translateLabel}
+            </Button>
             {canReport ? (
-              <Pressable
+              <Button
                 accessibilityLabel={reportLabel}
-                accessibilityRole="button"
+                iconLeft={<MaterialIcons color={colors.text.muted} name="outlined-flag" size={18} />}
                 onPress={() => {
                   onReport?.();
                   setActionsVisible(false);
                 }}
-                style={({ pressed }) => [styles.smallAction, styles.reportAction, pressed && styles.pressed]}
+                size="sm"
+                style={[styles.smallAction, styles.reportAction]}
+                textStyle={styles.smallActionText}
+                variant="secondary"
               >
-                <MaterialIcons color={MUTED_GRAY} name="outlined-flag" size={18} />
-                <Text style={styles.smallActionText}>{reportLabel}</Text>
-              </Pressable>
+                {reportLabel}
+              </Button>
             ) : null}
           </View>
         ) : null}
@@ -133,10 +132,8 @@ const styles = StyleSheet.create({
   },
   timestamp: {
     marginBottom: 8,
-    color: MUTED_GRAY,
-    fontSize: 12,
-    fontWeight: "700",
-    letterSpacing: 0,
+    color: colors.text.muted,
+    ...typography.small,
     lineHeight: 15,
   },
   bubble: {
@@ -144,27 +141,24 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingHorizontal: 18,
     paddingVertical: 13,
-    borderRadius: 20,
+    borderRadius: radius["2xl"],
   },
   bubbleMine: {
-    borderTopRightRadius: 8,
-    backgroundColor: BLUE,
+    borderTopRightRadius: radius.sm,
+    backgroundColor: colors.brand.sky,
   },
   bubbleOther: {
-    borderTopLeftRadius: 8,
+    borderTopLeftRadius: radius.sm,
     backgroundColor: "#f4f4f4",
   },
   pressedBubble: {
     opacity: 0.9,
   },
   messageText: {
-    fontSize: 16,
-    fontWeight: "700",
-    letterSpacing: 0,
-    lineHeight: 24,
+    ...typography.bodyStrong,
   },
   messageTextMine: {
-    color: "#ffffff",
+    color: colors.text.inverse,
   },
   messageTextOther: {
     color: "#30343b",
@@ -194,16 +188,13 @@ const styles = StyleSheet.create({
     gap: 6,
     paddingHorizontal: 14,
     borderWidth: 1,
-    borderColor: BORDER_GRAY,
-    borderRadius: 16,
-    backgroundColor: "#ffffff",
+    borderColor: colors.border.subtle,
+    borderRadius: radius.pill,
+    backgroundColor: colors.surface.default,
   },
   smallActionText: {
-    color: TEXT_GRAY,
-    fontSize: 13,
-    fontWeight: "800",
-    letterSpacing: 0,
-    lineHeight: 17,
+    color: colors.text.secondary,
+    ...typography.captionStrong,
   },
   reportAction: {
     paddingHorizontal: 12,
@@ -211,10 +202,8 @@ const styles = StyleSheet.create({
   translation: {
     maxWidth: "100%",
     marginTop: 8,
-    color: YELLOW,
-    fontSize: 13,
-    fontWeight: "800",
-    letterSpacing: 0,
+    color: colors.brand.gold,
+    ...typography.captionStrong,
     lineHeight: 19,
   },
   translationMine: {
@@ -222,8 +211,5 @@ const styles = StyleSheet.create({
   },
   translationOther: {
     textAlign: "left",
-  },
-  pressed: {
-    opacity: 0.72,
   },
 });
