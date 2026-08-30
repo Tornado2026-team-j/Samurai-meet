@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { MaterialIcons } from "@expo/vector-icons";
 import {
   FlatList,
+  Keyboard,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -11,12 +12,13 @@ import {
   TextInput,
   View,
 } from "react-native";
-import type { AppLanguage, LocalProfile } from "../services/onboarding";
-import { Button, Pill, colors, opacity, radius, typography } from "./ui";
+import { MONSTER_INPUT_LIMITS, type AppLanguage, type LocalProfile } from "../services/onboarding-contract";
+import { Button, colors, opacity, radius, typography } from "./ui";
 
-const MAX_TAGS_PER_CATEGORY = 5;
-const MIN_TOTAL_TAGS = 3;
-const FREE_TEXT_LIMIT = 150;
+const MAX_INTEREST_ITEMS = MONSTER_INPUT_LIMITS?.interestMax ?? 2;
+const MAX_SKILL_ITEMS = MONSTER_INPUT_LIMITS?.skillMax ?? 2;
+const JAPANESE_ITEM_LIMIT = MONSTER_INPUT_LIMITS?.jaItemCharacters ?? 15;
+const ENGLISH_ITEM_LIMIT = MONSTER_INPUT_LIMITS?.enItemCharacters ?? 30;
 
 const COUNTRY_CODES = "AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ BA BB BD BE BF BG BH BI BJ BL BM BN BO BQ BR BS BT BV BW BY BZ CA CC CD CF CG CH CI CK CL CM CN CO CR CU CV CW CX CY CZ DE DJ DK DM DO DZ EC EE EG EH ER ES ET FI FJ FK FM FO FR GA GB GD GE GF GG GH GI GL GM GN GP GQ GR GS GT GU GW GY HK HM HN HR HT HU ID IE IL IM IN IO IQ IR IS IT JE JM JO JP KE KG KH KI KM KN KP KR KW KY KZ LA LB LC LI LK LR LS LT LU LV LY MA MC MD ME MF MG MH MK ML MM MN MO MP MQ MR MS MT MU MV MW MX MY MZ NA NC NE NF NG NI NL NO NP NR NU NZ OM PA PE PF PG PH PK PL PM PN PR PS PT PW PY QA RE RO RS RU RW SA SB SC SD SE SG SH SI SJ SK SL SM SN SO SR SS ST SV SX SY SZ TC TD TF TG TH TJ TK TL TM TN TO TR TT TV TW TZ UA UG UM US UY UZ VA VC VE VG VI VN VU WF WS YE YT ZA ZM ZW".split(" ");
 
@@ -197,82 +199,100 @@ function createCountryOptions(language: AppLanguage): CountryOption[] {
   return japan ? [japan, ...options.filter((country) => country.code !== "JP")] : options;
 }
 
-type TagOption = {
-  id: string;
-  ja: string;
-  en: string;
-};
-
-const SKILL_TAGS: TagOption[] = [
-  { id: "english_conversation", ja: "英語で話す", en: "Speaking English" },
-  { id: "photography", ja: "写真を撮る", en: "Taking photos" },
-  { id: "directions", ja: "道案内", en: "Giving directions" },
-  { id: "food_guiding", ja: "グルメ案内", en: "Food guiding" },
-  { id: "history", ja: "歴史を説明する", en: "Explaining history" },
-  { id: "cafe_hunting", ja: "カフェ探し", en: "Finding cafes" },
-  { id: "hidden_spots", ja: "穴場紹介", en: "Hidden spots" },
-  { id: "shopping", ja: "買い物に付き合う", en: "Shopping together" },
-  { id: "conversation", ja: "人と話す", en: "Conversation" },
-  { id: "planning", ja: "スケジュールを考える", en: "Planning routes" },
-  { id: "other", ja: "その他", en: "Other" },
-];
-
-const INTEREST_TAGS: TagOption[] = [
-  { id: "food", ja: "グルメ", en: "Food" },
-  { id: "cafes", ja: "カフェ", en: "Cafes" },
-  { id: "shrines_temples", ja: "神社・寺", en: "Shrines and temples" },
-  { id: "anime", ja: "アニメ", en: "Anime" },
-  { id: "games", ja: "ゲーム", en: "Games" },
-  { id: "fashion", ja: "ファッション", en: "Fashion" },
-  { id: "music", ja: "音楽", en: "Music" },
-  { id: "nature", ja: "自然", en: "Nature" },
-  { id: "night_views", ja: "夜景", en: "Night views" },
-  { id: "walking", ja: "散歩", en: "Walking" },
-  { id: "traditional_culture", ja: "伝統文化", en: "Traditional culture" },
-  { id: "photos", ja: "写真", en: "Photography" },
-  { id: "other", ja: "その他", en: "Other" },
-];
-
-function tagLabel(tag: TagOption, language: AppLanguage): string {
-  return language === "ja" ? tag.ja : tag.en;
-}
-
-function toggleTag(tags: string[], tagID: string): string[] {
-  if (tags.includes(tagID)) return tags.filter((tag) => tag !== tagID);
-  if (tags.length >= MAX_TAGS_PER_CATEGORY) return tags;
-  return [...tags, tagID];
-}
-
 type ProfileFormProps = {
   initialProfile?: LocalProfile | null;
   language: AppLanguage;
   onSubmit: (profile: LocalProfile) => Promise<void>;
+  submitLabel?: string;
 };
+
+const LEGACY_TAG_LABELS: Record<string, Record<AppLanguage, string>> = {
+  english_conversation: { ja: "英語で話す", en: "Speaking English" },
+  photography: { ja: "写真を撮る", en: "Taking photos" },
+  directions: { ja: "道案内", en: "Giving directions" },
+  food_guiding: { ja: "グルメ案内", en: "Food guiding" },
+  history: { ja: "歴史を説明する", en: "Explaining history" },
+  cafe_hunting: { ja: "カフェ探し", en: "Finding cafes" },
+  hidden_spots: { ja: "穴場紹介", en: "Hidden spots" },
+  shopping: { ja: "買い物に付き合う", en: "Shopping together" },
+  conversation: { ja: "人と話す", en: "Conversation" },
+  planning: { ja: "スケジュールを考える", en: "Planning routes" },
+  other: { ja: "その他", en: "Other" },
+  food: { ja: "グルメ", en: "Food" },
+  cafes: { ja: "カフェ", en: "Cafes" },
+  shrines_temples: { ja: "神社・寺", en: "Shrines and temples" },
+  anime: { ja: "アニメ", en: "Anime" },
+  games: { ja: "ゲーム", en: "Games" },
+  fashion: { ja: "ファッション", en: "Fashion" },
+  music: { ja: "音楽", en: "Music" },
+  nature: { ja: "自然", en: "Nature" },
+  night_views: { ja: "夜景", en: "Night views" },
+  walking: { ja: "散歩", en: "Walking" },
+  traditional_culture: { ja: "伝統文化", en: "Traditional culture" },
+  photos: { ja: "写真", en: "Photography" },
+};
+
+function normalizeProfileItems(items: string[] | undefined, language: AppLanguage, maxItems: number): string[] {
+  return (items ?? [])
+    .map((item) => LEGACY_TAG_LABELS[item]?.[language] ?? item)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .slice(0, maxItems);
+}
+
+function createInitialItems(items: string[] | undefined, language: AppLanguage, maxItems: number, minItems: number): string[] {
+  const normalized = normalizeProfileItems(items, language, maxItems);
+  while (normalized.length < minItems) normalized.push("");
+  return normalized;
+}
+
+function sanitizeMonsterItem(value: string): string {
+  return value.replace(/[\r\n,、]/gu, "").trimStart();
+}
+
+function normalizedDuplicateKey(value: string): string {
+  return value.trim().replace(/\s+/gu, " ").toLocaleLowerCase();
+}
+
+function hasDuplicateItems(items: string[]): boolean {
+  const seen = new Set<string>();
+  for (const item of items.map(normalizedDuplicateKey).filter(Boolean)) {
+    if (seen.has(item)) return true;
+    seen.add(item);
+  }
+  return false;
+}
 
 export default function ProfileForm({
   initialProfile,
   language,
   onSubmit,
+  submitLabel,
 }: ProfileFormProps) {
+  const itemLimit = language === "ja" ? JAPANESE_ITEM_LIMIT : ENGLISH_ITEM_LIMIT;
   const copy = language === "ja"
     ? {
         name: "表示名",
         namePlaceholder: "例：田中 梨菜",
         nationality: "国籍",
         nationalityPlaceholder: "国を選択",
-        monsterTitle: "得意なこと・好きなこと",
-        monsterDescription: "あなたらしいモンスターの作成や、案内内容とのマッチングに使用します。",
-        skillTags: "得意なことを選んでください",
-        interestTags: "好きなことを選んでください",
-        freeText: "選択肢だけでは伝わらない好きなこと・得意なことがあれば、少しだけ書いてください。",
-        freeTextPlaceholder: "例：路地裏の小さな喫茶店や、写真映えする散歩道を探すのが好きです。",
-        submit: "はじめる",
+        monsterTitle: "あなたらしさを教えてください",
+        monsterDescription: "入力した内容をもとに、あなただけのモンスターを作ります。一つの欄には、一つのことを短い言葉で入力してください。",
+        interests: "好きなこと（1〜2個）",
+        skills: "得意なこと（0〜2個）",
+        interestPlaceholder: "例：カフェ巡り",
+        skillPlaceholder: "例：写真を撮ること",
+        addOneMore: "＋ もう1つ追加",
+        remove: "削除",
+        submit: "この内容でモンスターを作る",
         countryTitle: "国籍を選択",
         countrySearch: "国名で検索",
         noCountries: "該当する国がありません",
         close: "閉じる",
-        tagLimit: "各カテゴリ最大5個まで選択できます",
-        required: "表示名・国籍・タグを合計3つ以上入力してください",
+        required: "表示名・国籍・好きなことを1つ以上入力してください",
+        duplicate: "同じ内容は登録できません",
+        invalidSeparator: "改行・カンマ区切りでの複数入力はできません",
+        overLimit: `${itemLimit}文字以内で入力してください`,
         submitError: "プロフィールを保存できませんでした。時間をおいて再試行してください。",
       }
     : {
@@ -280,28 +300,36 @@ export default function ProfileForm({
         namePlaceholder: "e.g. Rina Tanaka",
         nationality: "Nationality",
         nationalityPlaceholder: "Choose a country",
-        monsterTitle: "Skills and Interests",
-        monsterDescription: "Used to create your personal monster and match you with guide requests.",
-        skillTags: "Choose what you are good at",
-        interestTags: "Choose what you like",
-        freeText: "Add anything your selected tags do not fully explain.",
-        freeTextPlaceholder: "e.g. I enjoy finding quiet local cafes and photogenic walking routes.",
-        submit: "Get started",
+        monsterTitle: "Tell us what makes you you",
+        monsterDescription: "We will create your personal monster from these details. Add one short thing in each field.",
+        interests: "Things you like (1-2)",
+        skills: "Things you are good at (0-2)",
+        interestPlaceholder: "e.g. Cafe hopping",
+        skillPlaceholder: "e.g. Taking photos",
+        addOneMore: "+ Add one more",
+        remove: "Remove",
+        submit: "Create my monster",
         countryTitle: "Choose your nationality",
         countrySearch: "Search countries",
         noCountries: "No countries found",
         close: "Close",
-        tagLimit: "Choose up to 5 in each category",
-        required: "Enter a display name, nationality, and at least 3 tags",
+        required: "Enter a display name, nationality, and at least one thing you like",
+        duplicate: "Duplicate entries cannot be used",
+        invalidSeparator: "Use one field per item. New lines and commas are not allowed",
+        overLimit: `Keep each item within ${itemLimit} characters`,
         submitError: "Could not save your profile. Please try again.",
       };
   const [name, setName] = useState(initialProfile?.name ?? "");
   const [nationalityCode, setNationalityCode] = useState(
     initialProfile?.nationalityCode ?? "",
   );
-  const [skillTags, setSkillTags] = useState(initialProfile?.monsterSeed?.skillTags ?? []);
-  const [interestTags, setInterestTags] = useState(initialProfile?.monsterSeed?.interestTags ?? []);
-  const [freeText, setFreeText] = useState(initialProfile?.monsterSeed?.freeText ?? "");
+  const [interestItems, setInterestItems] = useState(() =>
+    createInitialItems(initialProfile?.monsterSeed?.interestTags, language, MAX_INTEREST_ITEMS, 1),
+  );
+  const [skillItems, setSkillItems] = useState(() =>
+    createInitialItems(initialProfile?.monsterSeed?.skillTags, language, MAX_SKILL_ITEMS, 0),
+  );
+  const [separatorError, setSeparatorError] = useState<string | null>(null);
   const [countryPickerVisible, setCountryPickerVisible] = useState(false);
   const [countryQuery, setCountryQuery] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -320,13 +348,78 @@ export default function ProfileForm({
       (country) => country.searchText.includes(normalizedQuery),
     );
   }, [countries, countryQuery, language]);
-  const totalSelectedTags = skillTags.length + interestTags.length;
+  const cleanedInterestItems = interestItems.map((item) => item.trim()).filter(Boolean);
+  const cleanedSkillItems = skillItems.map((item) => item.trim()).filter(Boolean);
+  const allMonsterItems = [...cleanedInterestItems, ...cleanedSkillItems];
+  const duplicateError = hasDuplicateItems(allMonsterItems);
+  const lengthError = [...interestItems, ...skillItems].some((item) => item.trim().length > itemLimit);
   const valid =
     name.trim().length > 0 &&
     nationalityCode.length === 2 &&
-    totalSelectedTags >= MIN_TOTAL_TAGS;
+    cleanedInterestItems.length >= 1 &&
+    !duplicateError &&
+    !lengthError;
+
+  const updateInterestItem = (index: number, value: string) => {
+    if (/[\r\n,、]/u.test(value)) {
+      setSeparatorError(copy.invalidSeparator);
+    } else {
+      setSeparatorError(null);
+    }
+    setInterestItems((current) => current.map((item, itemIndex) => (
+      itemIndex === index ? sanitizeMonsterItem(value) : item
+    )));
+  };
+
+  const updateSkillItem = (index: number, value: string) => {
+    if (/[\r\n,、]/u.test(value)) {
+      setSeparatorError(copy.invalidSeparator);
+    } else {
+      setSeparatorError(null);
+    }
+    setSkillItems((current) => current.map((item, itemIndex) => (
+      itemIndex === index ? sanitizeMonsterItem(value) : item
+    )));
+  };
+
+  const addInterestItem = () => {
+    setInterestItems((current) => current.length >= MAX_INTEREST_ITEMS ? current : [...current, ""]);
+  };
+
+  const addSkillItem = () => {
+    setSkillItems((current) => current.length >= MAX_SKILL_ITEMS ? current : [...current, ""]);
+  };
+
+  const removeInterestItem = (index: number) => {
+    setInterestItems((current) => {
+      if (current.length <= 1) return current;
+      return current.filter((_item, itemIndex) => itemIndex !== index);
+    });
+  };
+
+  const removeSkillItem = (index: number) => {
+    setSkillItems((current) => current.filter((_item, itemIndex) => itemIndex !== index));
+  };
+
+  const closeCountryPicker = () => {
+    Keyboard.dismiss();
+    setCountryPickerVisible(false);
+  };
+
+  const openCountryPicker = () => {
+    Keyboard.dismiss();
+    setCountryPickerVisible(true);
+  };
+
+  const selectCountry = (countryCode: string) => {
+    Keyboard.dismiss();
+    setNationalityCode(countryCode);
+    setCountryQuery("");
+    setCountryPickerVisible(false);
+  };
 
   const submit = async () => {
+    Keyboard.dismiss();
     if (!valid || submitting) {
       setShowValidation(true);
       return;
@@ -339,9 +432,9 @@ export default function ProfileForm({
         name: name.trim(),
         nationalityCode,
         monsterSeed: {
-          skillTags,
-          interestTags,
-          freeText: freeText.trim(),
+          skillTags: cleanedSkillItems,
+          interestTags: cleanedInterestItems,
+          freeText: "",
         },
         completed: true,
         identityVerificationChoice:
@@ -376,7 +469,7 @@ export default function ProfileForm({
         <Pressable
           accessibilityLabel={copy.nationality}
           accessibilityRole="button"
-          onPress={() => setCountryPickerVisible(true)}
+          onPress={openCountryPicker}
           style={({ pressed }) => [styles.select, pressed && styles.pressed]}
         >
           {selectedCountry ? (
@@ -397,45 +490,55 @@ export default function ProfileForm({
           <Text style={styles.monsterDescription}>{copy.monsterDescription}</Text>
         </View>
 
-        <TagGroup
-          language={language}
-          onToggle={(tagID) => setSkillTags((current) => toggleTag(current, tagID))}
-          options={SKILL_TAGS}
-          selectedTags={skillTags}
-          title={copy.skillTags}
+        <MonsterItemGroup
+          addLabel={copy.addOneMore}
+          itemLimit={itemLimit}
+          items={interestItems}
+          onAdd={addInterestItem}
+          onChange={updateInterestItem}
+          onRemove={removeInterestItem}
+          placeholder={copy.interestPlaceholder}
+          required
+          removeLabel={copy.remove}
+          showValidation={showValidation}
+          title={copy.interests}
         />
 
-        <TagGroup
-          language={language}
-          onToggle={(tagID) => setInterestTags((current) => toggleTag(current, tagID))}
-          options={INTEREST_TAGS}
-          selectedTags={interestTags}
-          title={copy.interestTags}
+        <MonsterItemGroup
+          addLabel={copy.addOneMore}
+          itemLimit={itemLimit}
+          items={skillItems}
+          onAdd={addSkillItem}
+          onChange={updateSkillItem}
+          onRemove={removeSkillItem}
+          placeholder={copy.skillPlaceholder}
+          removableFirstItem
+          removeLabel={copy.remove}
+          showValidation={showValidation}
+          title={copy.skills}
         />
 
-        <Text style={styles.tagHint}>{copy.tagLimit}</Text>
-
-        <View style={styles.fieldGroup}>
-          <Text style={styles.label}>{copy.freeText}</Text>
-          <TextInput
-            accessibilityLabel={copy.freeText}
-            maxLength={FREE_TEXT_LIMIT}
-            multiline
-            onChangeText={setFreeText}
-            placeholder={copy.freeTextPlaceholder}
-            placeholderTextColor={colors.text.muted}
-            style={[styles.input, styles.freeTextInput]}
-            textAlignVertical="top"
-            value={freeText}
-          />
-          <Text style={styles.counter}>{freeText.length}/{FREE_TEXT_LIMIT}</Text>
-        </View>
+        {separatorError ? (
+          <Text accessibilityRole="alert" style={styles.validation}>
+            {separatorError}
+          </Text>
+        ) : null}
+        {duplicateError ? (
+          <Text accessibilityRole="alert" style={styles.validation}>
+            {copy.duplicate}
+          </Text>
+        ) : null}
+        {lengthError ? (
+          <Text accessibilityRole="alert" style={styles.validation}>
+            {copy.overLimit}
+          </Text>
+        ) : null}
       </View>
 
-      {showValidation && !valid ? (
+      {showValidation && !valid && !duplicateError && !lengthError ? (
         <Text accessibilityRole="alert" style={styles.validation}>
           {copy.required}
-      </Text>
+        </Text>
       ) : null}
 
       {submitError ? (
@@ -444,22 +547,31 @@ export default function ProfileForm({
         </Text>
       ) : null}
 
-      <Button
-        disabled={submitting}
-        fullWidth
-        iconRight={<MaterialIcons color={colors.text.inverse} name="arrow-forward" size={20} />}
-        loading={submitting}
-        onPress={() => void submit()}
-        size="lg"
-        style={styles.submitButton}
-        textStyle={styles.submitText}
-      >
-        {copy.submit}
-      </Button>
+      <View style={styles.fixedSubmitSpacer} />
+      <View style={styles.fixedSubmit}>
+        <Button
+          disabled={submitting}
+          fullWidth
+          iconRight={
+            <MaterialIcons
+              color={colors.text.inverse}
+              name="auto-awesome"
+              size={20}
+            />
+          }
+          loading={submitting}
+          onPress={() => void submit()}
+          size="lg"
+          style={styles.submitButton}
+          textStyle={styles.submitText}
+        >
+          {submitLabel ?? copy.submit}
+        </Button>
+      </View>
 
       <Modal
         animationType="slide"
-        onRequestClose={() => setCountryPickerVisible(false)}
+        onRequestClose={closeCountryPicker}
         presentationStyle="overFullScreen"
         transparent
         visible={countryPickerVisible}
@@ -470,7 +582,7 @@ export default function ProfileForm({
         >
           <Pressable
             accessibilityLabel={copy.close}
-            onPress={() => setCountryPickerVisible(false)}
+            onPress={closeCountryPicker}
             style={styles.backdropDismissArea}
           />
           <View style={styles.countrySheet}>
@@ -480,7 +592,7 @@ export default function ProfileForm({
                 accessibilityLabel={copy.close}
                 accessibilityRole="button"
                 hitSlop={8}
-                onPress={() => setCountryPickerVisible(false)}
+                onPress={closeCountryPicker}
                 style={({ pressed }) => [styles.closeButton, pressed && styles.pressed]}
               >
                 <MaterialIcons color={colors.text.secondary} name="close" size={24} />
@@ -511,11 +623,7 @@ export default function ProfileForm({
                   <Pressable
                     accessibilityRole="button"
                     accessibilityState={{ selected }}
-                    onPress={() => {
-                      setNationalityCode(country.code);
-                      setCountryQuery("");
-                      setCountryPickerVisible(false);
-                    }}
+                    onPress={() => selectCountry(country.code)}
                     style={({ pressed }) => [
                       styles.countryOption,
                       selected && styles.countryOptionSelected,
@@ -545,46 +653,89 @@ export default function ProfileForm({
   );
 }
 
-function TagGroup({
-  language,
-  onToggle,
-  options,
-  selectedTags,
+function MonsterItemGroup({
+  addLabel,
+  itemLimit,
+  items,
+  onAdd,
+  onChange,
+  onRemove,
+  placeholder,
+  removableFirstItem = false,
+  required = false,
+  removeLabel,
+  showValidation,
   title,
 }: {
-  language: AppLanguage;
-  onToggle: (tagID: string) => void;
-  options: TagOption[];
-  selectedTags: string[];
+  addLabel: string;
+  itemLimit: number;
+  items: string[];
+  onAdd: () => void;
+  onChange: (index: number, value: string) => void;
+  onRemove: (index: number) => void;
+  placeholder: string;
+  removableFirstItem?: boolean;
+  required?: boolean;
+  removeLabel: string;
+  showValidation: boolean;
   title: string;
 }) {
-  const maxReached = selectedTags.length >= MAX_TAGS_PER_CATEGORY;
+  const canAdd = items.length < 2;
 
   return (
-    <View style={styles.tagGroup}>
-      <Text style={styles.tagGroupTitle}>{title}</Text>
-      <View style={styles.tagGrid}>
-        {options.map((tag) => {
-          const selected = selectedTags.includes(tag.id);
-          const disabled = maxReached && !selected;
+    <View style={styles.itemGroup}>
+      <Text style={styles.itemGroupTitle}>{title}</Text>
+      {items.map((item, index) => {
+        const count = item.trim().length;
+        const overLimit = count > itemLimit;
+        const showEmptyError = showValidation && required && index === 0 && count === 0;
 
-          return (
-            <Pill
-              key={tag.id}
-              accessibilityRole="checkbox"
-              accessibilityState={{ checked: selected, disabled }}
-              disabled={disabled}
-              iconRight={selected ? <MaterialIcons color={colors.text.inverse} name="check" size={15} /> : null}
-              onPress={() => onToggle(tag.id)}
-              selected={selected}
-              style={styles.tagChip}
-              textStyle={[styles.tagChipText, selected && styles.tagChipTextSelected]}
-            >
-              {tagLabel(tag, language)}
-            </Pill>
-          );
-        })}
-      </View>
+        return (
+          <View key={index} style={styles.monsterItemRow}>
+            <View style={styles.monsterInputWrap}>
+              <TextInput
+                accessibilityLabel={`${title} ${index + 1}`}
+                autoCapitalize="sentences"
+                autoCorrect={false}
+                blurOnSubmit
+                multiline={false}
+                onChangeText={(value) => onChange(index, value)}
+                placeholder={placeholder}
+                placeholderTextColor={colors.text.muted}
+                returnKeyType="done"
+                style={[
+                  styles.input,
+                  styles.monsterItemInput,
+                  (overLimit || showEmptyError) && styles.inputError,
+                ]}
+                value={item}
+              />
+              <Text style={[styles.itemCounter, overLimit && styles.counterError]}>
+                {count} / {itemLimit}
+              </Text>
+            </View>
+            {index > 0 || removableFirstItem ? (
+              <Pressable
+                accessibilityLabel={removeLabel}
+                accessibilityRole="button"
+                onPress={() => onRemove(index)}
+                style={({ pressed }) => [styles.removeItemButton, pressed && styles.pressed]}
+              >
+                <MaterialIcons color={colors.text.subtle} name="close" size={18} />
+              </Pressable>
+            ) : null}
+          </View>
+        );
+      })}
+      {canAdd ? (
+        <Pressable
+          accessibilityRole="button"
+          onPress={onAdd}
+          style={({ pressed }) => [styles.addItemButton, pressed && styles.pressed]}
+        >
+          <Text style={styles.addItemText}>{addLabel}</Text>
+        </Pressable>
+      ) : null}
     </View>
   );
 }
@@ -592,6 +743,7 @@ function TagGroup({
 const styles = StyleSheet.create({
   form: {
     width: "100%",
+    position: "relative",
     gap: 16,
   },
   fieldGroup: {
@@ -632,52 +784,62 @@ const styles = StyleSheet.create({
     fontWeight: "400",
     lineHeight: 18,
   },
-  tagGroup: {
+  itemGroup: {
     gap: 9,
   },
-  tagGroupTitle: {
+  itemGroupTitle: {
     color: colors.text.secondary,
     ...typography.caption,
   },
-  tagGrid: {
+  monsterItemRow: {
     flexDirection: "row",
-    flexWrap: "wrap",
     gap: 8,
+    alignItems: "center",
   },
-  tagChip: {
+  monsterInputWrap: {
+    flex: 1,
+    minWidth: 0,
+  },
+  monsterItemInput: {
+    paddingRight: 72,
+  },
+  inputError: {
+    borderColor: colors.state.danger,
+    backgroundColor: "#fff8f8",
+  },
+  itemCounter: {
+    position: "absolute",
+    right: 12,
+    top: 18,
+    color: colors.text.subtle,
+    fontSize: 11,
+    fontWeight: "600",
+    letterSpacing: 0,
+  },
+  counterError: {
+    color: colors.state.danger,
+  },
+  addItemButton: {
     minHeight: 36,
-    paddingHorizontal: 12,
-    flexDirection: "row",
+    alignSelf: "flex-start",
+    justifyContent: "center",
+    paddingHorizontal: 4,
+  },
+  addItemText: {
+    color: colors.brand.gold,
+    fontSize: 14,
+    fontWeight: "800",
+    letterSpacing: 0,
+  },
+  removeItemButton: {
+    width: 36,
+    height: 36,
     alignItems: "center",
     justifyContent: "center",
-    gap: 5,
-    borderRadius: radius.pill,
-  },
-  tagChipText: {
-    color: colors.text.secondary,
-    ...typography.caption,
-  },
-  tagChipTextSelected: {
-    color: colors.text.inverse,
-  },
-  tagHint: {
-    marginTop: -3,
-    color: colors.text.subtle,
-    fontSize: 11,
-    letterSpacing: 0,
-  },
-  freeTextInput: {
-    height: 94,
-    paddingTop: 14,
-    paddingBottom: 22,
-  },
-  counter: {
-    position: "absolute",
-    right: 10,
-    bottom: 8,
-    color: colors.text.subtle,
-    fontSize: 11,
-    letterSpacing: 0,
+    borderWidth: 1,
+    borderColor: colors.border.default,
+    borderRadius: 18,
+    backgroundColor: colors.surface.default,
   },
   select: {
     width: "100%",
@@ -722,6 +884,18 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "600",
     letterSpacing: 0,
+  },
+  fixedSubmitSpacer: {
+    height: 86,
+  },
+  fixedSubmit: {
+    position: "absolute",
+    right: 0,
+    bottom: 0,
+    left: 0,
+    paddingTop: 12,
+    paddingHorizontal: 0,
+    backgroundColor: "rgba(255, 255, 255, 0.94)",
   },
   submitButton: {
     width: "100%",

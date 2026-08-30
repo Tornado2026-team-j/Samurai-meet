@@ -21,6 +21,7 @@ const draft: RecruitmentDraft = {
   date: "2026-08-25",
   startTime: "14:30",
   durationHours: 2,
+  participantLimit: 1,
   distanceKm: 3,
 };
 
@@ -56,7 +57,7 @@ describe("募集プレビュー", () => {
   });
 
 	it("カテゴリはGemini APIの4カテゴリ契約だけを受け入れる", () => {
-		const categories = ["Food", "Places", "Activity", "Other"] as const;
+		const categories = ["Food", "Heritage", "Activity", "Other"] as const;
 		expect(categories.map((category) => buildRecruitmentPreview(draft, category).category)).toEqual([...categories]);
 	});
 
@@ -163,12 +164,12 @@ describe("募集プレビュー", () => {
       undefined,
       undefined,
       {
-        category: "Places",
+        category: "Heritage",
         keywords: ["  temple  ", "Temple", "sightseeing"],
       },
     );
 
-    expect(request.category).toBe("Places");
+    expect(request.category).toBe("Heritage");
     expect(request.keywords).toEqual(["temple", "sightseeing"]);
   });
 

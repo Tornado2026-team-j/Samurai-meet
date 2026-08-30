@@ -40,7 +40,7 @@ type MaterialIconName = ComponentProps<typeof MaterialIcons>["name"];
 
 const CATEGORY_ICONS: Record<MatchCategory, MaterialIconName> = {
   Food: "restaurant",
-  Places: "place",
+  Heritage: "place",
   Activity: "directions-run",
   Other: "category",
 };
@@ -51,7 +51,7 @@ const MOCK_RECRUITMENT: {
   dateLabel: string;
   meetingPlace: string;
 } = {
-  category: "Places",
+  category: "Heritage",
   title: "伏見稲荷案内",
   dateLabel: "Today 14:00",
   meetingPlace: "Inari Station",

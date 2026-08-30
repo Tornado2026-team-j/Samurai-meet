@@ -34,6 +34,8 @@ const recruitment: Recruitment = {
   duration_hours: 2,
   keywords: ["local", "culture"],
   description: "A local dinner.",
+  location_name: "Tokyo Station",
+  participant_limit: 2,
   visibility_radius_km: 3,
   distance_band: "within_1_km",
   status: "open",
@@ -85,6 +87,8 @@ describe("募集APIクライアント", () => {
       timezone: "Asia/Tokyo",
       keywords: ["local"],
       description: "A local dinner.",
+      location_name: "Tokyo Station",
+      participant_limit: 2,
       visibility_radius_km: 3,
       latitude: 35.68,
       longitude: 139.76,
@@ -107,10 +111,10 @@ describe("募集APIクライアント", () => {
 		globalThis.fetch = (async (input, init) => {
 			requestedURL = String(input);
 			requestedInit = init;
-			return new Response(JSON.stringify({ data: { category: "Places" } }), { status: 200 });
+			return new Response(JSON.stringify({ data: { category: "Heritage" } }), { status: 200 });
 		}) as typeof fetch;
 
-		await expect(classifyRecruitmentDescription("Please show me a temple.", session)).resolves.toBe("Places");
+		await expect(classifyRecruitmentDescription("Please show me a temple.", session)).resolves.toBe("Heritage");
 		expect(requestedURL).toContain("/recruitments/classify");
 		expect(requestedInit?.method).toBe("POST");
 		expect(JSON.parse(String(requestedInit?.body))).toEqual({ description: "Please show me a temple." });
@@ -179,7 +183,7 @@ describe("募集APIクライアント", () => {
 
     await expect(listMyRecruitments(session)).resolves.toHaveLength(1);
     await expect(updateRecruitment(recruitment.id, session, {
-      category: "Places",
+      category: "Heritage",
       available_date: "2026-08-28",
       start_time: "09:30",
       end_time: "11:00",
@@ -194,7 +198,7 @@ describe("募集APIクライアント", () => {
     expect(requests[0]?.url).toContain("/recruitments/mine");
     expect(requests[1]?.method).toBe("PATCH");
     expect(JSON.parse(requests[1]?.body ?? "{}")).toMatchObject({
-      category: "Places",
+      category: "Heritage",
       available_date: "2026-08-28",
       start_time: "09:30",
       end_time: "11:00",

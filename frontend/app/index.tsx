@@ -15,7 +15,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import IdentityVerificationPrompt from "../components/IdentityVerificationPrompt";
 import ProfileForm from "../components/ProfileForm";
-import { RecoveryAccountDeleteAction, RecoveryCompletion, RecoveryKDFFallbackNotice, RecoveryKeyDisplay, RecoveryKeyInput, SupportAccountID } from "../components/RecoveryFlow";
+import { RecoveryAccountDeleteAction, RecoveryCompletion, RecoveryKeyDisplay, RecoveryKeyInput, SupportAccountID } from "../components/RecoveryFlow";
 import { useAuth } from "../hooks/useAuth";
 import {
   completeInitialKeySetup,
@@ -33,7 +33,7 @@ import {
   savePendingRecoveryKeyRotation,
   type GeneratedKeyMaterial,
 } from "../services/key-management";
-import { createRecoveryMaterial, deriveAccountDataKey, getRecoveryKDFImplementation, type KeyEnvelope, type RecoveryKDFImplementation } from "../services/crypto";
+import { createRecoveryMaterial, deriveAccountDataKey, type KeyEnvelope } from "../services/crypto";
 import { updateMyProfile } from "../services/profile";
 import {
   clearAppMode,
@@ -724,7 +724,6 @@ export default function OnboardingScreen() {
   const [keySetupActionError, setKeySetupActionError] = useState<string | null>(null);
   const [keySetupState, setKeySetupState] = useState<KeySetupState>({ status: "loading" });
   const [keySetupStage, setKeySetupStage] = useState<KeySetupStage>("loading_local");
-  const [keyKDFImplementation, setKeyKDFImplementation] = useState<RecoveryKDFImplementation | null>(null);
   const [restoreRetrying, setRestoreRetrying] = useState(false);
   const sessionRef = useRef(session);
   sessionRef.current = session;
@@ -760,6 +759,19 @@ export default function OnboardingScreen() {
     setRestoreRetrying(true);
     try {
       await retryRestore();
+    } finally {
+      setRestoreRetrying(false);
+    }
+  };
+
+  const clearBlockedAuth = async () => {
+    if (restoreRetrying) return;
+    setRestoreRetrying(true);
+    try {
+      await logout();
+      setLanguage(null);
+      setAppMode(null);
+      setAccountStepCompleted(false);
     } finally {
       setRestoreRetrying(false);
     }
@@ -882,7 +894,6 @@ export default function OnboardingScreen() {
       setKeySetupFor(null);
       setKeySetupState({ status: "loading" });
       setKeySetupStage("loading_local");
-      setKeyKDFImplementation(null);
       return;
     }
     // Wait until the persisted language lookup has completed. Starting the
@@ -896,7 +907,6 @@ export default function OnboardingScreen() {
     setKeySetupBusy(false);
     setKeySetupState({ status: "loading" });
     setKeySetupStage("loading_local");
-    setKeyKDFImplementation(null);
     void (async () => {
       try {
         await withTimeout((async () => {
@@ -918,9 +928,6 @@ export default function OnboardingScreen() {
               setKeySetupFor(userID);
               return;
             }
-            const kdfImplementation = await getRecoveryKDFImplementation(envelope.kdf_params.argon2id);
-            if (!active) return;
-            setKeyKDFImplementation(kdfImplementation);
             // Device registration is needed for protected photo requests, but
             // it is not needed to verify the local root key or open onboarding.
             // Do not make the whole app wait for this network round-trip.
@@ -957,9 +964,6 @@ export default function OnboardingScreen() {
           if (!active) return;
           const recoverableEnvelope = envelopes.find((envelope) => envelope.recovery_public_key.length > 0);
           if (recoverableEnvelope) {
-            const kdfImplementation = await getRecoveryKDFImplementation(recoverableEnvelope.kdf_params.argon2id);
-            if (!active) return;
-            setKeyKDFImplementation(kdfImplementation);
             if (initialDraft && keyEnvelopeMatches(initialDraft.envelope, recoverableEnvelope)) {
               setKeySetupState({ status: "create", material: initialDraft });
             } else {
@@ -968,9 +972,6 @@ export default function OnboardingScreen() {
           } else {
             setKeySetupStage("generating");
             const material = initialDraft ?? await (async () => {
-              const kdfImplementation = await getRecoveryKDFImplementation();
-              if (!active) return null;
-              setKeyKDFImplementation(kdfImplementation);
               return createInitialKeyMaterial();
             })();
             if (!material || !active) return;
@@ -1022,6 +1023,18 @@ export default function OnboardingScreen() {
               ) : (
                 <Text style={styles.restoreRetryButtonText}>再試行 / Retry</Text>
               )}
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              disabled={restoreRetrying}
+              onPress={() => void clearBlockedAuth()}
+              style={({ pressed }) => [
+                styles.restoreSignOutButton,
+                restoreRetrying && styles.disabled,
+                pressed && styles.pressed,
+              ]}
+            >
+              <Text style={styles.restoreSignOutButtonText}>ログアウト / Sign out</Text>
             </Pressable>
           </>
         ) : (
@@ -1082,12 +1095,9 @@ export default function OnboardingScreen() {
           {loadingText}
         </Text>
         {keySetupStage === "generating" ? (
-          <>
-            <Text style={styles.loadingHint}>
-              {language === "ja" ? "端末によっては少し時間がかかります。" : "This may take a little longer on some devices."}
-            </Text>
-            {keyKDFImplementation === "javascript" ? <RecoveryKDFFallbackNotice language={language} /> : null}
-          </>
+          <Text style={styles.loadingHint}>
+            {language === "ja" ? "端末によっては少し時間がかかります。" : "This may take a little longer on some devices."}
+          </Text>
         ) : null}
       </View>
     );
@@ -1156,7 +1166,6 @@ export default function OnboardingScreen() {
         accountID={session.user_id}
         busy={keySetupBusy || keySetupActionBusy}
         error={keySetupState.error ?? null}
-        kdfImplementation={keyKDFImplementation ?? undefined}
         language={language}
         onBack={() => void logout()}
         onSubmit={async (recoveryKey) => {
@@ -1336,6 +1345,23 @@ const styles = StyleSheet.create({
   },
   restoreRetryButtonText: {
     color: "#ffffff",
+    fontSize: 13,
+    fontWeight: "800",
+  },
+  restoreSignOutButton: {
+    minWidth: 132,
+    minHeight: 38,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 10,
+    paddingHorizontal: 18,
+    borderWidth: 1,
+    borderColor: BORDER_GRAY,
+    borderRadius: 19,
+    backgroundColor: "#ffffff",
+  },
+  restoreSignOutButtonText: {
+    color: MUTED_GRAY,
     fontSize: 13,
     fontWeight: "800",
   },

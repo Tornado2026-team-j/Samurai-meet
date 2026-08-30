@@ -8,6 +8,24 @@ export type MonsterSeedProfile = {
   freeText: string;
 };
 
+export const MONSTER_INPUT_LIMITS = {
+  interestMin: 1,
+  interestMax: 2,
+  skillMin: 0,
+  skillMax: 2,
+  jaItemCharacters: 15,
+  enItemCharacters: 30,
+} as const;
+
+export const MONSTER_GENERATION_RULES = {
+  primaryTheme: "monsterSeed.interestTags[0]",
+  primaryAbility: "monsterSeed.skillTags[0]",
+  secondaryDecoration: [
+    "monsterSeed.interestTags[1]",
+    "monsterSeed.skillTags[1]",
+  ],
+} as const;
+
 export type LocalProfile = {
   name: string;
   nationalityCode: string;
@@ -78,7 +96,7 @@ export function serializeMonsterSeedForLegacyBio(profile: LocalProfile): string 
 function parseTagList(value: unknown): string[] | null {
   if (!Array.isArray(value)) return null;
   if (!value.every((tag) => typeof tag === "string")) return null;
-  return [...new Set(value.map((tag) => tag.trim()).filter(Boolean))].slice(0, 5);
+  return [...new Set(value.map((tag) => tag.trim()).filter(Boolean))].slice(0, 2);
 }
 
 function parseMonsterSeedProfile(

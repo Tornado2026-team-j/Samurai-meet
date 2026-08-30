@@ -9,11 +9,13 @@ import (
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/auth"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/chat"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/classification"
+	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/identity"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/image"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/keys"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/matching"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/meeting"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/notification"
+	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/push"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/safety"
 	profileuser "github.com/Tornado2026-team-j/Samurai-meet/backend/internal/user"
 )
@@ -44,6 +46,8 @@ type RouterOptions struct {
 	Meetings              *meeting.Service
 	Notifications         *notification.Service
 	Safety                *safety.Service
+	Identity              *identity.Service
+	Push                  *push.Service
 }
 
 func NewRouter() http.Handler { return NewRouterWithOptions(RouterOptions{}) }
@@ -56,6 +60,9 @@ func NewRouterWithOptions(o RouterOptions) http.Handler {
 	m.HandleFunc("/passkey/", passkeyPage)
 	m.HandleFunc(APIV1Prefix+"/healthz", healthz)
 	m.HandleFunc(APIV1Prefix+"/readyz", readyz)
+	if o.Identity != nil {
+		m.HandleFunc(identityWebhookPath, identityWebhook(o.Identity))
+	}
 	if o.OAuthLogin != nil {
 		m.HandleFunc(APIV1Prefix+"/auth/google/start", googleStart(o.OAuthLogin, o.Environment, o.AllowExpoGoRedirect, o.ClientOrigin, o.DevClientOrigin))
 		m.HandleFunc(APIV1Prefix+"/auth/google/exchange", googleExchange(o.OAuthLogin))
@@ -149,6 +156,12 @@ func NewRouterWithOptions(o RouterOptions) http.Handler {
 		m.HandleFunc(meBlocksPath, blockCollection(o.Safety, o.Sessions))
 		m.HandleFunc(blocksPath, blockCollection(o.Safety, o.Sessions))
 		m.HandleFunc(blocksPath+"/", blockItem(o.Safety, o.Sessions))
+	}
+	if o.Sessions != nil && o.Identity != nil {
+		m.HandleFunc(identitySessionPath, createIdentitySession(o.Identity, o.Sessions))
+	}
+	if o.Sessions != nil && o.Push != nil {
+		m.HandleFunc(pushSettingsPath, pushSettings(o.Push, o.Sessions))
 	}
 	return withSecurityHeadersAndRateLimit(withCORS(withJSONContentType(m), o))
 }

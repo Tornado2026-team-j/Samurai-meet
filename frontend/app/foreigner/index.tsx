@@ -8,23 +8,24 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { colors } from "../../components/ui";
 import { useAuth } from "../../hooks/useAuth";
 import { useUnreadNotifications } from "../../hooks/useUnreadNotifications";
 import { APIError } from "../../services/api-client";
-import { listMatches, type MatchView } from "../../services/matching";
+import { listChats } from "../../services/chat";
+import { listMatches, listMyRecruitments, type MatchView, type Recruitment } from "../../services/matching";
 import { loadLanguage, subscribeLanguage, type AppLanguage } from "../../services/onboarding";
 
-const BLUE = "#5ec5f5";
-const YELLOW = "#e7b454";
-const TEXT_GRAY = "#535353";
-const MUTED_GRAY = "#949494";
-const BORDER_GRAY = "#e4e4e4";
-const SOFT_BLUE = "#eff8ff";
+const BLUE = colors.brand.sky;
+const YELLOW = colors.brand.gold;
+const TEXT_GRAY = colors.text.secondary;
+const MUTED_GRAY = colors.text.muted;
+const BORDER_GRAY = colors.border.subtle;
+const SOFT_BLUE = colors.surface.blueSoft;
 
 const COPY = {
   ja: {
@@ -36,6 +37,11 @@ const COPY = {
     notifications: "通知",
     profile: "プロフィール",
     title: "あなたの日本を見つけよう！",
+    createRecruitment: "募集を作成",
+    publicRecruitments: "公開中の募集",
+    todayPlan: "今日の予定",
+    openPlans: "予定を見る",
+    unreadChat: "未読チャットがあります",
     needsResponse: "対応が必要です",
     newApplications: (count: number) => `${count}件の新しい応募`,
     loading: "応募を読み込み中…",
@@ -59,6 +65,11 @@ const COPY = {
     notifications: "Notifications",
     profile: "Profile",
     title: "Find Your Japan!",
+    createRecruitment: "Create recruitment",
+    publicRecruitments: "Live recruitments",
+    todayPlan: "Today's plan",
+    openPlans: "View plans",
+    unreadChat: "You have unread chats",
     needsResponse: "Needs your response",
     newApplications: (count: number) => count === 1 ? "1 new application" : `${count} new applications`,
     loading: "Loading applications…",
@@ -81,12 +92,12 @@ export default function ForeignerHomeScreen() {
   const { getCurrentSession, refresh, session, status } = useAuth();
   const hasUnreadNotifications = useUnreadNotifications();
   const [language, setLanguage] = useState<AppLanguage | null>(null);
-  const [query, setQuery] = useState("");
   const [applications, setApplications] = useState<MatchView[]>([]);
+  const [ownedRecruitments, setOwnedRecruitments] = useState<Recruitment[]>([]);
+  const [unreadChatCount, setUnreadChatCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const searchInputRef = useRef<TextInput>(null);
   const initialLoadStartedRef = useRef(false);
   const copy = COPY[language ?? "en"];
   const copyRef = useRef(copy);
@@ -101,6 +112,9 @@ export default function ForeignerHomeScreen() {
     ),
     [applications],
   );
+  const openRecruitments = useMemo(() => ownedRecruitments.filter((item) => item.status === "open" || item.status === "matched"), [ownedRecruitments]);
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Tokyo", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  const todayPlans = useMemo(() => matchedApplications.filter((item) => item.status === "accepted" && item.recruitment.available_date === today), [matchedApplications, today]);
 
   const loadApplications = useCallback((mode: "initial" | "refresh" = "refresh") => {
     const controller = new AbortController();
@@ -126,24 +140,30 @@ export default function ForeignerHomeScreen() {
       setLoadError(null);
       try {
         let result;
+        let recruitments;
+        let chats;
         try {
-          result = await listMatches(
-            activeSession,
-            { role: "owner", limit: 50 },
-            controller.signal,
-          );
+          [result, recruitments, chats] = await Promise.all([
+            listMatches(activeSession, { role: "owner", limit: 50 }, controller.signal),
+            listMyRecruitments(activeSession, controller.signal),
+            listChats(activeSession, controller.signal),
+          ]);
         } catch (error) {
           if (!(error instanceof APIError) || error.status !== 401) throw error;
           await refresh();
           const refreshedSession = getCurrentSession();
           if (!refreshedSession) throw error;
-          result = await listMatches(
-            refreshedSession,
-            { role: "owner", limit: 50 },
-            controller.signal,
-          );
+          [result, recruitments, chats] = await Promise.all([
+            listMatches(refreshedSession, { role: "owner", limit: 50 }, controller.signal),
+            listMyRecruitments(refreshedSession, controller.signal),
+            listChats(refreshedSession, controller.signal),
+          ]);
         }
-        if (!cancelled) setApplications(result);
+        if (!cancelled) {
+          setApplications(result);
+          setOwnedRecruitments(recruitments);
+          setUnreadChatCount(chats.reduce((sum, chat) => sum + chat.unread_count, 0));
+        }
       } catch (error) {
         if (error instanceof Error && error.name === "AbortError" && (cancelled || controller.signal.aborted)) return;
         if (!cancelled) {
@@ -191,11 +211,7 @@ export default function ForeignerHomeScreen() {
   }, [status]);
 
   const openSearchPreferences = () => {
-    searchInputRef.current?.blur();
-    router.push({
-      pathname: "/tabs",
-      params: { query },
-    });
+    router.push("/tabs");
   };
   const openApplication = (applicationId: string) => {
     router.push({
@@ -224,31 +240,20 @@ export default function ForeignerHomeScreen() {
             { top: Math.max(insets.top + 8, 45) },
           ]}
         >
-          <View style={styles.searchField}>
-            <Pressable
-              accessibilityLabel={copy.openSearch}
-              accessibilityRole="button"
-              hitSlop={8}
-              onPress={openSearchPreferences}
-              style={({ pressed }) => [
-                styles.searchIconButton,
-                pressed && styles.pressed,
-              ]}
-            >
-              <MaterialIcons color="#949494" name="search" size={22} />
-            </Pressable>
-            <TextInput
-              ref={searchInputRef}
-              accessibilityLabel={copy.search}
-              onChangeText={setQuery}
-              onSubmitEditing={openSearchPreferences}
-              placeholder={copy.searchPlaceholder}
-              placeholderTextColor="#949494"
-              returnKeyType="search"
-              style={styles.searchInput}
-              value={query}
-            />
-          </View>
+          <Pressable
+            accessibilityLabel={copy.openSearch}
+            accessibilityRole="button"
+            onPress={openSearchPreferences}
+            style={({ pressed }) => [
+              styles.searchField,
+              pressed && styles.pressed,
+            ]}
+          >
+            <MaterialIcons color="#949494" name="search" size={24} />
+            <Text numberOfLines={1} style={styles.searchPlaceholder}>
+              {copy.searchPlaceholder}
+            </Text>
+          </Pressable>
 
           <Pressable
             accessibilityLabel={copy.notifications}
@@ -263,7 +268,7 @@ export default function ForeignerHomeScreen() {
             <MaterialIcons
               color="#ffffff"
               name="notifications-none"
-              size={30}
+              size={32}
             />
             {hasUnreadNotifications ? <View style={styles.notificationBadge} /> : null}
           </Pressable>
@@ -275,7 +280,7 @@ export default function ForeignerHomeScreen() {
             onPress={() => router.push("/profile")}
             style={styles.profileButton}
           >
-            <MaterialIcons color="#ffffff" name="account-circle" size={30} />
+            <MaterialIcons color="#ffffff" name="account-circle" size={34} />
           </Pressable>
         </View>
 
@@ -290,7 +295,10 @@ export default function ForeignerHomeScreen() {
       </View>
 
       <ScrollView
-        contentContainerStyle={styles.content}
+        contentContainerStyle={[
+          styles.content,
+          { paddingBottom: Math.max(insets.bottom + 120, 132) },
+        ]}
         refreshControl={
           <RefreshControl
             onRefresh={() => {
@@ -302,6 +310,30 @@ export default function ForeignerHomeScreen() {
         }
         showsVerticalScrollIndicator={false}
       >
+        <Pressable onPress={openSearchPreferences} style={({ pressed }) => [styles.createButton, pressed && styles.pressed]}>
+          <MaterialIcons color="#ffffff" name="add-circle" size={23} />
+          <Text style={styles.createButtonText}>{copy.createRecruitment}</Text>
+        </Pressable>
+
+        <View style={styles.dashboardRow}>
+          <Pressable onPress={() => router.push("/recruitments/mine")} style={styles.dashboardItem}>
+            <Text style={styles.dashboardCount}>{openRecruitments.length}</Text>
+            <Text style={styles.dashboardLabel}>{copy.publicRecruitments}</Text>
+          </Pressable>
+          <Pressable onPress={() => router.push("/plans")} style={styles.dashboardItem}>
+            <Text style={styles.dashboardCount}>{todayPlans.length}</Text>
+            <Text style={styles.dashboardLabel}>{copy.todayPlan}</Text>
+          </Pressable>
+        </View>
+
+        {unreadChatCount > 0 ? (
+          <Pressable onPress={() => router.push("/chat")} style={styles.unreadBanner}>
+            <MaterialIcons color={BLUE} name="mark-chat-unread" size={20} />
+            <Text style={styles.unreadText}>{copy.unreadChat}</Text>
+            <MaterialIcons color={BLUE} name="chevron-right" size={21} />
+          </Pressable>
+        ) : null}
+
         <View style={styles.pendingHeader}>
           <View style={styles.pendingIconCircle}>
             <MaterialIcons color={YELLOW} name="how-to-reg" size={28} />
@@ -429,51 +461,96 @@ const styles = StyleSheet.create({
   header: {
     position: "relative",
     width: "100%",
-    height: 156,
+    height: 176,
     backgroundColor: BLUE,
     borderBottomLeftRadius: 50,
     borderBottomRightRadius: 50,
+  },
+  createButton: {
+    minHeight: 50,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    borderRadius: 12,
+    backgroundColor: YELLOW,
+  },
+  createButtonText: {
+    color: "#ffffff",
+    fontSize: 16,
+    fontWeight: "900",
+  },
+  dashboardRow: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  dashboardItem: {
+    flex: 1,
+    minHeight: 82,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: BORDER_GRAY,
+    borderRadius: 12,
+    backgroundColor: "#ffffff",
+  },
+  dashboardCount: {
+    color: BLUE,
+    fontSize: 24,
+    fontWeight: "900",
+  },
+  dashboardLabel: {
+    marginTop: 3,
+    color: TEXT_GRAY,
+    fontSize: 12,
+    fontWeight: "700",
+    textAlign: "center",
+  },
+  unreadBanner: {
+    minHeight: 48,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    backgroundColor: SOFT_BLUE,
+  },
+  unreadText: {
+    flex: 1,
+    color: TEXT_GRAY,
+    fontSize: 13,
+    fontWeight: "800",
   },
   actionRow: {
     position: "absolute",
     top: 45,
     left: 19,
     right: 19,
-    height: 30,
+    height: 44,
     flexDirection: "row",
     alignItems: "center",
-    gap: 19,
+    gap: 14,
   },
   searchField: {
     flex: 1,
-    height: 30,
-    justifyContent: "center",
-    borderRadius: 20,
+    height: 44,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingHorizontal: 14,
+    borderRadius: 22,
     backgroundColor: "#ffffff",
   },
-  searchIconButton: {
-    position: "absolute",
-    left: 12,
-    width: 28,
-    height: 28,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  searchInput: {
-    width: "100%",
-    height: 30,
-    paddingTop: 0,
-    paddingRight: 12,
-    paddingBottom: 0,
-    paddingLeft: 45.34,
-    color: "#1f1f1f",
-    fontSize: 12,
+  searchPlaceholder: {
+    flex: 1,
+    color: "#949494",
+    fontSize: 15,
     fontWeight: "400",
     letterSpacing: 0,
   },
   notificationButton: {
-    width: 32,
-    height: 32,
+    width: 44,
+    height: 44,
     alignItems: "center",
     justifyContent: "center",
     overflow: "visible",
@@ -490,8 +567,8 @@ const styles = StyleSheet.create({
     backgroundColor: YELLOW,
   },
   profileButton: {
-    width: 32,
-    height: 32,
+    width: 44,
+    height: 44,
     alignItems: "center",
     justifyContent: "center",
     overflow: "visible",

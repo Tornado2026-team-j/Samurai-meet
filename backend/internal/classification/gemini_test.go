@@ -17,7 +17,7 @@ func TestGeminiClassifyAcceptsOnlySupportedCategory(t *testing.T) {
 			t.Fatalf("request = %s %s", r.Method, r.URL.String())
 		}
 		body, _ := io.ReadAll(r.Body)
-		if !strings.Contains(string(body), "Food, Places, Activity, or Other") {
+		if !strings.Contains(string(body), "Food, Heritage, Activity, or Other") {
 			t.Fatalf("classification contract missing from request: %s", body)
 		}
 		var requestBody struct {
@@ -37,7 +37,7 @@ func TestGeminiClassifyAcceptsOnlySupportedCategory(t *testing.T) {
 		if got := requestBody.GenerationConfig.ResponseSchema.Required; len(got) != 2 || got[0] != "category" || got[1] != "keywords" {
 			t.Fatalf("required fields = %#v, want category and keywords", got)
 		}
-		_, _ = w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"{\"category\":\"Places\",\"keywords\":[\"temple\",\"sightseeing\"]}"}]}}]}`))
+		_, _ = w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"{\"category\":\"Heritage\",\"keywords\":[\"temple\",\"sightseeing\"]}"}]}}]}`))
 	}))
 	defer server.Close()
 
@@ -47,8 +47,8 @@ func TestGeminiClassifyAcceptsOnlySupportedCategory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ClassifyWithKeywords() error = %v", err)
 	}
-	if result.Category != "Places" || len(result.Keywords) != 2 || result.Keywords[0] != "temple" || result.Keywords[1] != "sightseeing" {
-		t.Fatalf("ClassifyWithKeywords() = %#v, want Places with temple and sightseeing", result)
+	if result.Category != "Heritage" || len(result.Keywords) != 2 || result.Keywords[0] != "temple" || result.Keywords[1] != "sightseeing" {
+		t.Fatalf("ClassifyWithKeywords() = %#v, want Heritage with temple and sightseeing", result)
 	}
 }
 
@@ -81,8 +81,8 @@ func TestParseClassificationJSON(t *testing.T) {
 	}{
 		{
 			name: "normal strict JSON",
-			text: `{"category":"Places","keywords":["temple"," sightseeing "]}`,
-			want: ClassificationResult{Category: "Places", Keywords: []string{"temple", "sightseeing"}},
+			text: `{"category":"Heritage","keywords":["temple"," sightseeing "]}`,
+			want: ClassificationResult{Category: "Heritage", Keywords: []string{"temple", "sightseeing"}},
 		},
 		{
 			name:      "unknown field",
