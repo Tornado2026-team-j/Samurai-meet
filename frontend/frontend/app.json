@@ -1,0 +1,32 @@
+{
+  "expo": {
+    "name": "Samurai Meet",
+    "slug": "samurai-meet",
+    "scheme": "samuraimeet",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "experiments": {
+      "typedRoutes": true
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      "expo-web-browser",
+      "expo-font",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Samurai Meet uses your location to find nearby recruitments."
+        }
+      ],
+      "@react-native-community/datetimepicker",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Samurai Meet uses your photo library to upload memories."
+        }
+      ]
+    ]
+  }
+}

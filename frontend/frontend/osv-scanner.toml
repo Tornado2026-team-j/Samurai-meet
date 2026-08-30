@@ -1,0 +1,9 @@
+[[IgnoredVulns]]
+id = "GHSA-w3rx-r6r6-pgpr"
+ignoreUntil = 2026-09-07
+reason = "Expo / Metro の開発時依存 image-size@1.2.1。公開済みの修正版が存在しないため。"
+
+[[IgnoredVulns]]
+id = "GHSA-5p2g-fcmc-qvqq"
+ignoreUntil = 2026-09-07
+reason = "Expo / Metro の開発時依存 image-size@1.2.1。公開済みの修正版が存在しないため。"

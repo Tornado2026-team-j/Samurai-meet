@@ -1,0 +1,11 @@
+/passkey
+  Cache-Control: no-store
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' https://samurai-meet.disnana.com; object-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'
+  Permissions-Policy: publickey-credentials-create=(self), publickey-credentials-get=(self)
+  Referrer-Policy: no-referrer
+  X-Content-Type-Options: nosniff
+
+/auth/complete
+  Cache-Control: no-store
+  Referrer-Policy: no-referrer
+  X-Content-Type-Options: nosniff
