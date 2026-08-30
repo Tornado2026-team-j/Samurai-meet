@@ -40,6 +40,13 @@ const (
 	recruitmentTimezone  = "Asia/Tokyo"
 )
 
+const (
+	categoryFood     = "Food"
+	categoryPlaces   = "Places"
+	categoryActivity = "Activity"
+	categoryOther    = "Other"
+)
+
 // recruitmentLocation is deliberately fixed at Japan Standard Time. The
 // recruitment API is Japan-only, so date and clock fields must not depend on
 // the server's local timezone database or process timezone.
@@ -1053,7 +1060,7 @@ func (s *Service) UpdateLocation(ctx context.Context, userID string, input Locat
 func normalizeRecruitmentInput(input RecruitmentInput, now time.Time) (RecruitmentInput, string, error) {
 	input.Category = strings.TrimSpace(input.Category)
 	if input.Category == "" {
-		input.Category = "Other"
+		input.Category = categoryOther
 	}
 	input.Status = strings.TrimSpace(input.Status)
 	if input.Status == "" {
@@ -1062,7 +1069,7 @@ func normalizeRecruitmentInput(input RecruitmentInput, now time.Time) (Recruitme
 	if input.Status != "draft" && input.Status != "open" && input.Status != "closed" {
 		return RecruitmentInput{}, "", ErrInvalidInput
 	}
-	if input.Category != "Food" && input.Category != "Heritage" && input.Category != "Activity" && input.Category != "Other" {
+	if !isRecruitmentCategory(input.Category) {
 		return RecruitmentInput{}, "", ErrInvalidInput
 	}
 	input.LocationName = strings.TrimSpace(input.LocationName)
@@ -1155,7 +1162,7 @@ func normalizeKeywords(values []string) ([]string, error) {
 
 func normalizeSearchParams(params SearchParams) (SearchParams, error) {
 	params.Category = strings.TrimSpace(params.Category)
-	if params.Category != "" && params.Category != "Food" && params.Category != "Heritage" && params.Category != "Activity" && params.Category != "Other" {
+	if params.Category != "" && !isRecruitmentCategory(params.Category) {
 		return SearchParams{}, ErrInvalidInput
 	}
 	if params.RadiusKM != 0 && params.RadiusKM != 1 && params.RadiusKM != 3 && params.RadiusKM != 5 {
@@ -1197,6 +1204,15 @@ func normalizeSearchParams(params SearchParams) (SearchParams, error) {
 		params.Limit = maxSearchLimit
 	}
 	return params, nil
+}
+
+func isRecruitmentCategory(value string) bool {
+	switch value {
+	case categoryFood, categoryPlaces, categoryActivity, categoryOther:
+		return true
+	default:
+		return false
+	}
 }
 
 func normalizeMatchListParams(params MatchListParams) (MatchListParams, error) {

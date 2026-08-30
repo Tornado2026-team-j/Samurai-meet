@@ -1,6 +1,6 @@
 import type { Session } from "./auth-contract";
 import { APIError, requestAPI } from "./api-client";
-import type { MatchCardData, MatchCategory } from "../types/match";
+import { isMatchCategory, type MatchCardData, type MatchCategory } from "../types/match";
 
 export type RecruitmentStatus =
   | "draft"
@@ -149,7 +149,10 @@ function recruitmentQuery(params: RecruitmentSearchParams): string {
     const normalizedKeyword = keyword.trim();
     if (normalizedKeyword) appendQueryPart(parts, "keyword", normalizedKeyword);
   }
-  if (params.category) appendQueryPart(parts, "category", params.category);
+  if (params.category !== undefined) {
+    if (!isMatchCategory(params.category)) throw new Error("invalid_recruitment_category");
+    appendQueryPart(parts, "category", params.category);
+  }
   if (params.availableDate) appendQueryPart(parts, "available_date", params.availableDate);
   if (params.startTime) appendQueryPart(parts, "start_time", params.startTime);
   if (params.endTime) appendQueryPart(parts, "end_time", params.endTime);
@@ -221,7 +224,7 @@ export async function classifyRecruitmentDescription(
     { method: "POST", body: JSON.stringify({ description }), signal },
   );
   const category = response.data?.category;
-  if (category === "Food" || category === "Heritage" || category === "Activity" || category === "Other") {
+  if (isMatchCategory(category)) {
     return category;
   }
   throw new Error("recruitment classification response is invalid");
@@ -483,6 +486,9 @@ function uniqueTags(recruitment: Recruitment): string[] {
 }
 
 export function recruitmentToMatchCard(recruitment: Recruitment): MatchCardData {
+  if (!isMatchCategory(recruitment.category)) {
+    throw new Error("recruitment response is invalid");
+  }
   const dates = formatRecruitmentDate(recruitment.available_date);
   const tags = uniqueTags(recruitment);
   const detailTags = [...new Set([...tags, recruitment.category])].slice(0, 5);

@@ -30,7 +30,7 @@ import {
   updateCurrentLocation,
 } from "../../services/matching";
 import { loadLanguage, subscribeLanguage, type AppLanguage } from "../../services/onboarding";
-import type { MatchCardData, MatchCategory } from "../../types/match";
+import { isMatchCategory, type MatchCardData } from "../../types/match";
 
 const BLUE = colors.brand.sky;
 const YELLOW = colors.brand.gold;
@@ -194,7 +194,7 @@ export default function JapaneseHomeScreen() {
   const [selectedDate, setSelectedDate] = useState(params.date ?? todayDateKey);
   const [sortMode, setSortMode] = useState<SortMode>(params.sort === "deadline" ? "deadline" : "near");
   const [todayPlanCount, setTodayPlanCount] = useState(0);
-  const selectedCategory = params.category === "Food" || params.category === "Heritage" || params.category === "Activity" || params.category === "Other" ? params.category as MatchCategory : undefined;
+  const selectedCategory = isMatchCategory(params.category) ? params.category : undefined;
   const selectedTime = params.time === "morning" || params.time === "afternoon" || params.time === "evening" ? params.time : undefined;
   const selectedRadius = params.radius === "1" || params.radius === "5" ? Number(params.radius) as 1 | 5 : 3;
   const verifiedOnly = params.verified === "1";

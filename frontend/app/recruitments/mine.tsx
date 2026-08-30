@@ -33,7 +33,7 @@ import {
   type RecruitmentUpdateRequest,
 } from "../../services/matching";
 import { formatTimeRange } from "../../utils/time";
-import type { MatchCategory } from "../../types/match";
+import { MATCH_CATEGORIES, type MatchCategory } from "../../types/match";
 
 const BLUE = "#5ec5f5";
 const YELLOW = "#e7b454";
@@ -42,7 +42,7 @@ const MUTED_GRAY = "#949494";
 const BORDER_GRAY = "#e4e4e4";
 const SOFT_BLUE = "#eff8ff";
 
-const CATEGORIES: MatchCategory[] = ["Food", "Heritage", "Activity", "Other"];
+const CATEGORIES = MATCH_CATEGORIES;
 
 const COPY = {
   ja: {

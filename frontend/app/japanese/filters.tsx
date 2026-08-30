@@ -4,12 +4,12 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { Header, colors, radius } from "../../components/ui";
-import type { MatchCategory } from "../../types/match";
+import { type MatchCategory } from "../../types/match";
 
-const CATEGORIES: Array<{ value: MatchCategory | ""; label: string }> = [
+const CATEGORIES: { value: MatchCategory | ""; label: string }[] = [
   { value: "", label: "すべて" },
   { value: "Food", label: "Food" },
-  { value: "Heritage", label: "Heritage" },
+  { value: "Places", label: "Places" },
   { value: "Activity", label: "Activity" },
   { value: "Other", label: "Other" },
 ];

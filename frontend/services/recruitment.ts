@@ -6,18 +6,11 @@ import {
   type RecruitmentCreateRequest,
 } from "./matching";
 import { requestAPI } from "./api-client";
-import type { MatchCategory } from "../types/match";
+import { isMatchCategory, type MatchCategory } from "../types/match";
 import type {
   RecruitmentDraft,
   RecruitmentPreview,
 } from "../types/recruitment";
-
-const MATCH_CATEGORIES: readonly MatchCategory[] = [
-  "Food",
-  "Heritage",
-  "Activity",
-  "Other",
-];
 
 type RecruitmentClassificationResponse = {
   data?: {
@@ -30,10 +23,6 @@ export type RecruitmentSelection = {
   category: MatchCategory;
   keywords: string[];
 };
-
-function isMatchCategory(value: unknown): value is MatchCategory {
-  return typeof value === "string" && MATCH_CATEGORIES.includes(value as MatchCategory);
-}
 
 export function normalizeRecruitmentKeywords(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
