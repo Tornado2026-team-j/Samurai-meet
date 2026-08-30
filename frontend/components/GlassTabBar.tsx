@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { BlurView } from "expo-blur";
-import { useRouter, type Href } from "expo-router";
-import type { ComponentProps } from "react";
+import { usePathname, useRouter, type Href } from "expo-router";
+import { useEffect, useRef, type ComponentProps } from "react";
 import { Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { AppMode } from "../services/onboarding";
@@ -21,6 +21,11 @@ type GlassTabBarProps = {
   homeHref?: Href;
   plansHref?: Href;
 };
+
+function hrefKey(href: Href): string {
+  if (typeof href === "string") return href;
+  return JSON.stringify(href) ?? "";
+}
 
 const TAB_ITEMS: Array<{
   key: TabKey;
@@ -42,10 +47,16 @@ export default function GlassTabBar({
   plansHref,
 }: GlassTabBarProps) {
   const insets = useSafeAreaInsets();
+  const pathname = usePathname();
   const router = useRouter();
+  const pendingHref = useRef<string | null>(null);
   const bottom = Math.max(insets.bottom + 8, 18);
   const defaultHomeHref: Href = appMode === "traveler" ? "/foreigner" : "/japanese";
   const defaultPlansHref: Href = "/plans";
+
+  useEffect(() => {
+    pendingHref.current = null;
+  }, [pathname]);
 
   const hrefFor = (key: TabKey): Href => {
     switch (key) {
@@ -62,6 +73,16 @@ export default function GlassTabBar({
     }
   };
 
+  const navigateToTab = (key: TabKey) => {
+    const href = hrefFor(key);
+    const targetKey = hrefKey(href);
+    const targetPath = typeof href === "string" ? href.split(/[?#]/u, 1)[0] : null;
+    if (targetPath === pathname || pendingHref.current === targetKey) return;
+
+    pendingHref.current = targetKey;
+    router.replace(href);
+  };
+
   return (
     <View pointerEvents="box-none" style={[styles.wrapper, { bottom }]}>
       <BlurView intensity={Platform.OS === "ios" ? 42 : 22} tint="light" style={styles.bar}>
@@ -74,7 +95,7 @@ export default function GlassTabBar({
               accessibilityLabel={item.label}
               accessibilityRole="tab"
               accessibilityState={{ selected }}
-              onPress={() => router.replace(hrefFor(item.key))}
+              onPress={() => navigateToTab(item.key)}
               style={({ pressed }) => [
                 styles.tab,
                 pressed && styles.pressed,

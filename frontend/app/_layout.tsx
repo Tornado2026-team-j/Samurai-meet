@@ -24,7 +24,6 @@ function AuthRouteGuard({ children }: { children: ReactNode }) {
   return (
     <View style={{ flex: 1 }}>
       {children}
-      <GlobalTabBar />
     </View>
   );
 }
@@ -48,14 +47,17 @@ function RootNavigator() {
   }, [router, status]);
 
   return (
-    <Stack
-      initialRouteName="index"
-      screenLayout={({ children }) => <AuthRouteGuard>{children}</AuthRouteGuard>}
-      screenOptions={{
-        animation: "none",
-        headerShown: false,
-      }}
-    />
+    <View style={{ flex: 1 }}>
+      <Stack
+        initialRouteName="index"
+        screenLayout={({ children }) => <AuthRouteGuard>{children}</AuthRouteGuard>}
+        screenOptions={{
+          animation: "none",
+          headerShown: false,
+        }}
+      />
+      {status === "signed_in" ? <GlobalTabBar /> : null}
+    </View>
   );
 }
 
