@@ -27,7 +27,11 @@ describe("onboarding storage validation", () => {
         JSON.stringify({
           name: "田中 梨菜",
           nationalityCode: "JP",
-          bio: "大阪を案内します",
+          monsterSeed: {
+            skillTags: ["english_conversation", "directions"],
+            interestTags: ["cafes"],
+            freeText: "路地裏の小さな喫茶店が好きです",
+          },
           completed: true,
           identityVerificationChoice: "proceed",
         }),
@@ -35,7 +39,11 @@ describe("onboarding storage validation", () => {
     ).toEqual({
       name: "田中 梨菜",
       nationalityCode: "JP",
-      bio: "大阪を案内します",
+      monsterSeed: {
+        skillTags: ["english_conversation", "directions"],
+        interestTags: ["cafes"],
+        freeText: "路地裏の小さな喫茶店が好きです",
+      },
       completed: true,
       identityVerificationChoice: "proceed",
     });
@@ -47,11 +55,32 @@ describe("onboarding storage validation", () => {
         JSON.stringify({
           name: "Rina",
           nationalityCode: "JP",
-          bio: "",
+          monsterSeed: {
+            skillTags: ["photography"],
+            interestTags: ["food", "anime"],
+            freeText: "",
+          },
           completed: true,
         }),
       )?.identityVerificationChoice,
     ).toBeNull();
+  });
+
+  test("migrates legacy bio into monster seed free text", () => {
+    expect(
+      parseLocalProfile(
+        JSON.stringify({
+          name: "Rina",
+          nationalityCode: "JP",
+          bio: "大阪を案内します",
+          completed: true,
+        }),
+      )?.monsterSeed,
+    ).toEqual({
+      skillTags: [],
+      interestTags: [],
+      freeText: "大阪を案内します",
+    });
   });
 
   test("rejects malformed profile storage", () => {

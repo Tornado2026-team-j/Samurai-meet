@@ -26,6 +26,7 @@ import { getCurrentCoordinates } from "../../services/location";
 import {
   loadLanguage,
   loadLocalProfile,
+  serializeMonsterSeedForLegacyBio,
   subscribeLanguage,
   type AppLanguage,
 } from "../../services/onboarding";
@@ -843,7 +844,7 @@ export default function SearchPreferencesScreen() {
         await updateMyProfile(activeSession, {
           name: localProfile.name,
           nationality_code: localProfile.nationalityCode,
-          bio: localProfile.bio,
+          bio: serializeMonsterSeedForLegacyBio(localProfile),
         });
       }
 

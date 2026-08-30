@@ -46,6 +46,7 @@ import {
   saveIdentityVerificationChoice,
   saveLanguage,
   saveLocalProfile,
+  serializeMonsterSeedForLegacyBio,
   type AppMode,
   type AppLanguage,
   type IdentityVerificationChoice,
@@ -1290,7 +1291,7 @@ export default function OnboardingScreen() {
         await updateMyProfile(activeSession, {
           name: profileWithIdentityVerificationChoice.name,
           nationality_code: profileWithIdentityVerificationChoice.nationalityCode,
-          bio: profileWithIdentityVerificationChoice.bio,
+          bio: serializeMonsterSeedForLegacyBio(profileWithIdentityVerificationChoice),
         });
         await saveLocalProfile(
           activeSession.user_id,
@@ -1490,9 +1491,11 @@ const styles = StyleSheet.create({
     letterSpacing: 0,
   },
   progress: {
+    width: "100%",
     height: 14,
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "center",
     gap: 10,
   },
   progressDot: {
