@@ -229,11 +229,13 @@ func (s *Service) attachmentByMessageID(ctx context.Context, messageID string) (
 	return &a, nil
 }
 
-// ProcessExpiredAttachments removes uploads that were never referenced by a
-// message within ttl. It first marks a row deleted, so a concurrent message
+// ProcessExpiredAttachments deletes the ciphertext blob of every attachment
+// that is done for: an upload never referenced by a message within ttl, or one
+// already tombstoned (deleted_at set) by the retention sweep because its message
+// aged out. It first marks an unreferenced row deleted, so a concurrent message
 // transaction cannot link the attachment after its blob has been selected for
-// deletion. Blob deletion is idempotent and marked rows are retried on the
-// next sweep when storage is temporarily unavailable.
+// deletion. Blob deletion is idempotent and marked rows are retried on the next
+// sweep when storage is temporarily unavailable.
 func (s *Service) ProcessExpiredAttachments(ctx context.Context, ttl time.Duration, now time.Time) error {
 	if s == nil || s.db == nil || s.blobs == nil {
 		return nil
@@ -241,8 +243,8 @@ func (s *Service) ProcessExpiredAttachments(ctx context.Context, ttl time.Durati
 	cutoff := now.Add(-ttl).UTC().Format(time.RFC3339Nano)
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id,uploader_user_id FROM chat_attachments
-		WHERE message_id IS NULL
-		  AND (deleted_at IS NOT NULL OR created_at < $1)
+		WHERE deleted_at IS NOT NULL
+		   OR (message_id IS NULL AND created_at < $1)
 		ORDER BY COALESCE(deleted_at, created_at)
 		LIMIT $2`, cutoff, attachmentSweepBatch)
 	if err != nil {
@@ -271,10 +273,11 @@ func (s *Service) ProcessExpiredAttachments(ctx context.Context, ttl time.Durati
 		err := s.db.QueryRowContext(ctx, `
 			UPDATE chat_attachments
 			SET deleted_at=COALESCE(deleted_at,$1)
-			WHERE id=$2 AND message_id IS NULL
+			WHERE id=$2 AND (message_id IS NULL OR deleted_at IS NOT NULL)
 			RETURNING uploader_user_id`, claimStamp, t.id).Scan(&claimedUploader)
 		if errors.Is(err, sql.ErrNoRows) {
-			// A concurrent SendMessage linked it first; its blob must remain.
+			// A concurrent SendMessage linked it first (message_id set, not
+			// tombstoned); its blob must remain.
 			continue
 		}
 		if err != nil {
@@ -289,7 +292,7 @@ func (s *Service) ProcessExpiredAttachments(ctx context.Context, ttl time.Durati
 			}
 			continue
 		}
-		if _, err := s.db.ExecContext(ctx, `DELETE FROM chat_attachments WHERE id=$1 AND message_id IS NULL AND deleted_at IS NOT NULL`, t.id); err != nil && firstErr == nil {
+		if _, err := s.db.ExecContext(ctx, `DELETE FROM chat_attachments WHERE id=$1 AND deleted_at IS NOT NULL`, t.id); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}

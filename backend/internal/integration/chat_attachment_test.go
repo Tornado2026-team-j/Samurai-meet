@@ -313,6 +313,62 @@ func TestChatAttachmentDeliveredOverWebSocket(t *testing.T) {
 	}
 }
 
+// TestChatAttachmentRetentionPurge locks that the message retention sweep also
+// disposes of a linked photo: PurgeExpiredMessages tombstones the attachment row
+// (download 404s at once) and the attachment sweep then deletes its blob and row.
+func TestChatAttachmentRetentionPurge(t *testing.T) {
+	f := newChatAttachmentFixture(t)
+	nonce := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x09}, 12))
+
+	_, attachment, _ := f.upload(t, f.requesterTok, bytes.Repeat([]byte{0x77}, 96), nonce)
+	attachmentID := attachment["id"].(string)
+	status, msg := f.sendMessage(t, f.requesterTok, map[string]any{
+		"client_message_id": "ret-att-1",
+		"ciphertext":        base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{1}, 32)),
+		"nonce":             base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{2}, 12)),
+		"algorithm":         "AES-256-GCM",
+		"key_version":       "chat-mvp-v1",
+		"attachment_id":     attachmentID,
+	})
+	if status != http.StatusCreated {
+		t.Fatalf("send status = %d", status)
+	}
+
+	f.chatService.ConfigureMessageRetention(30)
+	stale := f.now.Add(-45 * 24 * time.Hour).Format(time.RFC3339Nano)
+	if _, err := f.database.ExecContext(f.ctx, `UPDATE messages SET created_at=$1 WHERE id=$2`, stale, msg["id"]); err != nil {
+		t.Fatalf("backdate: %v", err)
+	}
+
+	if purged, err := f.chatService.PurgeExpiredMessages(f.ctx, f.now); err != nil || purged != 1 {
+		t.Fatalf("PurgeExpiredMessages = %d, %v (want 1, nil)", purged, err)
+	}
+
+	// The attachment row is tombstoned and the download endpoint stops serving it.
+	var deletedAt string
+	if err := f.database.QueryRowContext(f.ctx, `SELECT COALESCE(deleted_at,'') FROM chat_attachments WHERE id=$1`, attachmentID).Scan(&deletedAt); err != nil {
+		t.Fatalf("read attachment tombstone: %v", err)
+	}
+	if deletedAt == "" {
+		t.Fatal("linked attachment not tombstoned by retention sweep")
+	}
+	if code, _, _ := f.download(t, f.ownerToken, attachmentID); code == http.StatusOK {
+		t.Fatal("tombstoned attachment still downloadable")
+	}
+
+	// The attachment sweep deletes the blob and the row.
+	if err := f.chatService.ProcessExpiredAttachments(f.ctx, 24*time.Hour, f.now.Add(time.Minute)); err != nil {
+		t.Fatalf("ProcessExpiredAttachments: %v", err)
+	}
+	var remaining int
+	if err := f.database.QueryRowContext(f.ctx, `SELECT COUNT(*) FROM chat_attachments WHERE id=$1`, attachmentID).Scan(&remaining); err != nil {
+		t.Fatal(err)
+	}
+	if remaining != 0 {
+		t.Fatalf("attachment row not removed after sweep (%d rows)", remaining)
+	}
+}
+
 // --- HTTP helpers ---
 
 func (f *chatAttachmentFixture) upload(t *testing.T, token string, ciphertext []byte, nonce string) (int, map[string]any, http.Header) {

@@ -118,7 +118,7 @@ RESTのメッセージ送信・`transport-token`発行・WebSocket接続は`acce
 
 写真添付は2段階です。まず`POST /chats/{id}/attachments`へAES-256-GCM暗号文をraw bodyでアップロードし（メタは`X-Chat-Attachment-*`ヘッダ）、次に`POST /chats/{id}/messages`の`attachment_id`で1つのメッセージへ結び付けます。参照できるのは同一チャットで自分がアップロードした未参照の添付だけです。`GET /messages`とWebSocketの`message.created` / `message.ack`は、添付付きメッセージに`attachment`オブジェクトを含めます。サーバーは画像鍵を持たず、`nonce` / `algorithm` / `key_version`を不透明メタデータとして保存するだけで、EXIF除去はクライアントの責務です。暗号文上限は`IMAGE_MAX_UPLOAD_BYTES`（既定20MiB）、許可MIMEは`image/jpeg` / `image/png` / `image/webp` / `application/octet-stream`。メッセージから参照されない添付は約24時間後にスイープで削除します。取得は`accepted`/`completed`マッチの参加者のみ、ブロック時は不可です。詳細は [写真仕様](photos.md)。
 
-保持期間（既定180日・`CHAT_MESSAGE_RETENTION_DAYS`）を過ぎたメッセージは6時間ごとのスイープで`deleted_at`を打ち、暗号文・nonceを消去し、`chat_message_deletions`へ監査行を残します。以後は履歴・未読数・配送のいずれにも現れません。
+保持期間（既定180日・`CHAT_MESSAGE_RETENTION_DAYS`）を過ぎたメッセージは6時間ごとのスイープで`deleted_at`を打ち、暗号文・nonceを消去し、`chat_message_deletions`へ監査行を残します。写真添付が結び付いている場合は同じスイープで添付行も`deleted_at`を打ち（取得エンドポイントは即座に404）、次の添付スイープが暗号文BLOBと行を削除します。以後は履歴・未読数・配送のいずれにも現れません。
 
 WebSocketの配送はプロセス内ハブ（`hub.go`）で行い、複数インスタンス構成では PostgreSQL `LISTEN/NOTIFY` fan-out（`cluster.go`）が各インスタンスの `message.created` / `message.read` / `typing` を他インスタンスのローカルソケットへ再配送します。NOTIFY のペイロードは `sequence` などの最小情報だけで、受信側が暗号文行を DB から再取得します（8000 byte 上限内）。発行元インスタンスのイベントは自分では再配送しません。NOTIFY 取りこぼし時はクライアントが再接続時に `sequence` cursor で REST 補完します。単一インスタンス運用では `StartClusterFanout` を呼ばなければ NOTIFY を出しません。`LISTEN` 用に専用のプールコネクションを1本占有します。
 
