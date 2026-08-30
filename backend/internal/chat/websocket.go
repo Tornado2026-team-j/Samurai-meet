@@ -436,6 +436,7 @@ func (s *Service) broadcastTyping(c *wsConn, state string) {
 		return
 	}
 	s.hub.broadcastExceptUser(c.chatID, c.userID, mustFrame(typingFrame{Type: serverFrameTyping, UserID: c.userID, State: state}))
+	s.publishClusterEvent(clusterEvent{Kind: serverFrameTyping, ChatID: c.chatID, UserID: c.userID, State: state})
 }
 
 func (s *Service) replyError(c *wsConn, code, message string) {

@@ -156,7 +156,7 @@ Chat Token を更新する場合も短い重複期間と `token_seq` を利用�
 - heartbeat はアクティブな接続の `sessions.last_seen_at` を更新し、WebSocketだけを使うクライアントのセッションを維持する。
 - ユーザー・チャット単位の接続数を `maxConnectionsPerUser`（現在 4）で制限する。
 - メッセージ送信はユーザー単位のトークンバケット（`chat.Service.sendLimiter`）でレート制限する。REST と WebSocket は同じ予算を共有し、接続数上限とは独立にスパム・ハラスメント経路を塞ぐ。超過時、REST は `429` ＋ `Retry-After`、WebSocket は `rate_limited` エラーフレーム（`retry_after_seconds` 付き、接続維持）。
-- 複数 API インスタンス構成での `LISTEN / NOTIFY` fan-out は未実装（§後述の未決事項）。現状のハブはプロセス内。
+- 複数 API インスタンス構成は PostgreSQL `LISTEN / NOTIFY` fan-out（`chat.Service.StartClusterFanout` / `cluster.go`）で対応済み。各インスタンスの `message.created` / `message.read` / `typing` を `chat_events`（非 public schema は `chat_events_<schema>`）チャネルへ NOTIFY し、他インスタンスのリスナーがローカルソケットへ再配送する。ペイロードは最小情報（`sequence` 等）で、受信側が暗号文行を DB から再取得する。発行元インスタンスのイベントは自分では再配送しない。NOTIFY 取りこぼしはクライアントの再接続時 REST 補完で回収する。単一インスタンス運用では `StartClusterFanout` を呼ばず NOTIFY を出さない。
 
 ## 7. 0-RTT の扱い
 
@@ -209,7 +209,8 @@ QUICのtransport層が失われたpacketを再送することと、アプリケ�
 | WebSocket サーバー | Go（`coder/websocket`、`backend/internal/chat/websocket.go` 実装済み） |
 | QUIC / HTTP/3 サーバー（将来） | Go。採用ライブラリを PoC で決定（WebSocketで先行） |
 | 参加者・セッション・ブロック判定 | Go + PostgreSQL（実装済み） |
-| 失効通知 | heartbeat / polling（実装済み）。`LISTEN / NOTIFY` は複数インスタンス時に追加 |
+| 失効通知 | heartbeat / polling（実装済み） |
+| 複数インスタンス配送 | Go。`LISTEN / NOTIFY` fan-out（`cluster.go`、実装済み） |
 
 MVP のリアルタイム配送は WebSocket（実装済み）で、同じ Chat Token の認可モデルを適用します。QUIC / HTTP/3 WebTransport は将来の標準候補で、Expo の対応状況を見て後追いします。
 

@@ -4,12 +4,10 @@ import "sync"
 
 // Hub is an in-process registry of live WebSocket connections keyed by chat ID.
 //
-// It is deliberately single-instance: with more than one API process, a
-// message sent through process A is not delivered to a socket on process B.
-// The follow-up is a PostgreSQL LISTEN/NOTIFY fan-out (see
-// docs/features/chat-transport.md §6); until then run chat delivery on one
-// instance or accept that WebSocket clients reconcile missed messages over
-// REST using the sequence cursor.
+// It only reaches sockets on this process. Cross-instance delivery is handled
+// by clusterFanout (cluster.go): a PostgreSQL LISTEN/NOTIFY bridge that
+// re-delivers remote message.created / message.read / typing events to this
+// hub's local sockets. See docs/features/chat-transport.md §6.
 type Hub struct {
 	mu    sync.RWMutex
 	rooms map[string]map[*wsConn]struct{}

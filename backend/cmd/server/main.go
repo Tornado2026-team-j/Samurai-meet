@@ -113,6 +113,10 @@ func main() {
 	matchingService := matching.NewService(database, notifications)
 	chatService := chat.NewService(database, signer, notifications)
 	chatService.ConfigureSendRateLimit(cfg.Chat.SendBurst, float64(cfg.Chat.SendRefillPerMinute)/60.0)
+	chatService.SetClusterLogger(log.Printf)
+	if err = chatService.StartClusterFanout(context.Background()); err != nil {
+		log.Fatalf("chat cross-instance fan-out initialization failed: %v", err)
+	}
 	meetingService := meeting.NewService(database)
 	safetyService := safety.NewService(database)
 	server := &http.Server{

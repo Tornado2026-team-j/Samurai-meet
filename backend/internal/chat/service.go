@@ -42,6 +42,11 @@ type Service struct {
 	notifications *notification.Service
 	hub           *Hub
 	sendLimiter   *sendRateLimiter
+
+	instanceID     string
+	clusterCh      string
+	clusterEnabled bool
+	clusterLogf    func(string, ...any)
 }
 
 type ChatSummary struct {
@@ -102,7 +107,15 @@ func NewService(database *sql.DB, signer *auth.Signer, notificationServices ...*
 	if len(notificationServices) > 0 {
 		notifications = notificationServices[0]
 	}
-	return &Service{db: database, signer: signer, notifications: notifications, hub: newHub(), sendLimiter: newSendRateLimiter()}
+	return &Service{db: database, signer: signer, notifications: notifications, hub: newHub(), sendLimiter: newSendRateLimiter(), instanceID: newInstanceID()}
+}
+
+// SetClusterLogger installs a logger for cross-instance fan-out diagnostics
+// (listener reconnects, publish failures). Optional; nil stays silent.
+func (s *Service) SetClusterLogger(logf func(string, ...any)) {
+	if s != nil {
+		s.clusterLogf = logf
+	}
 }
 
 // ConfigureSendRateLimit overrides the per-user message send budget. capacity
@@ -310,6 +323,9 @@ func (s *Service) sendMessage(ctx context.Context, userID, chatID string, input 
 	if isNew && s.hub != nil {
 		s.hub.broadcastExcept(access.ChatID, origin, mustFrame(messageFrame{Type: serverFrameMessageCreated, Message: message}))
 	}
+	if isNew {
+		s.publishClusterEvent(clusterEvent{Kind: serverFrameMessageCreated, ChatID: access.ChatID, Sequence: message.Sequence})
+	}
 	return message, isNew, nil
 }
 
@@ -357,6 +373,7 @@ func (s *Service) markRead(ctx context.Context, userID, chatID string, sequence 
 	if s.hub != nil {
 		s.hub.broadcastExcept(access.ChatID, origin, mustFrame(readFrame{Type: serverFrameMessageRead, UserID: userID, LastMessageSequence: sequence}))
 	}
+	s.publishClusterEvent(clusterEvent{Kind: serverFrameMessageRead, ChatID: access.ChatID, UserID: userID, Sequence: sequence})
 	return nil
 }
 

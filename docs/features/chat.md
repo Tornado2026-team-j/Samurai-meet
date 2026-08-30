@@ -2,7 +2,7 @@
 
 ## 現在の実装状態
 
-現行のバックエンドはRESTのチャット一覧・暗号文メッセージ送信・履歴・既読、短命transport token、および**WebSocketによるリアルタイム配送**（`backend/internal/chat/websocket.go`、単一APIインスタンス前提）を持つ。チャット画面の接続と再接続制御はフロント側で未実装。QUIC／WebTransportは将来の標準候補で、以下のQUIC項目は将来仕様である。
+現行のバックエンドはRESTのチャット一覧・暗号文メッセージ送信・履歴・既読、短命transport token、および**WebSocketによるリアルタイム配送**（`backend/internal/chat/websocket.go`）を持つ。複数APIインスタンス構成は PostgreSQL `LISTEN/NOTIFY` fan-out（`backend/internal/chat/cluster.go`）で対応済み。チャット画面の接続と再接続制御はフロント側で未実装。QUIC／WebTransportは将来の標準候補で、以下のQUIC項目は将来仕様である。
 
 ## 1. 対象
 
@@ -20,7 +20,8 @@
 | 接続状態 | `frontend/hooks/useChatTransport.ts` | TypeScript |
 | QUIC クライアント（予定） | `frontend/services/quic.ts`（未実装） | TypeScript + native module |
 | API・履歴 | `frontend/services/api.ts` | TypeScript |
-| 接続認証・配送・順序確定 | `backend/internal/chat/websocket.go` / `backend/internal/chat/hub.go` | Go（WebSocket配送 実装済み。単一インスタンス前提） |
+| 接続認証・配送・順序確定 | `backend/internal/chat/websocket.go` / `backend/internal/chat/hub.go` | Go（WebSocket配送 実装済み） |
+| 複数インスタンス配送 | `backend/internal/chat/cluster.go` | Go（PostgreSQL `LISTEN/NOTIFY` fan-out 実装済み） |
 | QUIC配送（将来） | `backend/internal/chat/quic.go`（未実装） | Go（標準候補） |
 | 保存・取得・既読 | `backend/internal/chat/service.go` / `backend/internal/httpapi/chat.go` | Go（REST実装済み） |
 
@@ -104,7 +105,7 @@ QUICの理由、JWS claimの検証、heartbeat、失敗時の自動再送、WebS
 
 RESTのメッセージ送信は`accepted`マッチの参加者だけが利用でき、本文ではなくBase64URLのAES-256-GCM暗号文を保存します。`client_message_id`で再送を冪等化し、WebSocket未接続・再接続直後は`sequence` cursorで`GET /chats/{id}/messages?after=`を使って補完します。サーバーは暗号文を復号しません。
 
-WebSocket配送は現状**単一APIインスタンス前提のin-memoryハブ**（`hub.go`）です。複数インスタンスで動かす場合は、A で送ったメッセージが B の接続へ届きません。PostgreSQL `LISTEN/NOTIFY` によるfan-out（chat-transport.md §6）が次の作業で、それまではチャット配送を1インスタンスに寄せるか、クライアントのRESTポーリングで許容します。
+WebSocketの配送はプロセス内ハブ（`hub.go`）で行い、複数インスタンス構成では PostgreSQL `LISTEN/NOTIFY` fan-out（`cluster.go`）が各インスタンスの `message.created` / `message.read` / `typing` を他インスタンスのローカルソケットへ再配送します。NOTIFY のペイロードは `sequence` などの最小情報だけで、受信側が暗号文行を DB から再取得します（8000 byte 上限内）。発行元インスタンスのイベントは自分では再配送しません。NOTIFY 取りこぼし時はクライアントが再接続時に `sequence` cursor で REST 補完します。単一インスタンス運用では `StartClusterFanout` を呼ばなければ NOTIFY を出しません。`LISTEN` 用に専用のプールコネクションを1本占有します。
 
 ## 8. 受け入れ条件
 
