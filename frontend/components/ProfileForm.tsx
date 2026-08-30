@@ -714,16 +714,18 @@ function MonsterItemGroup({
                 {count} / {itemLimit}
               </Text>
             </View>
-            {index > 0 || removableFirstItem ? (
-              <Pressable
-                accessibilityLabel={removeLabel}
-                accessibilityRole="button"
-                onPress={() => onRemove(index)}
-                style={({ pressed }) => [styles.removeItemButton, pressed && styles.pressed]}
-              >
-                <MaterialIcons color={colors.text.subtle} name="close" size={18} />
-              </Pressable>
-            ) : null}
+            <View style={styles.removeItemSlot}>
+              {index > 0 || removableFirstItem ? (
+                <Pressable
+                  accessibilityLabel={removeLabel}
+                  accessibilityRole="button"
+                  onPress={() => onRemove(index)}
+                  style={({ pressed }) => [styles.removeItemButton, pressed && styles.pressed]}
+                >
+                  <MaterialIcons color={colors.text.subtle} name="close" size={18} />
+                </Pressable>
+              ) : null}
+            </View>
           </View>
         );
       })}
@@ -799,6 +801,11 @@ const styles = StyleSheet.create({
   monsterInputWrap: {
     flex: 1,
     minWidth: 0,
+  },
+  removeItemSlot: {
+    width: 36,
+    height: 36,
+    flexShrink: 0,
   },
   monsterItemInput: {
     paddingRight: 72,
