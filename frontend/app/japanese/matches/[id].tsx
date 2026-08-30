@@ -106,6 +106,8 @@ export default function JapaneseMatchDetailScreen() {
   const copy = COPY[language ?? "ja"];
   const copyRef = useRef(copy);
   copyRef.current = copy;
+  const authRef = useRef({ getCurrentSession, refresh, session, status });
+  authRef.current = { getCurrentSession, refresh, session, status };
 
   useEffect(() => {
     let cancelled = false;
@@ -139,8 +141,9 @@ export default function JapaneseMatchDetailScreen() {
     let cancelled = false;
 
     const load = async () => {
-      const activeSession = getCurrentSession() ?? session;
-      if (!matchId || status !== "signed_in" || !activeSession) {
+      const auth = authRef.current;
+      const activeSession = auth.getCurrentSession() ?? auth.session;
+      if (!matchId || auth.status !== "signed_in" || !activeSession) {
         if (!cancelled) {
           setLoadState("error");
           setLoadError(copyRef.current.loginRequired);
@@ -161,8 +164,8 @@ export default function JapaneseMatchDetailScreen() {
           recruitment = await loadWithSession(activeSession);
         } catch (error) {
           if (!(error instanceof APIError) || error.status !== 401) throw error;
-          await refresh();
-          const refreshedSession = getCurrentSession();
+          await auth.refresh();
+          const refreshedSession = auth.getCurrentSession();
           if (!refreshedSession) throw error;
           recruitment = await loadWithSession(refreshedSession);
         }
@@ -184,7 +187,7 @@ export default function JapaneseMatchDetailScreen() {
       cancelled = true;
       controller.abort();
     };
-  }, [getCurrentSession, matchId, refresh, session, status]);
+  }, [matchId, status]);
 
   if (!languageLoaded) {
     return (
