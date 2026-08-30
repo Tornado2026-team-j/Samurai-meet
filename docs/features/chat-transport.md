@@ -1,8 +1,8 @@
-# 機能仕様：チャット通信トークン（QUIC・予定）
+# 機能仕様：チャット通信トークン（transport token＋WebSocket 実装済み／QUIC 予定）
 
 ## 1. 位置づけ
 
-本書は将来のリアルタイム配送に向けた設計仕様であり、現行実装の完了報告ではありません。現行のチャットはRESTの履歴・暗号文送信・既読です。QUIC／WebTransport／WebSocketの配送クライアントとサーバーはまだ存在せず、`frontend/services/quic.ts` と `backend/internal/chat/quic.go` は未実装です。
+本書は将来のQUICリアルタイム配送に向けた設計仕様です。現時点で実装済みなのは、RESTの履歴・暗号文送信・既読、短命transport tokenの発行・検証、および**WebSocketによるリアルタイム配送サーバー**（`backend/internal/chat/websocket.go` / `hub.go`、統合テスト `TestChatWebSocketDelivery`）です。QUIC／HTTP/3 WebTransportの配送はまだ設計段階で、`frontend/services/quic.ts`、`backend/internal/chat/quic.go`、フロントのWebSocketクライアント（`frontend/services/websocket.ts`）は未実装です。transport tokenが発行する `transport` の値は `websocket` のみで、`webtransport` / `quic` はそれを終端するサーバーが実装されるまで `ErrChatInvalidInput`（HTTP 400 `invalid_chat_request`）で拒否します。
 
 将来は QUIC を標準 transport 候補とします。HTTP/3 WebTransportを使う場合もQUIC上の実装形態として扱い、WebSocketは自動採用しません。QUICは通信路のプロトコルであり、アプリケーションの認証・認可そのものではないため、QUIC / HTTP/3の暗号化通信上でチャット専用の短命トークンを別途検証します。
 
@@ -110,14 +110,14 @@ Chat Token は JWS 署名付き JWT とします。
 
 JWSは署名検証に成功しても、それだけで接続を許可しません。DBのセッション、ユーザー状態、チャット参加権限、ブロック、マッチ状態を毎回確認します。
 
-## 4. 発行 API（REST部品あり・既定値不整合）
+## 4. 発行 API（実装済み）
 
 ### `POST /chats/{chat_id}/transport-token`
 
 通常の Access Token で呼び出します。Go API は次を確認してから Chat Token を発行します。
 
 - Access Token の署名・期限・DB セッションが有効
-- `matches.status = accepted`
+- `matches.status = accepted`（`completed` は `chat_not_available` で拒否。完了後のチャットは REST の履歴閲覧・既読のみで、`transport-token` 発行も WebSocket 接続も不可）
 - 呼び出しユーザーがマッチ参加者
 - ブロック・停止・通報による遮断状態がない
 - 対象チャットが削除・終了されていない
@@ -134,9 +134,9 @@ Response（将来QUICを採用した場合の例）：
 }
 ```
 
-Chat TokenはRefresh Tokenで更新しません。期限前に、通常のREST APIで次のChat Tokenを取得する設計です。現行コードには発行部品がありますが、HTTP handlerの既定値は`quic`、サービス側の受理値は`websocket`または`webtransport`で一致していません。コード整合まで、このendpointを動作済みとみなしません。以下の`quic`は将来のQUIC採用時の設計例です。
+Chat TokenはRefresh Tokenで更新しません。期限前に、通常のREST APIで次のChat Tokenを取得する設計です。現行コードのHTTP handler既定値・サービス受理値はともに `websocket` で一致しており（`chatTransportToken` の既定値、`IssueTransportToken` の受理値）、このendpointはWebSocket接続で動作確認済みです。requestの `transport` は省略時 `websocket`、明示する場合も `websocket` のみ受理し、`webtransport` / `quic` は `ErrChatInvalidInput`（HTTP 400）で拒否します。上記Responseの `transport: "quic"` は将来のQUIC採用時の設計例で、現行の発行値は `websocket` です。
 
-将来のQUIC採用時はtransport-token requestで`transport=quic`を使う案ですが、現行の受理値との整合をコードで確定する必要があります。既存のREST履歴・送信・既読を現行経路とし、QUIC配送とQUICクライアントが未実装の間は`sequence` cursorによるRESTポーリングを使います。
+将来QUIC／HTTP/3 WebTransportを採用する際に、そのサーバー実装と同じ変更で受理値を追加します。それまでは、REST履歴・送信・既読とWebSocket配送を現行経路とし、WebSocket未接続・再接続直後は`sequence` cursorによるRESTポーリングで補完します。
 
 ## 5. Chat Token の切り替え（WebSocket配送で実装済み）
 
@@ -183,20 +183,39 @@ QUIC の 0-RTT アプリケーションデータは攻撃者に再送される�
 
 `jti`は署名付きtokenの識別子であり、単独ではリプレイ防止になりません。短い有効期限、DBセッション確認、対象chat確認、接続単位のnonceまたはtoken世代、heartbeat、接続数制限を組み合わせます。
 
-### 7.2 アプリケーションメッセージの自動再送
+### 7.2 アプリケーションメッセージの自動再送（確定契約）
 
-QUICのtransport層が失われたpacketを再送することと、アプリケーションが送信操作を再試行することは別です。アプリの自動再送は次の契約で行います。
+QUICのtransport層が失われたpacketを再送することと、アプリケーションが送信操作を再試行することは別です。バックエンドの冪等性は実装済み（下記）なので、フロントは以下の**固定契約**で自動再送を実装します。
+
+#### バックエンドが保証すること（実装済み）
+
+- `messages` は `(chat_id, sender_user_id, client_message_id)` に一意制約を持つ。
+- 同じ `client_message_id` の再送は新規行を作らず、**最初のメッセージ行をそのまま返す**。
+  - WebSocket `message.send`: `message.ack` に `duplicate: true` を付けて返す。`message.created` は相手へ再配送しない。
+  - REST `POST /chats/{id}/messages`: 初回と同じ本文で `201 Created` を返す（本文が正、ステータスは冪等判定に使わない）。
+- `client_message_id` の形式: 非空・有効なUTF-8・**最大128文字**・制御文字と空白文字を含まない。違反は `invalid_chat_request`（400）／WS `invalid_input`。
+
+#### フロントの再送ルール
 
 | 状況 | 動作 |
 | --- | --- |
-| QUIC packet loss | QUICに任せ、同じアプリイベントを新規作成しない。 |
-| 接続断・timeout・応答欠落 | 保留中の同じ`client_message_id`を自動再送する。サーバーは既存メッセージまたは既存ackを返す。 |
-| 5xx | 一時障害として同じ`client_message_id`を期限・回数付きで再送する。 |
-| 429 | `Retry-After`がある場合だけ従い、上限を超えて再送しない。 |
-| 400/401/403/404、入力不正、Chat Token失効 | 自動再送しない。必要ならtoken再取得・再接続・再ログインを先に行い、元の操作はユーザーまたは上位状態機械で再評価する。 |
-| typingイベント | 永続イベントではないため、自動再送しない。 |
+| QUIC / WebSocket の packet loss | transport層に任せ、アプリイベントを新規作成しない。 |
+| 接続断・書き込みtimeout・`ack`/応答が来ない | 保留中の同じ `client_message_id` を再送する。 |
+| HTTP 5xx / WS `chat_failed` | 一時障害として同じ `client_message_id` を再送する。 |
+| HTTP 429 (`chat_rate_limited`) / WS `rate_limited` | `Retry-After` または `retry_after_seconds` の秒数だけ待ってから1回だけ再送。無ければ再送しない。いずれも下記の最大試行回数・全体期限を超えない。WS はこの間も接続を維持する。 |
+| HTTP 400/401/403/404、WS `invalid_input`/`message_too_large`/`blocked`/`chat_not_available`/`forbidden`、Chat Token失効 | **自動再送しない。** 必要ならtoken再取得・再接続・再ログインを先に行い、元の送信はユーザー操作か上位状態機械で再評価する。 |
+| `typing.start` / `typing.stop` | 永続イベントではないため再送しない。 |
 
-自動再送には指数バックオフとjitter、最大試行回数、全体期限を設けます。初期値は「最大3回の再送、全体30秒、1秒・2秒・4秒を基準にしたbackoff」とし、実機・回線・サーバー負荷試験で確定します。`message.ack`またはRESTの成功応答を受けた後は再送を停止します。
+#### 固定パラメータ
+
+- **最大試行回数**: 初回送信 + 再送3回（計4回）。
+- **バックオフ**: 1回目 1s、2回目 2s、3回目 4s（指数、基数2）。各待機に **±50% の均等ジッター**（`delay * random(0.5, 1.5)`）を掛ける。
+- **全体期限**: 最初の送信試行から **30秒**。期限を超えたら再送を止め、メッセージを `failed` 表示にする。
+- **停止条件**: `message.ack`（WS）または成功HTTP応答（REST）を受けた時点で即停止。上記「自動再送しない」の応答を受けた時も即停止。
+- **`client_message_id` の生成**: 1つの論理送信につき1回だけ生成し（UUIDv4推奨）、全再送で同一値を使う。ユーザーが同じ本文を再入力した場合は別の論理送信として新しいIDを振る。
+- **再送の多重起動防止**: 同じ `client_message_id` の再送タイマーは常に1つ。アプリ再起動後に未確定の送信を復元する場合も、同じIDで再送する。
+
+これらは負荷試験の結果で見直す場合があるが、その際は本節・§9・API仕様・フロント実装を同じ変更で更新する。
 
 ## 8. 実装分担
 
@@ -228,8 +247,9 @@ MVP のリアルタイム配送は WebSocket（実装済み）で、同じ Chat 
   - heartbeat はアクティブ接続の `sessions.last_seen_at` を前進させる（`TestChatWebSocketHeartbeatKeepsSessionWarm`）。
 - 0-RTT でメッセージ送信などの状態変更ができない。（WebSocketは1-RTT。QUIC採用時に再確認）
 - 接続中の Chat Token ローテーションと巻き戻し拒否（`token_seq`）を実装済み。`token.renew` で期限を前進させ、受理済み世代以下は `stale_token` で拒否、期限切れ未更新は heartbeat が `token_expired` で切断（統合テスト `TestChatWebSocketTokenRotation` / `TestChatWebSocketClosesOnTokenExpiryWithoutRotation`）。
-- 通信断・タイムアウト・一時的なサーバーエラー時は、同じ`client_message_id`で期限・回数を制限した自動再送ができる。（フロント側の受入条件）
-- 入力不正、認証失効、認可拒否などの永続的な失敗では自動再送しない。（フロント側の受入条件）
+- 通信断・タイムアウト・5xx時は、同じ`client_message_id`で自動再送する。再送は計4回・バックオフ1/2/4秒（±50%ジッター）・全体期限30秒（§7.2の確定契約）。（フロント側の受入条件）
+- 4xx・入力不正・認証失効・認可拒否・`blocked`/`chat_not_available`では自動再送しない。`rate_limited` は `Retry-After` / `retry_after_seconds` に従って再送する。（フロント側の受入条件）
+- 同じ`client_message_id`の再送でメッセージが二重登録されない。（バックエンド実装済み・`(chat_id,sender_user_id,client_message_id)`一意制約）
 - Chat Token、Refresh Token が URL、ログ、クラッシュレポートに出ない。
 - Expo 実機での再接続・失効伝播・トークンローテーションの負荷試験は [chat-load-test.md](chat-load-test.md) の手順書で実施する（ローンチ前 QA ゲート・未実施）。
 

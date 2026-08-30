@@ -27,7 +27,12 @@
 
 ## 3. 利用条件
 
-- `matches.status = accepted` の参加者だけが利用できる。
+- 送信・リアルタイム接続は `matches.status = accepted` の参加者だけが利用できる。
+- **`matches.status = completed`（マッチ完了後）は REST の履歴閲覧・既読更新のみ**。
+  `POST /chats/{id}/messages`、`POST /chats/{id}/transport-token`、WebSocket 接続
+  （`GET /ws/chats/{id}`）はいずれも `chat_not_available`（HTTP 409、WS は
+  `chat_not_available` エラーフレーム後に切断）で拒否される。`GET /chats`、
+  `GET /chats/{id}/messages`、`POST /chats/{id}/read` は引き続き可能。
 - ブロックまたは運営停止された場合は送受信を停止する。
 - マッチ成立前の自由チャットは提供しない。
 - メッセージ送信はユーザー単位のトークンバケットでレート制限する（REST/WebSocket 共通、`chat.Service` 層で実施）。既定は容量15・補充60/分（`CHAT_SEND_BURST` / `CHAT_SEND_REFILL_PER_MINUTE`）。超過時は REST が `429 chat_rate_limited` ＋ `Retry-After`、WebSocket が `{"type":"error","code":"rate_limited","retry_after_seconds":N}`（接続は維持し、`closing` は送らない）。
@@ -70,15 +75,17 @@ MVP のリアルタイム配送は WebSocket。QUIC / HTTP/3 WebTransport は将
 
 送信メッセージには `client_message_id` を付け、再送されても二重登録しません（`message.send` は既存の REST `SendMessage` と同じ冪等性）。`message.created` / `message.read` は REST 経由の送信・既読でも接続中の全ソケットへ配送されます。配送の除外はユーザー単位ではなくソケット単位のため、同一ユーザーが複数端末で接続していても、送信・既読を行っていない他端末は更新を受け取れます（`typing` だけは自端末のエコーを避けるためユーザー単位で除外）。
 
+`last_message_sequence` は**「クライアントが見た最大 `sequence`」を渡すハイウォーターマーク**で、そのチャットに実在する message の `sequence` と厳密一致する必要はありません。`sequence` は全チャット横断の `BIGSERIAL` で1チャット内では歯抜けになるため、サーバーはその値を**そのチャットの最新 live message の `sequence` にクランプ**し、保存済みマーカーは前進のみ（`GREATEST`）です。1以上なら受理し、`message.read` レシート（および REST の応答経路）では**クランプ後の実効値**を相手へ通知します。0以下は `invalid_chat_request`、messageが1件も無いチャットは `chat_not_found`（`ErrMessageNotFound`）を返します。
+
 ## 5. 切断・再接続
 
 1. 接続切断を UI に表示する。
 2. 指数バックオフで再接続する。
 3. 再接続成功後、最後に受信したメッセージ ID 以降を REST で取得する。
 4. 送信中メッセージは `sending / sent / failed` で表示する。
-5. 通信断、タイムアウト、一時的なサーバーエラーでは、同じ `client_message_id` を使って期限・回数を制限した自動再送を行う。
-6. 入力不正、認証失効、認可拒否などの永続的な失敗では自動再送せず、ユーザーへ再ログイン・再入力などの対応を促す。
-7. 同じ `client_message_id` はサーバーで冪等に処理する。
+5. 通信断、タイムアウト、5xx では、同じ `client_message_id` で自動再送する。再送は計4回、バックオフ 1/2/4 秒（±50% ジッター）、全体期限 30 秒（[チャット通信トークン仕様](chat-transport.md) §7.2 の確定契約）。
+6. 4xx・入力不正・認証失効・認可拒否では自動再送せず、ユーザーへ再ログイン・再入力などの対応を促す。
+7. 同じ `client_message_id` はサーバーで冪等に処理する（`(chat_id, sender_user_id, client_message_id)` 一意制約。再送は最初のメッセージ／ack を返す）。`client_message_id` は1論理送信につき1回だけ生成し（UUIDv4 推奨）、最大128文字・制御/空白文字なし。
 
 ## 6. 暗号化
 
@@ -93,17 +100,18 @@ QUICの理由、JWS claimの検証、heartbeat、失敗時の自動再送、WebS
 
 ## 7. API / DB
 
-- `GET /chats`
-- `GET /chats/{id}/messages`
-- `POST /chats/{id}/messages`
-- `POST /chats/{id}/read`
-- `POST /chats/{id}/transport-token`
+- `GET /chats`（`accepted` / `completed`）
+- `GET /chats/{id}/messages`（`accepted` / `completed`）
+- `POST /chats/{id}/messages`（`accepted` のみ）
+- `POST /chats/{id}/read`（`accepted` / `completed`）
+- `POST /chats/{id}/transport-token`（`accepted` のみ）
+- `GET /ws/chats/{id}`（`accepted` のみ）
 - `POST /matches/{id}/meeting`
 - `GET|POST /meetings/{id}/proximity`
 - QUIC endpoint：将来、環境ごとに設定する（`chat_id`単位。HTTP/3 WebTransportの場合はHTTPS URLとして提供）
 - テーブル：`matches`、`chat_threads`、`messages`、`chat_read_states`、`chat_token_sequences`、`chat_message_deletions`、`photos`
 
-RESTのメッセージ送信は`accepted`マッチの参加者だけが利用でき、本文ではなくBase64URLのAES-256-GCM暗号文を保存します。`client_message_id`で再送を冪等化し、WebSocket未接続・再接続直後は`sequence` cursorで`GET /chats/{id}/messages?after=`を使って補完します。サーバーは暗号文を復号しません。
+RESTのメッセージ送信・`transport-token`発行・WebSocket接続は`accepted`マッチの参加者だけが利用できます。`completed`マッチは一覧・履歴・既読のみで、送信と接続は`chat_not_available`で拒否されます。本文ではなくBase64URLのAES-256-GCM暗号文を保存します。`client_message_id`で再送を冪等化し、WebSocket未接続・再接続直後は`sequence` cursorで`GET /chats/{id}/messages?after=`を使って補完します。サーバーは暗号文を復号しません。
 
 保持期間（既定180日・`CHAT_MESSAGE_RETENTION_DAYS`）を過ぎたメッセージは6時間ごとのスイープで`deleted_at`を打ち、暗号文・nonceを消去し、`chat_message_deletions`へ監査行を残します。以後は履歴・未読数・配送のいずれにも現れません。
 
@@ -112,6 +120,7 @@ WebSocketの配送はプロセス内ハブ（`hub.go`）で行い、複数イン
 ## 8. 受け入れ条件
 
 - マッチ成立後だけチャット画面へ入れる。
+- `completed` マッチではチャット画面は履歴閲覧・既読のみ（入力欄を無効化し、WebSocket 接続と `transport-token` 取得を行わない）。
 - WebSocket接続中の相手へメッセージがリアルタイム配送される（バックエンド実装済み・統合テスト済み。フロント接続は未）。
 - WebSocket切断後に再接続すると未同期メッセージを `sequence` cursor で取得できる（フロント側の受入条件）。
 - 同じ送信操作を再試行しても二重メッセージにならない。

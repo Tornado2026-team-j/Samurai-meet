@@ -1,6 +1,6 @@
 # 実装状態の境界
 
-最終確認: 2026-08-27
+最終確認: 2026-08-30
 
 この文書は現行コードを正とする。仕様書に「予定」と書かれたものは、コードとテストで確認できるまで実装済みとして扱わない。詳細なHTTP契約は [backend/API_SPEC.md](../../../backend/API_SPEC.md) を参照する。
 
@@ -11,7 +11,7 @@
 - 募集・マッチングの外国人／日本人画面からAPIを呼ぶ実装、募集管理・応募履歴・応募取り下げ、表示言語に依存しない通知遷移が存在する。日時入力はISO内部値と `Asia/Tokyo` 固定へ更新し、自動テストで確認済み。表示言語と利用モードは別の保存設定で、2026-08-29にiPhone上の表示言語即時切替を確認した。募集作成から通知遷移・応募取消・ログアウト後の戻る操作までを同一手順で確認するiOS実機全通しE2Eは未確認である。
 - 通知のDB永続化、一覧・既読API、応募／承認／辞退／暗号化チャット送信に伴う通知生成、外国人／日本人の通知画面・未読バッジ。
 - 通知は現時点でアプリ内REST通知であり、`expo-notifications`等によるOSプッシュ通知は未実装。
-- チャットは暗号文のREST送信・履歴取得・既読更新・短命transport token発行に加え、WebSocketによるリアルタイム配送（マルチデバイス整合、送信レート制限、heartbeat失効、接続中のChat Tokenローテーション、複数インスタンス向け`LISTEN/NOTIFY` fan-out）と、保持期間スイープ（既定180日・`deleted_at`実配線・暗号文消去・`chat_message_deletions`監査）をバックエンド実装済み。QUIC／WebTransportとチャット画面は未実装。保持日数の最終確定は運用・法務判断。
+- チャットは暗号文のREST送信・履歴取得・既読更新・短命transport token発行に加え、WebSocketによるリアルタイム配送（マルチデバイス整合、送信レート制限、heartbeat失効、接続中のChat Tokenローテーション、複数インスタンス向け`LISTEN/NOTIFY` fan-out）と、保持期間スイープ（既定180日・`deleted_at`実配線・暗号文消去・`chat_message_deletions`監査）をバックエンド実装済み。既読の `last_message_sequence` はハイウォーターマーク方式（最新liveへクランプ・前進のみ）。transport tokenが発行する `transport` は `websocket` のみ（`webtransport` / `quic` は終端サーバーが無いため400で拒否）。QUIC／WebTransport配送とチャット画面のフロント接続は未実装。保持日数の最終確定は運用・法務判断。
 - 募集の利用日・壁時計は現在 `Asia/Tokyo` 固定で正規化する方針。DB/APIの絶対時刻はUTCとして扱う。
 
 ## 未完了・本番承認不可
@@ -23,7 +23,7 @@
 
 ## 既知の実装不整合
 
-現時点で未解消の重大な実装不整合はない。`POST /api/v1/chats/{id}/transport-token` は既定・受理値とも `websocket`（`webtransport` も受理）で整合済み。QUIC配送は引き続き未実装で、ドキュメント上も将来仕様として扱う。
+現時点で未解消の重大な実装不整合はない。`POST /api/v1/chats/{id}/transport-token` のHTTP handler既定値とサービス受理値の不整合は解消済みで、現在はhandler既定値・サービス受理値ともに `websocket` で一致し、`websocket` のみを発行する（`webtransport` / `quic` は終端サーバーが未実装のため `ErrChatInvalidInput`／HTTP 400 で拒否）。QUIC／WebTransport配送は引き続き実装済みとは扱わず、ドキュメント上も将来仕様として扱う。
 
 ## 接続先・Expo実行環境
 
