@@ -66,6 +66,8 @@ MVP のリアルタイム配送は WebSocket。QUIC / HTTP/3 WebTransport は将
 
 送信メッセージには `client_message_id` を付け、再送されても二重登録しません（`message.send` は既存の REST `SendMessage` と同じ冪等性）。`message.created` / `message.read` は REST 経由の送信・既読でも接続中の相手へ配送されます。
 
+`last_message_sequence` は**「クライアントが見た最大 `sequence`」を渡すハイウォーターマーク**で、そのチャットに実在する message の `sequence` と厳密一致する必要はありません。`sequence` は全チャット横断の `BIGSERIAL` で1チャット内では歯抜けになるため、サーバーはその値を**そのチャットの最新 live message の `sequence` にクランプ**し、保存済みマーカーは前進のみ（`GREATEST`）です。1以上なら受理し、`message.read` レシート（および REST の応答経路）では**クランプ後の実効値**を相手へ通知します。0以下は `invalid_chat_request`、messageが1件も無いチャットは `chat_not_found`（`ErrMessageNotFound`）を返します。
+
 ## 5. 切断・再接続
 
 1. 接続切断を UI に表示する。

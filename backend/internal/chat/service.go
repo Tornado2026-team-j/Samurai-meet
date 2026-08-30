@@ -301,6 +301,12 @@ func (s *Service) notificationActorNameTx(ctx context.Context, tx *sql.Tx, userI
 	return strings.TrimSpace(name), err
 }
 
+// MarkRead advances the caller's read marker for a chat. last_message_sequence
+// is treated as a high-water mark, not an exact message id: the global
+// BIGSERIAL `messages.sequence` is sparse within any one chat, so a client just
+// echoes back the highest sequence it has seen. The value is clamped to the
+// newest live message in this chat and the stored marker only ever moves
+// forward. The other participant is notified with the effective stored marker.
 func (s *Service) MarkRead(ctx context.Context, userID, chatID string, sequence int64, now time.Time) error {
 	if sequence <= 0 {
 		return ErrChatInvalidInput
@@ -309,23 +315,28 @@ func (s *Service) MarkRead(ctx context.Context, userID, chatID string, sequence 
 	if err != nil {
 		return err
 	}
-	var exists bool
-	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM messages WHERE chat_id=$1 AND sequence=$2 AND deleted_at IS NULL)`, access.ChatID, sequence).Scan(&exists); err != nil {
+	var maxSequence sql.NullInt64
+	if err := s.db.QueryRowContext(ctx, `SELECT MAX(sequence) FROM messages WHERE chat_id=$1 AND deleted_at IS NULL`, access.ChatID).Scan(&maxSequence); err != nil {
 		return err
 	}
-	if !exists {
+	if !maxSequence.Valid {
 		return ErrMessageNotFound
 	}
-	if _, err = s.db.ExecContext(ctx, `
+	if sequence > maxSequence.Int64 {
+		sequence = maxSequence.Int64
+	}
+	var stored int64
+	if err = s.db.QueryRowContext(ctx, `
 		INSERT INTO chat_read_states (chat_id,user_id,last_read_sequence,read_at)
 		VALUES ($1,$2,$3,$4)
 		ON CONFLICT (chat_id,user_id) DO UPDATE SET
 			last_read_sequence=GREATEST(chat_read_states.last_read_sequence,EXCLUDED.last_read_sequence),
-			read_at=EXCLUDED.read_at`, access.ChatID, userID, sequence, now.UTC().Format(time.RFC3339Nano)); err != nil {
+			read_at=EXCLUDED.read_at
+		RETURNING last_read_sequence`, access.ChatID, userID, sequence, now.UTC().Format(time.RFC3339Nano)).Scan(&stored); err != nil {
 		return err
 	}
 	if s.hub != nil {
-		s.hub.broadcastExceptUser(access.ChatID, userID, mustFrame(readFrame{Type: serverFrameMessageRead, UserID: userID, LastMessageSequence: sequence}))
+		s.hub.broadcastExceptUser(access.ChatID, userID, mustFrame(readFrame{Type: serverFrameMessageRead, UserID: userID, LastMessageSequence: stored}))
 	}
 	return nil
 }
