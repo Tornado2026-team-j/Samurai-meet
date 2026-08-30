@@ -157,6 +157,8 @@ type SearchParams struct {
 	Keywords      []string
 	Category      string
 	AvailableDate string
+	AvailableFrom string
+	AvailableTo   string
 	StartTime     string
 	EndTime       string
 	RadiusKM      int
@@ -1179,6 +1181,13 @@ func normalizeSearchParams(params SearchParams) (SearchParams, error) {
 			return SearchParams{}, ErrInvalidInput
 		}
 	}
+	if params.AvailableFrom != "" || params.AvailableTo != "" {
+		from, fromErr := time.Parse("2006-01-02", params.AvailableFrom)
+		to, toErr := time.Parse("2006-01-02", params.AvailableTo)
+		if fromErr != nil || toErr != nil || to.Before(from) || to.Sub(from) > 31*24*time.Hour {
+			return SearchParams{}, ErrInvalidInput
+		}
+	}
 	if (params.StartTime == "") != (params.EndTime == "") {
 		return SearchParams{}, ErrInvalidInput
 	}
@@ -1415,6 +1424,12 @@ func matchesKeywords(values, requested []string) bool {
 
 func matchesDateAndTime(record cardRecord, params SearchParams) bool {
 	if params.AvailableDate != "" && record.AvailableDate != params.AvailableDate {
+		return false
+	}
+	if params.AvailableFrom != "" && record.AvailableDate < params.AvailableFrom {
+		return false
+	}
+	if params.AvailableTo != "" && record.AvailableDate > params.AvailableTo {
 		return false
 	}
 	if params.StartTime == "" {

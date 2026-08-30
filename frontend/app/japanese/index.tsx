@@ -158,7 +158,7 @@ function sortRecruitments(recruitments: Recruitment[], mode: SortMode): Recruitm
 
 export default function JapaneseHomeScreen() {
   const { push } = useNavigationGuard();
-  const params = useLocalSearchParams<{ query?: string; date?: string; sort?: string; category?: string; time?: string; radius?: string }>();
+  const params = useLocalSearchParams<{ query?: string; date?: string; sort?: string; category?: string; time?: string; radius?: string; availableFrom?: string; availableTo?: string }>();
   const insets = useSafeAreaInsets();
   const { getCurrentSession, refresh, session, status } = useAuth();
   const hasUnreadNotifications = useUnreadNotifications();
@@ -251,7 +251,9 @@ export default function JapaneseHomeScreen() {
             searchRecruitments(activeSession, {
               keywords: submittedQuery ? [submittedQuery] : [],
               category: selectedCategory,
-              availableDate: selectedDate,
+              availableDate: params.availableFrom || params.availableTo ? undefined : selectedDate,
+              availableFrom: params.availableFrom,
+              availableTo: params.availableTo,
               ...timeRange,
               radiusKm: selectedRadius,
               latitude: coordinates?.latitude,
@@ -269,7 +271,9 @@ export default function JapaneseHomeScreen() {
             searchRecruitments(refreshedSession, {
               keywords: submittedQuery ? [submittedQuery] : [],
               category: selectedCategory,
-              availableDate: selectedDate,
+              availableDate: params.availableFrom || params.availableTo ? undefined : selectedDate,
+              availableFrom: params.availableFrom,
+              availableTo: params.availableTo,
               ...timeRange,
               radiusKm: selectedRadius,
                 latitude: coordinates?.latitude,

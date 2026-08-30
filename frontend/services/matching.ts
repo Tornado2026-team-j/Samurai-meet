@@ -85,6 +85,8 @@ export type RecruitmentSearchParams = {
   keywords?: string[];
   category?: MatchCategory;
   availableDate?: string;
+  availableFrom?: string;
+  availableTo?: string;
   startTime?: string;
   endTime?: string;
   radiusKm?: 1 | 3 | 5;
@@ -154,6 +156,8 @@ function recruitmentQuery(params: RecruitmentSearchParams): string {
     appendQueryPart(parts, "category", params.category);
   }
   if (params.availableDate) appendQueryPart(parts, "available_date", params.availableDate);
+  if (params.availableFrom) appendQueryPart(parts, "available_from", params.availableFrom);
+  if (params.availableTo) appendQueryPart(parts, "available_to", params.availableTo);
   if (params.startTime) appendQueryPart(parts, "start_time", params.startTime);
   if (params.endTime) appendQueryPart(parts, "end_time", params.endTime);
   if (params.radiusKm !== undefined) appendQueryPart(parts, "radius_km", params.radiusKm);

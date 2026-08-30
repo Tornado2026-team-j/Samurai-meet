@@ -1,7 +1,7 @@
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { useState } from "react";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { Header, colors, radius } from "../../components/ui";
 import { type MatchCategory } from "../../types/match";
@@ -22,10 +22,12 @@ const TIMES = [
 
 export default function JapaneseFiltersScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ category?: string; time?: string; radius?: string; query?: string; date?: string; sort?: string }>();
+  const params = useLocalSearchParams<{ category?: string; time?: string; radius?: string; query?: string; date?: string; sort?: string; availableFrom?: string; availableTo?: string }>();
   const [category, setCategory] = useState<MatchCategory | "">(CATEGORIES.some((item) => item.value === params.category) ? params.category as MatchCategory : "");
   const [time, setTime] = useState(TIMES.some((item) => item.value === params.time) ? params.time ?? "" : "");
   const [radius, setRadius] = useState(params.radius === "1" || params.radius === "5" ? params.radius : "3");
+  const [availableFrom, setAvailableFrom] = useState(params.availableFrom ?? "");
+  const [availableTo, setAvailableTo] = useState(params.availableTo ?? "");
 
   const apply = () => router.replace({
     pathname: "/japanese",
@@ -33,6 +35,8 @@ export default function JapaneseFiltersScreen() {
       ...(params.query ? { query: params.query } : {}),
       ...(params.date ? { date: params.date } : {}),
       ...(params.sort ? { sort: params.sort } : {}),
+      ...(availableFrom ? { availableFrom } : {}),
+      ...(availableTo ? { availableTo } : {}),
       ...(category ? { category } : {}),
       ...(time ? { time } : {}),
       radius,
@@ -49,6 +53,14 @@ export default function JapaneseFiltersScreen() {
         </FilterGroup>
         <FilterGroup label="時間帯">
           <View style={styles.choices}>{TIMES.map((item) => <Choice key={item.value} label={item.label} onPress={() => setTime(item.value)} selected={time === item.value} />)}</View>
+        </FilterGroup>
+        <FilterGroup label="募集日（期間）">
+          <Text style={styles.hint}>YYYY-MM-DD形式で指定（来月も検索できます）</Text>
+          <View style={styles.dateRow}>
+            <TextInput accessibilityLabel="開始日" onChangeText={setAvailableFrom} placeholder="開始日 2026-09-01" style={styles.dateInput} value={availableFrom} />
+            <Text style={styles.dateSeparator}>〜</Text>
+            <TextInput accessibilityLabel="終了日" onChangeText={setAvailableTo} placeholder="終了日 2026-09-30" style={styles.dateInput} value={availableTo} />
+          </View>
         </FilterGroup>
         <FilterGroup label="検索地点からの距離">
           <View style={styles.choices}>{["1", "3", "5"].map((value) => <Choice key={value} label={`${value}km以内`} onPress={() => setRadius(value)} selected={radius === value} />)}</View>
@@ -98,6 +110,9 @@ const styles = StyleSheet.create({
   checkboxLabelRow: { flexDirection: "row", alignItems: "center", gap: 6 },
   comingSoon: { color: colors.text.muted, fontSize: 11, fontWeight: "800" },
   hint: { marginTop: 4, color: colors.text.muted, fontSize: 11 },
+  dateRow: { flexDirection: "row", alignItems: "center", gap: 6 },
+  dateInput: { flex: 1, minHeight: 44, paddingHorizontal: 12, borderWidth: 1, borderColor: colors.border.default, borderRadius: radius.md, backgroundColor: colors.surface.default, color: colors.text.primary },
+  dateSeparator: { color: colors.text.secondary, fontWeight: "900" },
   apply: { minHeight: 50, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7, borderRadius: radius.md, backgroundColor: colors.brand.sky },
   applyText: { color: colors.text.inverse, fontSize: 15, fontWeight: "900" },
 });
