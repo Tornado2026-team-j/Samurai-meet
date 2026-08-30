@@ -15,6 +15,8 @@ type DataResponse<T> = { data?: T };
 
 export type ChatStatus = "accepted" | "completed";
 
+export type ChatListFilter = "all" | "active" | "completed";
+
 export type ChatSummary = {
   id: string;
   match_id: string;
@@ -25,6 +27,19 @@ export type ChatSummary = {
   unread_count: number;
   updated_at: string;
 };
+
+const CHAT_STATUS_FOR_FILTER: Record<Exclude<ChatListFilter, "all">, ChatStatus> = {
+  active: "accepted",
+  completed: "completed",
+};
+
+export function filterChatsByStatus(
+  chats: readonly ChatSummary[],
+  filter: ChatListFilter,
+): ChatSummary[] {
+  if (filter === "all") return [...chats];
+  return chats.filter((chat) => chat.status === CHAT_STATUS_FOR_FILTER[filter]);
+}
 
 export type EncryptedChatMessage = {
   id: string;

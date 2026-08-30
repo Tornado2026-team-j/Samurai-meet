@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MaterialIcons } from "@expo/vector-icons";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useLocalSearchParams } from "expo-router";
 import {
   ActivityIndicator,
   Keyboard,
@@ -18,8 +18,9 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import MatchCard from "../../components/MatchCard";
 import { colors } from "../../components/ui";
 import { useAuth } from "../../hooks/useAuth";
+import { useDelayedLoading } from "../../hooks/useDelayedLoading";
+import { useNavigationGuard } from "../../hooks/useNavigationGuard";
 import { useUnreadNotifications } from "../../hooks/useUnreadNotifications";
-import { MOCK_MATCHES } from "../../mocks/matches";
 import { APIError } from "../../services/api-client";
 import { getCurrentCoordinates } from "../../services/location";
 import {
@@ -41,9 +42,6 @@ const SATURDAY_BLUE = "#0b70e0";
 const SUNDAY_RED = "#e11919";
 const DATE_SWIPE_THRESHOLD = 42;
 const DATE_SWIPE_VERTICAL_LIMIT = 28;
-const USE_MOCK_RECRUITMENTS =
-  process.env.EXPO_PUBLIC_USE_MOCK_RECRUITMENTS === "1" ||
-  process.env.NODE_ENV !== "production";
 
 type SortMode = "near" | "deadline";
 type DateButtonItem = {
@@ -158,28 +156,9 @@ function sortRecruitments(recruitments: Recruitment[], mode: SortMode): Recruitm
   });
 }
 
-function mockDateKey(match: MatchCardData): string {
-  const parsed = /^(Aug|Sep) (\d{1,2}), 2026/u.exec(match.detailDate);
-  if (!parsed) return "";
-  const month = parsed[1] === "Aug" ? "08" : "09";
-  return `2026-${month}-${String(Number(parsed[2])).padStart(2, "0")}`;
-}
-
-function mockExpiryTime(value: string): number {
-  const normalized = value.replace(/\//gu, "-").replace(" ", "T");
-  const time = new Date(normalized).getTime();
-  return Number.isNaN(time) ? Number.MAX_SAFE_INTEGER : time;
-}
-
-function mockMatchesForDate(dateKey: string, mode: SortMode): MatchCardData[] {
-  const items = MOCK_MATCHES.filter((match) => mockDateKey(match) === dateKey);
-  if (mode !== "deadline") return items;
-  return [...items].sort((first, second) => mockExpiryTime(first.expiresAt) - mockExpiryTime(second.expiresAt));
-}
-
 export default function JapaneseHomeScreen() {
-  const router = useRouter();
-  const params = useLocalSearchParams<{ query?: string; date?: string; sort?: string; category?: string; time?: string; radius?: string; verified?: string }>();
+  const { push } = useNavigationGuard();
+  const params = useLocalSearchParams<{ query?: string; date?: string; sort?: string; category?: string; time?: string; radius?: string }>();
   const insets = useSafeAreaInsets();
   const { getCurrentSession, refresh, session, status } = useAuth();
   const hasUnreadNotifications = useUnreadNotifications();
@@ -197,12 +176,14 @@ export default function JapaneseHomeScreen() {
   const selectedCategory = isMatchCategory(params.category) ? params.category : undefined;
   const selectedTime = params.time === "morning" || params.time === "afternoon" || params.time === "evening" ? params.time : undefined;
   const selectedRadius = params.radius === "1" || params.radius === "5" ? Number(params.radius) as 1 | 5 : 3;
-  const verifiedOnly = params.verified === "1";
+  const verifiedOnly = false;
   const timeRange = useMemo(() => selectedTime === "morning" ? { startTime: "06:00", endTime: "12:00" }
     : selectedTime === "afternoon" ? { startTime: "12:00", endTime: "18:00" }
       : selectedTime === "evening" ? { startTime: "18:00", endTime: "23:59" }
         : {}, [selectedTime]);
   const copy = COPY[language ?? "ja"];
+  const showLanguageLoading = useDelayedLoading(!language);
+  const showInitialLoading = useDelayedLoading(loading && matches.length === 0);
   const copyRef = useRef(copy);
   copyRef.current = copy;
   const dateButtons = useMemo(
@@ -273,7 +254,6 @@ export default function JapaneseHomeScreen() {
               availableDate: selectedDate,
               ...timeRange,
               radiusKm: selectedRadius,
-              verifiedOnly,
               latitude: coordinates?.latitude,
               longitude: coordinates?.longitude,
               limit: 50,
@@ -292,8 +272,7 @@ export default function JapaneseHomeScreen() {
               availableDate: selectedDate,
               ...timeRange,
               radiusKm: selectedRadius,
-              verifiedOnly,
-              latitude: coordinates?.latitude,
+                latitude: coordinates?.latitude,
               longitude: coordinates?.longitude,
               limit: 50,
             }, controller.signal),
@@ -307,22 +286,13 @@ export default function JapaneseHomeScreen() {
             applicationStatus: statusByRecruitment.get(item.id),
           }));
           setTodayPlanCount(applicationResult.filter((item) => item.status === "accepted" && item.recruitment.available_date === todayDateKey()).length);
-          setMatches(
-            apiMatches.length > 0 || !USE_MOCK_RECRUITMENTS
-              ? apiMatches
-              : mockMatchesForDate(selectedDate, sortMode),
-          );
+          setMatches(apiMatches);
           hasLoaded.current = true;
         }
       } catch (error) {
         if (error instanceof Error && error.name === "AbortError" && (cancelled || controller.signal.aborted)) return;
         if (!cancelled) {
-          if (USE_MOCK_RECRUITMENTS) {
-            setMatches(mockMatchesForDate(selectedDate, sortMode));
-            hasLoaded.current = true;
-          } else {
-            setLoadError(copyRef.current.loadError);
-          }
+          setLoadError(copyRef.current.loadError);
         }
       } finally {
         if (!cancelled) {
@@ -337,7 +307,7 @@ export default function JapaneseHomeScreen() {
       cancelled = true;
       controller.abort();
     };
-  }, [getCurrentSession, refresh, selectedCategory, selectedDate, selectedRadius, session, sortMode, status, submittedQuery, timeRange, verifiedOnly]);
+  }, [getCurrentSession, refresh, selectedCategory, selectedDate, selectedRadius, session, sortMode, status, submittedQuery, timeRange]);
 
   useEffect(() => {
     let active = true;
@@ -386,7 +356,7 @@ export default function JapaneseHomeScreen() {
   }), [moveSelectedDate]);
 
   const openMatch = (match: MatchCardData) => {
-    router.push({
+    push({
       pathname: "/japanese/matches/[id]",
       params: { id: match.id },
     });
@@ -396,7 +366,7 @@ export default function JapaneseHomeScreen() {
     return (
       <View style={styles.loadingScreen}>
         <StatusBar style="dark" />
-        <ActivityIndicator color={BLUE} size="large" />
+        {showLanguageLoading ? <ActivityIndicator color={BLUE} size="large" /> : null}
       </View>
     );
   }
@@ -425,17 +395,19 @@ export default function JapaneseHomeScreen() {
         {...dateSwipeResponder.panHandlers}
       >
         {todayPlanCount > 0 ? (
-          <Pressable onPress={() => router.push("/plans")} style={styles.planShortcut}>
+          <Pressable onPress={() => push("/plans")} style={styles.planShortcut}>
             <MaterialIcons color={BLUE} name="event-available" size={21} />
             <Text style={styles.planShortcutText}>{copy.acceptedPlans(todayPlanCount)}</Text>
             <MaterialIcons color={BLUE} name="chevron-right" size={22} />
           </Pressable>
         ) : null}
-        {loading ? (
-          <View style={styles.statePanel}>
-            <ActivityIndicator color={BLUE} size="small" />
-            <Text style={styles.stateText}>{copy.loading}</Text>
-          </View>
+        {loading && matches.length === 0 ? (
+          showInitialLoading ? (
+            <View style={styles.statePanel}>
+              <ActivityIndicator color={BLUE} size="small" />
+              <Text style={styles.stateText}>{copy.loading}</Text>
+            </View>
+          ) : null
         ) : loadError && matches.length === 0 ? (
           <View style={styles.statePanel}>
             <Text accessibilityRole="alert" style={styles.stateText}>{loadError}</Text>
@@ -498,7 +470,7 @@ export default function JapaneseHomeScreen() {
               accessibilityLabel={copy.filters}
               accessibilityRole="button"
               hitSlop={6}
-              onPress={() => router.push({
+              onPress={() => push({
                 pathname: "/japanese/filters",
                 params: {
                   ...(submittedQuery ? { query: submittedQuery } : {}),
@@ -507,12 +479,11 @@ export default function JapaneseHomeScreen() {
                   ...(selectedCategory ? { category: selectedCategory } : {}),
                   ...(selectedTime ? { time: selectedTime } : {}),
                   radius: String(selectedRadius),
-                  verified: verifiedOnly ? "1" : "0",
                 },
               })}
               style={styles.filterButton}
             >
-              <MaterialIcons color={selectedCategory || selectedTime || verifiedOnly ? BLUE : PLACEHOLDER_GRAY} name="tune" size={21} />
+              <MaterialIcons color={selectedCategory || selectedTime ? BLUE : PLACEHOLDER_GRAY} name="tune" size={21} />
             </Pressable>
           </View>
 
@@ -520,7 +491,7 @@ export default function JapaneseHomeScreen() {
             accessibilityLabel={copy.notifications}
             accessibilityRole="button"
             hitSlop={12}
-            onPress={() => router.push("/japanese/notifications")}
+            onPress={() => push("/japanese/notifications")}
             style={({ pressed }) => [
               styles.headerIconButton,
               styles.notificationButton,
@@ -535,7 +506,7 @@ export default function JapaneseHomeScreen() {
             accessibilityLabel={copy.profile}
             accessibilityRole="button"
             hitSlop={12}
-            onPress={() => router.push("/profile")}
+            onPress={() => push("/profile")}
             style={({ pressed }) => [
               styles.headerIconButton,
               styles.profileButton,

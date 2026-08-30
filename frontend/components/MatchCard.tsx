@@ -22,24 +22,28 @@ export default function MatchCard({ match, onOpen }: MatchCardProps) {
       onPress={onOpen ? () => onOpen(match) : undefined}
       style={styles.card}
     >
-      <View style={styles.profileRow}>
-        <MaterialIcons color={colors.border.default} name="account-circle" size={26} />
-        <Text numberOfLines={1} style={styles.authorName}>
-          {match.authorName}
-        </Text>
-        <Text style={styles.countryFlag}>{match.countryFlag}</Text>
+      <View style={styles.headerRow}>
+        <View style={styles.profileRow}>
+          <MaterialIcons color={colors.border.default} name="account-circle" size={26} />
+          <Text numberOfLines={1} style={styles.authorName}>
+            {match.authorName}
+          </Text>
+          <Text style={styles.countryFlag}>{match.countryFlag}</Text>
+        </View>
+
+        {statusLabel ? <View style={[styles.statusBadge, match.applicationStatus === "accepted" && styles.statusAccepted]}><Text style={[styles.statusText, match.applicationStatus === "accepted" && styles.statusAcceptedText]}>{statusLabel}</Text></View> : <View style={styles.openButton}><MaterialIcons color={colors.text.secondary} name="open-in-new" size={18} /></View>}
       </View>
 
-      {statusLabel ? <View style={[styles.statusBadge, match.applicationStatus === "accepted" && styles.statusAccepted]}><Text style={[styles.statusText, match.applicationStatus === "accepted" && styles.statusAcceptedText]}>{statusLabel}</Text></View> : <View style={styles.openButton}><MaterialIcons color={colors.text.secondary} name="open-in-new" size={18} /></View>}
-
-      <Text numberOfLines={1} style={[styles.detailLine, styles.dateLine]}>
-        <Text style={styles.detailLabel}>Date</Text>
-        {`   ${match.date}`}
-      </Text>
-      <Text numberOfLines={1} style={[styles.detailLine, styles.timeLine]}>
-        <Text style={styles.detailLabel}>Time</Text>
-        {`   ${formatTimeRange(match.startTime, match.durationHours)}`}
-      </Text>
+      <View style={styles.details}>
+        <Text numberOfLines={1} style={styles.detailLine}>
+          <Text style={styles.detailLabel}>Date</Text>
+          {`   ${match.date}`}
+        </Text>
+        <Text numberOfLines={1} style={styles.detailLine}>
+          <Text style={styles.detailLabel}>Time</Text>
+          {`   ${formatTimeRange(match.startTime, match.durationHours)}`}
+        </Text>
+      </View>
 
       <View style={styles.tags}>
         {match.tags.map((tag) => (
@@ -49,9 +53,13 @@ export default function MatchCard({ match, onOpen }: MatchCardProps) {
         ))}
       </View>
 
-      <Text style={styles.expiry}>{match.expiresAt}まで</Text>
-      {match.locationName ? <View style={styles.locationRow}><MaterialIcons color={colors.text.muted} name="place" size={12} /><Text numberOfLines={1} style={styles.locationText}>{match.locationName}</Text></View> : null}
-      {match.isToday ? <Text style={styles.today}>今日</Text> : null}
+      <View style={styles.footer}>
+        {match.locationName ? <View style={styles.locationRow}><MaterialIcons color={colors.text.muted} name="place" size={12} /><Text numberOfLines={1} style={styles.locationText}>{match.locationName}</Text></View> : <View style={styles.footerSpacer} />}
+        <View style={styles.footerMeta}>
+          {match.isToday ? <Text style={styles.today}>今日</Text> : null}
+          <Text style={styles.expiry}>{match.expiresAt}まで</Text>
+        </View>
+      </View>
     </Card>
   );
 }
@@ -60,46 +68,50 @@ const styles = StyleSheet.create({
   card: {
     width: 307,
     maxWidth: "78.72%",
-    height: 132,
-    padding: 0,
+    minHeight: 132,
+    gap: 8,
+    paddingHorizontal: 22,
+    paddingVertical: 12,
     borderColor: colors.border.muted,
     borderRadius: radius["2xl"],
   },
+  headerRow: {
+    width: "100%",
+    minHeight: 27,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
   profileRow: {
-    position: "absolute",
-    top: 7,
-    left: 24,
-    right: 44,
-    height: 27,
+    minWidth: 0,
+    flex: 1,
     flexDirection: "row",
     alignItems: "center",
   },
   authorName: {
-    maxWidth: 126,
-    marginLeft: 12,
+    minWidth: 0,
+    flex: 1,
+    marginLeft: 8,
     color: colors.text.black,
     ...typography.subheading,
     lineHeight: 19,
   },
   countryFlag: {
-    marginLeft: 11,
+    flexShrink: 0,
+    marginLeft: 8,
     color: colors.text.black,
     ...typography.subheading,
     lineHeight: 19,
   },
   openButton: {
-    position: "absolute",
-    top: 10,
-    right: 10,
     width: 20,
     height: 20,
+    flexShrink: 0,
     alignItems: "center",
     justifyContent: "center",
   },
   statusBadge: {
-    position: "absolute",
-    top: 8,
-    right: 9,
+    flexShrink: 0,
     paddingHorizontal: 7,
     paddingVertical: 4,
     borderRadius: radius.pill,
@@ -108,18 +120,10 @@ const styles = StyleSheet.create({
   statusAccepted: { backgroundColor: colors.surface.blueSoft },
   statusText: { color: colors.brand.gold, ...typography.micro, fontWeight: "900" },
   statusAcceptedText: { color: colors.brand.sky },
-  today: {
-    position: "absolute",
-    right: 10,
-    bottom: 24,
-    color: colors.state.danger,
-    ...typography.micro,
-    fontWeight: "900",
+  details: {
+    gap: 4,
   },
   detailLine: {
-    position: "absolute",
-    left: 22,
-    right: 16,
     color: colors.text.secondary,
     ...typography.smallStrong,
     lineHeight: 15,
@@ -127,54 +131,63 @@ const styles = StyleSheet.create({
   detailLabel: {
     fontWeight: "900",
   },
-  dateLine: {
-    top: 42,
-  },
-  timeLine: {
-    top: 66,
-  },
   tags: {
-    position: "absolute",
-    top: 93,
-    left: 22,
-    right: 74,
-    height: 25,
     flexDirection: "row",
+    flexWrap: "wrap",
     gap: 6,
   },
   tag: {
     minWidth: 55,
-    maxWidth: 68,
-    height: 25,
+    maxWidth: "100%",
     minHeight: 25,
     paddingHorizontal: 6,
+    paddingVertical: 4,
+    flexShrink: 1,
     borderRadius: radius.xs,
   },
   tagText: {
+    flexShrink: 1,
     color: colors.text.secondary,
     ...typography.micro,
   },
-  expiry: {
-    position: "absolute",
-    right: 10,
-    bottom: 7,
-    color: colors.brand.gold,
-    ...typography.micro,
-    fontWeight: "600",
-    letterSpacing: 0,
+  footer: {
+    width: "100%",
+    minHeight: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
   },
   locationRow: {
-    position: "absolute",
-    left: 22,
-    right: 96,
-    bottom: 7,
+    minWidth: 0,
+    flex: 1,
     flexDirection: "row",
     alignItems: "center",
     gap: 3,
   },
   locationText: {
+    minWidth: 0,
     flex: 1,
     color: colors.text.muted,
     ...typography.micro,
+  },
+  footerSpacer: {
+    minWidth: 0,
+    flex: 1,
+  },
+  footerMeta: {
+    flexShrink: 0,
+    alignItems: "flex-end",
+    gap: 1,
+  },
+  today: {
+    color: colors.state.danger,
+    ...typography.micro,
+    fontWeight: "900",
+  },
+  expiry: {
+    color: colors.brand.gold,
+    ...typography.micro,
+    fontWeight: "600",
+    letterSpacing: 0,
   },
 });

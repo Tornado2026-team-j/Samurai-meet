@@ -2,6 +2,7 @@ import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from "react";
 import {
   ActivityIndicator,
+  Keyboard,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -53,6 +54,10 @@ const DANGER = "#b42318";
 
 type ReportTarget = { kind: "account" } | { kind: "message"; messageID: string };
 type ConfirmAction = "decline" | "block" | "account_report" | "message_report";
+type SafetyModal =
+  | { kind: "menu" }
+  | { kind: "confirm"; action: ConfirmAction; target: ReportTarget | null }
+  | { kind: "report"; target: ReportTarget };
 type MaterialIconName = ComponentProps<typeof MaterialIcons>["name"];
 
 const CATEGORY_ICONS: Record<MatchCategory, MaterialIconName> = {
@@ -267,18 +272,17 @@ export default function ChatDetailScreen() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);
   const [translatedMessages, setTranslatedMessages] = useState<Record<string, string>>({});
-  const [reportTarget, setReportTarget] = useState<ReportTarget | null>(null);
-  const [menuVisible, setMenuVisible] = useState(false);
-  const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null);
+  const [safetyModal, setSafetyModal] = useState<SafetyModal | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [locallyClosed, setLocallyClosed] = useState<"declined" | "blocked" | null>(null);
   const [safetySubmitting, setSafetySubmitting] = useState(false);
+  const safetySubmittingRef = useRef(false);
   const copy = COPY[language ?? "ja"];
   const moderation = useMemo(() => moderateChatText(draft), [draft]);
   const displayMessages = useMemo(() => deduplicateChatMessages(messages), [messages]);
   const validation = validateChatDraft(draft);
   const readOnly = chat?.status === "completed" || locallyClosed !== null;
-  const canSend = !readOnly && !sending && !validation && moderation.severity !== "block";
+  const canSend = safetyModal === null && !readOnly && !sending && !validation && moderation.severity !== "block";
 
   const runWithSession = useCallback(async <T,>(
     action: (activeSession: NonNullable<typeof session>, signal: AbortSignal) => Promise<T>,
@@ -484,26 +488,41 @@ export default function ChatDetailScreen() {
     });
   };
 
-  const startConfirmation = (action: ConfirmAction) => {
-    setMenuVisible(false);
-    setConfirmAction(action);
+  const openSafetyModal = (modal: SafetyModal) => {
+    Keyboard.dismiss();
+    setSafetyModal(modal);
+  };
+
+  const closeSafetyModal = () => {
+    if (safetySubmittingRef.current || safetySubmitting) return;
+    Keyboard.dismiss();
+    setSafetyModal(null);
+  };
+
+  const startConfirmation = (action: ConfirmAction, target: ReportTarget | null = null) => {
+    openSafetyModal({ kind: "confirm", action, target });
   };
 
   const confirmSafetyAction = async () => {
-    const action = confirmAction;
-    if (!action || safetySubmitting) return;
+    const modal = safetyModal;
+    if (!modal || modal.kind !== "confirm" || safetySubmitting || safetySubmittingRef.current) return;
+    const { action } = modal;
 
     if (action === "account_report") {
-      setReportTarget({ kind: "account" });
-      setConfirmAction(null);
+      openSafetyModal({ kind: "report", target: { kind: "account" } });
       return;
     }
     if (action === "message_report") {
-      setReportTarget((current) => current ?? { kind: "message", messageID: "" });
-      setConfirmAction(null);
+      if (!modal.target) {
+        setSafetyModal(null);
+        setNotice(copy.reportFailed);
+        return;
+      }
+      openSafetyModal({ kind: "report", target: modal.target });
       return;
     }
 
+    safetySubmittingRef.current = true;
     setSafetySubmitting(true);
     try {
       if (action === "block") {
@@ -516,6 +535,7 @@ export default function ChatDetailScreen() {
         socketRef.current?.close();
         setLocallyClosed("blocked");
         setNotice(copy.blockedLocal);
+        setSafetyModal(null);
       } else {
         const matchID = chat?.match_id ?? match?.id;
         if (!matchID) throw new Error("missing_match");
@@ -524,29 +544,31 @@ export default function ChatDetailScreen() {
           new AbortController().signal,
         );
         socketRef.current?.close();
-        setLocallyClosed("declined");
-        setNotice(copy.declinedLocal);
+        setSafetyModal(null);
+        router.replace("/chat");
       }
-      setConfirmAction(null);
     } catch {
       setNotice(action === "block" ? copy.blockFailed : copy.declineFailed);
-      setConfirmAction(null);
+      setSafetyModal(null);
     } finally {
+      safetySubmittingRef.current = false;
       setSafetySubmitting(false);
     }
   };
 
   const submitReport = async (reason: ChatReportReason) => {
-    const target = reportTarget;
-    if (!target || safetySubmitting) return;
+    const modal = safetyModal;
+    if (!modal || modal.kind !== "report" || safetySubmitting || safetySubmittingRef.current) return;
+    const { target } = modal;
 
     const targetID = target.kind === "message" ? target.messageID : chat?.other_user_id;
     if (!targetID) {
-      setReportTarget(null);
+      setSafetyModal(null);
       setNotice(copy.reportFailed);
       return;
     }
 
+    safetySubmittingRef.current = true;
     setSafetySubmitting(true);
     try {
       await runWithSession(
@@ -557,15 +579,18 @@ export default function ChatDetailScreen() {
         }, signal),
         new AbortController().signal,
       );
-      setReportTarget(null);
+      setSafetyModal(null);
       setNotice(`${copy.reportSubmitted} ${copy.reasons[reason]}`);
     } catch {
+      setSafetyModal(null);
       setNotice(copy.reportFailed);
     } finally {
+      safetySubmittingRef.current = false;
       setSafetySubmitting(false);
     }
   };
 
+  const confirmAction = safetyModal?.kind === "confirm" ? safetyModal.action : null;
   const confirmTitle = confirmAction === "decline"
     ? copy.declineTitle
     : confirmAction === "block"
@@ -615,8 +640,9 @@ export default function ChatDetailScreen() {
       behavior={Platform.OS === "ios" ? "padding" : undefined}
       style={styles.screen}
     >
-      <StatusBar style="light" />
-      <View style={[styles.header, { paddingTop: Math.max(insets.top, 36) }]}>
+      <View pointerEvents={safetyModal ? "none" : "auto"} style={styles.screenContent}>
+        <StatusBar style="light" />
+        <View style={[styles.header, { paddingTop: Math.max(insets.top, 36) }]}>
         <Pressable
           accessibilityLabel={copy.back}
           accessibilityRole="button"
@@ -639,7 +665,7 @@ export default function ChatDetailScreen() {
           accessibilityLabel={copy.menuTitle}
           accessibilityRole="button"
           hitSlop={10}
-          onPress={() => setMenuVisible(true)}
+          onPress={() => openSafetyModal({ kind: "menu" })}
           style={({ pressed }) => [
             styles.moreButton,
             { top: Math.max(insets.top + 8, 49) },
@@ -648,16 +674,17 @@ export default function ChatDetailScreen() {
         >
           <MaterialIcons color="#ffffff" name="more-horiz" size={30} />
         </Pressable>
-      </View>
+        </View>
 
-      <ScrollView
-        ref={scrollRef}
-        contentContainerStyle={styles.content}
-        refreshControl={
-          <RefreshControl onRefresh={() => void load("refresh")} refreshing={refreshing} tintColor={BLUE} />
-        }
-        showsVerticalScrollIndicator={false}
-      >
+        <ScrollView
+          ref={scrollRef}
+          contentContainerStyle={styles.content}
+          refreshControl={
+            <RefreshControl onRefresh={() => void load("refresh")} refreshing={refreshing} tintColor={BLUE} />
+          }
+          scrollEnabled={safetyModal === null}
+          showsVerticalScrollIndicator={false}
+        >
         {match ? (
           <View style={styles.schedulePanel}>
             <View style={styles.scheduleIcon}>
@@ -704,10 +731,9 @@ export default function ChatDetailScreen() {
               createdAt={message.created_at}
               encryptedFallback={!message.plaintext}
               mine={message.mine}
-              onReport={!message.mine ? () => {
-                setReportTarget({ kind: "message", messageID: message.id });
-                setConfirmAction("message_report");
-              } : undefined}
+              onReport={!message.mine
+                ? () => startConfirmation("message_report", { kind: "message", messageID: message.id })
+                : undefined}
               onTranslate={() => showTranslation(message)}
               reportLabel={!message.mine ? copy.messageReport : undefined}
               text={message.plaintext ?? copy.encryptedMessage}
@@ -716,16 +742,16 @@ export default function ChatDetailScreen() {
             />
           ))
         )}
-      </ScrollView>
+        </ScrollView>
 
-      <View style={[styles.bottomBar, { paddingBottom: Math.max(insets.bottom + 12, 22) }]}>
+        <View style={[styles.bottomBar, { paddingBottom: Math.max(insets.bottom + 12, 22) }]}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.quickReplyScroll}>
           <View style={styles.quickReplyRow}>
             {quickReplies.map((reply) => (
               <Pressable
                 key={reply}
                 accessibilityRole="button"
-                disabled={readOnly}
+                disabled={readOnly || safetyModal !== null}
                 onPress={() => setDraft(reply)}
                 style={({ pressed }) => [styles.quickReply, readOnly && styles.disabledPill, pressed && styles.pressed]}
               >
@@ -748,7 +774,7 @@ export default function ChatDetailScreen() {
         <View style={styles.inputRow}>
           <TextInput
             accessibilityLabel={copy.input}
-            editable={!readOnly && !sending}
+            editable={!readOnly && !sending && safetyModal === null}
             multiline
             onChangeText={setDraft}
             placeholder={copy.input}
@@ -767,109 +793,121 @@ export default function ChatDetailScreen() {
             {sending ? <ActivityIndicator color="#ffffff" size="small" /> : <MaterialIcons color="#ffffff" name="send" size={24} />}
           </Pressable>
         </View>
+        </View>
       </View>
 
-      <Modal animationType="slide" transparent visible={menuVisible} onRequestClose={() => setMenuVisible(false)}>
-        <Pressable style={styles.sheetBackdrop} onPress={() => setMenuVisible(false)}>
-          <Pressable style={[styles.bottomSheet, { paddingBottom: Math.max(insets.bottom + 18, 28) }]}>
-            <View style={styles.sheetHandle} />
-            <Text style={styles.sheetTitle}>{copy.menuTitle}</Text>
+      <Modal
+        animationType="none"
+        onRequestClose={closeSafetyModal}
+        presentationStyle="overFullScreen"
+        transparent
+        visible={safetyModal !== null}
+      >
+        {safetyModal ? (
+          <View accessibilityViewIsModal style={styles.safetyModalRoot}>
             <Pressable
-              accessibilityRole="button"
-              onPress={() => startConfirmation("decline")}
-              style={({ pressed }) => [styles.sheetAction, pressed && styles.pressed]}
+              accessibilityLabel={copy.close}
+              disabled={safetySubmitting}
+              onPress={closeSafetyModal}
+              style={styles.modalScrim}
+            />
+            <View
+              pointerEvents="box-none"
+              style={[styles.modalLayer, safetyModal.kind === "menu" && styles.sheetLayer]}
             >
-              <MaterialIcons color={BLUE} name="logout" size={23} />
-              <Text style={styles.sheetActionText}>{copy.decline}</Text>
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => startConfirmation("account_report")}
-              style={({ pressed }) => [styles.sheetAction, pressed && styles.pressed]}
-            >
-              <MaterialIcons color={BLUE} name="outlined-flag" size={23} />
-              <Text style={styles.sheetActionText}>{copy.accountReport}</Text>
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => startConfirmation("block")}
-              style={({ pressed }) => [styles.sheetAction, pressed && styles.pressed]}
-            >
-              <MaterialIcons color={DANGER} name="block" size={23} />
-              <Text style={[styles.sheetActionText, styles.dangerText]}>{copy.block}</Text>
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => setMenuVisible(false)}
-              style={({ pressed }) => [styles.sheetCancel, pressed && styles.pressed]}
-            >
-              <Text style={styles.sheetCancelText}>{copy.cancel}</Text>
-            </Pressable>
-          </Pressable>
-        </Pressable>
-      </Modal>
-
-      <Modal animationType="fade" transparent visible={!!reportTarget && !confirmAction} onRequestClose={() => setReportTarget(null)}>
-        <View style={styles.modalBackdrop}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>{reportTarget?.kind === "message" ? copy.messageReport : copy.accountReport}</Text>
-            <Text style={styles.modalSubtitle}>{copy.reasonTitle}</Text>
-            <View style={styles.reasonList}>
-              {REPORT_REASONS.map((reason) => (
-                <Pressable
-                  key={reason}
-                  accessibilityRole="button"
-                  disabled={safetySubmitting}
-                  onPress={() => void submitReport(reason)}
-                  style={({ pressed }) => [styles.reasonButton, safetySubmitting && styles.disabledPill, pressed && styles.pressed]}
-                >
-                  <Text style={styles.reasonText}>{copy.reasons[reason]}</Text>
-                </Pressable>
-              ))}
+              {safetyModal.kind === "menu" ? (
+                <View style={[styles.bottomSheet, { paddingBottom: Math.max(insets.bottom + 18, 28) }]}>
+                  <View style={styles.sheetHandle} />
+                  <Text style={styles.sheetTitle}>{copy.menuTitle}</Text>
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => startConfirmation("decline")}
+                    style={({ pressed }) => [styles.sheetAction, pressed && styles.pressed]}
+                  >
+                    <MaterialIcons color={BLUE} name="logout" size={23} />
+                    <Text style={styles.sheetActionText}>{copy.decline}</Text>
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => startConfirmation("account_report")}
+                    style={({ pressed }) => [styles.sheetAction, pressed && styles.pressed]}
+                  >
+                    <MaterialIcons color={BLUE} name="outlined-flag" size={23} />
+                    <Text style={styles.sheetActionText}>{copy.accountReport}</Text>
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => startConfirmation("block")}
+                    style={({ pressed }) => [styles.sheetAction, pressed && styles.pressed]}
+                  >
+                    <MaterialIcons color={DANGER} name="block" size={23} />
+                    <Text style={[styles.sheetActionText, styles.dangerText]}>{copy.block}</Text>
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={closeSafetyModal}
+                    style={({ pressed }) => [styles.sheetCancel, pressed && styles.pressed]}
+                  >
+                    <Text style={styles.sheetCancelText}>{copy.cancel}</Text>
+                  </Pressable>
+                </View>
+              ) : safetyModal.kind === "report" ? (
+                <View style={styles.modalCard}>
+                  <Text style={styles.modalTitle}>{safetyModal.target.kind === "message" ? copy.messageReport : copy.accountReport}</Text>
+                  <Text style={styles.modalSubtitle}>{copy.reasonTitle}</Text>
+                  <View style={styles.reasonList}>
+                    {REPORT_REASONS.map((reason) => (
+                      <Pressable
+                        key={reason}
+                        accessibilityRole="button"
+                        disabled={safetySubmitting}
+                        onPress={() => void submitReport(reason)}
+                        style={({ pressed }) => [styles.reasonButton, safetySubmitting && styles.disabledPill, pressed && styles.pressed]}
+                      >
+                        <Text style={styles.reasonText}>{copy.reasons[reason]}</Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                  <Pressable
+                    accessibilityRole="button"
+                    disabled={safetySubmitting}
+                    onPress={closeSafetyModal}
+                    style={({ pressed }) => [styles.modalCancelButton, pressed && styles.pressed]}
+                  >
+                    <Text style={styles.modalCancelText}>{copy.cancel}</Text>
+                  </Pressable>
+                </View>
+              ) : (
+                <View style={styles.modalCard}>
+                  <Text style={styles.modalTitle}>{confirmTitle}</Text>
+                  <Text style={styles.modalSubtitle}>{confirmDescription}</Text>
+                  <View style={styles.modalActionRow}>
+                    <Pressable
+                      accessibilityRole="button"
+                      onPress={closeSafetyModal}
+                      disabled={safetySubmitting}
+                      style={({ pressed }) => [styles.modalSecondaryButton, pressed && styles.pressed]}
+                    >
+                      <Text style={styles.modalSecondaryText}>{copy.cancel}</Text>
+                    </Pressable>
+                    <Pressable
+                      accessibilityRole="button"
+                      disabled={safetySubmitting}
+                      onPress={() => void confirmSafetyAction()}
+                      style={({ pressed }) => [styles.modalPrimaryButton, safetySubmitting && styles.sendButtonDisabled, pressed && styles.pressed]}
+                    >
+                      {safetySubmitting ? (
+                        <ActivityIndicator color="#ffffff" size="small" />
+                      ) : (
+                        <Text style={styles.modalPrimaryText}>{copy.confirm}</Text>
+                      )}
+                    </Pressable>
+                  </View>
+                </View>
+              )}
             </View>
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => setReportTarget(null)}
-              style={({ pressed }) => [styles.modalCancelButton, pressed && styles.pressed]}
-            >
-              <Text style={styles.modalCancelText}>{copy.cancel}</Text>
-            </Pressable>
           </View>
-        </View>
-      </Modal>
-
-      <Modal animationType="fade" transparent visible={!!confirmAction} onRequestClose={() => setConfirmAction(null)}>
-        <View style={styles.modalBackdrop}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>{confirmTitle}</Text>
-            <Text style={styles.modalSubtitle}>{confirmDescription}</Text>
-            <View style={styles.modalActionRow}>
-              <Pressable
-                accessibilityRole="button"
-                onPress={() => {
-                  if (confirmAction === "message_report") setReportTarget(null);
-                  setConfirmAction(null);
-                }}
-                disabled={safetySubmitting}
-                style={({ pressed }) => [styles.modalSecondaryButton, pressed && styles.pressed]}
-              >
-                <Text style={styles.modalSecondaryText}>{copy.cancel}</Text>
-              </Pressable>
-              <Pressable
-                accessibilityRole="button"
-                disabled={safetySubmitting}
-                onPress={() => void confirmSafetyAction()}
-                style={({ pressed }) => [styles.modalPrimaryButton, safetySubmitting && styles.sendButtonDisabled, pressed && styles.pressed]}
-              >
-                {safetySubmitting ? (
-                  <ActivityIndicator color="#ffffff" size="small" />
-                ) : (
-                  <Text style={styles.modalPrimaryText}>{copy.confirm}</Text>
-                )}
-              </Pressable>
-            </View>
-          </View>
-        </View>
+        ) : null}
       </Modal>
     </KeyboardAvoidingView>
   );
@@ -879,6 +917,9 @@ const styles = StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: "#ffffff",
+  },
+  screenContent: {
+    flex: 1,
   },
   loadingScreen: {
     flex: 1,
@@ -1184,10 +1225,29 @@ const styles = StyleSheet.create({
     letterSpacing: 0,
     lineHeight: 17,
   },
-  sheetBackdrop: {
+  safetyModalRoot: {
     flex: 1,
+    zIndex: 1000,
+    elevation: 1000,
+  },
+  modalScrim: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 1001,
+    elevation: 1,
+    backgroundColor: "rgba(8, 15, 28, 0.68)",
+  },
+  modalLayer: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 24,
+    zIndex: 1002,
+    elevation: 2,
+  },
+  sheetLayer: {
+    alignItems: "stretch",
     justifyContent: "flex-end",
-    backgroundColor: "rgba(0,0,0,0.28)",
+    padding: 0,
   },
   bottomSheet: {
     width: "100%",
@@ -1196,6 +1256,8 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     backgroundColor: "#ffffff",
+    zIndex: 1003,
+    elevation: 24,
   },
   sheetHandle: {
     width: 48,
@@ -1246,19 +1308,14 @@ const styles = StyleSheet.create({
     letterSpacing: 0,
     lineHeight: 18,
   },
-  modalBackdrop: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    padding: 24,
-    backgroundColor: "rgba(0,0,0,0.28)",
-  },
   modalCard: {
     width: "100%",
     maxWidth: 342,
     padding: 22,
     borderRadius: 20,
     backgroundColor: "#ffffff",
+    zIndex: 1003,
+    elevation: 24,
   },
   modalTitle: {
     color: "#101318",

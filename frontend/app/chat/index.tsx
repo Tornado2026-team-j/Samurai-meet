@@ -7,7 +7,12 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Header } from "../../components/ui";
 import { useAuth } from "../../hooks/useAuth";
 import { APIError } from "../../services/api-client";
-import { listChats, type ChatSummary } from "../../services/chat";
+import {
+  filterChatsByStatus,
+  listChats,
+  type ChatListFilter,
+  type ChatSummary,
+} from "../../services/chat";
 import { loadLanguage, subscribeLanguage, type AppLanguage } from "../../services/onboarding";
 
 const BLUE = "#5ec5f5";
@@ -24,12 +29,18 @@ const COPY = {
     loading: "チャットを読み込み中…",
     retry: "再試行",
     empty: "マッチング後にチャットが表示されます",
+    emptyFiltered: "選択した状態のチャットはありません",
+    showAll: "すべてのチャットを表示",
     signInRequired: "ログイン後にチャットを表示できます。",
     loadError: "チャットを読み込めませんでした。時間をおいて再試行してください。",
-    completed: "閲覧専用",
-    active: "案内前の確認",
+    filterTitle: "チャットの状態",
+    filters: { all: "すべて", active: "進行中", completed: "終了済み" },
+    filterOption: (label: string, count: number) => `${label}（${count}件）`,
+    chatStatus: { accepted: "進行中", completed: "終了済み" },
     unread: (count: number) => `${count}件の未読`,
-    open: (name: string) => `${name}さんとのチャットを開く`,
+    open: (name: string, status: string, unreadCount: number) =>
+      `${name}さんとのチャットを開く。状態: ${status}${unreadCount > 0 ? `。${unreadCount}件の未読` : ""}`,
+    unknownUser: "Samurai Meetユーザー",
     lastMessage: (time: string) => `最終メッセージ ${time}`,
     noMessages: "まだメッセージはありません",
   },
@@ -39,16 +50,28 @@ const COPY = {
     loading: "Loading chats…",
     retry: "Retry",
     empty: "Chats appear after a match is confirmed",
+    emptyFiltered: "No chats match this status",
+    showAll: "Show all chats",
     signInRequired: "Sign in to view chats.",
     loadError: "Chats could not be loaded. Please try again later.",
-    completed: "Read-only",
-    active: "Guide coordination",
+    filterTitle: "Chat status",
+    filters: { all: "All", active: "Active", completed: "Completed" },
+    filterOption: (label: string, count: number) => `${label} (${count})`,
+    chatStatus: { accepted: "Active", completed: "Completed" },
     unread: (count: number) => count === 1 ? "1 unread" : `${count} unread`,
-    open: (name: string) => `Open chat with ${name}`,
+    open: (name: string, status: string, unreadCount: number) =>
+      `Open chat with ${name}. Status: ${status}${unreadCount > 0 ? `. ${copyUnread(unreadCount)}` : ""}`,
+    unknownUser: "Samurai Meet user",
     lastMessage: (time: string) => `Last message ${time}`,
     noMessages: "No messages yet",
   },
 } as const;
+
+function copyUnread(count: number): string {
+  return count === 1 ? "1 unread" : `${count} unread`;
+}
+
+const FILTER_OPTIONS: readonly ChatListFilter[] = ["all", "active", "completed"];
 
 function formatRelative(value?: string): string | null {
   if (!value) return null;
@@ -74,6 +97,7 @@ export default function ChatListScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [filter, setFilter] = useState<ChatListFilter>("all");
   const navigatedMatchRef = useRef<string | null>(null);
   const copy = COPY[language ?? "ja"];
 
@@ -82,6 +106,16 @@ export default function ChatListScreen() {
     const rightTime = Date.parse(right.last_message_at ?? right.updated_at);
     return (Number.isNaN(rightTime) ? 0 : rightTime) - (Number.isNaN(leftTime) ? 0 : leftTime);
   }), [chats]);
+
+  const visibleChats = useMemo(
+    () => filterChatsByStatus(sortedChats, filter),
+    [filter, sortedChats],
+  );
+  const filterCounts = useMemo(() => ({
+    all: filterChatsByStatus(sortedChats, "all").length,
+    active: filterChatsByStatus(sortedChats, "active").length,
+    completed: filterChatsByStatus(sortedChats, "completed").length,
+  }), [sortedChats]);
 
   const load = useCallback((mode: "initial" | "refresh" = "refresh") => {
     const controller = new AbortController();
@@ -190,6 +224,34 @@ export default function ChatListScreen() {
         }
         showsVerticalScrollIndicator={false}
       >
+        {chats.length > 0 ? (
+          <View style={styles.filterSection}>
+            <Text style={styles.filterTitle}>{copy.filterTitle}</Text>
+            <View style={styles.filterRow}>
+              {FILTER_OPTIONS.map((option) => {
+                const selected = filter === option;
+                return (
+                  <Pressable
+                    key={option}
+                    accessibilityLabel={copy.filterOption(copy.filters[option], filterCounts[option])}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected }}
+                    onPress={() => setFilter(option)}
+                    style={({ pressed }) => [
+                      styles.filterButton,
+                      selected && styles.filterButtonSelected,
+                      pressed && styles.pressed,
+                    ]}
+                  >
+                    <Text style={[styles.filterButtonText, selected && styles.filterButtonTextSelected]}>
+                      {copy.filters[option]}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+        ) : null}
         {loading && chats.length === 0 ? (
           <View style={styles.statePanel}>
             <ActivityIndicator color={BLUE} />
@@ -206,21 +268,33 @@ export default function ChatListScreen() {
               <Text style={styles.retryButtonText}>{copy.retry}</Text>
             </Pressable>
           </View>
-        ) : sortedChats.length === 0 ? (
+        ) : visibleChats.length === 0 ? (
           <View style={styles.statePanel}>
             <View style={styles.emptyIconCircle}>
               <MaterialIcons color={BLUE} name="forum" size={34} />
             </View>
-            <Text style={styles.stateText}>{copy.empty}</Text>
+            <Text style={styles.stateText}>{chats.length === 0 ? copy.empty : copy.emptyFiltered}</Text>
+            {chats.length > 0 && filter !== "all" ? (
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => setFilter("all")}
+                style={({ pressed }) => [styles.clearFilterButton, pressed && styles.pressed]}
+              >
+                <Text style={styles.clearFilterButtonText}>{copy.showAll}</Text>
+              </Pressable>
+            ) : null}
           </View>
         ) : (
           <View style={styles.chatList}>
-            {sortedChats.map((chat) => {
+            {visibleChats.map((chat) => {
               const lastMessageAt = formatRelative(chat.last_message_at);
+              const statusLabel = copy.chatStatus[chat.status];
+              const isCompleted = chat.status === "completed";
+              const chatName = chat.other_user_name || copy.unknownUser;
               return (
                 <Pressable
                   key={chat.id}
-                  accessibilityLabel={copy.open(chat.other_user_name)}
+                  accessibilityLabel={copy.open(chatName, statusLabel, chat.unread_count)}
                   accessibilityRole="button"
                   onPress={() => router.push({ pathname: "/chat/[id]", params: { id: chat.id } })}
                   style={({ pressed }) => [styles.chatCard, pressed && styles.pressed]}
@@ -230,16 +304,33 @@ export default function ChatListScreen() {
                   </View>
                   <View style={styles.chatText}>
                     <View style={styles.titleRow}>
-                      <Text numberOfLines={1} style={styles.chatName}>{chat.other_user_name || "Samurai Meet user"}</Text>
+                      <Text numberOfLines={1} style={styles.chatName}>{chatName}</Text>
                       {chat.unread_count > 0 ? (
                         <View style={styles.unreadBadge}>
                           <Text style={styles.unreadText}>{chat.unread_count}</Text>
                         </View>
                       ) : null}
                     </View>
-                    <Text numberOfLines={1} style={styles.chatMeta}>
-                      {chat.status === "completed" ? copy.completed : copy.active}
-                    </Text>
+                    <View
+                      style={[
+                        styles.statusPill,
+                        isCompleted ? styles.statusPillCompleted : styles.statusPillActive,
+                      ]}
+                    >
+                      <MaterialIcons
+                        color={isCompleted ? TEXT_GRAY : BLUE}
+                        name={isCompleted ? "check-circle-outline" : "schedule"}
+                        size={16}
+                      />
+                      <Text
+                        style={[
+                          styles.statusText,
+                          isCompleted ? styles.statusTextCompleted : styles.statusTextActive,
+                        ]}
+                      >
+                        {statusLabel}
+                      </Text>
+                    </View>
                     <Text numberOfLines={1} style={styles.chatPreview}>
                       {lastMessageAt ? copy.lastMessage(lastMessageAt) : copy.noMessages}
                     </Text>
@@ -274,6 +365,47 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingTop: 36,
     paddingHorizontal: 24,
+  },
+  filterSection: {
+    width: "100%",
+    maxWidth: 348,
+    marginBottom: 20,
+  },
+  filterTitle: {
+    marginBottom: 9,
+    color: TEXT_GRAY,
+    fontSize: 13,
+    fontWeight: "900",
+    lineHeight: 18,
+  },
+  filterRow: {
+    width: "100%",
+    flexDirection: "row",
+    gap: 8,
+  },
+  filterButton: {
+    flex: 1,
+    minHeight: 44,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 8,
+    borderWidth: 1,
+    borderColor: BORDER_GRAY,
+    borderRadius: 12,
+    backgroundColor: "#ffffff",
+  },
+  filterButtonSelected: {
+    borderColor: BLUE,
+    backgroundColor: BLUE,
+  },
+  filterButtonText: {
+    color: TEXT_GRAY,
+    fontSize: 13,
+    fontWeight: "900",
+    lineHeight: 18,
+  },
+  filterButtonTextSelected: {
+    color: "#ffffff",
   },
   chatList: {
     width: "100%",
@@ -320,13 +452,35 @@ const styles = StyleSheet.create({
     letterSpacing: 0,
     lineHeight: 22,
   },
-  chatMeta: {
+  statusPill: {
+    minHeight: 28,
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    gap: 5,
     marginTop: 3,
-    color: BLUE,
+    paddingHorizontal: 9,
+    borderWidth: 1,
+    borderRadius: 14,
+  },
+  statusPillActive: {
+    borderColor: "#b8e4fb",
+    backgroundColor: SOFT_BLUE,
+  },
+  statusPillCompleted: {
+    borderColor: BORDER_GRAY,
+    backgroundColor: "#f7f7f7",
+  },
+  statusText: {
     fontSize: 12,
     fontWeight: "900",
-    letterSpacing: 0,
     lineHeight: 16,
+  },
+  statusTextActive: {
+    color: BLUE,
+  },
+  statusTextCompleted: {
+    color: TEXT_GRAY,
   },
   chatPreview: {
     marginTop: 7,
@@ -399,6 +553,21 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     letterSpacing: 0,
     lineHeight: 17,
+  },
+  clearFilterButton: {
+    minHeight: 40,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 16,
+    borderWidth: 1,
+    borderColor: BLUE,
+    borderRadius: 10,
+  },
+  clearFilterButtonText: {
+    color: BLUE,
+    fontSize: 13,
+    fontWeight: "900",
+    lineHeight: 18,
   },
   pressed: {
     opacity: 0.72,

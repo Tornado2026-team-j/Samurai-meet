@@ -5,6 +5,7 @@ import {
   createSafetyReport,
   decryptChatMessage,
   encryptChatPlaintext,
+  filterChatsByStatus,
   issueChatTransportToken,
   listChatMessages,
   listChats,
@@ -14,6 +15,7 @@ import {
   toChatMessageView,
   validateChatDraft,
   type EncryptedChatMessage,
+  type ChatSummary,
 } from "../services/chat";
 
 const originalFetch = globalThis.fetch;
@@ -54,7 +56,9 @@ describe("チャットAPIクライアント", () => {
       }), { status: 200 });
     }) as typeof fetch;
 
-    await expect(listChats(session)).resolves.toHaveLength(1);
+    const chats = await listChats(session);
+    expect(chats).toHaveLength(1);
+    expect(chats).toMatchObject([{ status: "accepted" }]);
     await expect(listChatMessages("chat-1", session, { after: 3, limit: 50 })).resolves.toMatchObject({
       items: [],
       has_more: false,
@@ -64,6 +68,36 @@ describe("チャットAPIクライアント", () => {
     expect(requests[1]).toContain("/chats/chat-1/messages");
     expect(requests[1]).toContain("after=3");
     expect(requests[1]).toContain("limit=50");
+  });
+
+  it("チャット一覧の絞り込みはAPIのstatusだけを根拠にする", () => {
+    const chats: ChatSummary[] = [
+      {
+        id: "chat-active",
+        match_id: "match-active",
+        status: "accepted",
+        other_user_id: "user-2",
+        other_user_name: "Sofia",
+        unread_count: 0,
+        updated_at: "2026-08-30T00:00:00Z",
+      },
+      {
+        id: "chat-completed",
+        match_id: "match-completed",
+        status: "completed",
+        other_user_id: "user-3",
+        other_user_name: "Haruto",
+        unread_count: 2,
+        updated_at: "2026-08-30T00:00:00Z",
+      },
+    ];
+
+    expect(filterChatsByStatus(chats, "all").map((chat) => chat.id)).toEqual([
+      "chat-active",
+      "chat-completed",
+    ]);
+    expect(filterChatsByStatus(chats, "active").map((chat) => chat.id)).toEqual(["chat-active"]);
+    expect(filterChatsByStatus(chats, "completed").map((chat) => chat.id)).toEqual(["chat-completed"]);
   });
 
   it("WebSocket用Chat Tokenを発行し、URL queryへ載せない接続先を作る", async () => {
