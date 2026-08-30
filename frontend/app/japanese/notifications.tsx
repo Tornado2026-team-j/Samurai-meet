@@ -191,6 +191,8 @@ export default function JapaneseNotificationsScreen() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const initialLoadStartedRef = useRef(false);
   const copy = COPY[language ?? "ja"];
+	const copyRef = useRef(copy);
+	copyRef.current = copy;
   const loadNotifications = useCallback((mode: "initial" | "refresh" = "refresh") => {
     const controller = new AbortController();
     let cancelled = false;
@@ -202,7 +204,7 @@ export default function JapaneseNotificationsScreen() {
           setNotificationRecords([]);
           setLoading(false);
           setRefreshing(false);
-          setLoadError(copy.signInRequired);
+			setLoadError(copyRef.current.signInRequired);
         }
         return;
       }
@@ -228,9 +230,9 @@ export default function JapaneseNotificationsScreen() {
           setNotificationRecords(records);
         }
       } catch (error) {
-        if (error instanceof Error && error.name === "AbortError") return;
+        if (error instanceof Error && error.name === "AbortError" && (cancelled || controller.signal.aborted)) return;
         if (!cancelled) {
-          setLoadError(copy.loadError);
+			setLoadError(copyRef.current.loadError);
         }
       } finally {
         if (!cancelled) {
@@ -245,7 +247,10 @@ export default function JapaneseNotificationsScreen() {
       cancelled = true;
       controller.abort();
     };
-  }, [copy.loadError, copy.signInRequired, getCurrentSession, refresh, session, status]);
+	}, [getCurrentSession, refresh, session, status]);
+
+  const loadNotificationsRef = useRef(loadNotifications);
+  loadNotificationsRef.current = loadNotifications;
 
   useEffect(() => {
     let active = true;
@@ -264,11 +269,11 @@ export default function JapaneseNotificationsScreen() {
   }, []);
 
   useEffect(() => {
-    if (initialLoadStartedRef.current) return;
+		if (status === "loading" || initialLoadStartedRef.current) return;
 
     initialLoadStartedRef.current = true;
-    return loadNotifications("initial");
-  }, [loadNotifications]);
+    return loadNotificationsRef.current("initial");
+	}, [status]);
 
   const notifications = useMemo(() => {
     const now = new Date();

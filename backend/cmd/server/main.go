@@ -6,6 +6,7 @@ import (
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/account"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/auth"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/chat"
+	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/classification"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/config"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/db"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/httpapi"
@@ -111,6 +112,7 @@ func main() {
 	profiles := user.NewService(database)
 	notifications := notification.NewService(database)
 	matchingService := matching.NewService(database, notifications)
+	recruitmentClassifier := classification.NewGemini(cfg.Gemini.APIKey, cfg.Gemini.Model)
 	chatService := chat.NewService(database, signer, notifications).
 		WithAttachments(store, int64(cfg.ImageStorage.MaxUploadBytes))
 	chatCleanupCtx, chatCleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -119,6 +121,7 @@ func main() {
 		log.Fatalf("pending chat attachment cleanup failed: %v", e)
 	}
 	chatCleanupCancel()
+	startChatAttachmentSweep(chatService)
 	meetingService := meeting.NewService(database)
 	safetyService := safety.NewService(database)
 	server := &http.Server{
@@ -128,10 +131,30 @@ func main() {
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       60 * time.Second,
 		MaxHeaderBytes:    32 * 1024,
-		Handler:           httpapi.NewRouterWithOptions(httpapi.RouterOptions{Environment: cfg.Environment, AllowExpoGoRedirect: cfg.AllowExpoGoRedirect, DevClientOrigin: cfg.DevClientOrigin, ClientOrigin: cfg.ClientOrigin, OAuthLogin: oauthLogin, PreAuth: preauth, Sessions: sessions, SessionHandoffs: handoffs, PasskeyBootstraps: bootstraps, Recovery: recovery, Passkeys: passkeys, KeyEnvelopes: envelopes, Devices: devices, DeviceTransfers: deviceTransfers, Images: images, Accounts: accounts, Profiles: profiles, Matching: matchingService, Chats: chatService, Meetings: meetingService, Notifications: notifications, Safety: safetyService}),
+		Handler:           httpapi.NewRouterWithOptions(httpapi.RouterOptions{Environment: cfg.Environment, AllowExpoGoRedirect: cfg.AllowExpoGoRedirect, DevClientOrigin: cfg.DevClientOrigin, ClientOrigin: cfg.ClientOrigin, OAuthLogin: oauthLogin, PreAuth: preauth, Sessions: sessions, SessionHandoffs: handoffs, PasskeyBootstraps: bootstraps, Recovery: recovery, Passkeys: passkeys, KeyEnvelopes: envelopes, Devices: devices, DeviceTransfers: deviceTransfers, Images: images, Accounts: accounts, Profiles: profiles, Matching: matchingService, RecruitmentClassifier: recruitmentClassifier, Chats: chatService, Meetings: meetingService, Notifications: notifications, Safety: safetyService}),
 	}
 	log.Printf("backend server listening on %s (environment=%s)", cfg.HTTPAddr, cfg.Environment)
 	if e := server.ListenAndServe(); e != nil && e != http.ErrServerClosed {
 		log.Fatal(e)
 	}
+}
+
+// startChatAttachmentSweep removes abandoned uploads during normal uptime as
+// well as at startup. A failed storage deletion remains marked and is retried
+// by the next run without making it linkable again.
+func startChatAttachmentSweep(chatService *chat.Service) {
+	sweep := func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		if err := chatService.ProcessExpiredAttachments(ctx, 24*time.Hour, time.Now()); err != nil {
+			log.Printf("chat attachment cleanup failed: %v", err)
+		}
+	}
+	go func() {
+		ticker := time.NewTicker(time.Hour)
+		defer ticker.Stop()
+		for range ticker.C {
+			sweep()
+		}
+	}()
 }

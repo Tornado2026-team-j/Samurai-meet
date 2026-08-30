@@ -4,6 +4,7 @@ import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, T
 import { StatusBar } from "expo-status-bar";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { Header } from "../../components/ui";
 import { useAuth } from "../../hooks/useAuth";
 import { APIError } from "../../services/api-client";
 import { listChats, type ChatSummary } from "../../services/chat";
@@ -171,23 +172,13 @@ export default function ChatListScreen() {
   return (
     <View style={styles.screen}>
       <StatusBar style="light" />
-      <View style={[styles.header, { paddingTop: Math.max(insets.top, 36) }]}>
-        <Pressable
-          accessibilityLabel={copy.back}
-          accessibilityRole="button"
-          hitSlop={10}
-          onPress={() => router.back()}
-          style={({ pressed }) => [
-            styles.backButton,
-            { top: Math.max(insets.top + 8, 49) },
-            pressed && styles.pressed,
-          ]}
-        >
-          <MaterialIcons color="#ffffff" name="chevron-left" size={30} />
-        </Pressable>
-        <MaterialIcons color="#ffffff" name="chat-bubble-outline" size={42} />
-        <Text style={styles.headerTitle}>{copy.title}</Text>
-      </View>
+      <Header
+        backAccessibilityLabel={copy.back}
+        iconName="chat-bubble-outline"
+        onBack={() => router.back()}
+        title={copy.title}
+        variant="hero"
+      />
 
       <ScrollView
         contentContainerStyle={[
@@ -277,31 +268,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "#ffffff",
-  },
-  header: {
-    position: "relative",
-    height: 214,
-    alignItems: "center",
-    justifyContent: "center",
-    borderBottomLeftRadius: 50,
-    borderBottomRightRadius: 50,
-    backgroundColor: BLUE,
-  },
-  backButton: {
-    position: "absolute",
-    left: 18,
-    width: 26,
-    height: 26,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  headerTitle: {
-    marginTop: 20,
-    color: "#ffffff",
-    fontSize: 30,
-    fontWeight: "900",
-    letterSpacing: 0,
-    lineHeight: 36,
   },
   content: {
     minHeight: 620,

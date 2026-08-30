@@ -21,6 +21,7 @@
 | 位置 | 自動 | 有効な現在地から取得。正確な値は非公開 |
 | 有効期限 | 自動 | 時間帯終了後に非表示 |
 | 状態 | 自動 | `draft / open / matched / closed / expired` |
+| 案内カテゴリ | 自動 | 募集文をサーバー側の`gemini-3.1-flash-lite`で`Food / Places / Activity / Other`の1つに分類する。Gemini APIキーはサーバー環境変数だけに置く |
 
 ## 3. カード状態
 
@@ -69,6 +70,7 @@ match: pending -> accepted -> completed
 - `GET /api/v1/recruitments`
 - `GET /api/v1/recruitments/mine`
 - `POST /api/v1/recruitments`
+- `POST /api/v1/recruitments/classify`
 - `GET /api/v1/recruitments/{id}`
 - `PATCH /api/v1/recruitments/{id}`
 - `DELETE /api/v1/recruitments/{id}`（物理削除ではなくclosed化）
@@ -83,6 +85,8 @@ match: pending -> accepted -> completed
 - テーブル：`recruitment_cards`、`matches`、`blocks`
 
 募集カードの公開には名前・国コードが揃ったプロフィールが必要です。作成・更新の成功レスポンスは `{ "data": { ...card } }`、検索は `{ "data": [ ...card ] }` です。カードのレスポンスには正確な緯度・経度を含めず、現在地を使った場合だけ `distance_band`（`within_1_km` / `within_3_km` / `within_5_km`）を返します。
+
+外国人側の募集確認に入る前に、`POST /api/v1/recruitments/classify`が入力文をGeminiへ送り、`Food`、`Places`、`Activity`、`Other`の案内カテゴリと最大5件の短いキーワード候補を返します。クライアントはAPIキーを保持せず、公開前にカテゴリ・候補キーワードを選び直せます。応答が契約外、未設定、またはGemini障害の場合はカテゴリを推測して公開せず、明示的なエラーにします。
 
 検索条件は `keyword`（複数可）、`available_date`、`start_time`、`end_time`、`radius_km`（1/3/5）、`verified_only`、`latitude`、`longitude`、`limit`（最大50）です。緯度経度を省略した場合は、期限内の `user_locations` を使います。位置がない場合はキーワード・日時検索として扱い、位置による絞り込みは行いません。
 
@@ -103,6 +107,7 @@ match: pending -> accepted -> completed
 - ブロック関係があるユーザーへカードが表示されない。
 - 同じカードへの関心はユーザーごとに一度だけで、重複時は `409 interest_already_sent`。
 - カード所有者以外の承認・更新・削除は拒否する。
+- 所有者または参加者に限定される状態変更は、別ユーザーが同じ募集ID・match IDを渡しても拒否し、募集・match・会合セッション・通知に副作用を残さない。URLのIDだけでなく、今後追加する関連ID入力も同じ認可境界で検証する。
 - フロントエンドは募集公開、募集検索・詳細、関心送信、応募一覧、承認・辞退を上記APIへ接続する。
 - 上記フロント接続、募集管理・応募履歴・応募取り下げ、表示言語に依存しない通知遷移、ログアウト後の履歴ガードはコードと自動テストで確認済み。iOSの表示言語即時切替は実機確認済み。iOSの日時pickerから公開・応募・通知遷移、応募取消、ログアウト後の戻る操作までの全通し実機E2Eは未完了とする。
 - `accepted`前のチャットAPIは存在しない。承認後はRESTの暗号化メッセージ、既読、短命transport tokenを利用できる。

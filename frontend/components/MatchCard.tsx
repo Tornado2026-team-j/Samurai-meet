@@ -1,11 +1,8 @@
 import { MaterialIcons } from "@expo/vector-icons";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { StyleSheet, Text, View } from "react-native";
 import type { MatchCardData } from "../types/match";
+import { Card, Pill, colors, radius, typography } from "./ui";
 import { formatTimeRange } from "../utils/time";
-
-const BLUE = "#5ec5f5";
-const YELLOW = "#e7b454";
-const TEXT_GRAY = "#535353";
 
 type MatchCardProps = {
   match: MatchCardData;
@@ -14,15 +11,15 @@ type MatchCardProps = {
 
 export default function MatchCard({ match, onOpen }: MatchCardProps) {
   return (
-    <Pressable
+    <Card
       accessibilityLabel={`${match.authorName}の募集詳細を開く`}
       accessibilityRole={onOpen ? "button" : undefined}
       disabled={!onOpen}
-      onPress={() => onOpen?.(match)}
-      style={({ pressed }) => [styles.card, pressed && styles.pressed]}
+      onPress={onOpen ? () => onOpen(match) : undefined}
+      style={styles.card}
     >
       <View style={styles.profileRow}>
-        <MaterialIcons color="#d4d4d4" name="account-circle" size={26} />
+        <MaterialIcons color={colors.border.default} name="account-circle" size={26} />
         <Text numberOfLines={1} style={styles.authorName}>
           {match.authorName}
         </Text>
@@ -30,7 +27,7 @@ export default function MatchCard({ match, onOpen }: MatchCardProps) {
       </View>
 
       <View style={styles.openButton}>
-        <MaterialIcons color={TEXT_GRAY} name="open-in-new" size={18} />
+        <MaterialIcons color={colors.text.secondary} name="open-in-new" size={18} />
       </View>
 
       <Text numberOfLines={1} style={[styles.detailLine, styles.dateLine]}>
@@ -44,21 +41,14 @@ export default function MatchCard({ match, onOpen }: MatchCardProps) {
 
       <View style={styles.tags}>
         {match.tags.map((tag) => (
-          <View key={tag} style={styles.tag}>
-            <Text
-              adjustsFontSizeToFit
-              minimumFontScale={0.75}
-              numberOfLines={1}
-              style={styles.tagText}
-            >
-              {tag}
-            </Text>
-          </View>
+          <Pill key={tag} style={styles.tag} textStyle={styles.tagText} variant="primary">
+            {tag}
+          </Pill>
         ))}
       </View>
 
       <Text style={styles.expiry}>{match.expiresAt}まで</Text>
-    </Pressable>
+    </Card>
   );
 }
 
@@ -67,10 +57,9 @@ const styles = StyleSheet.create({
     width: 307,
     maxWidth: "78.72%",
     height: 132,
-    borderWidth: 1,
-    borderColor: "#949494",
-    borderRadius: 20,
-    backgroundColor: "#ffffff",
+    padding: 0,
+    borderColor: colors.border.muted,
+    borderRadius: radius["2xl"],
   },
   profileRow: {
     position: "absolute",
@@ -84,18 +73,14 @@ const styles = StyleSheet.create({
   authorName: {
     maxWidth: 126,
     marginLeft: 12,
-    color: "#000000",
-    fontSize: 16,
-    fontWeight: "900",
-    letterSpacing: 0,
+    color: colors.text.black,
+    ...typography.subheading,
     lineHeight: 19,
   },
   countryFlag: {
     marginLeft: 11,
-    color: "#000000",
-    fontSize: 16,
-    fontWeight: "900",
-    letterSpacing: 0,
+    color: colors.text.black,
+    ...typography.subheading,
     lineHeight: 19,
   },
   openButton: {
@@ -111,10 +96,8 @@ const styles = StyleSheet.create({
     position: "absolute",
     left: 22,
     right: 16,
-    color: TEXT_GRAY,
-    fontSize: 12,
-    fontWeight: "900",
-    letterSpacing: 0,
+    color: colors.text.secondary,
+    ...typography.smallStrong,
     lineHeight: 15,
   },
   detailLabel: {
@@ -139,32 +122,21 @@ const styles = StyleSheet.create({
     minWidth: 55,
     maxWidth: 68,
     height: 25,
+    minHeight: 25,
     paddingHorizontal: 6,
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 1,
-    borderColor: BLUE,
-    borderRadius: 5,
-    backgroundColor: "#ffffff",
+    borderRadius: radius.xs,
   },
   tagText: {
-    color: TEXT_GRAY,
-    fontSize: 10,
-    fontWeight: "700",
-    letterSpacing: 0,
-    lineHeight: 12,
+    color: colors.text.secondary,
+    ...typography.micro,
   },
   expiry: {
     position: "absolute",
     right: 10,
     bottom: 7,
-    color: YELLOW,
-    fontSize: 10,
+    color: colors.brand.gold,
+    ...typography.micro,
     fontWeight: "600",
     letterSpacing: 0,
-    lineHeight: 12,
-  },
-  pressed: {
-    opacity: 0.72,
   },
 });

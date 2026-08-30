@@ -230,8 +230,10 @@ func (s *Service) attachmentByMessageID(ctx context.Context, messageID string) (
 }
 
 // ProcessExpiredAttachments removes uploads that were never referenced by a
-// message within ttl. Blob deletion is idempotent, so it is safe to run on
-// every startup.
+// message within ttl. It first marks a row deleted, so a concurrent message
+// transaction cannot link the attachment after its blob has been selected for
+// deletion. Blob deletion is idempotent and marked rows are retried on the
+// next sweep when storage is temporarily unavailable.
 func (s *Service) ProcessExpiredAttachments(ctx context.Context, ttl time.Duration, now time.Time) error {
 	if s == nil || s.db == nil || s.blobs == nil {
 		return nil
@@ -239,8 +241,9 @@ func (s *Service) ProcessExpiredAttachments(ctx context.Context, ttl time.Durati
 	cutoff := now.Add(-ttl).UTC().Format(time.RFC3339Nano)
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id,uploader_user_id FROM chat_attachments
-		WHERE message_id IS NULL AND deleted_at IS NULL AND created_at < $1
-		ORDER BY created_at
+		WHERE message_id IS NULL
+		  AND (deleted_at IS NOT NULL OR created_at < $1)
+		ORDER BY COALESCE(deleted_at, created_at)
 		LIMIT $2`, cutoff, attachmentSweepBatch)
 	if err != nil {
 		return err
@@ -263,13 +266,30 @@ func (s *Service) ProcessExpiredAttachments(ctx context.Context, ttl time.Durati
 	}
 	var firstErr error
 	for _, t := range targets {
-		if err := s.blobs.DeleteCiphertext(t.uploader, t.id); err != nil {
+		var claimedUploader string
+		claimStamp := now.UTC().Format(time.RFC3339Nano)
+		err := s.db.QueryRowContext(ctx, `
+			UPDATE chat_attachments
+			SET deleted_at=COALESCE(deleted_at,$1)
+			WHERE id=$2 AND message_id IS NULL
+			RETURNING uploader_user_id`, claimStamp, t.id).Scan(&claimedUploader)
+		if errors.Is(err, sql.ErrNoRows) {
+			// A concurrent SendMessage linked it first; its blob must remain.
+			continue
+		}
+		if err != nil {
 			if firstErr == nil {
 				firstErr = err
 			}
 			continue
 		}
-		if _, err := s.db.ExecContext(ctx, `DELETE FROM chat_attachments WHERE id=$1 AND message_id IS NULL`, t.id); err != nil && firstErr == nil {
+		if err := s.blobs.DeleteCiphertext(claimedUploader, t.id); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		if _, err := s.db.ExecContext(ctx, `DELETE FROM chat_attachments WHERE id=$1 AND message_id IS NULL AND deleted_at IS NOT NULL`, t.id); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
