@@ -26,7 +26,12 @@
 
 ## 3. 利用条件
 
-- `matches.status = accepted` の参加者だけが利用できる。
+- 送信・リアルタイム接続は `matches.status = accepted` の参加者だけが利用できる。
+- **`matches.status = completed`（マッチ完了後）は REST の履歴閲覧・既読更新のみ**。
+  `POST /chats/{id}/messages`、`POST /chats/{id}/transport-token`、WebSocket 接続
+  （`GET /ws/chats/{id}`）はいずれも `chat_not_available`（HTTP 409、WS は
+  `chat_not_available` エラーフレーム後に切断）で拒否される。`GET /chats`、
+  `GET /chats/{id}/messages`、`POST /chats/{id}/read` は引き続き可能。
 - ブロックまたは運営停止された場合は送受信を停止する。
 - マッチ成立前の自由チャットは提供しない。
 - 将来のリアルタイム配送は QUIC（HTTP/3 WebTransportを含む）を標準候補とし、`aud = samurai-meet-chat` のChat Tokenだけを利用する。現行はRESTである。
@@ -91,23 +96,25 @@ QUICの理由、JWS claimの検証、heartbeat、失敗時の自動再送、WebS
 
 ## 7. API / DB
 
-- `GET /chats`
-- `GET /chats/{id}/messages`
-- `POST /chats/{id}/messages`
-- `POST /chats/{id}/read`
-- `POST /chats/{id}/transport-token`
+- `GET /chats`（`accepted` / `completed`）
+- `GET /chats/{id}/messages`（`accepted` / `completed`）
+- `POST /chats/{id}/messages`（`accepted` のみ）
+- `POST /chats/{id}/read`（`accepted` / `completed`）
+- `POST /chats/{id}/transport-token`（`accepted` のみ）
+- `GET /ws/chats/{id}`（`accepted` のみ）
 - `POST /matches/{id}/meeting`
 - `GET|POST /meetings/{id}/proximity`
 - QUIC endpoint：将来、環境ごとに設定する（`chat_id`単位。HTTP/3 WebTransportの場合はHTTPS URLとして提供）
 - テーブル：`matches`、`chat_threads`、`messages`、`chat_read_states`、`photos`
 
-RESTのメッセージ送信は`accepted`マッチの参加者だけが利用でき、本文ではなくBase64URLのAES-256-GCM暗号文を保存します。`client_message_id`で再送を冪等化し、WebSocket未接続・再接続直後は`sequence` cursorで`GET /chats/{id}/messages?after=`を使って補完します。サーバーは暗号文を復号しません。
+RESTのメッセージ送信・`transport-token`発行・WebSocket接続は`accepted`マッチの参加者だけが利用できます。`completed`マッチは一覧・履歴・既読のみで、送信と接続は`chat_not_available`で拒否されます。本文ではなくBase64URLのAES-256-GCM暗号文を保存します。`client_message_id`で再送を冪等化し、WebSocket未接続・再接続直後は`sequence` cursorで`GET /chats/{id}/messages?after=`を使って補完します。サーバーは暗号文を復号しません。
 
 WebSocket配送は現状**単一APIインスタンス前提のin-memoryハブ**（`hub.go`）です。複数インスタンスで動かす場合は、A で送ったメッセージが B の接続へ届きません。PostgreSQL `LISTEN/NOTIFY` によるfan-out（chat-transport.md §6）が次の作業で、それまではチャット配送を1インスタンスに寄せるか、クライアントのRESTポーリングで許容します。
 
 ## 8. 受け入れ条件
 
 - マッチ成立後だけチャット画面へ入れる。
+- `completed` マッチではチャット画面は履歴閲覧・既読のみ（入力欄を無効化し、WebSocket 接続と `transport-token` 取得を行わない）。
 - WebSocket接続中の相手へメッセージがリアルタイム配送される（バックエンド実装済み・統合テスト済み。フロント接続は未）。
 - WebSocket切断後に再接続すると未同期メッセージを `sequence` cursor で取得できる（フロント側の受入条件）。
 - 同じ送信操作を再試行しても二重メッセージにならない。

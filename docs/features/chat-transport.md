@@ -117,7 +117,7 @@ JWSは署名検証に成功しても、それだけで接続を許可しませ�
 通常の Access Token で呼び出します。Go API は次を確認してから Chat Token を発行します。
 
 - Access Token の署名・期限・DB セッションが有効
-- `matches.status = accepted`
+- `matches.status = accepted`（`completed` は `chat_not_available` で拒否。完了後のチャットは REST の履歴閲覧・既読のみで、`transport-token` 発行も WebSocket 接続も不可）
 - 呼び出しユーザーがマッチ参加者
 - ブロック・停止・通報による遮断状態がない
 - 対象チャットが削除・終了されていない
