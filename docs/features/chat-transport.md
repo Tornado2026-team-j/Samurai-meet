@@ -27,7 +27,7 @@ WebSocket は自動フォールバックにしません。QUIC が対象端末�
 - Chat Token（JWS）はアプリケーション層の認証・認可・接続管理を担い、`aud`、`chat_id`、`sid`、`jti`、`iat`、`exp`、`transport` を検証する。
 - Chat Token は対象チャットとセッションに束縛し、セッション失効、ブロック、マッチ終了、アカウント停止をheartbeatとDB確認で反映する。
 - 同じメッセージの再送は `client_message_id` で冪等化し、再接続時は `sequence` cursor で未同期分を補完する。
-- Tokenの切り替え時は `token_seq` と接続単位の巻き戻し防止を使い、古いJWSを新しい接続へ再利用できないようにする。これは配送実装時に追加する。
+- Tokenの切り替え時は `token_seq` と接続単位の巻き戻し防止を使い、古いJWSを新しい接続へ再利用できないようにする。WebSocket配送では実装済み（`token.renew` フレーム、接続はハイウォーターマークで旧世代を拒否）。
 - QUICがパケットを再送する場合と、アプリがメッセージを自動再送する場合を分けて扱う。アプリの再送は同じ `client_message_id` を使い、サーバーが既存結果を返せるようにする。
 - 自動再送は通信断、タイムアウト、5xxなど一時的な失敗だけに限定し、指数バックオフ、最大試行回数、期限を設ける。4xx、入力不正、Chat Token失効、認可拒否では自動再送しない。
 
@@ -91,7 +91,7 @@ Chat Token は JWS 署名付き JWT とします。
 - `chat_id` は一つのマッチに限定する。
 - Chat TokenはRESTのAccess Tokenとして扱わず、対象chat transportの接続開始だけに使う。
 - `sid` で `sessions` と紐付け、セッション失効を反映する。
-- `token_seq` による更新順序管理は未実装（接続中ローテーション導入時に追加）。
+- `token_seq` は `(session, chat)` 単位の単調増加世代番号。`POST /chats/{id}/transport-token` のたびに `chat_token_sequences` を +1 し、発行する Chat Token に埋め込む。接続は受理済みの最大 `token_seq` を保持し、それ以下への `token.renew` を拒否する（WebSocket配送で実装済み）。
 - Token を URL の query string に含めない。WebSocket配送では接続直後の認証フレーム `{"type":"auth","chat_token":"…"}` で渡す（5秒以内）。HTTP/3 なら認証ヘッダー、独自 QUIC なら認証 handshake frame を使う。
 
 ### 3.1 Claimごとの意味と検証
@@ -106,7 +106,7 @@ Chat Token は JWS 署名付き JWT とします。
 | `jti` | tokenを一意に識別し、監査・接続制限・再利用検知に使う。 |
 | `transport` | QUIC採用時は`quic`固定。別transportへ流用しない。 |
 | `iat` / `exp` | 発行時刻と短い有効期限。期限切れ・未来時刻・許容clock skew超過を拒否する。 |
-| `token_seq` | token切り替え順序。配送実装時に追加し、古い世代への巻き戻しを拒否する。 |
+| `token_seq` | `(session, chat)` 単位の単調増加世代番号。接続は受理済み最大値を保持し、`token.renew` が同値以下なら `error(stale_token)` で拒否する（接続は維持）。WebSocket配送で実装済み。 |
 
 JWSは署名検証に成功しても、それだけで接続を許可しません。DBのセッション、ユーザー状態、チャット参加権限、ブロック、マッチ状態を毎回確認します。
 
@@ -138,23 +138,25 @@ Chat TokenはRefresh Tokenで更新しません。期限前に、通常のREST A
 
 将来のQUIC採用時はtransport-token requestで`transport=quic`を使う案ですが、現行の受理値との整合をコードで確定する必要があります。既存のREST履歴・送信・既読を現行経路とし、QUIC配送とQUICクライアントが未実装の間は`sequence` cursorによるRESTポーリングを使います。
 
-## 5. Chat Token の切り替え（QUIC配送実装時に追加）
+## 5. Chat Token の切り替え（WebSocket配送で実装済み）
 
-Chat Token を更新する場合も短い重複期間と `token_seq` を利用できますが、これは Access Token の Refresh Token ローテーションとは別の処理です。
+Chat Token を更新する場合も短い重複期間と `token_seq` を利用しますが、これは Access Token の Refresh Token ローテーションとは別の処理です。
 
-- Chat Token の期限前に次の token を取得する。
-- 切り替え中は旧 token と新 token に 10〜15 秒程度の重複期間を持たせる。
-- `token_seq`や接続単位の巻き戻し防止はQUIC配送実装時に追加する。
+- Chat Token の期限前に次の token を `POST /chats/{id}/transport-token` で取得する。新しい token は `token_seq` が 1 大きい。
+- クライアントは接続を張ったまま `{"type":"token.renew","chat_token":"…"}` を送る。サーバーは署名・`aud`・`chat_id`・`transport`・`sub`・`sid`・セッション有効性・`token_seq` を検証し、成功時 `{"type":"token.renewed","token_seq":N,"token_expires_at":"…"}` を返して接続の期限を前進させる。
+- `token_seq` が接続の受理済み最大値以下なら `error(stale_token)` で拒否する（接続は維持）。別 chat/user/session の token は `error(forbidden)`。
+- 期限切れを待ってから更新せず、通信中の token が有効な間に切り替える。期限までに `token.renew` が来なければ、heartbeat が `closing(token_expired)` で接続を閉じる。
 - Refresh Token は Chat Token の切り替えには使わない。
-- 期限切れを待ってから更新せず、通信中の token が有効な間に切り替える。
 
 ## 6. 接続の失効確認（WebSocket配送は実装済み）
 
 - 接続開始時に Chat Token、`sid`、`chat_id`、`matches.status=accepted`、`blocks`、チャット open を確認する（`chat.authenticateWS`）。
 - 接続中は 20 秒ごとの heartbeat で `sessions`（`status=active` / `revoked_at IS NULL` / 未失効 / 未アイドル失効）とマッチ・ブロック・チャット状態を再確認する。失効を検知したら `closing` フレームを送って接続を閉じる。
+- heartbeat は接続が保持する Chat Token の `exp` も確認し、`token.renew` されないまま期限を過ぎていれば `closing(token_expired)` で閉じる。
 - heartbeat はアクティブな接続の `sessions.last_seen_at` を更新し、WebSocketだけを使うクライアントのセッションを維持する。
 - ユーザー・チャット単位の接続数を `maxConnectionsPerUser`（現在 4）で制限する。
-- 複数 API インスタンス構成での `LISTEN / NOTIFY` fan-out は未実装（§後述の未決事項）。現状のハブはプロセス内。
+- メッセージ送信はユーザー単位のトークンバケット（`chat.Service.sendLimiter`）でレート制限する。REST と WebSocket は同じ予算を共有し、接続数上限とは独立にスパム・ハラスメント経路を塞ぐ。超過時、REST は `429` ＋ `Retry-After`、WebSocket は `rate_limited` エラーフレーム（`retry_after_seconds` 付き、接続維持）。
+- 複数 API インスタンス構成は PostgreSQL `LISTEN / NOTIFY` fan-out（`chat.Service.StartClusterFanout` / `cluster.go`）で対応済み。各インスタンスの `message.created` / `message.read` / `typing` を `chat_events`（非 public schema は `chat_events_<schema>`）チャネルへ NOTIFY し、他インスタンスのリスナーがローカルソケットへ再配送する。ペイロードは最小情報（`sequence` 等）で、受信側が暗号文行を DB から再取得する。発行元インスタンスのイベントは自分では再配送しない。NOTIFY 取りこぼしはクライアントの再接続時 REST 補完で回収する。単一インスタンス運用では `StartClusterFanout` を呼ばず NOTIFY を出さない。
 
 ## 7. 0-RTT の扱い
 
@@ -207,7 +209,8 @@ QUICのtransport層が失われたpacketを再送することと、アプリケ�
 | WebSocket サーバー | Go（`coder/websocket`、`backend/internal/chat/websocket.go` 実装済み） |
 | QUIC / HTTP/3 サーバー（将来） | Go。採用ライブラリを PoC で決定（WebSocketで先行） |
 | 参加者・セッション・ブロック判定 | Go + PostgreSQL（実装済み） |
-| 失効通知 | heartbeat / polling（実装済み）。`LISTEN / NOTIFY` は複数インスタンス時に追加 |
+| 失効通知 | heartbeat / polling（実装済み） |
+| 複数インスタンス配送 | Go。`LISTEN / NOTIFY` fan-out（`cluster.go`、実装済み） |
 
 MVP のリアルタイム配送は WebSocket（実装済み）で、同じ Chat Token の認可モデルを適用します。QUIC / HTTP/3 WebTransport は将来の標準候補で、Expo の対応状況を見て後追いします。
 
@@ -218,17 +221,35 @@ MVP のリアルタイム配送は WebSocket（実装済み）で、同じ Chat 
 - 通常の Access Token で Chat Token を取得できる。（実装済み）
 - Chat Token をプロフィール、Recovery、Key-B、他のチャットへ利用できない。（`aud` / `chat_id` / `transport` 束縛で実装済み）
 - 期限前に次の Chat Token をRESTで取得できる。（実装済み）
-- セッション失効、ブロック、マッチ終了後にチャット接続が閉じる。（heartbeatで実装済み・統合テスト `TestChatWebSocketDelivery`）
+- セッション失効、ブロック、マッチ終了後にチャット接続が閉じる。（実装済み・統合テスト）
+  - ブロックは送信経路とheartbeatの両方で検知し、`error(blocked)` → `closing(blocked)`（`TestChatWebSocketDelivery`）。
+  - セッション失効はheartbeatで検知し `closing(forbidden)`（`TestChatWebSocketClosesOnSessionRevoke`）。失効していない相手側の接続は維持される。
+  - マッチ `completed` / `cancelled` はheartbeatで検知し、両参加者へ `closing(chat_not_available)`（`TestChatWebSocketClosesOnMatchCompletion`）。`completed` 後は履歴・既読のみで、送信・WS・transport-token は不可。
+  - heartbeat はアクティブ接続の `sessions.last_seen_at` を前進させる（`TestChatWebSocketHeartbeatKeepsSessionWarm`）。
 - 0-RTT でメッセージ送信などの状態変更ができない。（WebSocketは1-RTT。QUIC採用時に再確認）
-- 古い token の接続巻き戻し拒否（`token_seq`）は未実装。接続確立時のみ token を検証し、維持はセッションheartbeatで担保。
+- 接続中の Chat Token ローテーションと巻き戻し拒否（`token_seq`）を実装済み。`token.renew` で期限を前進させ、受理済み世代以下は `stale_token` で拒否、期限切れ未更新は heartbeat が `token_expired` で切断（統合テスト `TestChatWebSocketTokenRotation` / `TestChatWebSocketClosesOnTokenExpiryWithoutRotation`）。
 - 通信断・タイムアウト・一時的なサーバーエラー時は、同じ`client_message_id`で期限・回数を制限した自動再送ができる。（フロント側の受入条件）
 - 入力不正、認証失効、認可拒否などの永続的な失敗では自動再送しない。（フロント側の受入条件）
 - Chat Token、Refresh Token が URL、ログ、クラッシュレポートに出ない。
+- Expo 実機での再接続・失効伝播・トークンローテーションの負荷試験は [chat-load-test.md](chat-load-test.md) の手順書で実施する（ローンチ前 QA ゲート・未実施）。
 
 ## 10. 未決事項
 
 - QUIC上の実装形態（native QUIC または HTTP/3 WebTransport）とendpoint。
 - Expo Managed Workflow で利用できる native module とビルド方式。
-- Chat Token の期限、切り替え間隔、重複期間の負荷試験。Access Token の 1 分 Refresh とは別に決定する。
-- `token_seq` を接続単位で管理するか、ユーザー・チャット単位で管理するか。
+- Chat Token の期限、切り替え間隔、重複期間の負荷試験。Access Token の 1 分 Refresh とは別に決定する。手順は [chat-load-test.md](chat-load-test.md) §3 シナリオ 3・4。
+- `token_seq` の管理単位は決定済み: 発行は `(session, chat)` 単位のDBカウンタ（`chat_token_sequences`）、接続維持中の巻き戻し拒否は接続単位のハイウォーターマーク。
 - MVPはWebSocketで確定。QUIC / WebTransport へ移行するか、両対応にするかの判断基準と時期。
+
+## 11. QUIC 実装の確定方針
+
+リアルタイム配送の次実装は、独自ALPNを使う生QUICではなく、**HTTP/3 上の WebTransport** とする。WebTransport session は QUIC/TLS 1.3 で確立し、最初の reliable bidirectional stream に既存と同じ `auth` フレームを送る。Chat Token を URL query やログに載せない。
+
+- endpoint は `https://<chat-host>/api/v1/wt/chats/{chat_id}` とし、UDP 443 と TLS 1.3 を必須にする。
+- 初期版は reliable stream 1本だけを使う。datagram、0-RTT application data、状態変更を伴う early data は許可しない。
+- `aud`、`sub`、`sid`、`chat_id`、`jti`、`iat`、`exp`、`transport=webtransport`、DB session、match、block を接続時・heartbeat時に検証する。
+- `message.send`、`message.read`、token rotation、`client_message_id` 冪等性、`sequence` cursor 補完は WebSocket と同じ service 層を共有する。
+- Expo Go にはネイティブ WebTransport 実装を追加できない。iOS は Development Build / 本番ビルドに native module を含め、実機で UDP遮断・ネットワーク切替・失効・再接続を検証する。
+- WebSocket は移行期間の fallback に限定する。WebTransport 接続が利用可能な端末では新規接続を WebTransport 優先とし、恒久的な最終transportとして扱わない。
+
+`backend/pkg/transport/quic` の専用ALPN設定は将来の raw QUIC PoC 用の安全な制限値であり、プロダクトtransportを意味しない。raw QUIC はWebとの相互運用性を失うため、本機能の採用対象外とする。

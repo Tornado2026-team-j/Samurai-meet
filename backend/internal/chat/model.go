@@ -14,6 +14,7 @@ const (
 	clientFrameTypingStart = "typing.start"
 	clientFrameTypingStop  = "typing.stop"
 	clientFramePing        = "ping"
+	clientFrameTokenRenew  = "token.renew"
 )
 
 // Server -> client frame types.
@@ -26,6 +27,7 @@ const (
 	serverFramePong           = "pong"
 	serverFrameError          = "error"
 	serverFrameClosing        = "closing"
+	serverFrameTokenRenewed   = "token.renewed"
 )
 
 // inboundFrame is the shared shape decoded from every client frame. Fields not
@@ -44,6 +46,13 @@ type inboundFrame struct {
 type authOKFrame struct {
 	Type           string `json:"type"`
 	ChatID         string `json:"chat_id"`
+	TokenSeq       int64  `json:"token_seq"`
+	TokenExpiresAt string `json:"token_expires_at"`
+}
+
+type tokenRenewedFrame struct {
+	Type           string `json:"type"`
+	TokenSeq       int64  `json:"token_seq"`
 	TokenExpiresAt string `json:"token_expires_at"`
 }
 
@@ -72,9 +81,10 @@ type typingFrame struct {
 }
 
 type errorFrame struct {
-	Type    string `json:"type"`
-	Code    string `json:"code"`
-	Message string `json:"message"`
+	Type              string `json:"type"`
+	Code              string `json:"code"`
+	Message           string `json:"message"`
+	RetryAfterSeconds int    `json:"retry_after_seconds,omitempty"`
 }
 
 type closingFrame struct {
