@@ -3,6 +3,7 @@ module github.com/Tornado2026-team-j/Samurai-meet/backend
 go 1.26.7
 
 require (
+	github.com/coder/websocket v1.8.13
 	github.com/coreos/go-oidc/v3 v3.20.0
 	github.com/go-webauthn/webauthn v0.17.4
 	github.com/jackc/pgx/v5 v5.10.0

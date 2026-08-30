@@ -2,7 +2,7 @@
 
 ## 現在の実装状態
 
-現行のバックエンドはRESTのチャット一覧・暗号文メッセージ送信・履歴・既読と、短命transport tokenの部品を持つ。チャット画面の接続、QUIC／WebTransport／WebSocketによるリアルタイム配送、再接続制御は未実装であり、以下のQUIC項目は将来仕様である。
+現行のバックエンドはRESTのチャット一覧・暗号文メッセージ送信・履歴・既読、短命transport token、および**WebSocketによるリアルタイム配送**（`backend/internal/chat/websocket.go`、単一APIインスタンス前提）を持つ。チャット画面の接続と再接続制御はフロント側で未実装。QUIC／WebTransportは将来の標準候補で、以下のQUIC項目は将来仕様である。
 
 ## 1. 対象
 
@@ -20,7 +20,8 @@
 | 接続状態 | `frontend/hooks/useChatTransport.ts` | TypeScript |
 | QUIC クライアント（予定） | `frontend/services/quic.ts`（未実装） | TypeScript + native module |
 | API・履歴 | `frontend/services/api.ts` | TypeScript |
-| 接続認証・配送・順序確定（予定） | `backend/internal/chat/quic.go`（未実装） | Go（QUIC配送は未実装） |
+| 接続認証・配送・順序確定 | `backend/internal/chat/websocket.go` / `backend/internal/chat/hub.go` | Go（WebSocket配送 実装済み。単一インスタンス前提） |
+| QUIC配送（将来） | `backend/internal/chat/quic.go`（未実装） | Go（標準候補） |
 | 保存・取得・既読 | `backend/internal/chat/service.go` / `backend/internal/httpapi/chat.go` | Go（REST実装済み） |
 
 ## 3. 利用条件
@@ -31,25 +32,39 @@
 - 将来のリアルタイム配送は QUIC（HTTP/3 WebTransportを含む）を標準候補とし、`aud = samurai-meet-chat` のChat Tokenだけを利用する。現行はRESTである。
 - Refresh Tokenを将来のtransportへ送信しない。
 
-## 4. QUIC ストリームイベント（予定）
+## 4. WebSocket イベント（実装済み）
+
+MVP のリアルタイム配送は WebSocket。QUIC / HTTP/3 WebTransport は将来の標準候補で、同じ Chat Token 認可モデルを適用する。
+
+エンドポイント：`GET wss://…/api/v1/ws/chats/{chat_id}`。接続直後、クライアントは 5 秒以内に認証フレームを 1 通送ります（Chat Token を URL query に載せない。chat-transport.md §3）。
+
+```json
+{"type":"auth","chat_token":"<JWS>"}
+```
+
+サーバーは Chat Token（`aud=samurai-meet-chat`、`chat_id` 一致、`transport=websocket`）とセッション有効性・マッチ・ブロック・チャット状態を検証し、`{"type":"auth.ok","chat_id":"…","token_expires_at":"…"}` を返します。失敗時は `{"type":"error","code":"…"}` の後に接続を閉じます。
 
 ### クライアント → サーバー
 
-- `message.send`
-- `message.read`
-- `typing.start`
-- `typing.stop`
+| type | フィールド |
+| --- | --- |
+| `message.send` | `client_message_id`, `ciphertext`, `nonce`, `algorithm`, `key_version` |
+| `message.read` | `last_message_sequence` |
+| `typing.start` / `typing.stop` | なし |
+| `ping` | なし（`pong` が返る） |
 
 ### サーバー → クライアント
 
-- `message.created`
-- `message.ack`
-- `message.read`
-- `typing.start`
-- `typing.stop`
-- `error`
+| type | 用途 |
+| --- | --- |
+| `message.created` | 相手が送信したメッセージ。`message` に REST と同じ形の暗号文メッセージ |
+| `message.ack` | 自分の送信の確定。`message`, `duplicate`（再送で既存を返した場合 true） |
+| `message.read` | 相手の既読。`user_id`, `last_message_sequence` |
+| `typing` | `user_id`, `state`（`start` / `stop`） |
+| `error` | `code`, `message`。回復不能な `code`（`blocked` / `chat_not_available` / `chat_closed` / `forbidden`）の後は `closing` が続く |
+| `closing` | `reason`。サーバーが接続を閉じる直前に一度だけ送る |
 
-送信メッセージには `client_message_id` を付け、再送されても二重登録しないようにします。
+送信メッセージには `client_message_id` を付け、再送されても二重登録しません（`message.send` は既存の REST `SendMessage` と同じ冪等性）。`message.created` / `message.read` は REST 経由の送信・既読でも接続中の相手へ配送されます。
 
 ## 5. 切断・再接続
 
@@ -84,13 +99,15 @@ QUICの理由、JWS claimの検証、heartbeat、失敗時の自動再送、WebS
 - QUIC endpoint：将来、環境ごとに設定する（`chat_id`単位。HTTP/3 WebTransportの場合はHTTPS URLとして提供）
 - テーブル：`matches`、`chat_threads`、`messages`、`chat_read_states`、`photos`
 
-RESTのメッセージ送信は`accepted`マッチの参加者だけが利用でき、本文ではなくBase64URLのAES-256-GCM暗号文を保存します。`client_message_id`で再送を冪等化し、現行は`sequence` cursorで履歴をポーリングします。サーバーは暗号文を復号しません。
+RESTのメッセージ送信は`accepted`マッチの参加者だけが利用でき、本文ではなくBase64URLのAES-256-GCM暗号文を保存します。`client_message_id`で再送を冪等化し、WebSocket未接続・再接続直後は`sequence` cursorで`GET /chats/{id}/messages?after=`を使って補完します。サーバーは暗号文を復号しません。
+
+WebSocket配送は現状**単一APIインスタンス前提のin-memoryハブ**（`hub.go`）です。複数インスタンスで動かす場合は、A で送ったメッセージが B の接続へ届きません。PostgreSQL `LISTEN/NOTIFY` によるfan-out（chat-transport.md §6）が次の作業で、それまではチャット配送を1インスタンスに寄せるか、クライアントのRESTポーリングで許容します。
 
 ## 8. 受け入れ条件
 
 - マッチ成立後だけチャット画面へ入れる。
-- QUIC配送を追加した後、接続中の相手へメッセージがリアルタイム配送される（将来の受入条件）。
-- QUIC切断後に再接続すると未同期メッセージを取得できる（将来の受入条件）。
+- WebSocket接続中の相手へメッセージがリアルタイム配送される（バックエンド実装済み・統合テスト済み。フロント接続は未）。
+- WebSocket切断後に再接続すると未同期メッセージを `sequence` cursor で取得できる（フロント側の受入条件）。
 - 同じ送信操作を再試行しても二重メッセージにならない。
 - 既読状態が相手へ反映される。
 - ブロック後は新規メッセージを送受信できない。
@@ -101,5 +118,7 @@ RESTのメッセージ送信は`accepted`マッチの参加者だけが利用で
 - E2EE の採用範囲と通報時の検査方法。
 - 既読を相手へ必ず通知するか。
 - タイピング表示、通知、オフライン送信の MVP 対象可否。
-- QUICサーバー実装とExpo実機での再接続負荷・失効確認。QUICが技術的に成立しない場合のWebSocket例外採用は、チーム合意と比較記録を前提とする。
-- QUICのパケット損失、0-RTTリプレイ、JWSの期限・世代再利用、メッセージ自動再送の上限とバックオフを確認する。
+- Expo実機での再接続負荷・失効確認（バックエンドのWebSocket配送は実装済み・統合テスト済み）。
+- 複数APIインスタンス構成にするタイミングと、その際の `LISTEN/NOTIFY` fan-out 実装。
+- Chat Token（2分TTL）の接続中ローテーション（`token_seq`）。現状は接続確立時のみ検証し、接続維持はセッション有効性のheartbeatに委ねている。
+- 将来QUICを採用する場合の、パケット損失、0-RTTリプレイ、JWSの期限・世代再利用、メッセージ自動再送の上限とバックオフ。
