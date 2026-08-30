@@ -10,6 +10,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"errors"
+	"os"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -38,10 +39,30 @@ var reportReasons = map[string]bool{
 }
 
 type Service struct {
-	db *sql.DB
+	db              *sql.DB
+	triageProviders []TriageProvider
 }
 
-func NewService(database *sql.DB) *Service { return &Service{db: database} }
+func NewService(database *sql.DB) *Service {
+	providers := make([]TriageProvider, 0, 2)
+	if provider := NewOpenAIModerationProvider(os.Getenv("OPENAI_API_KEY"), nil); provider != nil {
+		providers = append(providers, provider)
+	}
+	if provider := NewGeminiTriageProvider(os.Getenv("GEMINI_API_KEY"), nil); provider != nil {
+		providers = append(providers, provider)
+	}
+	return &Service{db: database, triageProviders: providers}
+}
+
+// WithTriageProviders is for dependency injection in tests and for a future
+// worker that consumes explicitly consented encrypted report evidence.
+func (s *Service) WithTriageProviders(providers ...TriageProvider) *Service {
+	if s == nil {
+		return s
+	}
+	s.triageProviders = append([]TriageProvider(nil), providers...)
+	return s
+}
 
 type ReportInput struct {
 	TargetType string `json:"target_type"`
@@ -104,14 +125,14 @@ func (s *Service) CreateReport(ctx context.Context, reporterID string, input Rep
 	err = s.db.QueryRowContext(ctx, `
 		INSERT INTO reports (id,reporter_user_id,target_type,target_id,reason,comment,created_at,updated_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$7)
-		ON CONFLICT (reporter_user_id,target_type,target_id) WHERE status IN ('received','reviewing') DO NOTHING
+		ON CONFLICT (reporter_user_id,target_type,target_id) WHERE status IN ('received','triaged','escalated','reviewing') DO NOTHING
 		RETURNING id,target_type,target_id,reason,comment,status,created_at`,
 		id, reporterID, input.TargetType, input.TargetID, input.Reason, input.Comment, stamp).Scan(
 		&report.ID, &report.TargetType, &report.TargetID, &report.Reason, &report.Comment, &report.Status, &report.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		if err = s.db.QueryRowContext(ctx, `
 			SELECT id,target_type,target_id,reason,comment,status,created_at FROM reports
-			WHERE reporter_user_id=$1 AND target_type=$2 AND target_id=$3 AND status IN ('received','reviewing')
+			WHERE reporter_user_id=$1 AND target_type=$2 AND target_id=$3 AND status IN ('received','triaged','escalated','reviewing')
 			ORDER BY created_at DESC LIMIT 1`,
 			reporterID, input.TargetType, input.TargetID).Scan(
 			&report.ID, &report.TargetType, &report.TargetID, &report.Reason, &report.Comment, &report.Status, &report.CreatedAt); err != nil {

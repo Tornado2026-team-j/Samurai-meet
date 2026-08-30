@@ -58,6 +58,17 @@ func TestSafetyReportAndBlock(t *testing.T) {
 	if count != 1 {
 		t.Fatalf("reports stored = %d, want 1", count)
 	}
+	// A triaged or escalated report remains an open report. Retrying must return
+	// the same row rather than turning the partial-index conflict into an error.
+	if _, err := database.ExecContext(ctx, `UPDATE reports SET status='triaged' WHERE id=$1`, report.ID); err != nil {
+		t.Fatal(err)
+	}
+	triagedAgain, err := svc.CreateReport(ctx, reporterID, safety.ReportInput{
+		TargetType: "user", TargetID: targetID, Reason: "dangerous", Comment: "retry after triage",
+	}, now.Add(2*time.Minute))
+	if err != nil || triagedAgain.ID != report.ID || triagedAgain.Status != "triaged" {
+		t.Fatalf("triaged repeat report = %+v, %v", triagedAgain, err)
+	}
 
 	if _, err := svc.CreateReport(ctx, reporterID, safety.ReportInput{TargetType: "user", TargetID: reporterID, Reason: "other"}, now); !errors.Is(err, safety.ErrInvalidReport) {
 		t.Fatalf("self report error = %v, want ErrInvalidReport", err)
