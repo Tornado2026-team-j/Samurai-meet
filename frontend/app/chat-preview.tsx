@@ -15,6 +15,7 @@ import { StatusBar } from "expo-status-bar";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import ChatBubble from "../components/ChatBubble";
+import DismissKeyboardView from "../components/DismissKeyboardView";
 import { moderateChatText, translateChatText, validateChatDraft } from "../services/chat";
 import type { MatchCategory } from "../types/match";
 
@@ -283,6 +284,7 @@ export default function ChatPreviewScreen() {
       behavior={Platform.OS === "ios" ? "padding" : undefined}
       style={styles.screen}
     >
+      <DismissKeyboardView style={styles.screen}>
       <StatusBar style="light" />
       <View style={[styles.header, { paddingTop: Math.max(insets.top, 36) }]}>
         <Pressable
@@ -325,6 +327,7 @@ export default function ChatPreviewScreen() {
       <ScrollView
         ref={scrollRef}
         contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.schedulePanel}>
@@ -477,6 +480,7 @@ export default function ChatPreviewScreen() {
           </View>
         </View>
       </Modal>
+      </DismissKeyboardView>
     </KeyboardAvoidingView>
   );
 }

@@ -13,6 +13,7 @@ import {
   View,
 } from "react-native";
 import { MONSTER_INPUT_LIMITS, type AppLanguage, type LocalProfile } from "../services/onboarding-contract";
+import DismissKeyboardView from "./DismissKeyboardView";
 import { Button, colors, opacity, radius, typography } from "./ui";
 
 const MAX_INTEREST_ITEMS = MONSTER_INPUT_LIMITS?.interestMax ?? 2;
@@ -448,7 +449,7 @@ export default function ProfileForm({
   };
 
   return (
-    <View style={styles.form}>
+    <DismissKeyboardView style={styles.form}>
       <View style={styles.fieldGroup}>
         <Text style={styles.label}>{copy.name}</Text>
         <TextInput
@@ -649,7 +650,7 @@ export default function ProfileForm({
           </View>
         </KeyboardAvoidingView>
       </Modal>
-    </View>
+    </DismissKeyboardView>
   );
 }
 

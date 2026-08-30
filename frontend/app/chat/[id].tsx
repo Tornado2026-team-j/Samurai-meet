@@ -18,6 +18,7 @@ import { StatusBar } from "expo-status-bar";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import ChatBubble from "../../components/ChatBubble";
+import DismissKeyboardView from "../../components/DismissKeyboardView";
 import { useAuth } from "../../hooks/useAuth";
 import { APIError } from "../../services/api-client";
 import {
@@ -640,7 +641,7 @@ export default function ChatDetailScreen() {
       behavior={Platform.OS === "ios" ? "padding" : undefined}
       style={styles.screen}
     >
-      <View pointerEvents={safetyModal ? "none" : "auto"} style={styles.screenContent}>
+      <DismissKeyboardView pointerEvents={safetyModal ? "none" : "auto"} style={styles.screenContent}>
         <StatusBar style="light" />
         <View style={[styles.header, { paddingTop: Math.max(insets.top, 36) }]}>
         <Pressable
@@ -683,6 +684,7 @@ export default function ChatDetailScreen() {
             <RefreshControl onRefresh={() => void load("refresh")} refreshing={refreshing} tintColor={BLUE} />
           }
           scrollEnabled={safetyModal === null}
+          keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
         {match ? (
@@ -794,7 +796,7 @@ export default function ChatDetailScreen() {
           </Pressable>
         </View>
         </View>
-      </View>
+      </DismissKeyboardView>
 
       <Modal
         animationType="none"

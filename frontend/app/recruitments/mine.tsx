@@ -18,6 +18,7 @@ import {
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import DismissKeyboardView from "../../components/DismissKeyboardView";
 import { useAuth } from "../../hooks/useAuth";
 import { APIError } from "../../services/api-client";
 import { loadLanguage, subscribeLanguage } from "../../services/onboarding";
@@ -588,7 +589,7 @@ export default function MyRecruitmentsScreen() {
           keyboardVerticalOffset={0}
           style={styles.modalKeyboardAvoiding}
         >
-          <Pressable onPress={Keyboard.dismiss} style={styles.modalBackdrop}>
+          <DismissKeyboardView style={styles.modalBackdrop}>
             <ScrollView
               automaticallyAdjustKeyboardInsets
               contentContainerStyle={[styles.modalContent, { paddingBottom: insets.bottom + 24, paddingTop: insets.top + 16 }]}
@@ -597,7 +598,7 @@ export default function MyRecruitmentsScreen() {
               showsVerticalScrollIndicator={false}
               style={styles.modalScrollView}
             >
-              <Pressable onPress={() => Keyboard.dismiss()} style={styles.editorPanel}>
+              <View style={styles.editorPanel}>
               <View style={styles.editorHeader}>
                 <Text style={styles.editorTitle}>{copy.editTitle}</Text>
                   <Pressable
@@ -773,9 +774,9 @@ export default function MyRecruitmentsScreen() {
                   </View>
                 </>
               ) : null}
-              </Pressable>
+              </View>
             </ScrollView>
-          </Pressable>
+          </DismissKeyboardView>
         </KeyboardAvoidingView>
       </Modal>
     </View>

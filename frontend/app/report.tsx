@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { StatusBar } from "expo-status-bar";
+import DismissKeyboardView from "../components/DismissKeyboardView";
 import { Header, colors, radius } from "../components/ui";
 import { useAuth } from "../hooks/useAuth";
 import type { ChatReportReason, SafetyReportTargetType } from "../services/chat";
@@ -67,7 +68,7 @@ export default function ReportScreen() {
   };
 
   return (
-    <View style={styles.screen}>
+    <DismissKeyboardView style={styles.screen}>
       <StatusBar style="light" />
       <Header iconName="report-problem" onBack={() => router.back()} title={copy.title} variant="hero" />
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
@@ -97,7 +98,7 @@ export default function ReportScreen() {
           <Text style={styles.submitText}>{submitting ? copy.submitting : copy.submit}</Text>
         </Pressable>
       </ScrollView>
-    </View>
+    </DismissKeyboardView>
   );
 }
 
