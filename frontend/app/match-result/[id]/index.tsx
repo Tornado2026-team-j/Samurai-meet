@@ -21,10 +21,12 @@ import { loadLanguage, subscribeLanguage } from "../../../services/onboarding";
 import type { AppLanguage } from "../../../services/onboarding-contract";
 
 const BLUE = "#5ec5f5";
+const BRIGHT_BLUE = "#00aeff";
+const LIGHT_BLUE_BG = "#dae6f2";
 const YELLOW = "#e7b454";
 const TEXT_GRAY = "#535353";
+const SUBTITLE_GRAY = "#8e8e93";
 const MUTED_GRAY = "#949494";
-const BORDER_GRAY = "#e4e4e4";
 const SOFT_BLUE = "#eff8ff";
 
 type PhotoPreview = {
@@ -34,11 +36,13 @@ type PhotoPreview = {
 
 const COPY = {
   ja: {
-    title: "今日の思い出をアップロード",
-    back: "戻る",
+    headerTitle: "今日の思い出",
+    mainTitle: "今日の思い出をアップロード",
+    subtitle: "写真をアップロードして\nモンスターを交換しよう",
     addPhoto: "写真を追加",
-    photoHint: "写真をアップロードすると、相手とモンスターを交換できます",
+    description: "写真をアップロードすると\n相手とモンスターを交換できます",
     exchange: "モンスターを交換",
+    back: "戻る",
     loading: "読み込み中…",
     loginRequired: "ログイン後に利用できます。",
     loadError: "読み込めませんでした。時間をおいて再試行してください。",
@@ -51,11 +55,13 @@ const COPY = {
     withPerson: "さんと",
   },
   en: {
-    title: "Today's Memory",
-    back: "Back",
-    addPhoto: "Add Photo",
-    photoHint: "Upload a photo to exchange monsters.",
+    headerTitle: "Today's memory",
+    mainTitle: "Upload today's memory",
+    subtitle: "Upload a photo to\nexchange monsters.",
+    addPhoto: "Add photo",
+    description: "Uploading a photo allows you to\nexchange monsters with your match.",
     exchange: "Exchange Monsters",
+    back: "Back",
     loading: "Loading…",
     loginRequired: "Sign in to continue.",
     loadError: "Could not load. Please try again later.",
@@ -243,7 +249,7 @@ export default function MatchResultScreen() {
     <View style={styles.screen}>
       <StatusBar style="light" />
 
-      <View style={[styles.header, { paddingTop: Math.max(insets.top, 18) }]}>
+      <View style={[styles.header, { paddingTop: Math.max(insets.top, 24) }]}>
         <Pressable
           accessibilityLabel={copy.back}
           accessibilityRole="button"
@@ -253,7 +259,7 @@ export default function MatchResultScreen() {
         >
           <MaterialIcons color="#ffffff" name="arrow-back-ios-new" size={20} />
         </Pressable>
-        <Text style={styles.headerTitle}>{copy.title}</Text>
+        <Text style={styles.headerTitle}>{copy.headerTitle}</Text>
       </View>
 
       <ScrollView
@@ -278,13 +284,8 @@ export default function MatchResultScreen() {
           </View>
         ) : match ? (
           <>
-            <View style={styles.guideInfoCard}>
-              <MaterialIcons color={BLUE} name="handshake" size={28} />
-              <Text style={styles.guideInfoText}>
-                {match.other_user.name}{copy.withPerson}
-                {language === "ja" ? "案内しました" : "had a guide session"}
-              </Text>
-            </View>
+            <Text style={styles.mainTitle}>{copy.mainTitle}</Text>
+            <Text style={styles.subtitle}>{copy.subtitle}</Text>
 
             <View style={styles.photoCard}>
               {photos.length === 0 ? (
@@ -294,9 +295,7 @@ export default function MatchResultScreen() {
                   onPress={() => void pickPhoto()}
                   style={({ pressed }) => [styles.photoAddArea, pressed && styles.pressed]}
                 >
-                  <View style={styles.photoAddCircle}>
-                    <MaterialIcons color={BLUE} name="add-a-photo" size={36} />
-                  </View>
+                  <Text style={styles.photoAddPlus}>＋</Text>
                   <Text style={styles.photoAddText}>{copy.addPhoto}</Text>
                 </Pressable>
               ) : (
@@ -320,12 +319,13 @@ export default function MatchResultScreen() {
                     onPress={() => void pickPhoto()}
                     style={({ pressed }) => [styles.photoAddSmall, pressed && styles.pressed]}
                   >
-                    <MaterialIcons color={BLUE} name="add" size={28} />
+                    <MaterialIcons color={BRIGHT_BLUE} name="add" size={28} />
                   </Pressable>
                 </View>
               )}
-              <Text style={styles.photoHint}>{copy.photoHint}</Text>
             </View>
+
+            <Text style={styles.description}>{copy.description}</Text>
 
             {actionError ? (
               <Text accessibilityRole="alert" style={styles.errorText}>{actionError}</Text>
@@ -343,8 +343,16 @@ export default function MatchResultScreen() {
               ]}
             >
               <Text style={styles.primaryButtonText}>{copy.exchange}</Text>
-              <MaterialIcons color="#ffffff" name="swap-horiz" size={20} />
+              <MaterialIcons color="#000000" name="swap-horiz" size={20} />
             </Pressable>
+
+            <View style={styles.guideInfoCard}>
+              <MaterialIcons color={BLUE} name="handshake" size={24} />
+              <Text style={styles.guideInfoText}>
+                {match.other_user.name}{copy.withPerson}
+                {language === "ja" ? "案内しました" : "had a guide session"}
+              </Text>
+            </View>
 
             <Pressable
               accessibilityRole="button"
@@ -375,66 +383,49 @@ const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: "#ffffff" },
   loadingScreen: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#ffffff" },
   header: {
-    minHeight: 108,
-    flexDirection: "row",
+    minHeight: 156,
     alignItems: "flex-end",
-    paddingHorizontal: 20,
-    paddingBottom: 18,
+    justifyContent: "center",
+    paddingBottom: 24,
     backgroundColor: BLUE,
-    borderBottomLeftRadius: 36,
-    borderBottomRightRadius: 36,
+    borderBottomLeftRadius: 50,
+    borderBottomRightRadius: 50,
   },
-  backButton: { width: 34, height: 34, alignItems: "center", justifyContent: "center", marginRight: 12 },
-  headerTitle: { color: "#ffffff", fontSize: 22, fontWeight: "800" },
-  content: { alignItems: "center", paddingHorizontal: 18, paddingTop: 22, gap: 14 },
-  statePanel: { minHeight: 180, width: "100%", alignItems: "center", justifyContent: "center", gap: 12, paddingHorizontal: 20 },
-  stateText: { color: MUTED_GRAY, fontSize: 14, fontWeight: "600", lineHeight: 20, textAlign: "center" },
-  retryButton: { minWidth: 84, minHeight: 36, alignItems: "center", justifyContent: "center", paddingHorizontal: 16, borderRadius: 18, backgroundColor: YELLOW },
-  retryText: { color: "#ffffff", fontSize: 13, fontWeight: "800" },
-  guideInfoCard: {
-    width: "100%",
-    maxWidth: 390,
-    flexDirection: "row",
+  backButton: {
+    position: "absolute",
+    top: 18,
+    left: 12,
+    width: 34,
+    height: 34,
     alignItems: "center",
-    gap: 10,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: "#cfe9f7",
-    borderRadius: 16,
-    backgroundColor: SOFT_BLUE,
+    justifyContent: "center",
   },
-  guideInfoText: { flex: 1, color: TEXT_GRAY, fontSize: 15, fontWeight: "700" },
+  headerTitle: { color: "#ffffff", fontSize: 20, fontWeight: "900" },
+  content: { alignItems: "center", paddingHorizontal: 20, paddingTop: 30 },
+  mainTitle: { fontSize: 24, fontWeight: "900", color: "#000000", textAlign: "center" },
+  subtitle: { marginTop: 28, fontSize: 18, fontWeight: "900", color: SUBTITLE_GRAY, textAlign: "center", lineHeight: 24 },
   photoCard: {
     width: "100%",
-    maxWidth: 390,
-    padding: 18,
+    maxWidth: 350,
+    marginTop: 33,
     borderWidth: 1,
-    borderColor: BORDER_GRAY,
-    borderRadius: 18,
-    backgroundColor: "#ffffff",
-    gap: 14,
+    borderColor: BRIGHT_BLUE,
+    borderRadius: 16,
+    backgroundColor: LIGHT_BLUE_BG,
+    minHeight: 179,
+    alignItems: "center",
+    justifyContent: "center",
   },
   photoAddArea: {
-    minHeight: 180,
     alignItems: "center",
     justifyContent: "center",
-    gap: 14,
-    borderWidth: 2,
-    borderColor: "#b8dff1",
-    borderStyle: "dashed",
-    borderRadius: 16,
-    backgroundColor: "#f5fbff",
+    gap: 8,
+    paddingVertical: 24,
+    width: "100%",
   },
-  photoAddCircle: {
-    width: 68,
-    height: 68,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: 34,
-    backgroundColor: "#eaf8ff",
-  },
-  photoAddText: { color: BLUE, fontSize: 15, fontWeight: "800" },
-  photoGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  photoAddPlus: { fontSize: 40, fontWeight: "900", color: BRIGHT_BLUE, lineHeight: 44 },
+  photoAddText: { fontSize: 20, fontWeight: "900", color: BRIGHT_BLUE },
+  photoGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10, padding: 16, alignItems: "center", justifyContent: "center" },
   photoItem: { position: "relative" },
   photoPreview: { width: 100, height: 100, borderRadius: 12 },
   photoRemoveButton: {
@@ -453,29 +444,44 @@ const styles = StyleSheet.create({
     height: 100,
     alignItems: "center",
     justifyContent: "center",
-    borderWidth: 2,
-    borderColor: "#b8dff1",
-    borderStyle: "dashed",
+    borderWidth: 1,
+    borderColor: BRIGHT_BLUE,
     borderRadius: 12,
-    backgroundColor: "#f5fbff",
+    backgroundColor: LIGHT_BLUE_BG,
   },
-  photoHint: { color: MUTED_GRAY, fontSize: 12, lineHeight: 18, textAlign: "center" },
-  errorText: { color: "#b42318", fontSize: 13, fontWeight: "600", lineHeight: 19, textAlign: "center" },
+  description: { marginTop: 16, fontSize: 16, fontWeight: "900", color: TEXT_GRAY, textAlign: "center", lineHeight: 22 },
+  errorText: { color: "#b42318", fontSize: 13, fontWeight: "600", lineHeight: 19, textAlign: "center", marginTop: 12 },
   primaryButton: {
     width: "100%",
-    maxWidth: 390,
-    minHeight: 50,
+    maxWidth: 350,
+    marginTop: 60,
+    minHeight: 58,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: 8,
-    borderRadius: 10,
+    borderRadius: 16,
     backgroundColor: YELLOW,
   },
-  primaryButtonText: { color: "#ffffff", fontSize: 16, fontWeight: "900" },
+  primaryButtonText: { color: "#000000", fontSize: 20, fontWeight: "900" },
+  guideInfoCard: {
+    width: "100%",
+    maxWidth: 350,
+    marginTop: 24,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: "#cfe9f7",
+    borderRadius: 16,
+    backgroundColor: SOFT_BLUE,
+  },
+  guideInfoText: { flex: 1, color: TEXT_GRAY, fontSize: 14, fontWeight: "700" },
   secondaryButton: {
     width: "100%",
-    maxWidth: 390,
+    maxWidth: 350,
+    marginTop: 16,
     minHeight: 46,
     flexDirection: "row",
     alignItems: "center",
@@ -483,10 +489,14 @@ const styles = StyleSheet.create({
     gap: 8,
     borderWidth: 1,
     borderColor: BLUE,
-    borderRadius: 10,
+    borderRadius: 16,
     backgroundColor: "#ffffff",
   },
   secondaryButtonText: { color: BLUE, fontSize: 14, fontWeight: "800" },
+  statePanel: { minHeight: 180, width: "100%", alignItems: "center", justifyContent: "center", gap: 12, paddingHorizontal: 20, paddingTop: 30 },
+  stateText: { color: MUTED_GRAY, fontSize: 14, fontWeight: "600", lineHeight: 20, textAlign: "center" },
+  retryButton: { minWidth: 84, minHeight: 36, alignItems: "center", justifyContent: "center", paddingHorizontal: 16, borderRadius: 18, backgroundColor: YELLOW },
+  retryText: { color: "#ffffff", fontSize: 13, fontWeight: "800" },
   disabled: { opacity: 0.55 },
   pressed: { opacity: 0.72 },
 });
