@@ -130,6 +130,17 @@ describe("通知APIクライアント", () => {
     });
   });
 
+  it("新しいメッセージ通知はchat_idでチャット画面へ遷移する", () => {
+    expect(getNotificationNavigation({
+      type: "new_message",
+      targetId: " chat-1 ",
+      recruitmentId: "recruitment-1",
+    })).toEqual({
+      pathname: "/chat/[id]",
+      params: { id: "chat-1" },
+    });
+  });
+
   it("対象IDがない通知は安全に何も開かない", () => {
     expect(getNotificationNavigation({
       type: "new_application",
