@@ -101,7 +101,7 @@ export type NotificationNavigation =
     }
   | {
       pathname: "/japanese/guide-requested";
-      params: { matchId: string };
+      params: { matchId: string; recruitmentId?: string };
     };
 
 // Navigation is determined from the server's stable notification contract.
@@ -128,7 +128,12 @@ export function getNotificationNavigation(
     case "application_rejected":
       return {
         pathname: "/japanese/guide-requested",
-        params: { matchId: targetID },
+        params: {
+          matchId: targetID,
+          ...(notification.recruitmentId?.trim()
+            ? { recruitmentId: notification.recruitmentId.trim() }
+            : {}),
+        },
       };
     case "new_message":
       return {

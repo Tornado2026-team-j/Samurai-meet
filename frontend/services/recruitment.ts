@@ -1,61 +1,92 @@
-import { buildMockRecruitmentPreview } from "../mocks/recruitment";
+import { buildRecruitmentPreview } from "../mocks/recruitment";
 import type { Session } from "./auth-contract";
 import {
   createRecruitment,
   type Coordinates,
   type RecruitmentCreateRequest,
 } from "./matching";
+import { requestAPI } from "./api-client";
+import type { MatchCategory } from "../types/match";
 import type {
   RecruitmentDraft,
   RecruitmentPreview,
 } from "../types/recruitment";
 
+const MATCH_CATEGORIES: readonly MatchCategory[] = [
+  "Food",
+  "Places",
+  "Activity",
+  "Other",
+];
+
+type RecruitmentClassificationResponse = {
+  data?: {
+    category?: unknown;
+    keywords?: unknown;
+  };
+};
+
+export type RecruitmentSelection = {
+  category: MatchCategory;
+  keywords: string[];
+};
+
+function isMatchCategory(value: unknown): value is MatchCategory {
+  return typeof value === "string" && MATCH_CATEGORIES.includes(value as MatchCategory);
+}
+
+export function normalizeRecruitmentKeywords(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+
+  const normalized: string[] = [];
+  const seen = new Set<string>();
+  for (const item of value) {
+    if (typeof item !== "string") continue;
+    const keyword = item.trim().replace(/\s+/gu, " ");
+    if (!keyword || seen.has(keyword.toLocaleLowerCase())) continue;
+    seen.add(keyword.toLocaleLowerCase());
+    normalized.push(keyword.slice(0, 80));
+    if (normalized.length >= 5) break;
+  }
+  return normalized;
+}
+
 export type RecruitmentPreviewProvider = {
-  createPreview: (
-    draft: RecruitmentDraft,
-    signal?: AbortSignal,
-  ) => Promise<RecruitmentPreview>;
+	createPreview: (
+		draft: RecruitmentDraft,
+		session: Session,
+		signal?: AbortSignal,
+	) => Promise<RecruitmentPreview>;
+};
+const geminiPreviewProvider: RecruitmentPreviewProvider = {
+	async createPreview(draft, session, signal) {
+		const response = await requestAPI<RecruitmentClassificationResponse>(
+			"/recruitments/classify",
+			session,
+			{ method: "POST", body: JSON.stringify({ description: draft.activity }), signal },
+		);
+		const category = response.data?.category;
+		if (!isMatchCategory(category)) {
+			throw new Error("recruitment classification response is invalid");
+		}
+
+		const preview = buildRecruitmentPreview(draft, category);
+		const keywords = normalizeRecruitmentKeywords(response.data?.keywords);
+		return {
+			...preview,
+			tags: keywords.length > 0 ? keywords : preview.tags,
+		};
+	},
 };
 
-function abortError(): Error {
-  const error = new Error("The preview request was cancelled.");
-  error.name = "AbortError";
-  return error;
-}
-
-function wait(duration: number, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal?.aborted) {
-      reject(abortError());
-      return;
-    }
-
-    const timeout = setTimeout(resolve, duration);
-    signal?.addEventListener(
-      "abort",
-      () => {
-        clearTimeout(timeout);
-        reject(abortError());
-      },
-      { once: true },
-    );
-  });
-}
-
-const mockPreviewProvider: RecruitmentPreviewProvider = {
-  async createPreview(draft, signal) {
-    await wait(420, signal);
-    return buildMockRecruitmentPreview(draft);
-  },
-};
-
-const previewProvider: RecruitmentPreviewProvider = mockPreviewProvider;
+const previewProvider: RecruitmentPreviewProvider = geminiPreviewProvider;
 
 export function createRecruitmentPreview(
-  draft: RecruitmentDraft,
-  signal?: AbortSignal,
+	draft: RecruitmentDraft,
+	session: Session,
+	signal?: AbortSignal,
 ): Promise<RecruitmentPreview> {
-  return previewProvider.createPreview(draft, signal);
+	return previewProvider.createPreview(draft, session, signal);
 }
 
 export const JST_TIME_ZONE = "Asia/Tokyo";
@@ -370,6 +401,7 @@ export function buildRecruitmentCreateRequest(
   now = new Date(),
   timezone = JST_TIME_ZONE,
   coordinates?: Coordinates | null,
+  selection?: RecruitmentSelection,
 ): RecruitmentCreateRequest {
   void timezone;
   const description = draft.activity.trim();
@@ -389,13 +421,16 @@ export function buildRecruitmentCreateRequest(
 
   const endHour = Math.floor(endMinutes / 60);
   const endMinute = endMinutes % 60;
+  const selectedKeywords = normalizeRecruitmentKeywords(
+    selection ? selection.keywords : preview.tags,
+  );
   const input: RecruitmentCreateRequest = {
-    category: preview.category,
+    category: selection?.category ?? preview.category,
     available_date: availableDate,
     start_time: draft.startTime,
     end_time: `${String(endHour).padStart(2, "0")}:${String(endMinute).padStart(2, "0")}`,
     timezone: JST_TIME_ZONE,
-    keywords: preview.tags.length > 0 ? preview.tags : ["Experience"],
+    keywords: selectedKeywords.length > 0 ? selectedKeywords : ["Experience"],
     description,
     visibility_radius_km: draft.distanceKm,
     status: "open",
@@ -415,10 +450,18 @@ export async function publishRecruitment(
   session: Session,
   coordinates?: Coordinates | null,
   signal?: AbortSignal,
+  selection?: RecruitmentSelection,
 ) {
   return createRecruitment(
     session,
-    buildRecruitmentCreateRequest(draft, preview, new Date(), undefined, coordinates),
+    buildRecruitmentCreateRequest(
+      draft,
+      preview,
+      new Date(),
+      undefined,
+      coordinates,
+      selection,
+    ),
     signal,
   );
 }

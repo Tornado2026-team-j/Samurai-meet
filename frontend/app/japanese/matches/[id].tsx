@@ -106,6 +106,8 @@ export default function JapaneseMatchDetailScreen() {
   const copy = COPY[language ?? "ja"];
   const copyRef = useRef(copy);
   copyRef.current = copy;
+  const authRef = useRef({ getCurrentSession, refresh, session, status });
+  authRef.current = { getCurrentSession, refresh, session, status };
 
   useEffect(() => {
     let cancelled = false;
@@ -139,8 +141,9 @@ export default function JapaneseMatchDetailScreen() {
     let cancelled = false;
 
     const load = async () => {
-      const activeSession = getCurrentSession() ?? session;
-      if (!matchId || status !== "signed_in" || !activeSession) {
+      const auth = authRef.current;
+      const activeSession = auth.getCurrentSession() ?? auth.session;
+      if (!matchId || auth.status !== "signed_in" || !activeSession) {
         if (!cancelled) {
           setLoadState("error");
           setLoadError(copyRef.current.loginRequired);
@@ -161,8 +164,8 @@ export default function JapaneseMatchDetailScreen() {
           recruitment = await loadWithSession(activeSession);
         } catch (error) {
           if (!(error instanceof APIError) || error.status !== 401) throw error;
-          await refresh();
-          const refreshedSession = getCurrentSession();
+          await auth.refresh();
+          const refreshedSession = auth.getCurrentSession();
           if (!refreshedSession) throw error;
           recruitment = await loadWithSession(refreshedSession);
         }
@@ -171,7 +174,7 @@ export default function JapaneseMatchDetailScreen() {
           setLoadState("ready");
         }
       } catch (error) {
-        if (error instanceof Error && error.name === "AbortError") return;
+        if (error instanceof Error && error.name === "AbortError" && (cancelled || controller.signal.aborted)) return;
         if (!cancelled) {
           setLoadState("error");
           setLoadError(copyRef.current.loadError);
@@ -184,7 +187,7 @@ export default function JapaneseMatchDetailScreen() {
       cancelled = true;
       controller.abort();
     };
-  }, [getCurrentSession, matchId, refresh, session, status]);
+  }, [matchId, status]);
 
   if (!languageLoaded) {
     return (
@@ -244,7 +247,7 @@ export default function JapaneseMatchDetailScreen() {
       if (interest?.id) {
         router.push({
           pathname: "/japanese/guide-requested",
-          params: { matchId: interest.id },
+          params: { matchId: interest.id, recruitmentId: interest.recruitment_id },
         });
       } else {
         router.push("/japanese/guide-requested");
@@ -270,14 +273,14 @@ export default function JapaneseMatchDetailScreen() {
         <View
           style={[
             styles.header,
-            { minHeight: Math.max(insets.top + 238, 286) },
+            { minHeight: Math.max(insets.top + 210, 260) },
           ]}
         >
             <Image
               accessibilityLabel={`${match.category}${copy.categoryIllustration}`}
               resizeMode="contain"
               source={CATEGORY_IMAGES[match.category]}
-              style={[styles.categoryImage, { top: Math.max(insets.top + 26, 66) }]}
+              style={[styles.categoryImage, { top: Math.max(insets.top + 20, 60) }]}
             />
 
             <Pressable
@@ -287,7 +290,7 @@ export default function JapaneseMatchDetailScreen() {
               onPress={() => router.back()}
               style={({ pressed }) => [
                 styles.backButton,
-            { top: Math.max(insets.top + 8, 49) },
+            { top: Math.max(insets.top + 6, 45) },
                 pressed && styles.pressed,
               ]}
             >
@@ -297,7 +300,7 @@ export default function JapaneseMatchDetailScreen() {
             <View
               style={[
                 styles.categoryBadge,
-                { top: Math.max(insets.top + 12, 52) },
+                { top: Math.max(insets.top + 8, 48) },
               ]}
             >
               <MaterialIcons
@@ -463,7 +466,7 @@ const styles = StyleSheet.create({
     alignSelf: "center",
     width: "100%",
     maxWidth: 383,
-    height: 209,
+    height: 180,
   },
   categoryBadge: {
     position: "absolute",
@@ -487,7 +490,7 @@ const styles = StyleSheet.create({
   },
   profileGroup: {
     width: "100%",
-    minHeight: 77,
+    minHeight: 62,
     flexDirection: "row",
     alignItems: "flex-start",
   },
@@ -495,8 +498,8 @@ const styles = StyleSheet.create({
     width: "100%",
     maxWidth: 440,
     alignSelf: "center",
-    paddingTop: 28,
-    paddingHorizontal: 38,
+    paddingTop: 20,
+    paddingHorizontal: 28,
   },
   profileText: {
     marginLeft: 17,
@@ -546,22 +549,22 @@ const styles = StyleSheet.create({
   },
   schedulePanel: {
     width: "100%",
-    minHeight: 152,
-    marginTop: 14,
+    minHeight: 132,
+    marginTop: 10,
     paddingHorizontal: 24,
-    paddingVertical: 20,
+    paddingVertical: 15,
     borderWidth: 1,
     borderColor: "#e4e4e4",
     borderRadius: 12,
     backgroundColor: "#ffffff",
   },
   scheduleRow: {
-    minHeight: 48,
+    minHeight: 40,
     flexDirection: "row",
     alignItems: "center",
   },
   timeRow: {
-    marginTop: 12,
+    marginTop: 7,
   },
   scheduleText: {
     marginLeft: 17,
@@ -584,14 +587,14 @@ const styles = StyleSheet.create({
   divider: {
     width: "100%",
     height: 1,
-    marginVertical: 7,
+    marginVertical: 5,
     backgroundColor: "#e6e6e6",
   },
   descriptionPanel: {
     width: "100%",
-    minHeight: 124,
-    marginTop: 16,
-    paddingTop: 12,
+    minHeight: 108,
+    marginTop: 12,
+    paddingTop: 10,
     paddingHorizontal: 15,
     borderWidth: 1,
     borderColor: BLUE,
@@ -615,8 +618,8 @@ const styles = StyleSheet.create({
   },
   keywordsPanel: {
     width: "100%",
-    minHeight: 77,
-    marginTop: 18,
+    minHeight: 64,
+    marginTop: 14,
   },
   keywordsTitleRow: {
     height: 25,
@@ -632,7 +635,7 @@ const styles = StyleSheet.create({
     lineHeight: 15,
   },
   keywordsRow: {
-    marginTop: 11,
+    marginTop: 8,
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 8,
@@ -657,7 +660,7 @@ const styles = StyleSheet.create({
   guideButton: {
     width: "100%",
     minHeight: 46,
-    marginTop: 24,
+    marginTop: 16,
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
