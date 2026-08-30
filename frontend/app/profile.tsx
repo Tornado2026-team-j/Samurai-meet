@@ -33,6 +33,7 @@ import {
   loadLocalProfile,
   saveAppMode,
   saveLanguage,
+  subscribeLanguage,
   type AppMode,
 } from "../services/onboarding";
 import type {
@@ -49,6 +50,7 @@ const BORDER_GRAY = "#d4d4d4";
 const COPY = {
   ja: {
     title: "プロフィール",
+    back: "戻る",
     loading: "プロフィールを読み込んでいます…",
     name: "名前",
     nationality: "国籍",
@@ -61,6 +63,12 @@ const COPY = {
     myApplications: "応募履歴",
     myApplicationsDescription: "自分が送った応募と結果を確認できます。",
     editProfile: "プロフィールを編集",
+    activitySection: "アクティビティ",
+    accountSecuritySection: "アカウントとセキュリティ",
+    settingsSection: "設定",
+    notificationPrivacySection: "通知とプライバシー",
+    supportSection: "サポート",
+    comingSoon: "近日公開",
     security: "ログイン・Passkey管理",
     deviceTransfer: "端末引き継ぎ",
     identityVerification: "本人確認",
@@ -128,6 +136,7 @@ const COPY = {
   },
   en: {
     title: "Profile",
+    back: "Back",
     loading: "Loading profile…",
     name: "Name",
     nationality: "Nationality",
@@ -140,6 +149,12 @@ const COPY = {
     myApplications: "Application history",
     myApplicationsDescription: "Review the applications you sent and their results.",
     editProfile: "Edit profile",
+    activitySection: "Activity",
+    accountSecuritySection: "Account & Security",
+    settingsSection: "Settings",
+    notificationPrivacySection: "Notifications & privacy",
+    supportSection: "Support",
+    comingSoon: "Coming Soon",
     security: "Sign-ins and Passkeys",
     deviceTransfer: "Transfer device",
     identityVerification: "Identity verification",
@@ -329,6 +344,13 @@ export default function ProfileScreen() {
       active = false;
     };
   }, [router, session?.session_id, session?.user_id]);
+
+  useEffect(() => {
+    const unsubscribe = subscribeLanguage((nextLanguage) => {
+      if (nextLanguage) setLanguage(nextLanguage);
+    });
+    return unsubscribe;
+  }, []);
 
   useEffect(() => {
     const userID = session?.user_id;
@@ -593,7 +615,32 @@ export default function ProfileScreen() {
       <StatusBar style="light" />
 
       <View style={[styles.header, { paddingTop: Math.max(insets.top, 20) }]}>
-        <Text style={styles.headerTitle}>{copy.title}</Text>
+        <View style={styles.headerContent}>
+          <Pressable
+            accessibilityLabel={copy.back}
+            accessibilityRole="button"
+            onPress={() => {
+              if (router.canGoBack()) {
+                router.back();
+              } else {
+                router.replace(appMode === "local" ? "/japanese" : "/foreigner");
+              }
+            }}
+            style={({ pressed }) => [styles.headerButton, pressed && styles.pressed]}
+          >
+            <MaterialIcons color="#ffffff" name="arrow-back-ios-new" size={20} />
+          </Pressable>
+          <Text style={styles.headerTitle}>{copy.title}</Text>
+          <Pressable
+            accessibilityLabel={copy.editProfile}
+            accessibilityRole="button"
+            onPress={() => router.push("/profile-edit")}
+            style={({ pressed }) => [styles.headerEditButton, pressed && styles.pressed]}
+          >
+            <MaterialIcons color="#ffffff" name="edit" size={17} />
+            <Text style={styles.headerEditText}>{copy.editProfile}</Text>
+          </Pressable>
+        </View>
       </View>
 
       <ScrollView
@@ -604,32 +651,121 @@ export default function ProfileScreen() {
         ]}
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.avatar}>
-          <MaterialIcons color={BLUE} name="person" size={54} />
+        <View style={styles.profileCard}>
+          <View style={styles.avatar}>
+            <MaterialIcons color={BLUE} name="person" size={54} />
+          </View>
+
+          <ProfileRow label={copy.name} value={displayedProfile.name || copy.notSet} />
+          <ProfileRow
+            label={copy.nationality}
+            value={displayedProfile.nationalityCode || copy.notSet}
+          />
+          <ProfileRow
+            label={copy.skills}
+            value={formatTags(displayedProfile.monsterSeed.skillTags, language) || copy.notSet}
+            multiline
+          />
+          <ProfileRow
+            label={copy.interests}
+            value={formatTags(displayedProfile.monsterSeed.interestTags, language) || copy.notSet}
+            multiline
+          />
+          <ProfileRow
+            label={copy.monsterNote}
+            value={displayedProfile.monsterSeed.freeText || copy.notSet}
+            multiline
+          />
+          <Pressable
+            accessibilityLabel={copy.editProfile}
+            accessibilityRole="button"
+            onPress={() => router.push("/profile-edit")}
+            style={({ pressed }) => [styles.editProfileButton, pressed && styles.pressed]}
+          >
+            <MaterialIcons color="#ffffff" name="edit" size={18} />
+            <Text style={styles.editProfileButtonText}>{copy.editProfile}</Text>
+          </Pressable>
         </View>
 
-        <ProfileRow label={copy.name} value={displayedProfile.name || copy.notSet} />
-        <ProfileRow
-          label={copy.nationality}
-          value={displayedProfile.nationalityCode || copy.notSet}
-        />
-        <ProfileRow
-          label={copy.skills}
-          value={formatTags(displayedProfile.monsterSeed.skillTags, language) || copy.notSet}
-          multiline
-        />
-        <ProfileRow
-          label={copy.interests}
-          value={formatTags(displayedProfile.monsterSeed.interestTags, language) || copy.notSet}
-          multiline
-        />
-        <ProfileRow
-          label={copy.monsterNote}
-          value={displayedProfile.monsterSeed.freeText || copy.notSet}
-          multiline
-        />
+        <View style={styles.managementSection}>
+          <Text style={styles.managementTitle}>{copy.activitySection}</Text>
+          <Text style={styles.managementDescription}>{copy.myRecruitmentsDescription}</Text>
+          <Pressable
+            accessibilityLabel={copy.myRecruitments}
+            accessibilityRole="button"
+            disabled={loggingOut || deleting || recoveryPreparing}
+            onPress={() => router.push("/recruitments/mine")}
+            style={({ pressed }) => [
+              styles.managementButton,
+              pressed && !loggingOut && !deleting && !recoveryPreparing && styles.pressed,
+              (loggingOut || deleting || recoveryPreparing) && styles.disabledButton,
+            ]}
+          >
+            <View style={styles.managementButtonLabel}>
+              <MaterialIcons color={BLUE} name="work-outline" size={20} />
+              <Text style={styles.managementButtonText}>{copy.myRecruitments}</Text>
+            </View>
+            <MaterialIcons color={BLUE} name="chevron-right" size={21} />
+          </Pressable>
+          <Text style={styles.managementDescription}>{copy.myApplicationsDescription}</Text>
+          <Pressable
+            accessibilityLabel={copy.myApplications}
+            accessibilityRole="button"
+            disabled={loggingOut || deleting || recoveryPreparing}
+            onPress={() => router.push({
+              pathname: "/japanese/applications",
+              params: { language },
+            })}
+            style={({ pressed }) => [
+              styles.managementButton,
+              pressed && !loggingOut && !deleting && !recoveryPreparing && styles.pressed,
+              (loggingOut || deleting || recoveryPreparing) && styles.disabledButton,
+            ]}
+          >
+            <View style={styles.managementButtonLabel}>
+              <MaterialIcons color={BLUE} name="history" size={20} />
+              <Text style={styles.managementButtonText}>{copy.myApplications}</Text>
+            </View>
+            <MaterialIcons color={BLUE} name="chevron-right" size={21} />
+          </Pressable>
+        </View>
+
+        <View style={styles.managementSection}>
+          <Text style={styles.managementTitle}>{copy.accountSecuritySection}</Text>
+          {([
+            [copy.security, "/security", "security"],
+            [copy.deviceTransfer, "/device-transfer", "devices-other"],
+          ] as const).map(([label, href, icon]) => (
+            <Pressable
+              key={href}
+              accessibilityLabel={label}
+              accessibilityRole="button"
+              onPress={() => router.push(href)}
+              style={({ pressed }) => [styles.managementButton, pressed && styles.pressed]}
+            >
+              <View style={styles.managementButtonLabel}>
+                <MaterialIcons color={BLUE} name={icon} size={20} />
+                <Text style={styles.managementButtonText}>{label}</Text>
+              </View>
+              <MaterialIcons color={BLUE} name="chevron-right" size={21} />
+            </Pressable>
+          ))}
+          <View
+            accessible
+            accessibilityLabel={`${copy.identityVerification}: ${copy.comingSoon}`}
+            accessibilityRole="text"
+            style={styles.managementButtonDisabled}
+          >
+            <View style={styles.managementButtonLabel}>
+              <MaterialIcons color={MUTED_GRAY} name="verified-user" size={20} />
+              <Text style={styles.managementButtonDisabledText}>{copy.identityVerification}</Text>
+            </View>
+            <Text style={styles.comingSoonText}>{copy.comingSoon}</Text>
+          </View>
+        </View>
 
         <View style={styles.settingsSection}>
+          <Text style={styles.managementTitle}>{copy.settingsSection}</Text>
           <Text style={styles.settingsTitle}>{copy.settingsTitle}</Text>
           <Text style={styles.settingsLabel}>{copy.displayLanguage}</Text>
           <Text style={styles.settingsDescription}>{copy.displayLanguageDescription}</Text>
@@ -667,48 +803,31 @@ export default function ProfileScreen() {
           {settingsSaveFailed ? <Text accessibilityRole="alert" style={styles.errorText}>{copy.settingsError}</Text> : null}
         </View>
 
-        <View style={styles.managementSection}>
-          <Text style={styles.managementTitle}>{copy.myRecruitments}</Text>
-          <Text style={styles.managementDescription}>{copy.myRecruitmentsDescription}</Text>
-          <Pressable
-            accessibilityLabel={copy.myRecruitments}
-            accessibilityRole="button"
-            disabled={loggingOut || deleting || recoveryPreparing}
-            onPress={() => router.push("/recruitments/mine")}
-            style={({ pressed }) => [
-              styles.managementButton,
-              pressed && !loggingOut && !deleting && !recoveryPreparing && styles.pressed,
-              (loggingOut || deleting || recoveryPreparing) && styles.disabledButton,
-            ]}
-          >
-            <Text style={styles.managementButtonText}>{copy.myRecruitments}</Text>
-            <MaterialIcons color={BLUE} name="chevron-right" size={21} />
-          </Pressable>
-          <Text style={styles.managementDescription}>{copy.myApplicationsDescription}</Text>
-          <Pressable
-            accessibilityLabel={copy.myApplications}
-            accessibilityRole="button"
-            disabled={loggingOut || deleting || recoveryPreparing}
-            onPress={() => router.push({
-              pathname: "/japanese/applications",
-              params: { language },
-            })}
-            style={({ pressed }) => [
-              styles.managementButton,
-              pressed && !loggingOut && !deleting && !recoveryPreparing && styles.pressed,
-              (loggingOut || deleting || recoveryPreparing) && styles.disabledButton,
-            ]}
-          >
-            <Text style={styles.managementButtonText}>{copy.myApplications}</Text>
-            <MaterialIcons color={BLUE} name="chevron-right" size={21} />
-          </Pressable>
+        <View style={styles.settingsSection}>
+          <Text style={styles.settingsSubsectionTitle}>{copy.notificationPrivacySection}</Text>
           {([
-            [copy.editProfile, "/profile-edit", "manage-accounts"],
-            [copy.security, "/security", "security"],
-            [copy.deviceTransfer, "/device-transfer", "devices-other"],
-            [copy.identityVerification, "/identity-verification", "verified-user"],
             [copy.notificationSettings, "/notification-settings", "notifications-none"],
             [copy.blockedUsers, "/blocked-users", "block"],
+          ] as const).map(([label, href, icon]) => (
+            <Pressable
+              key={href}
+              accessibilityLabel={label}
+              accessibilityRole="button"
+              onPress={() => router.push(href)}
+              style={({ pressed }) => [styles.managementButton, pressed && styles.pressed]}
+            >
+              <View style={styles.managementButtonLabel}>
+                <MaterialIcons color={BLUE} name={icon} size={20} />
+                <Text style={styles.managementButtonText}>{label}</Text>
+              </View>
+              <MaterialIcons color={BLUE} name="chevron-right" size={21} />
+            </Pressable>
+          ))}
+        </View>
+
+        <View style={styles.managementSection}>
+          <Text style={styles.managementTitle}>{copy.supportSection}</Text>
+          {([
             [copy.terms, "/legal/terms", "description"],
             [copy.privacy, "/legal/privacy", "privacy-tip"],
             [copy.safetyGuide, "/legal/safety", "health-and-safety"],
@@ -1134,10 +1253,43 @@ const styles = StyleSheet.create({
     borderBottomLeftRadius: 36,
     borderBottomRightRadius: 36,
   },
+  headerContent: {
+    minHeight: 34,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  headerButton: {
+    width: 38,
+    height: 38,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   headerTitle: {
+    flex: 1,
     color: "#ffffff",
     fontSize: 24,
     fontWeight: "700",
+    textAlign: "center",
+  },
+  headerEditButton: {
+    minHeight: 38,
+    maxWidth: 148,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 4,
+    paddingHorizontal: 9,
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.75)",
+    borderRadius: 19,
+  },
+  headerEditText: {
+    flexShrink: 1,
+    color: "#ffffff",
+    fontSize: 12,
+    fontWeight: "700",
+    textAlign: "center",
   },
   content: {
     padding: 24,
@@ -1156,6 +1308,29 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     borderRadius: 48,
     backgroundColor: "#eaf8ff",
+  },
+  profileCard: {
+    gap: 0,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: "#cfe9f7",
+    borderRadius: 20,
+    backgroundColor: "#ffffff",
+  },
+  editProfileButton: {
+    minHeight: 46,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 7,
+    marginTop: 16,
+    borderRadius: 23,
+    backgroundColor: BLUE,
+  },
+  editProfileButtonText: {
+    color: "#ffffff",
+    fontSize: 15,
+    fontWeight: "700",
   },
   profileRow: {
     paddingVertical: 12,
@@ -1254,9 +1429,36 @@ const styles = StyleSheet.create({
     borderRadius: 23,
     backgroundColor: "#ffffff",
   },
+  settingsSubsectionTitle: {
+    color: TEXT_GRAY,
+    fontSize: 15,
+    fontWeight: "700",
+  },
+  managementButtonDisabled: {
+    minHeight: 46,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 14,
+    borderWidth: 1,
+    borderColor: BORDER_GRAY,
+    borderRadius: 23,
+    backgroundColor: "#f4f4f4",
+    opacity: 0.75,
+  },
   managementButtonText: {
     color: BLUE,
     fontSize: 15,
+    fontWeight: "700",
+  },
+  managementButtonDisabledText: {
+    color: MUTED_GRAY,
+    fontSize: 15,
+    fontWeight: "700",
+  },
+  comingSoonText: {
+    color: MUTED_GRAY,
+    fontSize: 12,
     fontWeight: "700",
   },
   managementButtonLabel: {
