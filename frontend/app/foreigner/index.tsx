@@ -164,6 +164,9 @@ export default function ForeignerHomeScreen() {
     };
   }, [getCurrentSession, refresh, session, status]);
 
+  const loadApplicationsRef = useRef(loadApplications);
+  loadApplicationsRef.current = loadApplications;
+
   useEffect(() => {
     let active = true;
     const unsubscribe = subscribeLanguage((nextLanguage) => {
@@ -184,8 +187,8 @@ export default function ForeignerHomeScreen() {
     if (status === "loading" || initialLoadStartedRef.current) return;
 
     initialLoadStartedRef.current = true;
-    return loadApplications("initial");
-  }, [loadApplications, status]);
+    return loadApplicationsRef.current("initial");
+  }, [status]);
 
   const openSearchPreferences = () => {
     searchInputRef.current?.blur();

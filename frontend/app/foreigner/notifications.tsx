@@ -265,6 +265,9 @@ export default function ForeignerNotificationsScreen() {
     };
 	}, [getCurrentSession, refresh, session, status]);
 
+  const loadNotificationsRef = useRef(loadNotifications);
+  loadNotificationsRef.current = loadNotifications;
+
   useEffect(() => {
     let active = true;
     const unsubscribe = subscribeLanguage((nextLanguage) => {
@@ -285,8 +288,8 @@ export default function ForeignerNotificationsScreen() {
 		if (status === "loading" || initialLoadStartedRef.current) return;
 
     initialLoadStartedRef.current = true;
-    return loadNotifications("initial");
-	}, [loadNotifications, status]);
+    return loadNotificationsRef.current("initial");
+	}, [status]);
 
   const notifications = useMemo(() => {
     const now = new Date();
