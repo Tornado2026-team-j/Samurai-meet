@@ -91,8 +91,8 @@ Chat Token は JWS 署名付き JWT とします。
 - `chat_id` は一つのマッチに限定する。
 - Chat TokenはRESTのAccess Tokenとして扱わず、対象chat transportの接続開始だけに使う。
 - `sid` で `sessions` と紐付け、セッション失効を反映する。
-- `token_seq` による更新順序管理はQUIC配送実装時に追加する。
-- Token を URL の query string に含めない。HTTP/3 なら認証ヘッダー、独自 QUIC なら認証 handshake frame を使う。
+- `token_seq` による更新順序管理は未実装（接続中ローテーション導入時に追加）。
+- Token を URL の query string に含めない。WebSocket配送では接続直後の認証フレーム `{"type":"auth","chat_token":"…"}` で渡す（5秒以内）。HTTP/3 なら認証ヘッダー、独自 QUIC なら認証 handshake frame を使う。
 
 ### 3.1 Claimごとの意味と検証
 
@@ -148,13 +148,13 @@ Chat Token を更新する場合も短い重複期間と `token_seq` を利用�
 - Refresh Token は Chat Token の切り替えには使わない。
 - 期限切れを待ってから更新せず、通信中の token が有効な間に切り替える。
 
-## 6. QUIC 接続の失効確認
+## 6. 接続の失効確認（WebSocket配送は実装済み）
 
-- 接続開始時に Chat Token、`sid`、`chat_id`、`matches`、`blocks`、ユーザー状態を確認する。
-- 接続中は 15〜30 秒ごとの heartbeat で `sessions.revoked_at` とチャット状態を確認する。
-- ログアウト、端末失効、ブロック、アカウント停止を検知したら、接続を閉じる。
-- PostgreSQL の複数 API インスタンスでは `LISTEN / NOTIFY` を追加できる。
-- Chat Token だけでは新しいチャット接続を無制限に作れないよう、ユーザー・チャット単位の接続数制限を設ける。
+- 接続開始時に Chat Token、`sid`、`chat_id`、`matches.status=accepted`、`blocks`、チャット open を確認する（`chat.authenticateWS`）。
+- 接続中は 20 秒ごとの heartbeat で `sessions`（`status=active` / `revoked_at IS NULL` / 未失効 / 未アイドル失効）とマッチ・ブロック・チャット状態を再確認する。失効を検知したら `closing` フレームを送って接続を閉じる。
+- heartbeat はアクティブな接続の `sessions.last_seen_at` を更新し、WebSocketだけを使うクライアントのセッションを維持する。
+- ユーザー・チャット単位の接続数を `maxConnectionsPerUser`（現在 4）で制限する。
+- 複数 API インスタンス構成での `LISTEN / NOTIFY` fan-out は未実装（§後述の未決事項）。現状のハブはプロセス内。
 
 ## 7. 0-RTT の扱い
 
@@ -201,26 +201,28 @@ QUICのtransport層が失われたpacketを再送することと、アプリケ�
 | 処理 | 実装 |
 | --- | --- |
 | Chat Token 取得、切り替え、期限管理 | TypeScript / React Native（未接続） |
-| QUIC / WebTransport クライアント（予定） | TypeScript + native module。Expo の対応状況を PoC で確認 |
-| Chat Token 発行・検証 | Go（REST発行部品あり。transport既定値の整合が未完了） |
-| QUIC / HTTP/3 サーバー（予定） | Go。採用ライブラリを PoC で決定 |
-| 参加者・セッション・ブロック判定 | Go + PostgreSQL |
-| 失効通知 | PostgreSQL `LISTEN / NOTIFY` または heartbeat / polling |
+| WebSocket クライアント | TypeScript（`frontend/services/websocket.ts` 未実装） |
+| QUIC / WebTransport クライアント（将来） | TypeScript + native module。Expo の対応状況を PoC で確認 |
+| Chat Token 発行・検証 | Go（REST発行・署名検証・WebSocket接続時検証を実装済み） |
+| WebSocket サーバー | Go（`coder/websocket`、`backend/internal/chat/websocket.go` 実装済み） |
+| QUIC / HTTP/3 サーバー（将来） | Go。採用ライブラリを PoC で決定（WebSocketで先行） |
+| 参加者・セッション・ブロック判定 | Go + PostgreSQL（実装済み） |
+| 失効通知 | heartbeat / polling（実装済み）。`LISTEN / NOTIFY` は複数インスタンス時に追加 |
 
-Expo の標準機能だけで QUIC / WebTransport クライアントが利用できない場合は、QUIC対応native moduleまたはdevelopment buildを導入します。WebSocketへの自動フォールバックは行わず、例外採用はチーム合意後に決定します。
+MVP のリアルタイム配送は WebSocket（実装済み）で、同じ Chat Token の認可モデルを適用します。QUIC / HTTP/3 WebTransport は将来の標準候補で、Expo の対応状況を見て後追いします。
 
-この文書変更は設計契約の更新であり、QUICサーバー、native QUIC / WebTransportクライアント、heartbeat、token世代管理、アプリケーション自動再送の実装完了を意味しません。実装追加時はAPI仕様、状態管理、監査ログ、負荷試験、実機E2Eを同じ変更で更新します。
+この文書は設計契約であり、QUICサーバー、native QUIC / WebTransportクライアント、フロントのWebSocketクライアント、アプリケーション自動再送の実装完了を意味しません。実装追加時はAPI仕様、状態管理、監査ログ、負荷試験、実機E2Eを同じ変更で更新します。
 
 ## 9. 受け入れ条件
 
-- 通常の Access Token で Chat Token を取得できる。
-- Chat Token をプロフィール、Recovery、Key-B、他のチャットへ利用できない。
-- 期限前に次の Chat Token をRESTで取得できる。
-- QUIC配送追加時に古いtokenの接続巻き戻しを拒否する。
-- セッション失効、ブロック、マッチ終了後にチャット接続が閉じる。
-- 0-RTT でメッセージ送信などの状態変更ができない。
-- 通信断・タイムアウト・一時的なサーバーエラー時は、同じ`client_message_id`で期限・回数を制限した自動再送ができる。
-- 入力不正、認証失効、認可拒否などの永続的な失敗では自動再送しない。
+- 通常の Access Token で Chat Token を取得できる。（実装済み）
+- Chat Token をプロフィール、Recovery、Key-B、他のチャットへ利用できない。（`aud` / `chat_id` / `transport` 束縛で実装済み）
+- 期限前に次の Chat Token をRESTで取得できる。（実装済み）
+- セッション失効、ブロック、マッチ終了後にチャット接続が閉じる。（heartbeatで実装済み・統合テスト `TestChatWebSocketDelivery`）
+- 0-RTT でメッセージ送信などの状態変更ができない。（WebSocketは1-RTT。QUIC採用時に再確認）
+- 古い token の接続巻き戻し拒否（`token_seq`）は未実装。接続確立時のみ token を検証し、維持はセッションheartbeatで担保。
+- 通信断・タイムアウト・一時的なサーバーエラー時は、同じ`client_message_id`で期限・回数を制限した自動再送ができる。（フロント側の受入条件）
+- 入力不正、認証失効、認可拒否などの永続的な失敗では自動再送しない。（フロント側の受入条件）
 - Chat Token、Refresh Token が URL、ログ、クラッシュレポートに出ない。
 
 ## 10. 未決事項
@@ -229,4 +231,4 @@ Expo の標準機能だけで QUIC / WebTransport クライアントが利用で
 - Expo Managed Workflow で利用できる native module とビルド方式。
 - Chat Token の期限、切り替え間隔、重複期間の負荷試験。Access Token の 1 分 Refresh とは別に決定する。
 - `token_seq` を接続単位で管理するか、ユーザー・チャット単位で管理するか。
-- QUICが技術的に成立しない場合に限るWebSocket例外採用の判断基準とチーム合意記録。
+- MVPはWebSocketで確定。QUIC / WebTransport へ移行するか、両対応にするかの判断基準と時期。

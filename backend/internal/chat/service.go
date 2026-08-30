@@ -41,6 +41,7 @@ type Service struct {
 	db            *sql.DB
 	signer        *auth.Signer
 	notifications *notification.Service
+	hub           *Hub
 }
 
 type ChatSummary struct {
@@ -102,7 +103,32 @@ func NewService(database *sql.DB, signer *auth.Signer, notificationServices ...*
 	if len(notificationServices) > 0 {
 		notifications = notificationServices[0]
 	}
-	return &Service{db: database, signer: signer, notifications: notifications}
+	return &Service{db: database, signer: signer, notifications: notifications, hub: newHub()}
+}
+
+// sessionActive confirms the session behind a Chat Token is still usable:
+// present, active, not revoked, not past its absolute or idle expiry.
+func (s *Service) sessionActive(ctx context.Context, userID, sessionID string, now time.Time) (time.Time, error) {
+	if strings.TrimSpace(sessionID) == "" {
+		return time.Time{}, ErrChatForbidden
+	}
+	var status, expires, lastSeen string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT status,expires_at,last_seen_at FROM sessions
+		WHERE id=$1 AND user_id=$2 AND revoked_at IS NULL`, sessionID, userID).Scan(&status, &expires, &lastSeen)
+	if errors.Is(err, sql.ErrNoRows) {
+		return time.Time{}, ErrChatForbidden
+	}
+	if err != nil {
+		return time.Time{}, err
+	}
+	expiry, expiryErr := time.Parse(time.RFC3339Nano, expires)
+	lastSeenAt, lastSeenErr := time.Parse(time.RFC3339Nano, lastSeen)
+	if expiryErr != nil || lastSeenErr != nil || status != string(auth.SessionActive) ||
+		!now.Before(expiry) || !now.Before(lastSeenAt.Add(auth.RefreshIdleTTL)) {
+		return time.Time{}, ErrChatForbidden
+	}
+	return expiry, nil
 }
 
 func (s *Service) List(ctx context.Context, userID string, now time.Time) ([]ChatSummary, error) {
@@ -190,58 +216,61 @@ func (s *Service) ListMessages(ctx context.Context, userID, chatID string, after
 	return page, nil
 }
 
-func (s *Service) SendMessage(ctx context.Context, userID, chatID string, input SendMessageInput, now time.Time) (Message, error) {
+// SendMessage stores one ciphertext message. It is idempotent on
+// (chat, sender, client_message_id): a repeated client_message_id returns the
+// original row with created=false. When a new row is stored, the other
+// participant's live WebSocket connections receive a message.created frame.
+func (s *Service) SendMessage(ctx context.Context, userID, chatID string, input SendMessageInput, now time.Time) (Message, bool, error) {
 	if err := validateMessageInput(input); err != nil {
-		return Message{}, err
+		return Message{}, false, err
 	}
 	access, err := s.loadChat(ctx, userID, chatID, false)
 	if err != nil {
-		return Message{}, err
+		return Message{}, false, err
 	}
 	if access.MatchStatus != "accepted" {
-		return Message{}, ErrChatNotAvailable
+		return Message{}, false, ErrChatNotAvailable
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return Message{}, err
+		return Message{}, false, err
 	}
 	defer tx.Rollback()
 	id, err := randomID()
 	if err != nil {
-		return Message{}, err
+		return Message{}, false, err
 	}
-	created := now.UTC().Format(time.RFC3339Nano)
-	createdNewMessage := false
+	timestamp := now.UTC().Format(time.RFC3339Nano)
 	var message Message
+	isNew := true
 	err = tx.QueryRowContext(ctx, `
 		INSERT INTO messages (id,chat_id,sender_user_id,client_message_id,ciphertext,nonce,algorithm,key_version,created_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
 		ON CONFLICT (chat_id,sender_user_id,client_message_id) DO NOTHING
 		RETURNING id,chat_id,sender_user_id,client_message_id,sequence,ciphertext,nonce,algorithm,key_version,created_at`,
-		id, access.ChatID, userID, input.ClientMessageID, input.Ciphertext, input.Nonce, input.Algorithm, input.KeyVersion, created).Scan(
+		id, access.ChatID, userID, input.ClientMessageID, input.Ciphertext, input.Nonce, input.Algorithm, input.KeyVersion, timestamp).Scan(
 		&message.ID, &message.ChatID, &message.SenderUserID, &message.ClientMessageID, &message.Sequence,
 		&message.Ciphertext, &message.Nonce, &message.Algorithm, &message.KeyVersion, &message.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
+		isNew = false
 		if err = tx.QueryRowContext(ctx, `
 			SELECT id,chat_id,sender_user_id,client_message_id,sequence,ciphertext,nonce,algorithm,key_version,created_at
 			FROM messages WHERE chat_id=$1 AND sender_user_id=$2 AND client_message_id=$3`,
 			access.ChatID, userID, input.ClientMessageID).Scan(
 			&message.ID, &message.ChatID, &message.SenderUserID, &message.ClientMessageID, &message.Sequence,
 			&message.Ciphertext, &message.Nonce, &message.Algorithm, &message.KeyVersion, &message.CreatedAt); err != nil {
-			return Message{}, err
+			return Message{}, false, err
 		}
 	} else if err != nil {
-		return Message{}, err
-	} else if _, err = tx.ExecContext(ctx, `UPDATE chat_threads SET updated_at=$1 WHERE id=$2`, created, access.ChatID); err != nil {
-		return Message{}, err
-	} else {
-		createdNewMessage = true
+		return Message{}, false, err
+	} else if _, err = tx.ExecContext(ctx, `UPDATE chat_threads SET updated_at=$1 WHERE id=$2`, timestamp, access.ChatID); err != nil {
+		return Message{}, false, err
 	}
-	if createdNewMessage && s.notifications != nil {
+	if isNew && s.notifications != nil {
 		actorName, nameErr := s.notificationActorNameTx(ctx, tx, userID)
 		if nameErr != nil {
-			return Message{}, nameErr
+			return Message{}, false, nameErr
 		}
 		if err = s.notifications.CreateTx(ctx, tx, notification.CreateInput{
 			UserID:      access.OtherUserID,
@@ -251,13 +280,16 @@ func (s *Service) SendMessage(ctx context.Context, userID, chatID string, input 
 			Destination: notification.DestinationChat,
 			ActorName:   actorName,
 		}, now); err != nil {
-			return Message{}, err
+			return Message{}, false, err
 		}
 	}
 	if err = tx.Commit(); err != nil {
-		return Message{}, err
+		return Message{}, false, err
 	}
-	return message, nil
+	if isNew && s.hub != nil {
+		s.hub.broadcastExceptUser(access.ChatID, userID, mustFrame(messageFrame{Type: serverFrameMessageCreated, Message: message}))
+	}
+	return message, isNew, nil
 }
 
 func (s *Service) notificationActorNameTx(ctx context.Context, tx *sql.Tx, userID string) (string, error) {
@@ -284,13 +316,18 @@ func (s *Service) MarkRead(ctx context.Context, userID, chatID string, sequence 
 	if !exists {
 		return ErrMessageNotFound
 	}
-	_, err = s.db.ExecContext(ctx, `
+	if _, err = s.db.ExecContext(ctx, `
 		INSERT INTO chat_read_states (chat_id,user_id,last_read_sequence,read_at)
 		VALUES ($1,$2,$3,$4)
 		ON CONFLICT (chat_id,user_id) DO UPDATE SET
 			last_read_sequence=GREATEST(chat_read_states.last_read_sequence,EXCLUDED.last_read_sequence),
-			read_at=EXCLUDED.read_at`, access.ChatID, userID, sequence, now.UTC().Format(time.RFC3339Nano))
-	return err
+			read_at=EXCLUDED.read_at`, access.ChatID, userID, sequence, now.UTC().Format(time.RFC3339Nano)); err != nil {
+		return err
+	}
+	if s.hub != nil {
+		s.hub.broadcastExceptUser(access.ChatID, userID, mustFrame(readFrame{Type: serverFrameMessageRead, UserID: userID, LastMessageSequence: sequence}))
+	}
+	return nil
 }
 
 func (s *Service) IssueTransportToken(ctx context.Context, userID, sessionID, chatID, transport string, now time.Time) (TransportToken, error) {
