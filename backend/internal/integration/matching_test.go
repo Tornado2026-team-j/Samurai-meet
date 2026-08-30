@@ -13,7 +13,10 @@ import (
 
 func TestRecruitmentMatchingLifecycle(t *testing.T) {
 	database := openIsolatedDatabase(t)
-	now := time.Date(2026, time.August, 26, 8, 0, 0, 0, time.UTC)
+	now := time.Now().UTC().Truncate(time.Second)
+	firstDate := now.In(time.FixedZone("Asia/Tokyo", 9*60*60)).AddDate(0, 0, 1).Format("2006-01-02")
+	secondDate := now.In(time.FixedZone("Asia/Tokyo", 9*60*60)).AddDate(0, 0, 2).Format("2006-01-02")
+	withdrawDate := now.In(time.FixedZone("Asia/Tokyo", 9*60*60)).AddDate(0, 0, 3).Format("2006-01-02")
 	ctx := context.Background()
 	travelerID := randomID(t)
 	guideID := randomID(t)
@@ -48,7 +51,7 @@ func TestRecruitmentMatchingLifecycle(t *testing.T) {
 	cardLatitude, cardLongitude := 35.681236, 139.767125
 	card, err := service.CreateRecruitment(ctx, travelerID, matching.RecruitmentInput{
 		Category:           "Places",
-		AvailableDate:      "2026-08-27",
+		AvailableDate:      firstDate,
 		StartTime:          "18:00",
 		EndTime:            "20:00",
 		Timezone:           "Asia/Tokyo",
@@ -68,7 +71,7 @@ func TestRecruitmentMatchingLifecycle(t *testing.T) {
 
 	guideLatitude, guideLongitude := 35.6812, 139.7672
 	found, err := service.SearchRecruitments(ctx, guideID, matching.SearchParams{
-		AvailableDate: "2026-08-27",
+		AvailableDate: firstDate,
 		RadiusKM:      3,
 		Latitude:      &guideLatitude,
 		Longitude:     &guideLongitude,
@@ -199,7 +202,7 @@ func TestRecruitmentMatchingLifecycle(t *testing.T) {
 
 	secondCard, err := service.CreateRecruitment(ctx, travelerID, matching.RecruitmentInput{
 		Category:           "Food",
-		AvailableDate:      "2026-08-28",
+		AvailableDate:      secondDate,
 		StartTime:          "12:00",
 		EndTime:            "13:00",
 		Timezone:           "Asia/Tokyo",
@@ -260,7 +263,7 @@ func TestRecruitmentMatchingLifecycle(t *testing.T) {
 
 	withdrawCard, err := service.CreateRecruitment(ctx, travelerID, matching.RecruitmentInput{
 		Category:           "Other",
-		AvailableDate:      "2026-08-29",
+		AvailableDate:      withdrawDate,
 		StartTime:          "12:00",
 		EndTime:            "13:00",
 		Timezone:           "Asia/Tokyo",
