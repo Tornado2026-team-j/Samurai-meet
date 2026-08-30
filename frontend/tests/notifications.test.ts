@@ -114,7 +114,7 @@ describe("通知APIクライアント", () => {
 
     expect(english).toEqual({
       pathname: "/japanese/guide-requested",
-      params: { matchId: "match-accepted" },
+      params: { matchId: "match-accepted", recruitmentId: "recruitment-1" },
     });
     expect(japanese).toEqual(english);
   });

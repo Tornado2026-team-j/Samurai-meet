@@ -210,10 +210,13 @@ export default function JapaneseApplicationsScreen() {
     return loadApplicationsRef.current();
   }, [status]);
 
-  const openApplication = (matchID: string) => {
+  const openApplication = (application: MatchView) => {
     router.push({
       pathname: "/japanese/guide-requested",
-      params: { matchId: matchID },
+      params: {
+        matchId: application.id,
+        recruitmentId: application.recruitment.id,
+      },
     });
   };
 
@@ -336,7 +339,7 @@ export default function JapaneseApplicationsScreen() {
                   <Pressable
                     accessibilityLabel={`${application.other_user.name || copy.userFallback}${copy.detailLabelSuffix}`}
                     accessibilityRole="button"
-                    onPress={() => openApplication(application.id)}
+                    onPress={() => openApplication(application)}
                     style={({ pressed }) => [styles.cardMain, pressed && styles.pressed]}
                   >
                     <View style={styles.cardHeader}>
