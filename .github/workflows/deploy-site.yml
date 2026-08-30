@@ -1,0 +1,101 @@
+name: Deploy Site to GitHub Pages
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'site/**'
+      - '.github/workflows/deploy-site.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: 'site/package-lock.json'
+
+      - name: Install dependencies
+        working-directory: ./site
+        run: npm install --frozen-lockfile
+
+      - name: Build site
+        working-directory: ./site
+        run: npm run build
+
+      - name: Check if gh-pages branch exists
+        id: check-branch
+        run: |
+          if git ls-remote --heads origin gh-pages | grep -q gh-pages; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create gh-pages branch if it doesn't exist
+        if: steps.check-branch.outputs.exists == 'false'
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git checkout --orphan gh-pages
+          git rm -rf .
+          git commit --allow-empty -m "Initial gh-pages branch"
+          git push -u origin gh-pages
+
+      - name: Checkout gh-pages branch
+        uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+          path: gh-pages-dir
+
+      - name: Deploy to gh-pages
+        run: |
+          rm -rf gh-pages-dir/*
+          cp -r site/dist/* gh-pages-dir/
+          
+          cd gh-pages-dir
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add -A
+          
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Deploy site: $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
+            git push origin gh-pages
+            echo "✅ Site deployed to GitHub Pages"
+          fi
+
+  enable-pages:
+    needs: build-and-deploy
+    runs-on: ubuntu-latest
+    if: always()
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Enable GitHub Pages
+        run: |
+          echo "GitHub Pages will be automatically enabled when gh-pages branch is pushed."
+          echo "Configuration: Pages will serve from the gh-pages branch (root)"
