@@ -150,6 +150,28 @@ describe("募集プレビュー", () => {
     });
   });
 
+  it("確認画面で選択したカテゴリとキーワードを公開API入力に反映する", () => {
+    const preview = buildRecruitmentPreview(
+      { ...draft, date: "2026-08-27" },
+      "Food",
+    );
+
+    const request = buildRecruitmentCreateRequest(
+      { ...draft, date: "2026-08-27" },
+      preview,
+      new Date("2026-08-26T00:00:00.000Z"),
+      undefined,
+      undefined,
+      {
+        category: "Places",
+        keywords: ["  temple  ", "Temple", "sightseeing"],
+      },
+    );
+
+    expect(request.category).toBe("Places");
+    expect(request.keywords).toEqual(["temple", "sightseeing"]);
+  });
+
   it("日付をまたぐ公開時刻を送信前に拒否する", () => {
 	const preview = buildRecruitmentPreview({ ...draft, date: "2026-08-27" }, "Food");
 
