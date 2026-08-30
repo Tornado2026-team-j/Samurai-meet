@@ -8,7 +8,12 @@ export type {
   RecruitmentDraft,
   RecruitmentPreview,
 } from "./recruitment";
-export type { MatchCardData, MatchCategory } from "./match";
+export {
+  MATCH_CATEGORIES,
+  isMatchCategory,
+  type MatchCardData,
+  type MatchCategory,
+} from "./match";
 export type {
   ForeignerNotification,
   ForeignerNotificationType,

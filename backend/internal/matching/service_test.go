@@ -55,6 +55,19 @@ func TestNormalizeRecruitmentInput(t *testing.T) {
 	if _, _, err := normalizeRecruitmentInput(invalid, now); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("empty description error = %v, want ErrInvalidInput", err)
 	}
+
+	for _, category := range []string{"Places", "Activity", "Other"} {
+		valid := input
+		valid.Category = category
+		if _, _, err := normalizeRecruitmentInput(valid, now); err != nil {
+			t.Errorf("category %q error = %v, want nil", category, err)
+		}
+	}
+	invalid = input
+	invalid.Category = "Heritage"
+	if _, _, err := normalizeRecruitmentInput(invalid, now); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("retired category error = %v, want ErrInvalidInput", err)
+	}
 }
 
 func TestNormalizeRecruitmentInputDefaultsToJSTAndRejectsOtherTimezones(t *testing.T) {
@@ -144,6 +157,16 @@ func TestNormalizeSearchParams(t *testing.T) {
 	invalid := SearchParams{Latitude: &latitude}
 	if _, err := normalizeSearchParams(invalid); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("partial coordinates error = %v, want ErrInvalidInput", err)
+	}
+
+	for _, category := range []string{"Food", "Places", "Activity", "Other"} {
+		params, err := normalizeSearchParams(SearchParams{Category: category})
+		if err != nil || params.Category != category {
+			t.Errorf("category %q normalized params = %#v, error = %v", category, params, err)
+		}
+	}
+	if _, err := normalizeSearchParams(SearchParams{Category: "Heritage"}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("retired search category error = %v, want ErrInvalidInput", err)
 	}
 }
 

@@ -23,6 +23,13 @@ const DefaultModel = "gemini-3.1-flash-lite"
 const PlaceholderAPIKey = "CHANGE_ME_GEMINI_API_KEY"
 
 const (
+	CategoryFood     = "Food"
+	CategoryPlaces   = "Places"
+	CategoryActivity = "Activity"
+	CategoryOther    = "Other"
+)
+
+const (
 	maxClassificationKeywords     = 5
 	maxClassificationKeywordRunes = 40
 )
@@ -88,7 +95,7 @@ func (s *Service) ClassifyWithKeywords(ctx context.Context, userID, description 
 	}
 
 	body, err := json.Marshal(map[string]any{
-		"systemInstruction": map[string]any{"parts": []map[string]string{{"text": "Classify the recruitment request into exactly one category and generate up to five short search keywords. Reply with only strict JSON using exactly these fields: category and keywords. category must be exactly Food, Heritage, Activity, or Other. keywords must be a JSON array of short, safe, useful strings, with no empty strings, control characters, or explanations. Food is eating, drinking, restaurants, cooking, or food markets. Heritage is visiting locations, sightseeing, culture, history, museums, temples, neighborhoods, or shopping. Activity is a physical, recreational, or participatory activity. Other is only for requests that do not fit the first three."}}},
+		"systemInstruction": map[string]any{"parts": []map[string]string{{"text": "Classify the recruitment request into exactly one category and generate up to five short search keywords. Reply with only strict JSON using exactly these fields: category and keywords. category must be exactly Food, Places, Activity, or Other. keywords must be a JSON array of short, safe, useful strings, with no empty strings, control characters, or explanations. Food is eating, drinking, restaurants, cooking, or food markets. Places is visiting locations, sightseeing, culture, history, museums, temples, neighborhoods, or shopping. Activity is a physical, recreational, or participatory activity. Other is only for requests that do not fit the first three."}}},
 		"contents":          []map[string]any{{"role": "user", "parts": []map[string]string{{"text": description}}}},
 		"generationConfig": map[string]any{
 			"temperature":      0,
@@ -97,7 +104,7 @@ func (s *Service) ClassifyWithKeywords(ctx context.Context, userID, description 
 			"responseSchema": map[string]any{
 				"type": "OBJECT",
 				"properties": map[string]any{
-					"category": map[string]any{"type": "STRING", "enum": []string{"Food", "Heritage", "Activity", "Other"}},
+					"category": map[string]any{"type": "STRING", "enum": []string{CategoryFood, CategoryPlaces, CategoryActivity, CategoryOther}},
 					"keywords": map[string]any{"type": "ARRAY", "items": map[string]any{"type": "STRING"}},
 				},
 				"required": []string{"category", "keywords"},
@@ -177,7 +184,7 @@ func parseClassificationJSON(text string) (ClassificationResult, error) {
 	}
 	category = strings.TrimSpace(category)
 	switch category {
-	case "Food", "Heritage", "Activity", "Other":
+	case CategoryFood, CategoryPlaces, CategoryActivity, CategoryOther:
 	default:
 		return ClassificationResult{}, errors.New("unsupported classification category")
 	}

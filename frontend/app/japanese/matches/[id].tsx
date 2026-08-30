@@ -32,13 +32,13 @@ const TEXT_GRAY = colors.text.muted;
 const HEADER_BLUE = colors.brand.sky;
 const CATEGORY_ICONS = {
   Food: "restaurant",
-  Heritage: "place",
+  Places: "place",
   Activity: "directions-run",
   Other: "category",
 } as const;
 const CATEGORY_IMAGES = {
   Food: require("../../../assets/images/food.png"),
-  Heritage: require("../../../assets/images/places-category.png"),
+  Places: require("../../../assets/images/places-category.png"),
   Activity: require("../../../assets/images/activity-category.png"),
   Other: require("../../../assets/images/other-category.png"),
 } as const;

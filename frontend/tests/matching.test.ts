@@ -111,13 +111,22 @@ describe("募集APIクライアント", () => {
 		globalThis.fetch = (async (input, init) => {
 			requestedURL = String(input);
 			requestedInit = init;
-			return new Response(JSON.stringify({ data: { category: "Heritage" } }), { status: 200 });
+			return new Response(JSON.stringify({ data: { category: "Places" } }), { status: 200 });
 		}) as typeof fetch;
 
-		await expect(classifyRecruitmentDescription("Please show me a temple.", session)).resolves.toBe("Heritage");
+		await expect(classifyRecruitmentDescription("Please show me a temple.", session)).resolves.toBe("Places");
 		expect(requestedURL).toContain("/recruitments/classify");
 		expect(requestedInit?.method).toBe("POST");
 		expect(JSON.parse(String(requestedInit?.body))).toEqual({ description: "Please show me a temple." });
+	});
+
+	it("廃止されたHeritageカテゴリを分類APIから受け入れない", async () => {
+		globalThis.fetch = (async () =>
+			new Response(JSON.stringify({ data: { category: "Heritage" } }), { status: 200 })) as unknown as typeof fetch;
+
+		await expect(classifyRecruitmentDescription("Please show me a temple.", session)).rejects.toThrow(
+			"recruitment classification response is invalid",
+		);
 	});
 
   it("応募履歴はrequester roleで送信済み・承認済みを取得する", async () => {
@@ -183,7 +192,7 @@ describe("募集APIクライアント", () => {
 
     await expect(listMyRecruitments(session)).resolves.toHaveLength(1);
     await expect(updateRecruitment(recruitment.id, session, {
-      category: "Heritage",
+      category: "Places",
       available_date: "2026-08-28",
       start_time: "09:30",
       end_time: "11:00",
@@ -198,7 +207,7 @@ describe("募集APIクライアント", () => {
     expect(requests[0]?.url).toContain("/recruitments/mine");
     expect(requests[1]?.method).toBe("PATCH");
     expect(JSON.parse(requests[1]?.body ?? "{}")).toMatchObject({
-      category: "Heritage",
+      category: "Places",
       available_date: "2026-08-28",
       start_time: "09:30",
       end_time: "11:00",

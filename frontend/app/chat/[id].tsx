@@ -57,7 +57,7 @@ type MaterialIconName = ComponentProps<typeof MaterialIcons>["name"];
 
 const CATEGORY_ICONS: Record<MatchCategory, MaterialIconName> = {
   Food: "restaurant",
-  Heritage: "place",
+  Places: "place",
   Activity: "directions-run",
   Other: "category",
 };
@@ -212,16 +212,40 @@ function latestSequence(messages: ChatMessageView[]): number {
   return messages.reduce((max, message) => Math.max(max, message.sequence), 0);
 }
 
+function deduplicateChatMessages(messages: ChatMessageView[]): ChatMessageView[] {
+  const unique: ChatMessageView[] = [];
+  const identityIndexes = new Map<string, number>();
+
+  for (const message of messages) {
+    const identities = [
+      message.id ? `id:${message.id}` : null,
+      message.client_message_id ? `client:${message.client_message_id}` : null,
+    ].filter((identity): identity is string => identity !== null);
+    const existingIndex = identities
+      .map((identity) => identityIndexes.get(identity))
+      .find((index): index is number => index !== undefined);
+
+    if (existingIndex === undefined) {
+      const nextIndex = unique.push(message) - 1;
+      for (const identity of identities) identityIndexes.set(identity, nextIndex);
+    } else {
+      unique[existingIndex] = message;
+      for (const identity of identities) identityIndexes.set(identity, existingIndex);
+    }
+  }
+
+  return unique.sort((left, right) => left.sequence - right.sequence);
+}
+
+function chatMessageKey(message: ChatMessageView): string {
+  return message.id || message.client_message_id || `sequence:${message.sequence}`;
+}
+
 function mergeChatMessage(
   current: ChatMessageView[],
   incoming: ChatMessageView,
 ): ChatMessageView[] {
-  const next = current.some((message) => message.id === incoming.id || message.client_message_id === incoming.client_message_id)
-    ? current.map((message) => (
-      message.id === incoming.id || message.client_message_id === incoming.client_message_id ? incoming : message
-    ))
-    : [...current, incoming];
-  return next.sort((left, right) => left.sequence - right.sequence);
+  return deduplicateChatMessages([...current, incoming]);
 }
 
 export default function ChatDetailScreen() {
@@ -251,6 +275,7 @@ export default function ChatDetailScreen() {
   const [safetySubmitting, setSafetySubmitting] = useState(false);
   const copy = COPY[language ?? "ja"];
   const moderation = useMemo(() => moderateChatText(draft), [draft]);
+  const displayMessages = useMemo(() => deduplicateChatMessages(messages), [messages]);
   const validation = validateChatDraft(draft);
   const readOnly = chat?.status === "completed" || locallyClosed !== null;
   const canSend = !readOnly && !sending && !validation && moderation.severity !== "block";
@@ -298,7 +323,9 @@ export default function ChatDetailScreen() {
           return { currentChat, currentMatch, page, userID: activeSession.user_id };
         }, controller.signal);
         if (!cancelled) {
-          const messageViews = result.page.items.map((message) => toChatMessageView(chatID, message, result.userID));
+          const messageViews = deduplicateChatMessages(
+            result.page.items.map((message) => toChatMessageView(chatID, message, result.userID)),
+          );
           setChat(result.currentChat);
           setMatch(result.currentMatch);
           setMessages(messageViews);
@@ -406,10 +433,10 @@ export default function ChatDetailScreen() {
   }, [chat?.status, chatID, copy.blockedLocal, getCurrentSession, locallyClosed, runWithSession, session]);
 
   useEffect(() => {
-    if (messages.length === 0) return;
+    if (displayMessages.length === 0) return;
     const handle = setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 50);
     return () => clearTimeout(handle);
-  }, [messages.length]);
+  }, [displayMessages.length]);
 
   const submit = async () => {
     if (!chatID || sending) return;
@@ -433,7 +460,7 @@ export default function ChatDetailScreen() {
       const sent = await runWithSession((activeSession, signal) => sendChatMessage(chatID, messageText, activeSession, undefined, signal), new AbortController().signal);
       const activeSession = getCurrentSession() ?? session;
       if (activeSession) {
-        setMessages((current) => [...current, toChatMessageView(chatID, sent, activeSession.user_id)]);
+        setMessages((current) => mergeChatMessage(current, toChatMessageView(chatID, sent, activeSession.user_id)));
       }
       setDraft("");
     } catch {
@@ -665,15 +692,15 @@ export default function ChatDetailScreen() {
           </View>
         ) : null}
 
-        {messages.length === 0 ? (
+        {displayMessages.length === 0 ? (
           <View style={styles.emptyPanel}>
             <MaterialIcons color={BLUE} name="forum" size={34} />
             <Text style={styles.emptyText}>{copy.empty}</Text>
           </View>
         ) : (
-          messages.map((message) => (
+          displayMessages.map((message) => (
             <ChatBubble
-              key={message.id}
+              key={chatMessageKey(message)}
               createdAt={message.created_at}
               encryptedFallback={!message.plaintext}
               mine={message.mine}

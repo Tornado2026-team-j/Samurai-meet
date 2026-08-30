@@ -17,13 +17,16 @@ func TestGeminiClassifyAcceptsOnlySupportedCategory(t *testing.T) {
 			t.Fatalf("request = %s %s", r.Method, r.URL.String())
 		}
 		body, _ := io.ReadAll(r.Body)
-		if !strings.Contains(string(body), "Food, Heritage, Activity, or Other") {
+		if !strings.Contains(string(body), "Food, Places, Activity, or Other") {
 			t.Fatalf("classification contract missing from request: %s", body)
 		}
 		var requestBody struct {
 			GenerationConfig struct {
 				ResponseMIMEType string `json:"responseMimeType"`
 				ResponseSchema   struct {
+					Properties map[string]struct {
+						Enum []string `json:"enum"`
+					} `json:"properties"`
 					Required []string `json:"required"`
 				} `json:"responseSchema"`
 			} `json:"generationConfig"`
@@ -37,7 +40,10 @@ func TestGeminiClassifyAcceptsOnlySupportedCategory(t *testing.T) {
 		if got := requestBody.GenerationConfig.ResponseSchema.Required; len(got) != 2 || got[0] != "category" || got[1] != "keywords" {
 			t.Fatalf("required fields = %#v, want category and keywords", got)
 		}
-		_, _ = w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"{\"category\":\"Heritage\",\"keywords\":[\"temple\",\"sightseeing\"]}"}]}}]}`))
+		if got := requestBody.GenerationConfig.ResponseSchema.Properties["category"].Enum; len(got) != 4 || got[0] != CategoryFood || got[1] != CategoryPlaces || got[2] != CategoryActivity || got[3] != CategoryOther {
+			t.Fatalf("category enum = %#v, want the four formal categories", got)
+		}
+		_, _ = w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"{\"category\":\"Places\",\"keywords\":[\"temple\",\"sightseeing\"]}"}]}}]}`))
 	}))
 	defer server.Close()
 
@@ -47,8 +53,8 @@ func TestGeminiClassifyAcceptsOnlySupportedCategory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ClassifyWithKeywords() error = %v", err)
 	}
-	if result.Category != "Heritage" || len(result.Keywords) != 2 || result.Keywords[0] != "temple" || result.Keywords[1] != "sightseeing" {
-		t.Fatalf("ClassifyWithKeywords() = %#v, want Heritage with temple and sightseeing", result)
+	if result.Category != CategoryPlaces || len(result.Keywords) != 2 || result.Keywords[0] != "temple" || result.Keywords[1] != "sightseeing" {
+		t.Fatalf("ClassifyWithKeywords() = %#v, want Places with temple and sightseeing", result)
 	}
 }
 
@@ -81,8 +87,8 @@ func TestParseClassificationJSON(t *testing.T) {
 	}{
 		{
 			name: "normal strict JSON",
-			text: `{"category":"Heritage","keywords":["temple"," sightseeing "]}`,
-			want: ClassificationResult{Category: "Heritage", Keywords: []string{"temple", "sightseeing"}},
+			text: `{"category":"Places","keywords":["temple"," sightseeing "]}`,
+			want: ClassificationResult{Category: "Places", Keywords: []string{"temple", "sightseeing"}},
 		},
 		{
 			name:      "unknown field",
@@ -97,6 +103,11 @@ func TestParseClassificationJSON(t *testing.T) {
 		{
 			name:      "unsupported category",
 			text:      `{"category":"Culture","keywords":["temple"]}`,
+			wantError: true,
+		},
+		{
+			name:      "retired Heritage category",
+			text:      `{"category":"Heritage","keywords":["temple"]}`,
 			wantError: true,
 		},
 		{
