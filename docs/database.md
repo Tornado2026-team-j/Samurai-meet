@@ -42,6 +42,9 @@
 | `0025_notifications.sql` | 通知、既読時刻、応募・承認／辞退・暗号化チャット送信イベント |
 | `0026_match_withdrawal.sql` | 応募取り下げによる`matches.status = cancelled`を追加 |
 | `0027_reports.sql` | 通報の原票`reports`（対象種別・理由・任意コメント・運営ステータス） |
+| `0028_chat_token_sequences.sql` | `(session, chat)`単位のChat Token世代カウンタ。発行のたびに+1し、接続維持中のトークンローテーションで巻き戻しを拒否する |
+| `0029_chat_threads_drop_status.sql` | 未使用だった`chat_threads.status` / `closed_at`列を削除（B3のデッドコード整理。スレッドclose flowは製品トリガーがないため実装せず削除を選択） |
+| `0030_chat_message_deletions.sql` | メッセージ削除の追記専用監査`chat_message_deletions`（chat/message/sequence/送信者/元created_at/理由/保持日数/削除時刻）。保持期間スイープが暗号文を消去した記録を残す |
 
 注意: 現行のmigration runnerはSQLファイルを順番に正規化して実行し、`schema_migrations`へファイル名と正規化SQLのSHA-256 checksum、適用時刻を記録する。同じchecksumの適用済みmigrationはスキップし、PostgreSQL advisory lockで同時起動を直列化する。適用済みファイルの内容が変わった場合はchecksum mismatchで起動を停止する。適用済みmigrationを編集・置換してはいけない。DDL変更は新しい番号のSQLを追加する。
 
@@ -201,8 +204,8 @@ Recovery Phraseで復号したMaster Keyの所有証明を一時的に受け付�
 - `recruitment_cards`: 日時、時間帯、timezone、keywords、説明、公開半径、位置、状態。
 - `blocks`: ブロックする側・される側の複合主キー。
 - `matches`: 関心、承認、完了の状態。`card_id`と`requester_user_id`を一意にする。
-- `chat_threads`: accepted/completedマッチに遅延作成する1対1チャット。`match_id`を一意にする。
-- `messages`: Base64URLの暗号文、nonce、アルゴリズム、鍵versionだけを保存する。平文本文は列にもログにも存在しない。送信者・チャット・`client_message_id`の組み合わせを一意にして再送を冪等化する。
+- `chat_threads`: accepted/completedマッチに遅延作成する1対1チャット。`match_id`を一意にする。利用可否は`matches.status`と`blocks`で判定し、スレッド自体の状態列は持たない（`0029`で`status`/`closed_at`を削除）。
+- `messages`: Base64URLの暗号文、nonce、アルゴリズム、鍵versionだけを保存する。平文本文は列にもログにも存在しない。送信者・チャット・`client_message_id`の組み合わせを一意にして再送を冪等化する。`deleted_at` は保持期間スイープが打ち（§7）、同時に暗号文・nonce を消去する。読み取りは全経路で `deleted_at IS NULL` 済み。
 - `chat_read_states`: ユーザーごとの最後の既読`sequence`。
 - `meeting_sessions`: acceptedマッチのplanned/active/completed/cancelled会合状態。
 - `meeting_proximity_latest`: 会合中の参加者ごと・方式ごとの最新1件。Bluetooth MAC、RSSI生値、ビーコンID、緯度経度は保存せず、会合終了時に削除する。
@@ -225,7 +228,17 @@ Recovery Phraseで復号したMaster Keyの所有証明を一時的に受け付�
 4. refresh/passkey/challenge/key envelope/device/envelope/nonce/handoff/photo metadataを削除して、users rowを完全削除する。
 5. 削除結果を監査ログへ記録する（秘密情報は記録しない）。監査ログ実装まではアプリログへ秘密値を出さない。
 
-バックアップ上の物理削除期限、チャット保持期間、監査ログ保持期間は運用・法務決定後にmigrationと運用手順へ反映する。
+### チャットメッセージの保持期間
+
+作成から `CHAT_MESSAGE_RETENTION_DAYS`（既定 180 日、運用・法務で調整）を過ぎた
+`messages` は、6 時間ごとの定期スイープ（`chat.Service.PurgeExpiredMessages`）で
+`deleted_at` を打ち、`ciphertext` と `nonce` を空文字へ消去し、
+`chat_message_deletions` に監査行を 1 件残す。読み取り系クエリ（履歴・未読数・
+複数インスタンス fan-out の再取得）はすべて `deleted_at IS NULL` で除外するため、
+tombstone 済みメッセージは表示・配送されない。スイープは全インスタンスで安全に
+実行でき、`chat_message_deletions.message_id` の UNIQUE で監査行の重複を防ぐ。
+
+バックアップ上の物理削除期限、監査ログ保持期間は運用・法務決定後にmigrationと運用手順へ反映する。
 
 ## 8. v2クライアント所有鍵の追加テーブル
 

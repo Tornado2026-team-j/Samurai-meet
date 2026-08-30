@@ -21,7 +21,6 @@ var (
 	ErrChatBlocked       = errors.New("chat participants are blocked")
 	ErrChatInvalidInput  = errors.New("invalid chat input")
 	ErrChatNotAvailable  = errors.New("chat is not available for this match")
-	ErrChatClosed        = errors.New("chat is closed")
 	ErrMessageNotFound   = errors.New("message not found")
 	ErrMessageTooLarge   = errors.New("message is too large")
 	ErrChatSignerMissing = errors.New("chat token signer is not configured")
@@ -42,6 +41,14 @@ type Service struct {
 	signer        *auth.Signer
 	notifications *notification.Service
 	hub           *Hub
+	sendLimiter   *sendRateLimiter
+
+	instanceID     string
+	clusterCh      string
+	clusterEnabled bool
+	clusterLogf    func(string, ...any)
+
+	retentionDays int
 }
 
 type ChatSummary struct {
@@ -91,7 +98,6 @@ type TransportToken struct {
 type chatAccess struct {
 	ChatID      string
 	MatchID     string
-	ChatStatus  string
 	MatchStatus string
 	OwnerUserID string
 	RequesterID string
@@ -103,7 +109,25 @@ func NewService(database *sql.DB, signer *auth.Signer, notificationServices ...*
 	if len(notificationServices) > 0 {
 		notifications = notificationServices[0]
 	}
-	return &Service{db: database, signer: signer, notifications: notifications, hub: newHub()}
+	return &Service{db: database, signer: signer, notifications: notifications, hub: newHub(), sendLimiter: newSendRateLimiter(), instanceID: newInstanceID(), retentionDays: defaultMessageRetentionDays}
+}
+
+// SetClusterLogger installs a logger for cross-instance fan-out diagnostics
+// (listener reconnects, publish failures). Optional; nil stays silent.
+func (s *Service) SetClusterLogger(logf func(string, ...any)) {
+	if s != nil {
+		s.clusterLogf = logf
+	}
+}
+
+// ConfigureSendRateLimit overrides the per-user message send budget. capacity
+// is the burst size; refillPerSecond is the sustained send rate. Non-positive
+// values leave the corresponding default in place.
+func (s *Service) ConfigureSendRateLimit(capacity int, refillPerSecond float64) {
+	if s == nil || s.sendLimiter == nil {
+		return
+	}
+	s.sendLimiter.configure(capacity, refillPerSecond)
 }
 
 // sessionActive confirms the session behind a Chat Token is still usable:
@@ -216,13 +240,25 @@ func (s *Service) ListMessages(ctx context.Context, userID, chatID string, after
 	return page, nil
 }
 
-// SendMessage stores one ciphertext message. It is idempotent on
-// (chat, sender, client_message_id): a repeated client_message_id returns the
-// original row with created=false. When a new row is stored, the other
-// participant's live WebSocket connections receive a message.created frame.
+// SendMessage stores one ciphertext message from a REST caller. It is
+// idempotent on (chat, sender, client_message_id): a repeated client_message_id
+// returns the original row with created=false. When a new row is stored, every
+// live WebSocket connection on the chat receives a message.created frame.
 func (s *Service) SendMessage(ctx context.Context, userID, chatID string, input SendMessageInput, now time.Time) (Message, bool, error) {
+	return s.sendMessage(ctx, userID, chatID, input, now, nil)
+}
+
+// sendMessage is the shared implementation. origin is the socket that issued
+// the send (nil for REST); it is the only connection excluded from the
+// message.created fan-out, so the sender's other devices stay in sync.
+func (s *Service) sendMessage(ctx context.Context, userID, chatID string, input SendMessageInput, now time.Time, origin *wsConn) (Message, bool, error) {
 	if err := validateMessageInput(input); err != nil {
 		return Message{}, false, err
+	}
+	if s.sendLimiter != nil {
+		if allowed, retryAfter := s.sendLimiter.allow(userID, now); !allowed {
+			return Message{}, false, &RateLimitError{RetryAfter: retryAfter}
+		}
 	}
 	access, err := s.loadChat(ctx, userID, chatID, false)
 	if err != nil {
@@ -287,7 +323,10 @@ func (s *Service) SendMessage(ctx context.Context, userID, chatID string, input 
 		return Message{}, false, err
 	}
 	if isNew && s.hub != nil {
-		s.hub.broadcastExceptUser(access.ChatID, userID, mustFrame(messageFrame{Type: serverFrameMessageCreated, Message: message}))
+		s.hub.broadcastExcept(access.ChatID, origin, mustFrame(messageFrame{Type: serverFrameMessageCreated, Message: message}))
+	}
+	if isNew {
+		s.publishClusterEvent(clusterEvent{Kind: serverFrameMessageCreated, ChatID: access.ChatID, Sequence: message.Sequence})
 	}
 	return message, isNew, nil
 }
@@ -301,13 +340,21 @@ func (s *Service) notificationActorNameTx(ctx context.Context, tx *sql.Tx, userI
 	return strings.TrimSpace(name), err
 }
 
-// MarkRead advances the caller's read marker for a chat. last_message_sequence
-// is treated as a high-water mark, not an exact message id: the global
-// BIGSERIAL `messages.sequence` is sparse within any one chat, so a client just
-// echoes back the highest sequence it has seen. The value is clamped to the
-// newest live message in this chat and the stored marker only ever moves
-// forward. The other participant is notified with the effective stored marker.
+// MarkRead advances the caller's read marker for a chat from a REST caller.
+// last_message_sequence is treated as a high-water mark, not an exact message
+// id: the global BIGSERIAL `messages.sequence` is sparse within any one chat, so
+// a client just echoes back the highest sequence it has seen. The value is
+// clamped to the newest live message in this chat and the stored marker only
+// ever moves forward. The receipt is fanned out to every live socket on the
+// chat with the effective stored marker.
 func (s *Service) MarkRead(ctx context.Context, userID, chatID string, sequence int64, now time.Time) error {
+	return s.markRead(ctx, userID, chatID, sequence, now, nil)
+}
+
+// markRead is the shared implementation. origin is the socket that issued the
+// read (nil for REST) and is the only connection excluded from the receipt
+// fan-out, so the reader's other devices also advance their read watermark.
+func (s *Service) markRead(ctx context.Context, userID, chatID string, sequence int64, now time.Time, origin *wsConn) error {
 	if sequence <= 0 {
 		return ErrChatInvalidInput
 	}
@@ -336,8 +383,9 @@ func (s *Service) MarkRead(ctx context.Context, userID, chatID string, sequence 
 		return err
 	}
 	if s.hub != nil {
-		s.hub.broadcastExceptUser(access.ChatID, userID, mustFrame(readFrame{Type: serverFrameMessageRead, UserID: userID, LastMessageSequence: stored}))
+		s.hub.broadcastExcept(access.ChatID, origin, mustFrame(readFrame{Type: serverFrameMessageRead, UserID: userID, LastMessageSequence: stored}))
 	}
+	s.publishClusterEvent(clusterEvent{Kind: serverFrameMessageRead, ChatID: access.ChatID, UserID: userID, Sequence: stored})
 	return nil
 }
 
@@ -363,11 +411,29 @@ func (s *Service) IssueTransportToken(ctx context.Context, userID, sessionID, ch
 	if access.MatchStatus != "accepted" {
 		return TransportToken{}, ErrChatNotAvailable
 	}
-	token, claims, err := s.signer.IssueChatToken(userID, sessionID, access.ChatID, transport, now)
+	seq, err := s.nextTokenSeq(ctx, sessionID, access.ChatID, now)
+	if err != nil {
+		return TransportToken{}, err
+	}
+	token, claims, err := s.signer.IssueChatToken(userID, sessionID, access.ChatID, transport, seq, now)
 	if err != nil {
 		return TransportToken{}, err
 	}
 	return TransportToken{Token: token, ExpiresAt: time.Unix(claims.ExpiresAt, 0).UTC(), Transport: transport}, nil
+}
+
+// nextTokenSeq returns the next monotonic Chat Token generation number for a
+// (session, chat) pair. Every transport-token issue advances it; a live
+// connection rejects an in-connection rotation to a lower number.
+func (s *Service) nextTokenSeq(ctx context.Context, sessionID, chatID string, now time.Time) (int64, error) {
+	var seq int64
+	err := s.db.QueryRowContext(ctx, `
+		INSERT INTO chat_token_sequences (session_id,chat_id,seq,updated_at)
+		VALUES ($1,$2,1,$3)
+		ON CONFLICT (session_id,chat_id) DO UPDATE SET
+			seq=chat_token_sequences.seq+1, updated_at=EXCLUDED.updated_at
+		RETURNING seq`, sessionID, chatID, now.UTC().Format(time.RFC3339Nano)).Scan(&seq)
+	return seq, err
 }
 
 func (s *Service) ensureChat(ctx context.Context, userID, matchID string, now time.Time) (chatAccess, error) {
@@ -404,22 +470,19 @@ func (s *Service) ensureChat(ctx context.Context, userID, matchID string, now ti
 	if userID == access.OwnerUserID {
 		access.OtherUserID = access.RequesterID
 	}
-	var existingStatus string
-	err = tx.QueryRowContext(ctx, `SELECT id,status FROM chat_threads WHERE match_id=$1 FOR UPDATE`, matchID).Scan(&access.ChatID, &existingStatus)
+	err = tx.QueryRowContext(ctx, `SELECT id FROM chat_threads WHERE match_id=$1 FOR UPDATE`, matchID).Scan(&access.ChatID)
 	if errors.Is(err, sql.ErrNoRows) {
 		access.ChatID, err = randomID()
 		if err != nil {
 			return chatAccess{}, err
 		}
 		created := now.UTC().Format(time.RFC3339Nano)
-		if _, err = tx.ExecContext(ctx, `INSERT INTO chat_threads (id,match_id,status,created_at,updated_at) VALUES ($1,$2,'open',$3,$3)`, access.ChatID, matchID, created); err != nil {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO chat_threads (id,match_id,created_at,updated_at) VALUES ($1,$2,$3,$3)`, access.ChatID, matchID, created); err != nil {
 			return chatAccess{}, err
 		}
-		existingStatus = "open"
 	} else if err != nil {
 		return chatAccess{}, err
 	}
-	access.ChatStatus = existingStatus
 	if err = tx.Commit(); err != nil {
 		return chatAccess{}, err
 	}
@@ -432,10 +495,10 @@ func (s *Service) loadChat(ctx context.Context, userID, chatID string, allowComp
 	}
 	var access chatAccess
 	if err := s.db.QueryRowContext(ctx, `
-		SELECT c.id,c.match_id,c.status,m.status,m.owner_user_id,m.requester_user_id
+		SELECT c.id,c.match_id,m.status,m.owner_user_id,m.requester_user_id
 		FROM chat_threads c JOIN matches m ON m.id=c.match_id
 		WHERE c.id=$1`, chatID).Scan(
-		&access.ChatID, &access.MatchID, &access.ChatStatus, &access.MatchStatus, &access.OwnerUserID, &access.RequesterID); errors.Is(err, sql.ErrNoRows) {
+		&access.ChatID, &access.MatchID, &access.MatchStatus, &access.OwnerUserID, &access.RequesterID); errors.Is(err, sql.ErrNoRows) {
 		return chatAccess{}, ErrChatNotFound
 	} else if err != nil {
 		return chatAccess{}, err
@@ -457,9 +520,6 @@ func (s *Service) loadChat(ctx context.Context, userID, chatID string, allowComp
 		access.OtherUserID = access.RequesterID
 	} else {
 		access.OtherUserID = access.OwnerUserID
-	}
-	if access.ChatStatus != "open" && !allowCompleted {
-		return chatAccess{}, ErrChatClosed
 	}
 	return access, nil
 }

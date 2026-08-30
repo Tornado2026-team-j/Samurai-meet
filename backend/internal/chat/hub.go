@@ -4,12 +4,10 @@ import "sync"
 
 // Hub is an in-process registry of live WebSocket connections keyed by chat ID.
 //
-// It is deliberately single-instance: with more than one API process, a
-// message sent through process A is not delivered to a socket on process B.
-// The follow-up is a PostgreSQL LISTEN/NOTIFY fan-out (see
-// docs/features/chat-transport.md §6); until then run chat delivery on one
-// instance or accept that WebSocket clients reconcile missed messages over
-// REST using the sequence cursor.
+// It only reaches sockets on this process. Cross-instance delivery is handled
+// by clusterFanout (cluster.go): a PostgreSQL LISTEN/NOTIFY bridge that
+// re-delivers remote message.created / message.read / typing events to this
+// hub's local sockets. See docs/features/chat-transport.md §6.
 type Hub struct {
 	mu    sync.RWMutex
 	rooms map[string]map[*wsConn]struct{}
@@ -58,13 +56,35 @@ func (h *Hub) connectionCount(chatID, userID string) int {
 }
 
 // broadcastExceptUser delivers payload to every socket on the chat whose user
-// is not exceptUserID. A socket whose buffer is full is dropped: it will
-// reconcile over REST on reconnect.
+// is not exceptUserID. It is used for ephemeral, per-user signals such as
+// typing indicators, where the sender's own devices must not echo the event.
+// A socket whose buffer is full is dropped: it will reconcile over REST on
+// reconnect.
 func (h *Hub) broadcastExceptUser(chatID, exceptUserID string, payload []byte) {
 	h.mu.RLock()
 	targets := make([]*wsConn, 0, len(h.rooms[chatID]))
 	for c := range h.rooms[chatID] {
 		if c.userID != exceptUserID {
+			targets = append(targets, c)
+		}
+	}
+	h.mu.RUnlock()
+	for _, c := range targets {
+		c.enqueue(payload)
+	}
+}
+
+// broadcastExcept delivers payload to every socket on the chat except the one
+// that originated the action (exceptConn, which may be nil for a REST-driven
+// action). Excluding a single socket rather than the whole user means the
+// sender's other devices still receive durable events such as message.created
+// and read receipts, which is required for multi-device consistency. A socket
+// whose buffer is full is dropped: it will reconcile over REST on reconnect.
+func (h *Hub) broadcastExcept(chatID string, exceptConn *wsConn, payload []byte) {
+	h.mu.RLock()
+	targets := make([]*wsConn, 0, len(h.rooms[chatID]))
+	for c := range h.rooms[chatID] {
+		if c != exceptConn {
 			targets = append(targets, c)
 		}
 	}

@@ -45,6 +45,55 @@ func TestHubBroadcastExceptUserSkipsSender(t *testing.T) {
 	}
 }
 
+func TestHubBroadcastExceptSkipsOnlyOriginSocket(t *testing.T) {
+	h := newHub()
+	sender := newTestConn("chat-1", "alice")
+	senderOtherDevice := newTestConn("chat-1", "alice")
+	receiver := newTestConn("chat-1", "bob")
+	h.register(sender)
+	h.register(senderOtherDevice)
+	h.register(receiver)
+
+	h.broadcastExcept("chat-1", sender, []byte("created"))
+
+	for name, conn := range map[string]*wsConn{"sender other device": senderOtherDevice, "receiver": receiver} {
+		select {
+		case got := <-conn.send:
+			if string(got) != "created" {
+				t.Fatalf("%s payload = %q", name, got)
+			}
+		default:
+			t.Fatalf("%s did not get the broadcast", name)
+		}
+	}
+	select {
+	case got := <-sender.send:
+		t.Fatalf("origin socket should have been skipped, got %q", got)
+	default:
+	}
+}
+
+func TestHubBroadcastExceptNilReachesEverySocket(t *testing.T) {
+	h := newHub()
+	first := newTestConn("chat-1", "alice")
+	second := newTestConn("chat-1", "bob")
+	h.register(first)
+	h.register(second)
+
+	h.broadcastExcept("chat-1", nil, []byte("rest"))
+
+	for _, conn := range []*wsConn{first, second} {
+		select {
+		case got := <-conn.send:
+			if string(got) != "rest" {
+				t.Fatalf("payload = %q", got)
+			}
+		default:
+			t.Fatal("socket did not get the REST-driven broadcast")
+		}
+	}
+}
+
 func TestHubUnregisterDropsRoom(t *testing.T) {
 	h := newHub()
 	c := newTestConn("chat-1", "alice")
