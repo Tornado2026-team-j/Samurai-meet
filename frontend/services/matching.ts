@@ -358,16 +358,44 @@ export function rejectMatch(
   return updateMatch(matchId, "reject", session, signal);
 }
 
+/**
+ * Cancel an accepted match from the chat screen. Either participant may call
+ * it, and it also accepts a still-pending match. The backend frees the
+ * recruitment-card slot and notifies the other person.
+ */
+export async function cancelMatch(
+  matchId: string,
+  session: Session,
+  signal?: AbortSignal,
+): Promise<RecruitmentInterest> {
+  const response = await requestAPI<DataResponse<RecruitmentInterest>>(
+    `/matches/${encodeURIComponent(matchId)}/cancel`,
+    session,
+    { method: "POST", signal },
+  );
+  if (!response.data) throw new Error("match response is empty");
+  return response.data;
+}
+
 export async function declineMatch(
   matchId: string,
   session: Session,
   signal?: AbortSignal,
 ): Promise<RecruitmentInterest> {
   try {
-    return await withdrawRecruitmentInterest(matchId, session, signal);
+    return await cancelMatch(matchId, session, signal);
   } catch (error) {
-    if (error instanceof APIError && (error.status === 403 || error.code === "invalid_matching_state")) {
-      return rejectMatch(matchId, session, signal);
+    // Fall back to the pending-only endpoints if the cancel route is
+    // unavailable (older backend) or rejects the current match state.
+    if (error instanceof APIError && [403, 404, 405, 409].includes(error.status)) {
+      try {
+        return await withdrawRecruitmentInterest(matchId, session, signal);
+      } catch (withdrawError) {
+        if (withdrawError instanceof APIError && (withdrawError.status === 403 || withdrawError.code === "invalid_matching_state")) {
+          return rejectMatch(matchId, session, signal);
+        }
+        throw withdrawError;
+      }
     }
     throw error;
   }

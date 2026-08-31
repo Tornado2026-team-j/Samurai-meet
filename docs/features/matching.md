@@ -31,7 +31,8 @@ card:  draft -> open -> matched
                   └-> expired
 
 match: pending -> accepted -> completed
-       └-> cancelled（応募者が取り下げ）
+       ├-> cancelled（pending: 応募者が取り下げ / accepted: どちらかがチャットから辞退）
+       └-> rejected（募集者が却下）
 ```
 
 - `draft`：未公開。作成者だけが閲覧可能。
@@ -79,7 +80,8 @@ match: pending -> accepted -> completed
 - `GET /api/v1/matches/{id}`
 - `POST /api/v1/matches/{id}/accept`
 - `POST /api/v1/matches/{id}/reject`
-- `POST /api/v1/matches/{id}/withdraw`
+- `POST /api/v1/matches/{id}/withdraw`（応募者・`pending`のみ）
+- `POST /api/v1/matches/{id}/cancel`（どちらの参加者でも・`pending`／`accepted`。チャット画面の「辞退」）
 - `POST /api/v1/matches/{id}/complete`
 - `POST /api/v1/matches/{id}/meeting`
 - テーブル：`recruitment_cards`、`matches`、`blocks`
@@ -95,6 +97,8 @@ match: pending -> accepted -> completed
 `timezone`を省略または空にした募集入力は`Asia/Tokyo`へ正規化し、他のtimezoneは拒否します。`created_at`や`expires_at`などの絶対時刻はUTCで扱います。ISO内部値、JST固定の日時正規化、期限境界は自動テストで確認済みですが、過去時刻・日跨ぎ・端末日時pickerの実機確認は未完了です。
 
 応募者は`pending`中に関心を取り下げられ、matchの状態は`cancelled`になります。取り下げ後の行は履歴と通知の冪等性のため保持します。
+
+`accepted`後は、募集者・応募者のどちらでも`POST /matches/{id}/cancel`でチャット画面から辞退でき、matchは`cancelled`へ遷移します。`accepted`が占有していた募集枠は解放され、`matched`だったカードは`open`へ戻ります。相手には通知（応募者発=`application_withdrawn`、募集者発=`guide_canceled`）が届きます。`completed`のmatchは辞退できません。
 
 ## 7. 受け入れ条件
 

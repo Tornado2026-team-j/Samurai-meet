@@ -110,6 +110,7 @@ QUICの理由、JWS claimの検証、heartbeat、失敗時の自動再送、WebS
 - `POST /chats/{id}/attachments`（チャット写真の暗号文アップロード。`accepted` のみ）
 - `GET /chats/{id}/attachments/{attachment_id}`（チャット写真の暗号文取得。`accepted` / `completed`）
 - `POST /matches/{id}/meeting`
+- `POST /matches/{id}/cancel`（チャット画面からの案件辞退。`accepted` マッチをどちらの参加者でも `cancelled` にでき、募集枠を解放し相手へ通知する。[matching.md](matching.md)）
 - `GET|POST /meetings/{id}/proximity`
 - QUIC endpoint：将来、環境ごとに設定する（`chat_id`単位。HTTP/3 WebTransportの場合はHTTPS URLとして提供）
 - テーブル：`matches`、`chat_threads`、`messages`、`chat_read_states`、`chat_token_sequences`、`chat_message_deletions`、`chat_attachments`、`photos`

@@ -261,6 +261,8 @@ func matchAction(service *matching.Service, sessions *auth.SessionService, meeti
 			result, err = service.RejectMatch(r.Context(), claims.Subject, matchID, time.Now())
 		case "withdraw":
 			result, err = service.WithdrawInterest(r.Context(), claims.Subject, matchID, time.Now())
+		case "cancel":
+			result, err = service.CancelMatch(r.Context(), claims.Subject, matchID, time.Now())
 		default:
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "match_not_found"})
 			return
