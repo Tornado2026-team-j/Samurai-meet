@@ -1,8 +1,10 @@
 # iPhone実機E2E手順書（現行実装）
 
-最終更新: 2026-09-01  
-対象コミット: `ef4ae2096ca88b7e6f354c558492f3948941a607`  
+最終更新: 2026-09-01
+対象コードコミット: `ef4ae2096ca88b7e6f354c558492f3948941a607`
 判定: **実機未確認のため未完了**
+
+> この手順書の対象は上記コードコミットです。今回の変更はdocsだけで、アプリやサーバーのソースは変更しません。更新時点の作業ツリーには別作業の未コミットソース差分があるため、その作業ツリーを実機ビルドに使わず、対象コードと同じソース状態のクリーンなコミットからビルドしてください。
 
 この手順書は、現行の画面・API・サーバー設定を使って、iPhone実機で次の受入確認を行うためのものです。
 
@@ -34,18 +36,36 @@
 | アプリ内通知 | `/foreigner/notifications`、`/japanese/notifications`。通知本文の言語に関係なく構造化IDで遷移 | `GET /api/v1/notifications`、`POST /api/v1/notifications/{id}/read` | 実機未確認。OSプッシュは未実装 |
 | 応募取消 | `/japanese/applications` の保留中応募 → 「取り下げる」 | `POST /api/v1/matches/{id}/withdraw` | 承認前のみ。実機未確認 |
 | チャット本文 | `/chat` → `/chat/[id]`。送信前にModerationし、許可時だけ暗号化して送信 | `POST /api/v1/chats/{id}/moderation` → `POST /api/v1/chats/{id}/messages` | Expo GoはREST同期。実機Moderation未確認 |
-| チャット通報・ブロック | チャット右上の安全メニュー、メッセージ長押し/タップの通報 | `POST /api/v1/reports`、`POST /api/v1/blocks/{user_id}` | 実機未確認。運営キューは未実装 |
+| チャット通報・ブロック | チャット右上の安全メニュー、メッセージ長押し/タップの通報 | `POST /api/v1/reports`、`POST /api/v1/blocks`（body: `user_id`） | 実機未確認。運営キューは未実装 |
 | チャット画像 | バックエンドの暗号文BLOB APIのみ。現行`/chat/[id]`に画像選択・送信UIなし | `POST /api/v1/chats/{id}/attachments`、`GET /api/v1/chats/{id}/attachments/{attachment_id}` | **BLOCKED** |
 | チャットKey B | 現行Key Bは端末証明・プロフィール画像/端末移行用。チャット本文・添付の共有鍵ではない | — | **BLOCKED（未実装）** |
-| HTTP/3 WebTransport | サーバー側はWebTransportのみ。iOS側は`SamuraiMeetWebTransport` native moduleが必要 | `POST /api/v1/chats/{id}/transport-token`、HTTP/3 `CONNECT /api/v1/wt/chats/{id}` | **BLOCKED（現行リポジトリにnative bridgeなし）** |
+| HTTP/3 WebTransport | `ENABLE_CHAT_WEBTRANSPORT=true`で有効化するサーバー経路。iOS側は`SamuraiMeetWebTransport` native moduleが必要 | `POST /api/v1/chats/{id}/transport-token`、HTTP/3 `CONNECT /api/v1/wt/chats/{id}` | **BLOCKED（現行リポジトリにnative bridgeなし）** |
 | チャット翻訳 | 現行画面はローカル辞書による限定表示。サーバーGemini翻訳経路なし | — | **NOT RUN（Gemini翻訳未実装）** |
 | 画像Moderation | 画像ModerationのAPI配線なし | — | **BLOCKED（未実装）** |
 
-根拠となる実装位置は、[フロントエンドREADME](../frontend/README.md)、[バックエンドAPI仕様](../backend/API_SPEC.md)、[チャット通信仕様](chat-transport.md)、[現行進捗](../docs/進捗.md)、および各画面・サービスのソースです。`backend/API_SPEC.md`に過去のWebSocket表現が残る箇所はありますが、実機確認では現行コードと`backend/HANDOFF.md`のWebTransport契約を優先します。
+根拠となる実装位置は、[フロントエンドREADME](../frontend/README.md)、[バックエンドAPI仕様](../backend/API_SPEC.md)、[チャット通信仕様](features/chat-transport.md)、[現行進捗](進捗.md)、および各画面・サービスのソースです。`backend/API_SPEC.md`に過去のWebSocket表現が残る箇所はありますが、実機確認では対象コードのルーティングと`backend/HANDOFF.md`のWebTransport契約を優先します。
 
 ## 2. 前提環境
 
-### 2.1 テストアカウントと端末
+### 2.1 実機ビルドの対象固定（必須）
+
+実機確認を始める前に、実際に端末へ入れるソースとAPI接続先を固定します。`HEAD`が対象コードコミットそのもの、またはそのソースを変更していないdocsだけの後続コミットであることを確認します。
+
+```powershell
+git rev-parse --show-toplevel
+git rev-parse HEAD
+git status --short
+git diff --name-only -- backend frontend
+```
+
+次を満たさない場合、ケースは`NOT RUN`または`BLOCKED`として記録し、画面が表示できてもPASSにしません。
+
+- `git rev-parse HEAD`と実機ビルドに記録した対象コードコミットが一致する。
+- `git diff --name-only -- backend frontend`が空である。未コミットのバックエンド/フロントエンド差分を含む作業ツリーは実機対象にしない。
+- 実機アプリに埋め込んだ`EXPO_PUBLIC_API_BASE_URL`が、証跡へ記録したAPIホストと一致する。
+- APIエラー時に募集詳細へモックカードが表示されても成功とみなさない。現行`frontend/app/japanese/matches/[id].tsx`には読み込み失敗時のモックフォールバックがあるため、対象`GET /api/v1/recruitments/{id}`の成功レスポンスをサーバー側で確認できないケースはFAILとする。
+
+### 2.2 テストアカウントと端末
 
 専用のテストアカウントを2つ用意します。個人アカウント、実在する住所、Recovery Phrase、Key B、Access/Refresh Tokenは使わず、証跡にも残しません。
 
@@ -55,7 +75,7 @@
 - 表示言語（日本語/英語）と利用モードは別設定。プロファイル設定で一方だけを変更し、もう一方が勝手に変わらないことも確認する。
 - 実機の日時・地域は日本向けにし、テストデータの募集日時は常に現在のJSTより未来にする。
 
-### 2.2 バックエンド
+### 2.3 バックエンド
 
 テスト対象のAPIホストを1つに固定します。本番相当環境で行う場合は、テストデータと専用アカウントを使い、本番の利用者へ通知を出さない運用にしてください。
 
@@ -64,6 +84,7 @@
 - `GEMINI_API_KEY`: 募集内容の分類に使うサーバー専用キー。
 - `GEMINI_MODEL=gemini-3.1-flash-lite`: 現行の募集分類モデル。
 - `OPENAI_API_KEY`: チャット本文の送信前Moderation用サーバー専用キー。未設定時は`moderation_unavailable`となり、クライアントは送信を止める。
+- Moderationモデルは現行サーバー実装が`omni-moderation-latest`を使用する。モデル名やキーをクライアントから渡さない。
 - `DB_*`と適用済みmigration: 対象DBへ接続でき、起動時migrationが成功すること。
 - `IMAGE_STORAGE_DIR`、`IMAGE_MAX_UPLOAD_BYTES`: 暗号文画像APIを検証する場合のみ必要。既定の画像暗号文上限は20MiB。
 - WebTransport実機確認を行う別環境では、`ENABLE_CHAT_WEBTRANSPORT=true`、`CHAT_WEBTRANSPORT_UDP_ADDR`、`CHAT_WEBTRANSPORT_TLS_CERT_FILE`、`CHAT_WEBTRANSPORT_TLS_KEY_FILE`、許可するOriginを設定する。これらは現行`.env.example`に全て掲載されていないため、デプロイ担当者が実効値を確認する。
@@ -73,11 +94,13 @@
 ```powershell
 curl.exe --fail --silent --show-error https://<API_HOST>/healthz
 curl.exe --fail --silent --show-error https://<API_HOST>/readyz
+curl.exe --fail --silent --show-error https://<API_HOST>/api/v1/healthz
+curl.exe --fail --silent --show-error https://<API_HOST>/api/v1/readyz
 ```
 
-両方が成功しない場合はアプリ操作へ進まず、`FAIL`ではなく環境ブロッカーとして記録します。DB migration失敗、既存プロセスによる8080ポート占有、Proxyの502/503も同様です。
+4つのエンドポイントがすべて成功しない場合はアプリ操作へ進まず、`FAIL`ではなく環境ブロッカーとして記録します。DB migration失敗、既存プロセスによる8080ポート占有、Proxyの502/503も同様です。
 
-### 2.3 フロントエンドとAPI接続先
+### 2.4 フロントエンドとAPI接続先
 
 `frontend`で依存と自動検証を準備します。これは実機PASSの代替ではありません。
 
@@ -102,7 +125,7 @@ bun test tests/recruitment.test.ts tests/notifications.test.ts tests/chat.test.t
 - **Development Build / Store相当native build**: Passkey、Keychain/Secure Storage、native WebTransportなどの確認に必要。
 - 現行リポジトリには`NativeModules.SamuraiMeetWebTransport`を実装したiOS moduleがないため、Development Buildを作るだけではWebTransport PASSにならない。moduleとTLS/UDP公開経路がそろうまで`BLOCKED`のままにする。
 
-### 2.4 端末権限
+### 2.5 端末権限
 
 - ログイン時のGoogle/Passkey操作を完了する。
 - 募集作成で現在地・距離を使う場合だけ、位置情報の前景許可を与える。許可できない場合は公開地点名で続行し、距離検索をPASSにしない。
@@ -227,7 +250,24 @@ POST /api/v1/matches/{match_id}/withdraw   -> 200
 
 5. OpenAIの生レスポンス、カテゴリ、score、平文がアプリ画面・通知・DB・通常ログへ出ないことを確認する。Moderationの平文はこの同期判定中だけサーバーが参照する明示的な例外であり、厳密な完全E2EEとは表示しない。
 
-### 6.2 ブロック・Unavailable・上限
+### 6.2 Moderationの実機検証マトリクス
+
+本番の実データを使わず、ステージングの運用承認済みprovider stubまたはテストプロキシで判定結果を固定して実行します。プロキシには本文を保存せず、method・path・status・時刻・相関ID・呼出順だけを証跡へ残します。
+
+| ケース | Moderationの期待値 | `POST /messages` | 画面の期待値 |
+| --- | --- | --- | --- |
+| allowed | `200`、`decision=allowed` | 1回だけ`201` | 通常どおり送信済み表示 |
+| blocked | `200`、`decision=blocked` | **呼ばれない** | 一般化された安全上の理由を表示 |
+| unavailable / timeout / 上流5xx | `200`、`decision=unavailable`、`code=moderation_unavailable` | **呼ばれない** | 再試行案内を表示 |
+| 未認証・非参加者・pending・ブロック済み | `401`/`403`/`404`/`409`（状態に応じた拒否） | **呼ばれない** | 対象を推測できない拒否表示 |
+| 空入力・2,000 Unicode文字超過・不正UTF-8 | `400`相当 | **呼ばれない** | 入力エラー表示 |
+
+1. 端末の操作とテストプロキシの相関IDを対応付け、`/moderation`が先、かつ許可時だけ`/messages`が後になることを確認する。
+2. blocked・unavailable・認可拒否では、暗号化処理、`/messages`、通知への本文保存が開始されないことを確認する。
+3. OpenAIの生レスポンス、カテゴリ、score、平文がアプリ、DB、通常ログ、エラー本文、URLに現れないことを確認する。
+4. リクエスト処理中だけ平文を参照し処理後に保持しないというメモリ上の性質は、iPhone画面だけでは証明できない。HTTP/DB/ログの非保持は実機で確認し、メモリ破棄は対象コードのレビューとバックエンドテストの証跡を別ゲートで添付する。
+
+### 6.3 ブロック・Unavailable・上限
 
 1. **blocked**: ステージングで運用承認済みのModeration blocked fixtureを入力する。実在人物への脅迫や個人情報を手順書へ貼らない。安全判定がblockedになったら、一般化された日本語/英語の理由表示を確認する。
 2. blocked時は、画面が暗号化処理と`POST /messages`を開始しないことを、サーバーアクセスログまたはテストプロキシで確認する。blockedでもメッセージが保存された場合はFAIL。
@@ -242,10 +282,10 @@ POST /api/v1/matches/{match_id}/withdraw   -> 200
 POST /api/v1/chats/{id}/moderation -> 200
 POST /api/v1/chats/{id}/messages   -> allowedの後だけ
 POST /api/v1/reports               -> 201
-POST /api/v1/blocks/{user_id}      -> 2xx
+POST /api/v1/blocks               -> 204（body: `{"user_id":"..."}`）
 ```
 
-### 6.3 翻訳の現状
+### 6.4 翻訳の現状
 
 現行の`frontend/services/chat.ts`の`translateChatText`は限定的なローカル辞書です。`GEMINI_MODEL=gemini-3.1-flash-lite`は募集分類に使われ、チャット翻訳には接続されていません。したがって、チャット翻訳でGeminiの呼び出し、翻訳時の犯罪可能性検知、翻訳結果を用いた運営自動通知が確認できたとは記録しません。これらは別実装後にこの手順書へ再追加します。
 
@@ -266,6 +306,10 @@ POST /api/v1/blocks/{user_id}      -> 2xx
 ### 7.2 バックエンド契約の確認（現行アプリの実機PASSではない）
 
 クライアント実装または承認済みのQA harnessが別途用意された場合だけ、テスト用画像で次を確認します。平文画像、画像鍵、Key Bをサーバーやログへ渡さないでください。
+
+対象コードコミットには添付鍵recipient/envelopeを登録するチャットAPIは含まれていません。作業ツリーに同名の未コミット差分があっても、この手順書の現行APIや実機PASSには含めません。未コミット差分を含む状態で画像E2Eを実行しないでください。
+
+このバックエンド契約は暗号文の保存・取得境界だけを確認するもので、画像の内容をModerationする経路ではありません。画像Moderationの実機ケースは、画像選択UI、端末側の暗号化、サーバー側の安全判定、結果表示が実装されるまで`BLOCKED`です。
 
 1. accepted chatの参加者として、クライアントでEXIFを除去した画像をAES-256-GCM暗号化する。
 2. raw暗号文を次のエンドポイントへ送る。画像の平文をbodyへ送ってはいけない。
@@ -302,6 +346,8 @@ POST /api/v1/blocks/{user_id}      -> 2xx
 
 現行サーバーのリアルタイム経路はHTTP/3 WebTransportです。旧WebSocketへ切り替える手順はありません。native moduleが導入されたビルドでのみ、次を行います。
 
+`CHAT_WEBTRANSPORT_UDP_ADDR`はサーバーのUDP bind addressであり、URLそのものとは限りません。接続先はTLS証明書のホスト名を使った`https://<WEBTRANSPORT_HOST>/api/v1/wt/chats/{chat_id}`とし、UDP bind address・証明書・公開ポートの対応をデプロイ担当者から確認します。
+
 1. iPhoneへDevelopment Buildをインストールし、`SamuraiMeetWebTransport`が実際に含まれていることを確認する。Expo Goで代用しない。
 2. accepted chatを開き、次のtoken発行を確認する。
 
@@ -310,7 +356,7 @@ POST /api/v1/blocks/{user_id}      -> 2xx
    ```
 
 3. native moduleがTLS 1.3/HTTP/3のCONNECTへ、`Authorization: Bearer <短命Chat Token>`をheaderだけで設定していることを確認する。tokenをURL queryやcookieへ入れない。
-4. `https://<CHAT_WEBTRANSPORT_UDP_ADDR>/api/v1/wt/chats/{chat_id}`へ接続し、証明書検証、UDP到達、Origin/認可を確認する。
+4. `https://<WEBTRANSPORT_HOST>/api/v1/wt/chats/{chat_id}`へ接続し、証明書検証、UDP到達、Origin/認可を確認する。
 5. 別端末からメッセージ、typing、既読を発生させ、`message.created`、`message.read`、`typing`等を受信する。接続が切れたらRESTの`sequence` cursorで欠落を回収する。
 6. Wi-Fi/モバイル回線切替、アプリ復帰、token再発行、session revoke、match終了、ブロックを行い、接続が閉じて新tokenで再接続することを確認する。
 7. `/api/v1/ws/chats/{id}`へ接続しないこと、旧WebSocketが410になることをサーバー側で確認する。
@@ -373,7 +419,7 @@ API base（ホストのみ。tokenなし）:
 - [フロントエンド開発・API接続](../frontend/README.md)
 - [バックエンド引き継ぎ](../backend/HANDOFF.md)
 - [バックエンドAPI仕様](../backend/API_SPEC.md)
-- [チャット通信（HTTP/3 WebTransport）](chat-transport.md)
+- [チャット通信（HTTP/3 WebTransport）](features/chat-transport.md)
 - [認証クライアント仕様](auth-client.md)
 - [現行進捗](進捗.md)
 - [サーバー環境変数の例](../backend/.env.example)
