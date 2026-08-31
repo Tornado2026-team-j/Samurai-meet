@@ -127,7 +127,7 @@ func main() {
 	}
 	if webTransport != nil {
 		defer webTransport.Close()
-		log.Printf("chat WebTransport listening on UDP %s (Expo Go unsupported; development build required)", os.Getenv("CHAT_WEBTRANSPORT_UDP_ADDR"))
+		log.Print("chat WebTransport listener started (Expo Go unsupported; development build required)")
 	}
 	if err = chatService.StartClusterFanout(context.Background()); err != nil {
 		log.Fatalf("chat cross-instance fan-out initialization failed: %v", err)

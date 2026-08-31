@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"net/http"
@@ -29,6 +30,22 @@ func TestWebTransportRejectsQueryTokenWithoutEchoingIt(t *testing.T) {
 	}
 	if strings.Contains(recorder.Body.String(), "secret-token") {
 		t.Fatal("query token was reflected in response")
+	}
+}
+
+func TestWebTransportCloseCancelsSessionContext(t *testing.T) {
+	shutdownCtx, shutdownCancel := context.WithCancel(context.Background())
+	server := &WebTransportServer{
+		shutdownCtx:    shutdownCtx,
+		shutdownCancel: shutdownCancel,
+	}
+	if err := server.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	select {
+	case <-shutdownCtx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("Close() did not cancel the session parent context")
 	}
 }
 

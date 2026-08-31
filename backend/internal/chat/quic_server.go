@@ -33,10 +33,12 @@ type WebTransportConfig struct {
 // transport. Tokens are accepted only in the CONNECT Authorization header;
 // query parameters and cookies are never read for authentication.
 type WebTransportServer struct {
-	endpoint *QUICEndpoint
-	server   *webtransport.Server
-	packet   net.PacketConn
-	mu       sync.Mutex
+	endpoint       *QUICEndpoint
+	server         *webtransport.Server
+	packet         net.PacketConn
+	shutdownCtx    context.Context
+	shutdownCancel context.CancelFunc
+	mu             sync.Mutex
 }
 
 const webTransportRevalidationInterval = 15 * time.Second
@@ -113,7 +115,12 @@ func StartWebTransport(ctx context.Context, service *Service, cfg WebTransportCo
 	}
 	h3 := &http3.Server{Addr: cfg.UDPAddr, TLSConfig: http3.ConfigureTLSConfig(&tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{certificate}}), QUICConfig: &quic.Config{EnableDatagrams: true, EnableStreamResetPartialDelivery: true}}
 	webtransport.ConfigureHTTP3Server(h3)
-	result := &WebTransportServer{endpoint: NewQUICEndpoint(service, true)}
+	shutdownCtx, shutdownCancel := context.WithCancel(ctx)
+	result := &WebTransportServer{
+		endpoint:       NewQUICEndpoint(service, true),
+		shutdownCtx:    shutdownCtx,
+		shutdownCancel: shutdownCancel,
+	}
 	mux := http.NewServeMux()
 	result.server = &webtransport.Server{H3: h3, CheckOrigin: originAllowed(cfg.AllowedOrigins)}
 	mux.HandleFunc("/api/v1/wt/chats/", result.handleConnect)
@@ -128,7 +135,10 @@ func StartWebTransport(ctx context.Context, service *Service, cfg WebTransportCo
 			cfg.Logf("chat WebTransport listener stopped: %v", serveErr)
 		}
 	}()
-	go func() { <-ctx.Done(); _ = result.Close() }()
+	go func() {
+		<-ctx.Done()
+		_ = result.Close()
+	}()
 	return result, nil
 }
 
@@ -152,6 +162,9 @@ func originAllowed(allowed []string) func(*http.Request) bool {
 func (s *WebTransportServer) Close() error {
 	if s == nil {
 		return nil
+	}
+	if s.shutdownCancel != nil {
+		s.shutdownCancel()
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -191,7 +204,7 @@ func (s *WebTransportServer) handleConnect(w http.ResponseWriter, r *http.Reques
 	}
 	earlyData := session.SessionState().ConnectionState.Used0RTT
 	registered := s.endpoint.service.wtHub.register(connection.ChatID, connection.UserID, session)
-	go s.serveSession(session, registered, connection, earlyData)
+	go s.serveSession(s.shutdownCtx, session, registered, connection, earlyData)
 }
 
 func bearerToken(value string) (string, bool) {
@@ -204,10 +217,10 @@ func bearerToken(value string) (string, bool) {
 	}()
 }
 
-func (s *WebTransportServer) serveSession(session *webtransport.Session, registered *webTransportSession, connection QUICConnection, earlyData bool) {
+func (s *WebTransportServer) serveSession(parentCtx context.Context, session *webtransport.Session, registered *webTransportSession, connection QUICConnection, earlyData bool) {
 	defer s.endpoint.service.wtHub.unregister(connection.ChatID, registered)
 	defer session.CloseWithError(0, "closed")
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(parentCtx)
 	defer cancel()
 	go s.watchConnection(ctx, session, connection)
 	for {
