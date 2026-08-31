@@ -12,6 +12,8 @@ import (
 
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/auth"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/chat"
+	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/moderation"
+	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/safety"
 )
 
 const chatPath = APIV1Prefix + "/chats"
@@ -41,7 +43,7 @@ func chatCollection(service *chat.Service, sessions *auth.SessionService) http.H
 	}
 }
 
-func chatItem(service *chat.Service, sessions *auth.SessionService) http.HandlerFunc {
+func chatItem(service *chat.Service, sessions *auth.SessionService, inspector *moderation.Service, safetyService *safety.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		claims, ok := accessClaims(r, sessions)
 		if !ok {
@@ -68,6 +70,8 @@ func chatItem(service *chat.Service, sessions *auth.SessionService) http.Handler
 			chatAttachmentUpload(w, r, service, claims.Subject, chatID)
 		case rest[0] == "attachments" && len(rest) == 2:
 			chatAttachmentDownload(w, r, service, claims.Subject, chatID, rest[1])
+		case rest[0] == "moderate" && len(rest) == 1:
+			chatModerate(w, r, service, inspector, safetyService, claims.Subject, chatID)
 		default:
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "chat_not_found"})
 		}

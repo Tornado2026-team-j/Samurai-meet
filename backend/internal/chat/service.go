@@ -544,6 +544,44 @@ func (s *Service) ensureChat(ctx context.Context, userID, matchID string, now ti
 	return access, nil
 }
 
+// ModerationTarget identifies one message inside a chat the caller can see.
+type ModerationTarget struct {
+	ChatID          string
+	MessageID       string
+	MessageSenderID string
+	OtherUserID     string
+}
+
+// ResolveModerationTarget checks that userID participates in chatID (and is not
+// blocked), and that messageID is a live message in that chat. It is the guard
+// for the on-demand AI content check: the caller supplies the decrypted text
+// and this confirms they are entitled to have it screened.
+func (s *Service) ResolveModerationTarget(ctx context.Context, userID, chatID, messageID string) (ModerationTarget, error) {
+	if strings.TrimSpace(messageID) == "" {
+		return ModerationTarget{}, ErrChatInvalidInput
+	}
+	access, err := s.loadChat(ctx, userID, chatID, true)
+	if err != nil {
+		return ModerationTarget{}, err
+	}
+	var senderID string
+	err = s.db.QueryRowContext(ctx, `
+		SELECT sender_user_id FROM messages
+		WHERE id=$1 AND chat_id=$2 AND deleted_at IS NULL`, messageID, access.ChatID).Scan(&senderID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ModerationTarget{}, ErrMessageNotFound
+	}
+	if err != nil {
+		return ModerationTarget{}, err
+	}
+	return ModerationTarget{
+		ChatID:          access.ChatID,
+		MessageID:       messageID,
+		MessageSenderID: senderID,
+		OtherUserID:     access.OtherUserID,
+	}, nil
+}
+
 func (s *Service) loadChat(ctx context.Context, userID, chatID string, allowCompleted bool) (chatAccess, error) {
 	if s == nil || s.db == nil || strings.TrimSpace(userID) == "" || strings.TrimSpace(chatID) == "" {
 		return chatAccess{}, ErrChatNotFound

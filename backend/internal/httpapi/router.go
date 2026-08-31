@@ -14,6 +14,7 @@ import (
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/keys"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/matching"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/meeting"
+	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/moderation"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/notification"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/push"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/safety"
@@ -44,6 +45,7 @@ type RouterOptions struct {
 	Matching              *matching.Service
 	RecruitmentClassifier *classification.Service
 	Translation           *translation.Service
+	Moderation            *moderation.Service
 	Chats                 *chat.Service
 	Meetings              *meeting.Service
 	Notifications         *notification.Service
@@ -146,7 +148,7 @@ func NewRouterWithOptions(o RouterOptions) http.Handler {
 	}
 	if o.Sessions != nil && o.Chats != nil {
 		m.HandleFunc(chatPath, chatCollection(o.Chats, o.Sessions))
-		m.HandleFunc(chatPath+"/", chatItem(o.Chats, o.Sessions))
+		m.HandleFunc(chatPath+"/", chatItem(o.Chats, o.Sessions, o.Moderation, o.Safety))
 		m.HandleFunc(chatWebSocketPrefix, chatWebSocket(o.Chats, originHostPatterns(clientOrigins(o.Environment, o.ClientOrigin, o.DevClientOrigin))))
 	}
 	if o.Sessions != nil && o.Notifications != nil {

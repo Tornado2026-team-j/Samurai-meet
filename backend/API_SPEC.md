@@ -489,6 +489,8 @@ Request body:
 | GET | `/api/v1/ws/chats/{id}` | Chat Token（接続後の認証フレーム） | リアルタイム配送のWebSocket |
 | POST | `/api/v1/chats/{id}/attachments` | Access Token | チャット写真（暗号文BLOB）のアップロード |
 | GET | `/api/v1/chats/{id}/attachments/{attachment_id}` | Access Token | チャット写真の暗号文取得 |
+| POST | `/api/v1/chats/{id}/moderate` | Access Token | 1メッセージのAI不適切検知。`warn`/`block`は`reports`へ`source='ai_auto'`で自動登録 |
+| POST | `/api/v1/translate` | Access Token | 「翻訳」ボタンを押した1メッセージ平文の翻訳（`en`/`ja`） |
 
 送信bodyは次の形式です。
 
@@ -510,6 +512,12 @@ Request body:
 `POST /api/v1/translate`
 
 読み手がメッセージの「翻訳」ボタンを押したときだけ、そのメッセージの復号済み平文を送ります。Request body は `{ "text": "...", "target_language": "en" | "ja" }`。サーバーだけが`GEMINI_API_KEY`で`gemini-3.1-flash-lite`へ翻訳を依頼し、`{ "data": { "translated_text": "...", "target_language": "en" } }` を返します。`target_language`が`en`/`ja`以外・空文・2000字超は`400 invalid_translation_request`。ユーザーごとは1秒に1回までで、超過時は`429 translation_rate_limited`（`Retry-After: 1`）。モデル障害・契約外応答は`502 translation_failed`。APIキー未設定は`503 translation_unavailable`。チャットの共有鍵は`chat_id`から導出され、通報検査でもサーバーが平文へ到達できる設計のため、明示操作に限りサーバー翻訳を許容します。
+
+#### メッセージのAI不適切検知（運営確認）
+
+`POST /api/v1/chats/{id}/moderate`
+
+送信直後（自分の送信）と受信直後（相手の `message.created`）に、そのメッセージの復号済み平文を送ります。Request body は `{ "text": "...", "message_id": "同じチャットの生存メッセージID" }`。サーバーは `message_id` がそのチャットの参加者から見える生存メッセージであることを確認し（違反は `chat` と同じ `404 chat_not_found` / `403 chat_forbidden`）、`GEMINI_API_KEY` で `gemini-3.1-flash-lite` へ分類を依頼して `{ "data": { "categories": ["abuse" | "sexual" | "money" | "external_contact" | "dangerous_place" | "personal_info" | "coercion"], "severity": "none" | "warn" | "block", "escalated": true | false } }` を返します。`external_contact` / `personal_info` を含む場合は `severity` を常に `block` へ引き上げます。`severity` が `warn` / `block` のときは `reports` へ `target_type='message'`・`target_id=message_id`・`source='ai_auto'`・`reason`（カテゴリから決定）・`comment`（検知内容）で1行を自動登録し（同一 reporter×message は冪等）、`escalated=true` を返します。ユーザーごとは1秒に1回までで、超過時は `429 moderation_rate_limited`（`Retry-After: 1`）。モデル障害・契約外応答は `502 moderation_failed`、APIキー未設定は `503 moderation_unavailable`。クライアント側の簡易正規表現チェックは即時UIヒントとして残し、検知と運営確認の正はこのエンドポイントです。
 
 `POST /read` の `last_message_sequence` は「クライアントが受信した最大`sequence`」を渡すハイウォーターマークで、message行との厳密一致は不要です（`sequence`は全チャット横断の`BIGSERIAL`で1チャット内は歯抜け）。サーバーはその値をそのチャットの最新live messageへクランプし、保存マーカーは前進のみ（`GREATEST`）。`message.read`レシートはクランプ後の実効値を通知します。1未満は`invalid_chat_request`、messageが無いチャットは`chat_not_found`。
 

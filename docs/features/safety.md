@@ -27,15 +27,17 @@
 | --- | --- | --- |
 | 通報・ブロック画面 | TypeScript / TSX | 未 |
 | API 入力・対象権限・遮断判定 | Go（`backend/internal/safety`、`backend/internal/httpapi/safety.go`） | 実装済み |
-| 画像・本文の検査連携 | Go + 専用検査サービスの検討 | 未 |
-| 運営キュー・状態更新 | Go / 管理画面 | 未（`reports.status`列は用意済み） |
-| 原票・処理履歴 | PostgreSQL / SQL（`0027_reports.sql`、既存`blocks`） | `reports` 実装済み、`audit_logs` 未 |
+| 本文のAI検査連携（チャット） | Go（`backend/internal/moderation`、`backend/internal/httpapi/chat_moderation.go`） | 実装済み（`POST /chats/{id}/moderate`。Geminiで分類し `warn`/`block` を `reports` へ `source='ai_auto'` で自動登録） |
+| 画像の検査連携 | Go + 専用検査サービスの検討 | 未 |
+| 運営キュー・状態更新 | Go / 管理画面 | 未（`reports.status`列は用意済み。`source` 列で AI自動分をフィルタ可能） |
+| 原票・処理履歴 | PostgreSQL / SQL（`0027_reports.sql`、`0035_reports_source.sql`、既存`blocks`） | `reports` 実装済み、`audit_logs` 未 |
 
 ## 4. API / DB
 
 実装済み（すべて Access Token 必須）:
 
-- `POST /reports` — body `{target_type, target_id, reason, comment?}`。`target_type` は `user` / `recruitment_card` / `message` / `photo`、`reason` は `nuisance` / `harassment` / `impersonation` / `inappropriate_photo` / `dangerous` / `other`。`comment` は最大2000。同一通報者×同一対象で未処理の通報がある場合は既存の通報を返す（201）。自分自身・存在しないユーザーの通報は拒否。
+- `POST /reports` — body `{target_type, target_id, reason, comment?}`。`target_type` は `user` / `recruitment_card` / `message` / `photo`、`reason` は `nuisance` / `harassment` / `impersonation` / `inappropriate_photo` / `dangerous` / `other`。`comment` は最大2000。同一通報者×同一対象で未処理の通報がある場合は既存の通報を返す（201）。自分自身・存在しないユーザーの通報は拒否。応答には `source`（`user` / `ai_auto`）を含む。クライアントは `source` を指定できない。
+- `POST /chats/{id}/moderate` — チャットのAI不適切検知。body `{text, message_id}`。復号済み平文を Gemini で `abuse` / `sexual` / `money` / `external_contact` / `dangerous_place` / `personal_info` / `coercion` に分類し、`{data:{categories, severity, escalated}}` を返す。`severity` は `none` / `warn` / `block`（`external_contact` / `personal_info` は常に `block`）。`warn` / `block` は `reports`（`target_type='message'`, `reason` はカテゴリから決定, `source='ai_auto'`, `comment` に検知内容）へ自動登録し `escalated=true`。ユーザー単位で1秒1回。参加者以外・存在しないメッセージは404。
 - `GET /me/blocks` — 自分がブロックした相手の一覧（`user_id`, `name`, `created_at`）。
 - `POST /blocks` — body `{user_id}`。冪等（204）。
 - `DELETE /blocks/{user_id}` — 解除（204、未ブロックは404）。
@@ -67,6 +69,7 @@
 - ユーザー、カード、メッセージ、写真を通報できる。（API実装済み・`TestSafetyReportAndBlock`）
 - ブロック後に相手のカードとチャットが表示されない。（`matching` / `chat` の読み取りが`blocks`を参照。新規関心の遮断はテスト済み。既存match/カード非表示のフロント反映は未）
 - 通報が運営キューへ登録される。（`reports`行として登録。運営キューUIは未）
+- AIが暴言・差別・性的内容・詐欺・外部誘導などを検知し、怪しい内容は運営確認対象になる。（`POST /chats/{id}/moderate` で `warn`/`block` を `reports.source='ai_auto'` として自動登録。統合テスト `TestChatModerationEscalatesToReportsQueue`。運営キューUIは未）
 - 管理者の処理履歴が改ざん困難な監査ログに残る。（未・`audit_logs`）
 - 停止ユーザーがトークンを使って業務 API を利用できない。（既存のセッション判定で担保）
 

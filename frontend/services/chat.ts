@@ -238,6 +238,39 @@ export async function blockUser(
   );
 }
 
+export type ChatModerationResponse = {
+  categories: ChatModerationCategory[];
+  severity: "none" | "warn" | "block";
+  escalated: boolean;
+};
+
+/**
+ * Ask the backend AI check to screen one decrypted message. A "warn" / "block"
+ * verdict is escalated by the server to the operator-review queue against that
+ * message. Best-effort: callers treat a rejection as "not screened".
+ */
+export async function moderateChatMessage(
+  chatID: string,
+  messageID: string,
+  text: string,
+  session: Session,
+  signal?: AbortSignal,
+): Promise<ChatModerationResponse> {
+  const response = await requestAPI<DataResponse<ChatModerationResponse>>(
+    `/chats/${encodeURIComponent(chatID)}/moderate`,
+    session,
+    {
+      method: "POST",
+      body: JSON.stringify({ text, message_id: messageID }),
+      signal,
+    },
+  );
+  if (!response.data || !Array.isArray(response.data.categories)) {
+    throw new Error("moderation response is invalid");
+  }
+  return response.data;
+}
+
 export function parseChatSocketFrame(value: string): ChatSocketFrame | null {
   let parsed: unknown;
   try {

@@ -27,6 +27,7 @@ import {
   listChatMessages,
   listChats,
   markChatRead,
+  moderateChatMessage,
   moderateChatText,
   parseChatSocketFrame,
   sendChatMessage,
@@ -108,6 +109,7 @@ const COPY = {
     blockedDraft: "外部連絡先や個人情報を含む可能性があるため送信できません。",
     warningDraft: "安全確認が必要な内容を検知しました。内容を見直してください。",
     safetyNotice: "個人情報、外部連絡先、人気のない場所への誘導は送らないでください。",
+    flaggedForReview: "この内容はAIが安全確認の必要ありと判断し、運営確認の対象になりました。",
     scheduleTitle: "案内内容",
     date: "日付",
     time: "時刻",
@@ -176,6 +178,7 @@ const COPY = {
     blockedDraft: "This may include external contact details or personal information, so it cannot be sent.",
     warningDraft: "This message needs a safety check. Please review it before sending.",
     safetyNotice: "Do not share personal information, external contacts, or unsafe meeting places.",
+    flaggedForReview: "The AI check flagged this message as needing a safety review, so it was sent for operations review.",
     scheduleTitle: "Guide details",
     date: "Date",
     time: "Time",
@@ -275,6 +278,20 @@ export default function ChatDetailScreen() {
       return action(refreshedSession, signal);
     }
   }, [getCurrentSession, refresh, session, status]);
+
+  // Send a decrypted message through the backend AI safety check. A warn/block
+  // verdict is escalated server-side to the operator-review queue; here we only
+  // surface that it happened. Best-effort — failures are swallowed.
+  const runModeration = useCallback((messageID: string, text: string) => {
+    const source = text.trim();
+    if (!chatID || !messageID || !source) return;
+    void runWithSession(
+      (activeSession, signal) => moderateChatMessage(chatID, messageID, source, activeSession, signal),
+      new AbortController().signal,
+    ).then((result) => {
+      if (result.escalated) setNotice(copy.flaggedForReview);
+    }).catch(() => undefined);
+  }, [chatID, copy.flaggedForReview, runWithSession]);
 
   const load = useCallback((mode: "initial" | "refresh" = "refresh") => {
     const controller = new AbortController();
@@ -386,6 +403,9 @@ export default function ChatDetailScreen() {
                 (currentSession, signal) => markChatRead(chatID, view.sequence, currentSession, signal),
                 new AbortController().signal,
               ).catch(() => undefined);
+              if (frame.type === "message.created" && view.plaintext) {
+                runModeration(view.id, view.plaintext);
+              }
             }
           } else if (frame.type === "error" && frame.code === "blocked") {
             setLocallyClosed("blocked");
@@ -407,7 +427,7 @@ export default function ChatDetailScreen() {
       if (socketRef.current === socket) socketRef.current = null;
       socket?.close();
     };
-  }, [chat?.status, chatID, copy.blockedLocal, getCurrentSession, locallyClosed, runWithSession, session]);
+  }, [chat?.status, chatID, copy.blockedLocal, getCurrentSession, locallyClosed, runModeration, runWithSession, session]);
 
   useEffect(() => {
     if (messages.length === 0) return;
@@ -439,6 +459,7 @@ export default function ChatDetailScreen() {
       if (activeSession) {
         setMessages((current) => [...current, toChatMessageView(chatID, sent, activeSession.user_id)]);
       }
+      runModeration(sent.id, messageText);
       setDraft("");
     } catch {
       setSendError(copy.sendFailed);

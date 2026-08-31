@@ -9,6 +9,7 @@ import {
   listChatMessages,
   listChats,
   markChatRead,
+  moderateChatMessage,
   moderateChatText,
   sendChatMessage,
   toChatMessageView,
@@ -231,6 +232,25 @@ describe("チャットAPIクライアント", () => {
   it("翻訳レスポンスが空なら例外にする", async () => {
     globalThis.fetch = (async () => new Response(JSON.stringify({ data: { translated_text: "  " } }), { status: 200 })) as typeof fetch;
     await expect(translateMessage("hello", "ja", session)).rejects.toThrow("translation response is invalid");
+  });
+
+  it("AI検知はtext/message_idをPOSTし、運営確認エスカレーション結果を返す", async () => {
+    let requestedURL = "";
+    let requestedBody: unknown = null;
+    globalThis.fetch = (async (input, init) => {
+      requestedURL = String(input);
+      requestedBody = init?.body ? JSON.parse(String(init.body)) : null;
+      return new Response(JSON.stringify({
+        data: { categories: ["external_contact"], severity: "block", escalated: true },
+      }), { status: 200 });
+    }) as typeof fetch;
+
+    await expect(moderateChatMessage("chat-1", "message-1", "LINE教えて", session)).resolves.toMatchObject({
+      severity: "block",
+      escalated: true,
+    });
+    expect(requestedURL).toContain("/chats/chat-1/moderate");
+    expect(requestedBody).toEqual({ text: "LINE教えて", message_id: "message-1" });
   });
 
   it("空文と長すぎる文を送信前に検証する", () => {

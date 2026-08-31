@@ -37,6 +37,8 @@ var reportReasons = map[string]bool{
 	"inappropriate_photo": true, "dangerous": true, "other": true,
 }
 
+var reportSources = map[string]bool{"user": true, "ai_auto": true}
+
 type Service struct {
 	db *sql.DB
 }
@@ -48,6 +50,10 @@ type ReportInput struct {
 	TargetID   string `json:"target_id"`
 	Reason     string `json:"reason"`
 	Comment    string `json:"comment"`
+	// Source is "user" for a report a person filed and "ai_auto" for an
+	// operator-review item raised by the AI chat-content check. Empty means
+	// "user". Clients cannot set it; only the server-side moderation path does.
+	Source string `json:"-"`
 }
 
 type Report struct {
@@ -57,6 +63,7 @@ type Report struct {
 	Reason     string `json:"reason"`
 	Comment    string `json:"comment"`
 	Status     string `json:"status"`
+	Source     string `json:"source"`
 	CreatedAt  string `json:"created_at"`
 }
 
@@ -75,7 +82,10 @@ func (s *Service) CreateReport(ctx context.Context, reporterID string, input Rep
 	input.TargetType = strings.TrimSpace(input.TargetType)
 	input.TargetID = strings.TrimSpace(input.TargetID)
 	input.Reason = strings.TrimSpace(input.Reason)
-	if !reportTargetTypes[input.TargetType] || !reportReasons[input.Reason] {
+	if input.Source == "" {
+		input.Source = "user"
+	}
+	if !reportTargetTypes[input.TargetType] || !reportReasons[input.Reason] || !reportSources[input.Source] {
 		return Report{}, ErrInvalidReport
 	}
 	if input.TargetID == "" || utf8.RuneCountInString(input.TargetID) > maxTargetIDRunes {
@@ -104,19 +114,19 @@ func (s *Service) CreateReport(ctx context.Context, reporterID string, input Rep
 	stamp := now.UTC().Format(time.RFC3339Nano)
 	var report Report
 	err = s.db.QueryRowContext(ctx, `
-		INSERT INTO reports (id,reporter_user_id,target_type,target_id,reason,comment,created_at,updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$7)
+		INSERT INTO reports (id,reporter_user_id,target_type,target_id,reason,comment,source,created_at,updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$8)
 		ON CONFLICT (reporter_user_id,target_type,target_id) WHERE status IN ('received','reviewing') DO NOTHING
-		RETURNING id,target_type,target_id,reason,comment,status,created_at`,
-		id, reporterID, input.TargetType, input.TargetID, input.Reason, input.Comment, stamp).Scan(
-		&report.ID, &report.TargetType, &report.TargetID, &report.Reason, &report.Comment, &report.Status, &report.CreatedAt)
+		RETURNING id,target_type,target_id,reason,comment,status,source,created_at`,
+		id, reporterID, input.TargetType, input.TargetID, input.Reason, input.Comment, input.Source, stamp).Scan(
+		&report.ID, &report.TargetType, &report.TargetID, &report.Reason, &report.Comment, &report.Status, &report.Source, &report.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		if err = s.db.QueryRowContext(ctx, `
-			SELECT id,target_type,target_id,reason,comment,status,created_at FROM reports
+			SELECT id,target_type,target_id,reason,comment,status,source,created_at FROM reports
 			WHERE reporter_user_id=$1 AND target_type=$2 AND target_id=$3 AND status IN ('received','reviewing')
 			ORDER BY created_at DESC LIMIT 1`,
 			reporterID, input.TargetType, input.TargetID).Scan(
-			&report.ID, &report.TargetType, &report.TargetID, &report.Reason, &report.Comment, &report.Status, &report.CreatedAt); err != nil {
+			&report.ID, &report.TargetType, &report.TargetID, &report.Reason, &report.Comment, &report.Status, &report.Source, &report.CreatedAt); err != nil {
 			return Report{}, err
 		}
 		return report, nil
@@ -125,6 +135,43 @@ func (s *Service) CreateReport(ctx context.Context, reporterID string, input Rep
 		return Report{}, err
 	}
 	return report, nil
+}
+
+// RecordModerationFlag turns an AI chat-content verdict into an operator-review
+// item. It reuses the reports queue: target is the flagged message, source is
+// "ai_auto", and the comment carries the detected categories and severity so a
+// reviewer can triage without decrypting anything else. Repeats for the same
+// (reporter, message) return the open row unchanged.
+func (s *Service) RecordModerationFlag(ctx context.Context, reporterID, messageID string, categories []string, severity string, now time.Time) (Report, error) {
+	clean := make([]string, 0, len(categories))
+	for _, category := range categories {
+		if category = strings.TrimSpace(category); category != "" {
+			clean = append(clean, category)
+		}
+	}
+	comment := "[AI自動検知] severity=" + severity
+	if len(clean) > 0 {
+		comment += " categories=" + strings.Join(clean, ",")
+	}
+	return s.CreateReport(ctx, reporterID, ReportInput{
+		TargetType: "message",
+		TargetID:   messageID,
+		Reason:     moderationReason(clean),
+		Comment:    comment,
+		Source:     "ai_auto",
+	}, now)
+}
+
+func moderationReason(categories []string) string {
+	for _, category := range categories {
+		switch category {
+		case "abuse", "coercion":
+			return "harassment"
+		case "sexual", "dangerous_place":
+			return "dangerous"
+		}
+	}
+	return "other"
 }
 
 // BlockUser adds a block. It is idempotent: blocking an already-blocked user

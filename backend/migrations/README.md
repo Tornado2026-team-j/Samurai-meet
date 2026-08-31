@@ -28,6 +28,7 @@
 - `0032_identity_verifications.sql` はStripe IdentityのセッションIDと確認状態を保存する。本人確認書類や住所は保存しない。
 - `0033_push_devices.sql` はOSプッシュ通知用のExpo Push Tokenと通知種別ごとの設定を端末単位で保存する。
 - `0034_chat_attachments.sql` はチャット写真の暗号文メタデータ`chat_attachments`を追加する。画像本体はDBに保存せず暗号文BLOBストレージへ置き、平文・EXIF・暗号鍵は保存しない。`message_id`が`NULL`の未参照アップロードは起動時スイープで削除する。`--`コメント内に`;`を書かない（runnerは`;`で文を分割する）。
+- `0035_reports_source.sql` は`reports`へ`source`列（`user` / `ai_auto`）を追加する。チャットのAI不適切検知が自動登録した運営確認対象と、人が手で出した通報を区別する。既存行と手動通報は`user`。
 - runnerは`schema_migrations`へファイル名と正規化SQLのSHA-256を記録し、適用済みSQLを再実行しない。起動が同時になった場合もPostgreSQL advisory lockで直列化する。適用済みファイルの内容が変わった場合はchecksum mismatchで停止する。
 - 既存DBへ導入する初回起動では、ファイル名順に現行schemaを確認しながら未登録migrationを一度だけ適用する。適用済み状態を手作業で捏造・削除せず、バックアップと監査ログを残してから運用する。
 
