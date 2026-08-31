@@ -228,7 +228,7 @@ func (s *WebTransportServer) serveSession(parentCtx context.Context, session *we
 		if err != nil {
 			return
 		}
-		go s.serveStream(stream, connection, earlyData)
+		go s.serveStream(ctx, stream, connection, earlyData)
 	}
 }
 
@@ -255,7 +255,7 @@ func (s *WebTransportServer) watchConnection(ctx context.Context, session *webtr
 	}
 }
 
-func (s *WebTransportServer) serveStream(stream *webtransport.Stream, connection QUICConnection, earlyData bool) {
+func (s *WebTransportServer) serveStream(ctx context.Context, stream *webtransport.Stream, connection QUICConnection, earlyData bool) {
 	defer stream.Close()
 	var frame inboundFrame
 	decoder := json.NewDecoder(io.LimitReader(stream, 192*1024))
@@ -263,7 +263,7 @@ func (s *WebTransportServer) serveStream(stream *webtransport.Stream, connection
 		_ = json.NewEncoder(stream).Encode(errorFrame{Type: serverFrameError, Code: "invalid_frame"})
 		return
 	}
-	message, duplicate, err := s.endpoint.HandleFrame(context.Background(), connection, earlyData, frame, time.Now())
+	message, duplicate, err := s.endpoint.HandleFrame(ctx, connection, earlyData, frame, time.Now())
 	if err != nil {
 		_ = json.NewEncoder(stream).Encode(errorFrame{Type: serverFrameError, Code: transportErrorCode(err)})
 		return
