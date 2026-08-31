@@ -30,32 +30,29 @@ jobs:
     timeout-minutes: 40
     steps:
       - name: チェックアウト (全履歴取得)
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
           persist-credentials: true
 
       - name: Bun をセットアップ
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        uses: oven-sh/setup-bun@v2
 
       - name: Bun依存キャッシュを復元
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: actions/cache@v4
         with:
           path: ~/.bun/install/cache
           key: bun-${{ runner.os }}-${{ hashFiles('frontend/bun.lock') }}
           restore-keys: bun-${{ runner.os }}-
 
       - name: JDK 17 をセットアップ
-        uses: actions/setup-java@3a4f6e1af504cf6a31855fa8f9c6aaabac42b7b6 # v4.7.0
+        uses: actions/setup-java@v4
         with:
           distribution: "temurin"
           java-version: "17"
 
-      - name: Android SDK をセットアップ
-        uses: android-actions/setup-android@b62ec2d26f6eb8e547fae3dd50c4bb2e1bb4259b # v3.2.1
-
       - name: Gradle キャッシュを構成
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: actions/cache@v4
         with:
           path: |
             ~/.gradle/caches
@@ -207,14 +204,14 @@ jobs:
           echo "BUILD_TIME_JST=$BUILD_TIME_JST" >> "$GITHUB_OUTPUT"
 
       - name: 最大レベルの来歴証明 (Artifact Attestations) を生成
-        uses: actions/attest-build-provenance@c074443f15777c089a87d09ec62b08fa176a957b # v2.2.3
+        uses: actions/attest-build-provenance@v2
         with:
           subject-path: |
             samurai-meet-release.apk
             SHA256SUMS
 
       - name: GitHub Releases を作成・公開
-        uses: softprops/action-gh-release@c95fe1489396fe8a9eb87c0abf8aa5b2ef267fda # v2.2.1
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.metadata.outputs.TAG_NAME }}
           name: Samurai Meet ${{ steps.metadata.outputs.TAG_NAME }}
