@@ -55,7 +55,7 @@ export default function JapaneseFiltersScreen() {
           <View style={styles.choices}>{TIMES.map((item) => <Choice key={item.value} label={item.label} onPress={() => setTime(item.value)} selected={time === item.value} />)}</View>
         </FilterGroup>
         <FilterGroup label="募集日（期間）">
-          <Text style={styles.hint}>YYYY-MM-DD形式で指定（来月も検索できます）</Text>
+          <Text style={styles.hint}>YYYY-MM-DD形式で指定（2か月先まで検索できます）</Text>
           <View style={styles.dateRow}>
             <TextInput accessibilityLabel="開始日" onChangeText={setAvailableFrom} placeholder="開始日 2026-09-01" style={styles.dateInput} value={availableFrom} />
             <Text style={styles.dateSeparator}>〜</Text>

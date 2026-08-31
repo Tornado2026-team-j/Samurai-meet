@@ -64,6 +64,7 @@ import type {
 } from "../../types/recruitment";
 import { MATCH_CATEGORIES, type MatchCategory } from "../../types/match";
 import { formatTimeRange } from "../../utils/time";
+import { translateRecruitmentTag } from "../../utils/recruitment-tags";
 
 const BLUE = "#5ec5f5";
 const YELLOW = "#e7b454";
@@ -72,13 +73,14 @@ const PLACEHOLDER_GRAY = "#949494";
 const BORDER_GRAY = "#d4d4d4";
 const COLLAPSED_HEADER_HEIGHT = 156;
 const EXPANDED_HEADER_HEIGHT = 724;
-const CONFIRMATION_HEADER_HEIGHT = 542;
+const CONFIRMATION_HEADER_HEIGHT = 680;
 const EXPANSION_DURATION = 360;
 const RECRUITMENT_CATEGORIES = MATCH_CATEGORIES;
 const MIN_DURATION_HOURS = 0.5;
 const MAX_DURATION_HOURS = 8;
 const DURATION_STEP_HOURS = 0.5;
 const LOCATION_SEARCH_DEBOUNCE_MS = 300;
+const RECRUITMENT_LEAD_TIME_MS = 24 * 60 * 60 * 1000;
 
 const RECRUITMENT_COPY = {
   en: {
@@ -110,7 +112,7 @@ const RECRUITMENT_COPY = {
     distanceLabel: "Distance",
     next: "NEXT",
     confirmationTitle: "Is everything correct?",
-    confirmationExpiry: "Visible until the event ends:",
+    confirmationExpiry: "Visible until 24 hours before the start:",
     categoryLabel: "Guide category",
     keywordLabel: "Suggested keywords",
     keywordHint: "Tap a keyword to select or remove it.",
@@ -140,8 +142,10 @@ const RECRUITMENT_COPY = {
     noLocationResults: "No places found",
     closeScheduleWarning: "Close schedule warning",
     pastStartTitle: "This start time has passed.",
+    deadlinePassedTitle: "The application deadline has passed.",
     midnightTitle: "This duration crosses midnight.",
     pastStartQuestion: "Change it to tomorrow?",
+    deadlinePassedQuestion: "Change it to the next available time?",
     midnightQuestion: "Change it to tomorrow at 09:00?",
     suggestedSchedule: "Suggested schedule",
     useSuggestion: "YES, USE THIS",
@@ -152,6 +156,8 @@ const RECRUITMENT_COPY = {
     activityRequired: "Tell us what you would like to do before continuing.",
     locationRequired: "Choose a valid place for Where.",
     pastDate: "The selected start time has already passed. Choose another time.",
+    deadlinePassed:
+      "Recruitments must be published more than 24 hours before the start time.",
     crossesMidnight:
       "The selected duration crosses midnight. Choose an earlier time or shorter duration.",
     invalidDetails: "Check the recruitment details.",
@@ -166,7 +172,7 @@ const RECRUITMENT_COPY = {
     invalidProfile:
       "Your profile could not be synchronized. Check your name and nationality.",
     expiredRecruitment:
-      "The recruitment time has passed. Choose a new date and time.",
+      "The application deadline has passed. Choose a start time more than 24 hours away.",
     invalidMatchingRequest:
       "Review the entire recruitment details and try again.",
     publishFailed:
@@ -205,7 +211,7 @@ const RECRUITMENT_COPY = {
     distanceLabel: "距離",
     next: "次へ",
     confirmationTitle: "この内容でよろしいですか？",
-    confirmationExpiry: "イベント終了まで公開されます：",
+    confirmationExpiry: "開始24時間前まで公開されます：",
     categoryLabel: "案内カテゴリー",
     keywordLabel: "キーワード候補",
     keywordHint: "タップしてキーワードを選択・解除できます。",
@@ -235,8 +241,10 @@ const RECRUITMENT_COPY = {
     noLocationResults: "候補が見つかりません",
     closeScheduleWarning: "日時の確認を閉じる",
     pastStartTitle: "開始時刻が過ぎています。",
+    deadlinePassedTitle: "募集締切が過ぎています。",
     midnightTitle: "所要時間が日付をまたぎます。",
     pastStartQuestion: "明日に変更しますか？",
+    deadlinePassedQuestion: "公開できる次の日時に変更しますか？",
     midnightQuestion: "明日の09:00に変更しますか？",
     suggestedSchedule: "変更案",
     useSuggestion: "はい、これを使う",
@@ -247,6 +255,8 @@ const RECRUITMENT_COPY = {
     activityRequired: "したいことを入力してから次へ進んでください。",
     locationRequired: "Whereで有効な場所を選択してください。",
     pastDate: "選択した開始時刻は過ぎています。別の時刻を選択してください。",
+    deadlinePassed:
+      "募集は開始時刻の24時間前までに公開する必要があります。開始24時間より先の日時を選択してください。",
     crossesMidnight:
       "所要時間が日付をまたぎます。早い時刻または短い所要時間を選択してください。",
     invalidDetails: "募集内容を確認してください。",
@@ -259,7 +269,7 @@ const RECRUITMENT_COPY = {
     expiredSession: "セッションの有効期限が切れました。このAPI環境で再度ログインしてください。",
     incompleteProfile: "公開前にプロフィールを完成させてください。",
     invalidProfile: "プロフィールを同期できませんでした。名前と国籍を確認してください。",
-    expiredRecruitment: "募集時刻が過ぎています。新しい日付と時刻を選択してください。",
+    expiredRecruitment: "募集締切が過ぎています。開始24時間より先の日時を選択してください。",
     invalidMatchingRequest: "募集内容全体を確認してもう一度お試しください。",
     publishFailed: "募集を公開できませんでした。しばらくしてからもう一度お試しください。",
     signInAgain: "セッションの有効期限が切れました。公開前に再度ログインしてください。",
@@ -303,6 +313,8 @@ function recruitmentInputMessage(
       return copy.invalidDuration;
     case "recruitment_date_in_past":
       return copy.pastDate;
+    case "recruitment_deadline_passed":
+      return copy.deadlinePassed;
     case "recruitment_must_end_same_day":
       return copy.crossesMidnight;
     default:
@@ -372,28 +384,6 @@ function clampDuration(value: number): number {
   return Math.min(MAX_DURATION_HOURS, Math.max(MIN_DURATION_HOURS, stepped));
 }
 
-function translatePreviewTag(tag: string, language: AppLanguage): string {
-  if (language === "en") return tag;
-
-  const translations: Readonly<Record<string, string>> = {
-    activity: "アクティビティ",
-    anime: "アニメ",
-    culture: "文化",
-    experience: "体験",
-    food: "食事",
-    local: "地域",
-    museum: "美術館",
-    nightlife: "夜遊び",
-    other: "その他",
-    places: "観光地",
-    shopping: "買い物",
-    takoyaki: "たこ焼き",
-    walking: "散歩",
-  };
-
-  return translations[tag.trim().toLowerCase()] ?? tag;
-}
-
 function formatPreviewExpiry(
   preview: RecruitmentPreview,
   language: AppLanguage,
@@ -401,51 +391,29 @@ function formatPreviewExpiry(
   if (language === "en") return preview.expiresAt;
 
   try {
-    const [, endTime = preview.conditions.startTime] = formatTimeRange(
+    const startAt = recruitmentDateTimeToInstant(
+      preview.conditions.date,
       preview.conditions.startTime,
-      preview.conditions.durationHours,
-    ).split("~");
-    return `${formatRecruitmentDateForDisplay(preview.conditions.date, language)} ${endTime}`;
+    );
+    const deadline = new Date(startAt.getTime() - RECRUITMENT_LEAD_TIME_MS);
+    const time = new Intl.DateTimeFormat("en-US", {
+      hour: "2-digit",
+      hourCycle: "h23",
+      minute: "2-digit",
+      timeZone: JST_TIME_ZONE,
+    }).format(deadline);
+    return `${formatRecruitmentDateForDisplay(formatRecruitmentISODate(deadline), language)} ${time}`;
   } catch {
     return preview.expiresAt;
   }
 }
 
-function getJSTTimeParts(value: Date): { hour: number; minute: number } {
+function getPickerTimeParts(value: Date): { hour: number; minute: number } {
   if (Number.isNaN(value.getTime())) {
     return { hour: 0, minute: 0 };
   }
 
-  try {
-    const parts = new Intl.DateTimeFormat("en-US", {
-      hour: "2-digit",
-      hourCycle: "h23",
-      minute: "2-digit",
-      timeZone: JST_TIME_ZONE,
-    })
-      .formatToParts(value)
-      .reduce<Record<string, string>>((result, part) => {
-        if (part.type !== "literal") result[part.type] = part.value;
-        return result;
-      }, {});
-    const hour = Number(parts.hour);
-    const minute = Number(parts.minute);
-
-    if (
-      Number.isInteger(hour) &&
-      hour >= 0 &&
-      hour <= 23 &&
-      Number.isInteger(minute) &&
-      minute >= 0 &&
-      minute <= 59
-    ) {
-      return { hour, minute };
-    }
-  } catch {
-    // Keep the picker renderable even if the platform formatter is unavailable.
-  }
-
-  return { hour: 0, minute: 0 };
+  return { hour: value.getHours(), minute: value.getMinutes() };
 }
 
 function makeTimePickerValue(
@@ -457,20 +425,15 @@ function makeTimePickerValue(
   const safeMinute =
     Number.isInteger(minute) && minute >= 0 && minute <= 59 ? minute : 0;
 
-  try {
-    return recruitmentDateTimeToInstant(
-      date,
-      `${String(safeHour).padStart(2, "0")}:${String(safeMinute).padStart(2, "0")}`,
-    );
-  } catch {
-    return new Date(0);
-  }
+  const value = safeParseRecruitmentDate(date, new Date());
+  value.setHours(safeHour, safeMinute, 0, 0);
+  return value;
 }
 
 function roundPickerTime(value: Date): { hour: number; minute: number } {
-  const jstTime = getJSTTimeParts(value);
-  let hour = jstTime.hour;
-  let minute = Math.round(jstTime.minute / 5) * 5;
+  const pickerTime = getPickerTimeParts(value);
+  let hour = pickerTime.hour;
+  let minute = Math.round(pickerTime.minute / 5) * 5;
 
   if (minute === 60) {
     hour = (hour + 1) % 24;
@@ -529,6 +492,7 @@ export default function SearchPreferencesScreen() {
       Number(suggestedSchedule.startTime.slice(3, 5)),
     );
   });
+  const pickerTimeRef = useRef(pickerTime);
   const [scheduleWarning, setScheduleWarning] = useState<ScheduleWarning | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [isCompactHeaderVisible, setIsCompactHeaderVisible] = useState(true);
@@ -744,6 +708,11 @@ export default function SearchPreferencesScreen() {
     setPublishError(null);
   };
 
+  const setPickerTimeValue = (value: Date) => {
+    pickerTimeRef.current = value;
+    setPickerTime(value);
+  };
+
   const commitDate = (value: Date) => {
     try {
       const nextDate = formatRecruitmentISODate(value);
@@ -763,7 +732,7 @@ export default function SearchPreferencesScreen() {
 
   const commitTime = (value: Date) => {
     const nextTime = roundPickerTime(value);
-    setPickerTime(makeTimePickerValue(date, nextTime.hour, nextTime.minute));
+    setPickerTimeValue(makeTimePickerValue(date, nextTime.hour, nextTime.minute));
     setHour(nextTime.hour);
     setMinute(nextTime.minute);
     setTimePickerVisible(false);
@@ -778,7 +747,7 @@ export default function SearchPreferencesScreen() {
 
   const openTimePicker = () => {
     Keyboard.dismiss();
-    setPickerTime(makeTimePickerValue(date, hour, minute));
+    setPickerTimeValue(makeTimePickerValue(date, hour, minute));
     setTimePickerVisible(true);
   };
 
@@ -814,7 +783,7 @@ export default function SearchPreferencesScreen() {
     }
 
     if (event.type === "set" && value) {
-      setPickerTime(value);
+      setPickerTimeValue(value);
     }
   };
 
@@ -893,9 +862,17 @@ export default function SearchPreferencesScreen() {
     issue: RecruitmentScheduleIssue,
     fromConfirmation = false,
   ) => {
-    const suggestedDate = shiftRecruitmentDate(draft.date, 1);
+    const suggestion = defaultRecruitmentSchedule();
+    const suggestedDate =
+      issue === "recruitment_deadline_passed"
+        ? suggestion.date
+        : shiftRecruitmentDate(draft.date, 1);
     const suggestedStartTime =
-      issue === "recruitment_must_end_same_day" ? "09:00" : draft.startTime;
+      issue === "recruitment_must_end_same_day"
+        ? "09:00"
+        : issue === "recruitment_deadline_passed"
+          ? suggestion.startTime
+          : draft.startTime;
 
     setScheduleWarning({
       issue,
@@ -998,7 +975,7 @@ export default function SearchPreferencesScreen() {
     setPickerDate(safeParseRecruitmentDate(nextDraft.date, minimumDate));
     setHour(nextHour);
     setMinute(nextMinute);
-    setPickerTime(makeTimePickerValue(nextDraft.date, nextHour, nextMinute));
+    setPickerTimeValue(makeTimePickerValue(nextDraft.date, nextHour, nextMinute));
     setFormError(null);
     setPublishError(null);
     setScheduleWarning(null);
@@ -1671,7 +1648,7 @@ export default function SearchPreferencesScreen() {
                     <View style={styles.summaryTags}>
                       {selectedKeywords.map((tag) => (
                         <Pill key={tag} style={styles.summaryTag} textStyle={styles.summaryTagText} variant="primary">
-                          {translatePreviewTag(tag, language)}
+                          {translateRecruitmentTag(tag, language)}
                         </Pill>
                       ))}
                     </View>
@@ -1699,8 +1676,8 @@ export default function SearchPreferencesScreen() {
                     {preview.tags.map((tag) => {
                       const selected = selectedKeywords.includes(tag);
                       return (
-                        <Pressable key={tag} accessibilityLabel={translatePreviewTag(tag, language)} accessibilityRole="checkbox" accessibilityState={{ checked: selected }} onPress={() => setSelectedKeywords((current) => selected ? current.filter((keyword) => keyword !== tag) : [...current, tag])} style={({ pressed }) => [styles.keywordSelectionButton, selected && styles.keywordSelectionButtonSelected, pressed && styles.pressed]}>
-                          <Text adjustsFontSizeToFit minimumFontScale={0.8} numberOfLines={1} style={[styles.keywordSelectionText, selected && styles.keywordSelectionTextSelected]}>{translatePreviewTag(tag, language)}</Text>
+                        <Pressable key={tag} accessibilityLabel={translateRecruitmentTag(tag, language)} accessibilityRole="checkbox" accessibilityState={{ checked: selected }} onPress={() => setSelectedKeywords((current) => selected ? current.filter((keyword) => keyword !== tag) : [...current, tag])} style={({ pressed }) => [styles.keywordSelectionButton, selected && styles.keywordSelectionButtonSelected, pressed && styles.pressed]}>
+                          <Text adjustsFontSizeToFit minimumFontScale={0.8} numberOfLines={1} style={[styles.keywordSelectionText, selected && styles.keywordSelectionTextSelected]}>{translateRecruitmentTag(tag, language)}</Text>
                         </Pressable>
                       );
                     })}
@@ -1865,7 +1842,6 @@ export default function SearchPreferencesScreen() {
           minuteInterval={5}
           mode="time"
           onChange={handleTimePickerChange}
-          timeZoneName={JST_TIME_ZONE}
           value={pickerTime}
         />
       ) : null}
@@ -1954,7 +1930,7 @@ export default function SearchPreferencesScreen() {
                 <Text style={styles.pickerTitle}>{copy.pickerTimeTitle}</Text>
                 <Pressable
                   accessibilityRole="button"
-                  onPress={() => commitTime(pickerTime)}
+                  onPress={() => commitTime(pickerTimeRef.current)}
                   style={styles.pickerHeaderButton}
                 >
                   <Text style={styles.pickerDoneText}>{copy.pickerDone}</Text>
@@ -1970,7 +1946,6 @@ export default function SearchPreferencesScreen() {
                 onChange={handleTimePickerChange}
                 style={styles.nativePicker}
                 themeVariant="light"
-                timeZoneName={JST_TIME_ZONE}
                 value={pickerTime}
               />
             </View>
@@ -1995,12 +1970,16 @@ export default function SearchPreferencesScreen() {
               <Text style={styles.selectionTitle}>
                 {scheduleWarning.issue === "recruitment_date_in_past"
                   ? copy.pastStartTitle
-                  : copy.midnightTitle}
+                  : scheduleWarning.issue === "recruitment_deadline_passed"
+                    ? copy.deadlinePassedTitle
+                    : copy.midnightTitle}
               </Text>
               <Text style={styles.warningMessage}>
                 {scheduleWarning.issue === "recruitment_date_in_past"
                   ? copy.pastStartQuestion
-                  : copy.midnightQuestion}
+                  : scheduleWarning.issue === "recruitment_deadline_passed"
+                    ? copy.deadlinePassedQuestion
+                    : copy.midnightQuestion}
               </Text>
               <View style={styles.warningSuggestion}>
                 <Text style={styles.warningSuggestionLabel}>{copy.suggestedSchedule}</Text>
@@ -2043,88 +2022,98 @@ const styles = StyleSheet.create({
   categorySelectionLabel: {
     width: "100%",
     maxWidth: 340,
-    marginTop: 20,
-    color: '#1E3A8A',
+    marginTop: 16,
+    marginBottom: 7,
+    color: colors.text.inverse,
     fontSize: 15,
-    fontWeight: '700',
-    marginBottom: 8,
+    fontWeight: "900",
   },
   categorySelectionRow: {
     width: "100%",
     maxWidth: 340,
-    flexDirection: 'row',
-    flexWrap: 'wrap',
+    flexDirection: "row",
+    flexWrap: "wrap",
     gap: 8,
-    marginBottom: 16,
+    marginBottom: 12,
   },
   categorySelectionButton: {
+    minHeight: 32,
     maxWidth: "100%",
     flexShrink: 1,
-    backgroundColor: '#FFF7CC',
-    borderColor: '#F2C94C',
-    borderRadius: 16,
     borderWidth: 1,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    borderColor: colors.border.default,
+    borderRadius: radius.pill,
+    backgroundColor: colors.surface.default,
+    paddingHorizontal: 13,
+    paddingVertical: 6,
+    ...shadows.control,
   },
   categorySelectionButtonSelected: {
-    backgroundColor: '#1E3A8A',
-    borderColor: '#1E3A8A',
+    borderColor: colors.brand.gold,
+    backgroundColor: colors.brand.gold,
+    ...shadows.action,
   },
   categorySelectionText: {
     flexShrink: 1,
-    color: '#1E3A8A',
-    fontSize: 14,
-    fontWeight: '600',
+    color: colors.text.secondary,
+    fontSize: 13,
+    fontWeight: "900",
+    lineHeight: 17,
   },
   categorySelectionTextSelected: {
-    color: '#FFFFFF',
+    color: colors.text.inverse,
   },
   keywordSelectionLabel: {
     width: "100%",
     maxWidth: 340,
-    marginTop: 4,
-    color: '#1E3A8A',
-    fontSize: 15,
-    fontWeight: '700',
+    marginTop: 2,
     marginBottom: 4,
+    color: colors.text.inverse,
+    fontSize: 15,
+    fontWeight: "900",
   },
   keywordSelectionHint: {
     width: "100%",
     maxWidth: 340,
-    color: '#6B7280',
-    fontSize: 13,
-    marginBottom: 8,
+    marginBottom: 7,
+    color: colors.text.inverse,
+    fontSize: 12,
+    fontWeight: "600",
+    lineHeight: 16,
+    opacity: 0.86,
   },
   keywordSelectionRow: {
     width: "100%",
     maxWidth: 340,
-    flexDirection: 'row',
-    flexWrap: 'wrap',
+    flexDirection: "row",
+    flexWrap: "wrap",
     gap: 8,
   },
   keywordSelectionButton: {
+    minHeight: 32,
     maxWidth: "100%",
     flexShrink: 1,
-    backgroundColor: '#FFFFFF',
-    borderColor: '#1E3A8A',
-    borderRadius: 16,
     borderWidth: 1,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    borderColor: colors.border.default,
+    borderRadius: radius.pill,
+    backgroundColor: colors.surface.default,
+    paddingHorizontal: 13,
+    paddingVertical: 6,
   },
   keywordSelectionButtonSelected: {
-    backgroundColor: '#F2C94C',
-    borderColor: '#F2C94C',
+    borderColor: colors.brand.gold,
+    backgroundColor: colors.brand.gold,
+    ...shadows.action,
   },
   keywordSelectionText: {
     flexShrink: 1,
-    color: '#1E3A8A',
-    fontSize: 14,
-    fontWeight: '600',
+    color: colors.text.secondary,
+    fontSize: 13,
+    fontWeight: "900",
+    lineHeight: 17,
   },
   keywordSelectionTextSelected: {
-    color: '#1E3A8A',
+    color: colors.text.inverse,
   },
   screen: {
     flex: 1,

@@ -42,6 +42,7 @@ const SATURDAY_BLUE = "#0b70e0";
 const SUNDAY_RED = "#e11919";
 const DATE_SWIPE_THRESHOLD = 42;
 const DATE_SWIPE_VERTICAL_LIMIT = 28;
+const RECRUITMENT_LOOKAHEAD_MONTHS = 2;
 
 type SortMode = "near" | "deadline";
 type DateButtonItem = {
@@ -123,11 +124,29 @@ function addDaysToDateKey(dateKey: string, days: number): Date {
   return date;
 }
 
-function weekDateButtons(language: AppLanguage, startDateKey: string): DateButtonItem[] {
+function addMonthsToDateKey(dateKey: string, months: number): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateKey);
+  if (!match) return dateKey;
+  return formatDateKey(
+    jstDateParts(
+      new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1 + months, Number(match[3]), 12)),
+    ),
+  );
+}
+
+function daysBetweenDateKeys(fromDateKey: string, toDateKey: string): number {
+  const from = addDaysToDateKey(fromDateKey, 0);
+  const to = addDaysToDateKey(toDateKey, 0);
+  return Math.max(0, Math.round((to.getTime() - from.getTime()) / (24 * 60 * 60 * 1000)));
+}
+
+function dateButtonsInRange(language: AppLanguage, startDateKey: string): DateButtonItem[] {
   const copy = COPY[language];
   const today = todayDateKey();
+  const endDateKey = addMonthsToDateKey(startDateKey, RECRUITMENT_LOOKAHEAD_MONTHS);
+  const numberOfDays = daysBetweenDateKeys(startDateKey, endDateKey) + 1;
 
-  return Array.from({ length: 7 }, (_, index) => {
+  return Array.from({ length: numberOfDays }, (_, index) => {
     const date = addDaysToDateKey(startDateKey, index);
     const parts = jstDateParts(date);
     const dateKey = formatDateKey(parts);
@@ -137,7 +156,7 @@ function weekDateButtons(language: AppLanguage, startDateKey: string): DateButto
     return {
       dateKey,
       weekdayIndex: parts.weekdayIndex,
-      label: isToday ? copy.today : String(parts.day),
+      label: isToday ? copy.today : `${parts.month}/${parts.day}`,
       weekdayLabel,
       isToday,
     };
@@ -187,7 +206,7 @@ export default function JapaneseHomeScreen() {
   const copyRef = useRef(copy);
   copyRef.current = copy;
   const dateButtons = useMemo(
-    () => weekDateButtons(language ?? "ja", todayDateKey()),
+    () => dateButtonsInRange(language ?? "ja", todayDateKey()),
     [language],
   );
   const selectedDateIndex = useMemo(
@@ -437,7 +456,7 @@ export default function JapaneseHomeScreen() {
               </View>
             ) : null}
             {filteredMatches.map((match) => (
-              <MatchCard key={match.id} match={match} onOpen={openMatch} />
+              <MatchCard key={match.id} language={language ?? "ja"} match={match} onOpen={openMatch} />
             ))}
           </>
         )}

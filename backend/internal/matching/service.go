@@ -36,7 +36,9 @@ const (
 	maxDescriptionRunes  = 2000
 	maxLocationNameRunes = 120
 	maxParticipantLimit  = 10
+	maxSearchRangeMonths = 2
 	locationTTL          = time.Hour
+	recruitmentLeadTime  = 24 * time.Hour
 	recruitmentTimezone  = "Asia/Tokyo"
 )
 
@@ -292,6 +294,12 @@ func (s *Service) SearchRecruitments(ctx context.Context, userID string, params 
 		WHERE r.owner_user_id <> $1
 		  AND r.status IN ('open','matched')
 		  AND r.expires_at > $2
+		  AND ($4 = '' OR r.available_date = $4)
+		  AND ($5 = '' OR r.available_date >= $5)
+		  AND ($6 = '' OR r.available_date <= $6)
+		  AND ($7 = '' OR r.category = $7)
+		  AND (NOT $8 OR COALESCE(p.identity_status,'unverified') = 'verified')
+		  AND ($9 = '' OR (r.start_time < $10 AND $9 < r.end_time))
 		  AND (SELECT COUNT(*) FROM matches accepted WHERE accepted.card_id=r.id AND accepted.status='accepted') < r.participant_limit
 		  AND NOT EXISTS (
 				SELECT 1 FROM blocks b
@@ -299,7 +307,10 @@ func (s *Service) SearchRecruitments(ctx context.Context, userID string, params 
 				   OR (b.blocker_user_id = r.owner_user_id AND b.blocked_user_id = $1)
 		  )
 		ORDER BY r.created_at DESC
-		LIMIT $3`, userID, nowText, maxSearchLimit)
+		LIMIT $3`,
+		userID, nowText, maxSearchLimit, params.AvailableDate, params.AvailableFrom,
+		params.AvailableTo, params.Category, params.VerifiedOnly, params.StartTime,
+		params.EndTime)
 	if err != nil {
 		return nil, err
 	}
@@ -1129,9 +1140,11 @@ func normalizeRecruitmentInput(input RecruitmentInput, now time.Time) (Recruitme
 	input.AvailableDate = date.Format("2006-01-02")
 	input.StartTime = startClock.Format("15:04")
 	input.EndTime = endClock.Format("15:04")
-	// Keep the database value as a canonical absolute instant. The wall-clock
-	// fields above are interpreted in JST before this UTC conversion.
-	expires := time.Date(date.Year(), date.Month(), date.Day(), endClock.Hour(), endClock.Minute(), 0, 0, recruitmentLocation).UTC()
+	// Keep the database value as a canonical absolute instant. Applications
+	// close 24 hours before the JST wall-clock start time.
+	expires := time.Date(date.Year(), date.Month(), date.Day(), startClock.Hour(), startClock.Minute(), 0, 0, recruitmentLocation).
+		Add(-recruitmentLeadTime).
+		UTC()
 	if input.Status == "open" && !expires.After(now.In(recruitmentLocation)) {
 		return RecruitmentInput{}, "", ErrRecruitmentExpired
 	}
@@ -1184,7 +1197,7 @@ func normalizeSearchParams(params SearchParams) (SearchParams, error) {
 	if params.AvailableFrom != "" || params.AvailableTo != "" {
 		from, fromErr := time.Parse("2006-01-02", params.AvailableFrom)
 		to, toErr := time.Parse("2006-01-02", params.AvailableTo)
-		if fromErr != nil || toErr != nil || to.Before(from) || to.Sub(from) > 31*24*time.Hour {
+		if fromErr != nil || toErr != nil || to.Before(from) || to.After(from.AddDate(0, maxSearchRangeMonths, 0)) {
 			return SearchParams{}, ErrInvalidInput
 		}
 	}

@@ -3,13 +3,55 @@ import { StyleSheet, Text, View } from "react-native";
 import type { MatchCardData } from "../types/match";
 import { Card, Pill, colors, radius, typography } from "./ui";
 import { formatTimeRange } from "../utils/time";
+import { translateLocationLabel } from "../utils/location-labels";
+import { translateRecruitmentTag } from "../utils/recruitment-tags";
+import type { AppLanguage } from "../services/onboarding";
 
 type MatchCardProps = {
+  language?: AppLanguage;
   match: MatchCardData;
   onOpen?: (match: MatchCardData) => void;
 };
 
-export default function MatchCard({ match, onOpen }: MatchCardProps) {
+const MONTH_INDEX: Readonly<Record<string, number>> = {
+  april: 4,
+  august: 8,
+  december: 12,
+  february: 2,
+  january: 1,
+  july: 7,
+  june: 6,
+  march: 3,
+  may: 5,
+  november: 11,
+  october: 10,
+  september: 9,
+};
+
+function formatCardDate(value: string): string {
+  const slashMatch = /^(\d{4})\/(\d{1,2})\/(\d{1,2})$/.exec(value.trim());
+  if (slashMatch) {
+    return `${slashMatch[1]}/${Number(slashMatch[2])}/${Number(slashMatch[3])}`;
+  }
+
+  const isoMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
+  if (isoMatch) {
+    return `${isoMatch[1]}/${Number(isoMatch[2])}/${Number(isoMatch[3])}`;
+  }
+
+  const monthNameMatch = /^([A-Za-z]+),?\s*(\d{1,2}),?\s+(\d{4})$/.exec(value.trim());
+  if (monthNameMatch) {
+    const month = MONTH_INDEX[monthNameMatch[1]!.toLocaleLowerCase()];
+    if (month) return `${monthNameMatch[3]}/${month}/${Number(monthNameMatch[2])}`;
+  }
+
+  return value;
+}
+
+export default function MatchCard({ language = "en", match, onOpen }: MatchCardProps) {
+  const locationName = match.locationName
+    ? translateLocationLabel(match.locationName, language)
+    : "";
   const statusLabel = match.applicationStatus === "pending" ? "応募中"
     : match.applicationStatus === "accepted" ? "承認済み"
       : match.applicationStatus === "completed" ? "完了"
@@ -37,7 +79,7 @@ export default function MatchCard({ match, onOpen }: MatchCardProps) {
       <View style={styles.details}>
         <Text numberOfLines={1} style={styles.detailLine}>
           <Text style={styles.detailLabel}>Date</Text>
-          {`   ${match.date}`}
+          {`   ${formatCardDate(match.date)}`}
         </Text>
         <Text numberOfLines={1} style={styles.detailLine}>
           <Text style={styles.detailLabel}>Time</Text>
@@ -48,16 +90,16 @@ export default function MatchCard({ match, onOpen }: MatchCardProps) {
       <View style={styles.tags}>
         {match.tags.map((tag) => (
           <Pill key={tag} style={styles.tag} textStyle={styles.tagText} variant="primary">
-            {tag}
+            {translateRecruitmentTag(tag, language)}
           </Pill>
         ))}
       </View>
 
       <View style={styles.footer}>
-        {match.locationName ? <View style={styles.locationRow}><MaterialIcons color={colors.text.muted} name="place" size={12} /><Text numberOfLines={1} style={styles.locationText}>{match.locationName}</Text></View> : <View style={styles.footerSpacer} />}
+        {locationName ? <View style={styles.locationRow}><MaterialIcons color={colors.text.muted} name="place" size={12} style={styles.locationIcon} /><Text ellipsizeMode="tail" numberOfLines={1} style={styles.locationText}>{locationName}</Text></View> : <View style={styles.footerSpacer} />}
         <View style={styles.footerMeta}>
           {match.isToday ? <Text style={styles.today}>今日</Text> : null}
-          <Text style={styles.expiry}>{match.expiresAt}まで</Text>
+          <Text adjustsFontSizeToFit minimumFontScale={0.85} numberOfLines={1} style={styles.expiry}>{match.expiresAt}まで</Text>
         </View>
       </View>
     </Card>
@@ -155,18 +197,24 @@ const styles = StyleSheet.create({
     minHeight: 16,
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
+    gap: 6,
   },
   locationRow: {
     minWidth: 0,
     flex: 1,
+    flexShrink: 1,
     flexDirection: "row",
     alignItems: "center",
     gap: 3,
+    overflow: "hidden",
+  },
+  locationIcon: {
+    flexShrink: 0,
   },
   locationText: {
     minWidth: 0,
     flex: 1,
+    flexShrink: 1,
     color: colors.text.muted,
     ...typography.micro,
   },
@@ -175,6 +223,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   footerMeta: {
+    maxWidth: "54%",
     flexShrink: 0,
     alignItems: "flex-end",
     gap: 1,

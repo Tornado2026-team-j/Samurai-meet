@@ -464,13 +464,13 @@ function parseDateOnly(value: string): Date | null {
 function formatRecruitmentDate(value: string): { card: string; detail: string } {
   const parsed = parseDateOnly(value);
   if (!parsed) return { card: value, detail: value };
-  const month = parsed.toLocaleDateString("en-US", { month: "long", timeZone: "UTC" });
   const shortMonth = parsed.toLocaleDateString("en-US", { month: "short", timeZone: "UTC" });
   const weekday = parsed.toLocaleDateString("en-US", { weekday: "short", timeZone: "UTC" });
+  const month = parsed.getUTCMonth() + 1;
   const day = parsed.getUTCDate();
   const year = parsed.getUTCFullYear();
   return {
-    card: `${month},${day} ${year}`,
+    card: `${year}/${month}/${day}`,
     detail: `${shortMonth} ${day}, ${year} (${weekday})`,
   };
 }
@@ -478,7 +478,22 @@ function formatRecruitmentDate(value: string): { card: string; detail: string } 
 function formatExpiry(value: string): string {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return value;
-  return `${parsed.getUTCFullYear()}/${String(parsed.getUTCMonth() + 1).padStart(2, "0")}/${String(parsed.getUTCDate()).padStart(2, "0")}`;
+  const parts = new Intl.DateTimeFormat("en-US", {
+    day: "2-digit",
+    hour: "2-digit",
+    hourCycle: "h23",
+    minute: "2-digit",
+    month: "2-digit",
+    timeZone: "Asia/Tokyo",
+    year: "numeric",
+  })
+    .formatToParts(parsed)
+    .reduce<Record<string, string>>((result, part) => {
+      if (part.type !== "literal") result[part.type] = part.value;
+      return result;
+    }, {});
+
+  return `${parts.year}/${parts.month}/${parts.day} ${parts.hour}:${parts.minute}`;
 }
 
 function uniqueTags(recruitment: Recruitment): string[] {

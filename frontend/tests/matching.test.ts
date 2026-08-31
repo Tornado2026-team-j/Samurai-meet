@@ -41,7 +41,7 @@ const recruitment: Recruitment = {
   visibility_radius_km: 3,
   distance_band: "within_1_km",
   status: "open",
-  expires_at: "2026-08-27T11:00:00Z",
+  expires_at: "2026-08-26T09:00:00Z",
   created_at: "2026-08-26T00:00:00Z",
   updated_at: "2026-08-26T00:00:00Z",
 };
@@ -277,10 +277,10 @@ describe("募集APIクライアント", () => {
       authorName: "Mika",
       countryFlag: "🇯🇵",
       countryName: "Japan",
-      date: "August,27 2026",
+      date: "2026/8/27",
       detailDate: "Aug 27, 2026 (Thu)",
       tags: ["local", "culture"],
-      expiresAt: "2026/08/27",
+      expiresAt: "2026/08/26 18:00",
     });
   });
 });

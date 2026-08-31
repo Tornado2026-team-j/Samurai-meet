@@ -83,6 +83,7 @@ export const JST_TIME_ZONE = "Asia/Tokyo";
 
 const JST_OFFSET_MINUTES = 9 * 60;
 const MINUTES_PER_DAY = 24 * 60;
+const RECRUITMENT_LEAD_TIME_MS = 24 * 60 * 60 * 1000;
 
 type CalendarDateParts = {
   year: number;
@@ -231,6 +232,7 @@ export type DefaultRecruitmentSchedule = {
 
 export type RecruitmentScheduleIssue =
   | "recruitment_date_in_past"
+  | "recruitment_deadline_passed"
   | "recruitment_must_end_same_day";
 
 function formatTimeInput(totalMinutes: number): string {
@@ -242,7 +244,9 @@ function formatTimeInput(totalMinutes: number): string {
 export function defaultRecruitmentSchedule(
   reference = new Date(),
 ): DefaultRecruitmentSchedule {
-  const now = getJSTDateTimeParts(reference);
+  const now = getJSTDateTimeParts(
+    new Date(reference.getTime() + RECRUITMENT_LEAD_TIME_MS),
+  );
   const roundedMinutes =
     Math.floor((now.hour * 60 + now.minute) / 30) * 30 + 30;
   const nextDate = new Date(0);
@@ -381,6 +385,9 @@ export function getRecruitmentScheduleIssue(
   if (dateAtStart <= now) {
     return "recruitment_date_in_past";
   }
+  if (dateAtStart.getTime() - RECRUITMENT_LEAD_TIME_MS <= now.getTime()) {
+    return "recruitment_deadline_passed";
+  }
 
   return null;
 }
@@ -400,7 +407,12 @@ export function buildRecruitmentCreateRequest(
     throw new Error("invalid_recruitment_description");
   }
   const scheduleIssue = getRecruitmentScheduleIssue(draft, now);
-  if (scheduleIssue === "recruitment_must_end_same_day" || (scheduleIssue === "recruitment_date_in_past" && status === "open")) {
+  if (
+    scheduleIssue === "recruitment_must_end_same_day" ||
+    ((scheduleIssue === "recruitment_date_in_past" ||
+      scheduleIssue === "recruitment_deadline_passed") &&
+      status === "open")
+  ) {
     throw new Error(scheduleIssue);
   }
 
