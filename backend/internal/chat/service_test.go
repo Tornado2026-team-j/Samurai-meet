@@ -51,6 +51,17 @@ func TestValidateMessageInputRequiresCiphertextContract(t *testing.T) {
 	if strings.Contains(valid.Ciphertext, "hello") {
 		t.Fatal("test ciphertext unexpectedly contains plaintext")
 	}
+
+	location := valid
+	location.ContentType = "location"
+	location.ExpiresAt = time.Now().Add(time.Hour).UTC().Format(time.RFC3339Nano)
+	if err := validateMessageInput(location); err != nil {
+		t.Fatalf("valid location metadata rejected: %v", err)
+	}
+	location.ExpiresAt = time.Now().Add(25 * time.Hour).UTC().Format(time.RFC3339Nano)
+	if err := validateMessageInput(location); !errors.Is(err, ErrChatInvalidInput) {
+		t.Fatalf("overlong location expiry error = %v, want invalid input", err)
+	}
 }
 
 // TestIssueTransportTokenRejectsUnsupportedTransport locks the contract that

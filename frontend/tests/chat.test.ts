@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import {
+  parseChatLocationPayload,
   blockUser,
   chatWebSocketURL,
   createSafetyReport,
@@ -12,6 +13,7 @@ import {
   markChatRead,
   moderateChatText,
   sendChatMessage,
+  sendChatLocation,
   toChatMessageView,
   validateChatDraft,
   type EncryptedChatMessage,
@@ -216,6 +218,50 @@ describe("チャットAPIクライアント", () => {
     expect(parsed.algorithm).toBe("AES-256-GCM");
     expect(requestedBody).not.toContain("改札前");
     expect(decryptChatMessage("chat-1", message)).toBe("改札前で待ち合わせしましょう。");
+  });
+
+  it("位置共有も座標を平文API bodyへ入れず、期限付き型付きメッセージとして送る", async () => {
+    let requestedBody = "";
+    globalThis.fetch = (async (_input, init) => {
+      requestedBody = String(init?.body);
+      const body = JSON.parse(requestedBody) as Partial<EncryptedChatMessage>;
+      return new Response(JSON.stringify({ data: { ...body, id: "location-1", chat_id: "chat-1", sender_user_id: "user-1", sequence: 2, created_at: "2026-08-30T00:00:00Z" } }), { status: 201 });
+    }) as typeof fetch;
+    const expiresAt = new Date(Date.now() + 60_000).toISOString();
+    const message = await sendChatLocation("chat-1", { latitude: 35.681236, longitude: 139.767125, display_name: "Tokyo Station", accuracy_m: 20 }, session, expiresAt, "location-client-1", undefined, fixedRandom);
+    expect(JSON.parse(requestedBody)).toMatchObject({ content_type: "location", expires_at: expiresAt });
+    expect(requestedBody).not.toContain("35.681236");
+    expect(toChatMessageView("chat-1", message, "user-1").location).toMatchObject({ latitude: 35.681236, longitude: 139.767125, display_name: "Tokyo Station" });
+  });
+
+  it("期限切れの位置共有は座標を画面用データとして返さない", () => {
+    const expiredAt = new Date(Date.now() - 60_000).toISOString();
+    const payload = JSON.stringify({
+      type: "location",
+      latitude: 35.681236,
+      longitude: 139.767125,
+      display_name: "Tokyo Station",
+      expires_at: expiredAt,
+    });
+    expect(parseChatLocationPayload(payload, expiredAt)).toBeNull();
+
+    const message: EncryptedChatMessage = {
+      id: "location-expired",
+      chat_id: "chat-1",
+      sender_user_id: "user-2",
+      client_message_id: "location-expired-client",
+      sequence: 3,
+      ciphertext: "",
+      nonce: "",
+      algorithm: "AES-256-GCM",
+      key_version: "v1",
+      content_type: "location",
+      expires_at: expiredAt,
+      created_at: "2026-08-30T00:00:00Z",
+    };
+    const view = toChatMessageView("chat-1", message, "user-1");
+    expect(view.location).toBeNull();
+    expect(view.locationExpired).toBe(true);
   });
 
   it("暗号化メッセージを画面用に復号し、自分の送信か判定する", async () => {

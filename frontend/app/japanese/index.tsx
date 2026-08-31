@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MaterialIcons } from "@expo/vector-icons";
-import { useLocalSearchParams } from "expo-router";
+import { useFocusEffect, useLocalSearchParams } from "expo-router";
 import {
   ActivityIndicator,
   Keyboard,
@@ -329,13 +329,12 @@ export default function JapaneseHomeScreen() {
     };
   }, []);
 
-  const loadRecruitmentsRef = useRef(loadRecruitments);
-  loadRecruitmentsRef.current = loadRecruitments;
-
-  useEffect(() => {
-    if (status === "loading") return;
-    return loadRecruitmentsRef.current();
-  }, [selectedDate, sortMode, submittedQuery, status]);
+  useFocusEffect(
+    useCallback(() => {
+      if (status === "loading") return;
+      return loadRecruitments();
+    }, [loadRecruitments, status]),
+  );
 
   const moveSelectedDate = useCallback((offset: -1 | 1) => {
     const currentIndex = selectedDateIndex < 0 ? 0 : selectedDateIndex;

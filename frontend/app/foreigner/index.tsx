@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MaterialIcons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import {
   ActivityIndicator,
   Pressable,
@@ -12,7 +12,7 @@ import {
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { colors } from "../../components/ui";
+import { colors, spacing } from "../../components/ui";
 import { useAuth } from "../../hooks/useAuth";
 import { useUnreadNotifications } from "../../hooks/useUnreadNotifications";
 import { APIError } from "../../services/api-client";
@@ -98,7 +98,6 @@ export default function ForeignerHomeScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const initialLoadStartedRef = useRef(false);
   const copy = COPY[language ?? "en"];
   const copyRef = useRef(copy);
   copyRef.current = copy;
@@ -184,9 +183,6 @@ export default function ForeignerHomeScreen() {
     };
   }, [getCurrentSession, refresh, session, status]);
 
-  const loadApplicationsRef = useRef(loadApplications);
-  loadApplicationsRef.current = loadApplications;
-
   useEffect(() => {
     let active = true;
     const unsubscribe = subscribeLanguage((nextLanguage) => {
@@ -203,12 +199,9 @@ export default function ForeignerHomeScreen() {
     };
   }, []);
 
-  useEffect(() => {
-    if (status === "loading" || initialLoadStartedRef.current) return;
-
-    initialLoadStartedRef.current = true;
-    return loadApplicationsRef.current("initial");
-  }, [status]);
+  useFocusEffect(
+    useCallback(() => loadApplications("initial"), [loadApplications]),
+  );
 
   const openSearchPreferences = () => {
     router.push("/tabs");
@@ -297,7 +290,11 @@ export default function ForeignerHomeScreen() {
       <ScrollView
         contentContainerStyle={[
           styles.content,
-          { paddingBottom: Math.max(insets.bottom + 120, 132) },
+          {
+            paddingBottom: Math.max(insets.bottom + 120, 132),
+            paddingLeft: Math.max(insets.left + 16, 24),
+            paddingRight: Math.max(insets.right + 16, 24),
+          },
         ]}
         refreshControl={
           <RefreshControl
@@ -467,22 +464,33 @@ const styles = StyleSheet.create({
     borderBottomRightRadius: 50,
   },
   createButton: {
+    width: "100%",
+    maxWidth: 342,
     minHeight: 50,
+    marginBottom: spacing.xl,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
     borderRadius: 12,
     backgroundColor: YELLOW,
   },
   createButtonText: {
+    flexShrink: 1,
     color: "#ffffff",
     fontSize: 16,
     fontWeight: "900",
+    lineHeight: 20,
+    textAlign: "center",
   },
   dashboardRow: {
+    width: "100%",
+    maxWidth: 342,
     flexDirection: "row",
-    gap: 10,
+    gap: spacing.md,
+    marginBottom: spacing.xl,
   },
   dashboardItem: {
     flex: 1,
@@ -507,7 +515,10 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
   unreadBanner: {
+    width: "100%",
+    maxWidth: 342,
     minHeight: 48,
+    marginBottom: spacing.xl,
     flexDirection: "row",
     alignItems: "center",
     gap: 8,

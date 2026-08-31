@@ -182,10 +182,10 @@ func (s *Service) loadMessageBySequence(chatID string, sequence int64) (Message,
 	defer cancel()
 	var message Message
 	err := s.db.QueryRowContext(ctx, `
-		SELECT id,chat_id,sender_user_id,client_message_id,sequence,ciphertext,nonce,algorithm,key_version,created_at
+		SELECT id,chat_id,sender_user_id,client_message_id,sequence,ciphertext,nonce,algorithm,key_version,content_type,COALESCE(expires_at,''),created_at
 		FROM messages WHERE chat_id=$1 AND sequence=$2 AND deleted_at IS NULL`, chatID, sequence).Scan(
 		&message.ID, &message.ChatID, &message.SenderUserID, &message.ClientMessageID, &message.Sequence,
-		&message.Ciphertext, &message.Nonce, &message.Algorithm, &message.KeyVersion, &message.CreatedAt)
+		&message.Ciphertext, &message.Nonce, &message.Algorithm, &message.KeyVersion, &message.ContentType, &message.ExpiresAt, &message.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Message{}, ErrMessageNotFound
 	}

@@ -2,8 +2,10 @@ import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Keyboard,
   KeyboardAvoidingView,
+  Linking,
   Modal,
   Platform,
   Pressable,
@@ -32,6 +34,7 @@ import {
   moderateChatText,
   parseChatSocketFrame,
   sendChatMessage,
+  sendChatLocation,
   toChatMessageView,
   translateChatText,
   validateChatDraft,
@@ -40,6 +43,7 @@ import {
   type ChatReportReason,
   type ChatSummary,
 } from "../../services/chat";
+import { resolveCurrentLocationDisplay } from "../../services/location";
 import { declineMatch, getMatch, type MatchView } from "../../services/matching";
 import { loadLanguage, subscribeLanguage, type AppLanguage } from "../../services/onboarding";
 import { formatTimeRange } from "../../utils/time";
@@ -109,6 +113,15 @@ const COPY = {
     draftEmpty: "メッセージを入力してください。",
     draftTooLong: "メッセージは2000文字以内で入力してください。",
     sendFailed: "メッセージを送信できませんでした。時間をおいて再試行してください。",
+    shareLocation: "現在地を共有",
+    locationConfirmTitle: "現在地を共有しますか？",
+    locationConfirm: "相手は有効期限まで地図でこの場所を開けます。自宅などの正確な位置は共有しないでください。",
+    locationUnavailable: "現在地を取得できませんでした。位置情報の許可を確認してください。",
+    locationShared: "位置情報を共有しました",
+    locationExpired: "位置情報の共有期限が切れました",
+    openAppleMaps: "Appleマップで開く",
+    openGoogleMaps: "Googleマップで開く",
+    locationExpires: "共有期限",
     blockedDraft: "外部連絡先や個人情報を含む可能性があるため送信できません。",
     warningDraft: "安全確認が必要な内容を検知しました。内容を見直してください。",
     safetyNotice: "個人情報、外部連絡先、人気のない場所への誘導は送らないでください。",
@@ -176,6 +189,15 @@ const COPY = {
     draftEmpty: "Enter a message.",
     draftTooLong: "Messages must be 2000 characters or fewer.",
     sendFailed: "Message could not be sent. Please try again later.",
+    shareLocation: "Share current location",
+    locationConfirmTitle: "Share your current location?",
+    locationConfirm: "The recipient can open this location in a map until it expires. Do not share your home or another sensitive location.",
+    locationUnavailable: "Current location could not be obtained. Check location permission.",
+    locationShared: "Location shared",
+    locationExpired: "Location sharing has expired",
+    openAppleMaps: "Open in Apple Maps",
+    openGoogleMaps: "Open in Google Maps",
+    locationExpires: "Expires",
     blockedDraft: "This may include external contact details or personal information, so it cannot be sent.",
     warningDraft: "This message needs a safety check. Please review it before sending.",
     safetyNotice: "Do not share personal information, external contacts, or unsafe meeting places.",
@@ -270,6 +292,7 @@ export default function ChatDetailScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [sending, setSending] = useState(false);
+  const [sharingLocation, setSharingLocation] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);
   const [translatedMessages, setTranslatedMessages] = useState<Record<string, string>>({});
@@ -283,7 +306,7 @@ export default function ChatDetailScreen() {
   const displayMessages = useMemo(() => deduplicateChatMessages(messages), [messages]);
   const validation = validateChatDraft(draft);
   const readOnly = chat?.status === "completed" || locallyClosed !== null;
-  const canSend = safetyModal === null && !readOnly && !sending && !validation && moderation.severity !== "block";
+  const canSend = safetyModal === null && !readOnly && !sending && !sharingLocation && !validation && moderation.severity !== "block";
 
   const runWithSession = useCallback(async <T,>(
     action: (activeSession: NonNullable<typeof session>, signal: AbortSignal) => Promise<T>,
@@ -492,6 +515,45 @@ export default function ChatDetailScreen() {
   const openSafetyModal = (modal: SafetyModal) => {
     Keyboard.dismiss();
     setSafetyModal(modal);
+  };
+
+  const shareCurrentLocation = async () => {
+    if (!chatID || readOnly || sending || sharingLocation) return;
+    const approved = await new Promise<boolean>((resolve) => {
+      if (Platform.OS === "web") { resolve(globalThis.confirm?.(`${copy.locationConfirmTitle}\n\n${copy.locationConfirm}`) ?? false); return; }
+      Alert.alert(copy.locationConfirmTitle, copy.locationConfirm, [
+        { text: copy.cancel, style: "cancel", onPress: () => resolve(false) },
+        { text: copy.confirm, onPress: () => resolve(true) },
+      ], { cancelable: true, onDismiss: () => resolve(false) });
+    });
+    if (!approved) return;
+    setSharingLocation(true);
+    setSendError(null);
+    try {
+      const current = await resolveCurrentLocationDisplay();
+      if (!current) throw new Error("location_unavailable");
+      const sent = await runWithSession((activeSession, signal) => sendChatLocation(chatID, {
+        latitude: current.coordinates.latitude,
+        longitude: current.coordinates.longitude,
+        accuracy_m: current.coordinates.accuracy_m,
+        display_name: current.displayName,
+      }, activeSession, undefined, undefined, signal), new AbortController().signal);
+      const activeSession = getCurrentSession() ?? session;
+      if (activeSession) setMessages((items) => mergeChatMessage(items, toChatMessageView(chatID, sent, activeSession.user_id)));
+      setNotice(copy.locationShared);
+    } catch {
+      setSendError(copy.locationUnavailable);
+    } finally {
+      setSharingLocation(false);
+    }
+  };
+
+  const openLocationMap = async (provider: "apple" | "google", latitude: number, longitude: number) => {
+    const query = `${latitude},${longitude}`;
+    const url = provider === "apple"
+      ? `https://maps.apple.com/?ll=${encodeURIComponent(query)}&q=${encodeURIComponent(query)}`
+      : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
+    await Linking.openURL(url).catch(() => setNotice(copy.sendFailed));
   };
 
   const closeSafetyModal = () => {
@@ -728,8 +790,8 @@ export default function ChatDetailScreen() {
           </View>
         ) : (
           displayMessages.map((message) => (
+            <View key={chatMessageKey(message)}>
             <ChatBubble
-              key={chatMessageKey(message)}
               createdAt={message.created_at}
               encryptedFallback={!message.plaintext}
               mine={message.mine}
@@ -738,10 +800,25 @@ export default function ChatDetailScreen() {
                 : undefined}
               onTranslate={() => showTranslation(message)}
               reportLabel={!message.mine ? copy.messageReport : undefined}
-              text={message.plaintext ?? copy.encryptedMessage}
+              text={message.location ? copy.locationShared : message.locationExpired ? copy.locationExpired : message.plaintext ?? copy.encryptedMessage}
               translateLabel={copy.translate}
               translatedText={translatedMessages[message.id] ?? null}
             />
+            {message.location ? (
+              <View style={[styles.locationCard, message.mine ? styles.locationCardMine : styles.locationCardOther]}>
+                <Text numberOfLines={2} style={styles.locationName}>{message.location.display_name || `${message.location.latitude.toFixed(5)}, ${message.location.longitude.toFixed(5)}`}</Text>
+                <Text style={styles.locationMeta}>{copy.locationExpires}: {new Date(message.location.expires_at).toLocaleString(language === "ja" ? "ja-JP" : "en-US")}</Text>
+                <View style={styles.locationActions}>
+                  <Pressable accessibilityRole="link" onPress={() => void openLocationMap("apple", message.location!.latitude, message.location!.longitude)} style={styles.locationAction}>
+                    <Text style={styles.locationActionText}>{copy.openAppleMaps}</Text>
+                  </Pressable>
+                  <Pressable accessibilityRole="link" onPress={() => void openLocationMap("google", message.location!.latitude, message.location!.longitude)} style={styles.locationAction}>
+                    <Text style={styles.locationActionText}>{copy.openGoogleMaps}</Text>
+                  </Pressable>
+                </View>
+              </View>
+            ) : null}
+            </View>
           ))
         )}
         </ScrollView>
@@ -774,6 +851,15 @@ export default function ChatDetailScreen() {
         ) : null}
 
         <View style={styles.inputRow}>
+          <Pressable
+            accessibilityLabel={copy.shareLocation}
+            accessibilityRole="button"
+            disabled={readOnly || sending || sharingLocation || safetyModal !== null}
+            onPress={() => void shareCurrentLocation()}
+            style={({ pressed }) => [styles.locationButton, (readOnly || sending || sharingLocation) && styles.sendButtonDisabled, pressed && styles.pressed]}
+          >
+            {sharingLocation ? <ActivityIndicator color="#ffffff" size="small" /> : <MaterialIcons color="#ffffff" name="location-on" size={22} />}
+          </Pressable>
           <TextInput
             accessibilityLabel={copy.input}
             editable={!readOnly && !sending && safetyModal === null}
@@ -1232,6 +1318,30 @@ const styles = StyleSheet.create({
     zIndex: 1000,
     elevation: 1000,
   },
+  locationButton: {
+    width: 46,
+    height: 46,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 23,
+    backgroundColor: BLUE,
+  },
+  locationCard: {
+    maxWidth: "82%",
+    marginTop: 8,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: "#caeafd",
+    borderRadius: 14,
+    backgroundColor: SOFT_BLUE,
+  },
+  locationCardMine: { alignSelf: "flex-end" },
+  locationCardOther: { alignSelf: "flex-start" },
+  locationName: { color: TEXT_GRAY, fontSize: 14, fontWeight: "900", lineHeight: 20 },
+  locationMeta: { marginTop: 4, color: MUTED_GRAY, fontSize: 11, fontWeight: "700", lineHeight: 16 },
+  locationActions: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 10 },
+  locationAction: { minHeight: 32, justifyContent: "center", paddingHorizontal: 10, borderWidth: 1, borderColor: BLUE, borderRadius: 16, backgroundColor: "#ffffff" },
+  locationActionText: { color: BLUE, fontSize: 11, fontWeight: "900" },
   modalScrim: {
     ...StyleSheet.absoluteFillObject,
     zIndex: 1001,

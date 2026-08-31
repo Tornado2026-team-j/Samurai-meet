@@ -51,6 +51,8 @@ export type EncryptedChatMessage = {
   nonce: string;
   algorithm: typeof CHAT_ALGORITHM;
   key_version: string;
+  content_type?: "text" | "location";
+  expires_at?: string;
   created_at: string;
 };
 
@@ -62,7 +64,18 @@ export type ChatMessagePage = {
 
 export type ChatMessageView = EncryptedChatMessage & {
   plaintext: string | null;
+  location: ChatLocationPayload | null;
+  locationExpired: boolean;
   mine: boolean;
+};
+
+export type ChatLocationPayload = {
+  type: "location";
+  latitude: number;
+  longitude: number;
+  display_name?: string;
+  accuracy_m?: number;
+  expires_at: string;
 };
 
 export type ChatModerationCategory =
@@ -300,6 +313,22 @@ export function decryptChatMessage(chatID: string, message: EncryptedChatMessage
   }
 }
 
+export function parseChatLocationPayload(value: string | null, expiresAt?: string): ChatLocationPayload | null {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value) as Partial<ChatLocationPayload>;
+    if (parsed.type !== "location" || !Number.isFinite(parsed.latitude) || !Number.isFinite(parsed.longitude)
+      || Math.abs(parsed.latitude as number) > 90 || Math.abs(parsed.longitude as number) > 180
+      || typeof parsed.expires_at !== "string" || parsed.expires_at !== expiresAt
+      || !Number.isFinite(Date.parse(parsed.expires_at)) || Date.parse(parsed.expires_at) <= Date.now()) return null;
+    if (parsed.display_name !== undefined && (typeof parsed.display_name !== "string" || parsed.display_name.trim().length > 80)) return null;
+    if (parsed.accuracy_m !== undefined && (!Number.isFinite(parsed.accuracy_m) || parsed.accuracy_m < 0 || parsed.accuracy_m > 10_000)) return null;
+    return parsed as ChatLocationPayload;
+  } catch {
+    return null;
+  }
+}
+
 export async function sendChatMessage(
   chatID: string,
   plaintext: string,
@@ -325,14 +354,38 @@ export async function sendChatMessage(
   return response.data;
 }
 
+export async function sendChatLocation(
+  chatID: string,
+  location: Omit<ChatLocationPayload, "type" | "expires_at">,
+  session: Session,
+  expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+  clientMessageID = createClientMessageID(),
+  signal?: AbortSignal,
+  random: (length: number) => Promise<Uint8Array> = randomBytes,
+): Promise<EncryptedChatMessage> {
+  const payload: ChatLocationPayload = { type: "location", ...location, expires_at: expiresAt };
+  if (!parseChatLocationPayload(JSON.stringify(payload), expiresAt)) throw new Error("invalid_chat_location");
+  const encrypted = await encryptChatPlaintext(chatID, JSON.stringify(payload), random);
+  const response = await requestAPI<DataResponse<EncryptedChatMessage>>(
+    `/chats/${encodeURIComponent(chatID)}/messages`, session,
+    { method: "POST", body: JSON.stringify({ client_message_id: clientMessageID, ...encrypted, content_type: "location", expires_at: expiresAt }), signal },
+  );
+  if (!response.data) throw new Error("chat location response is empty");
+  return response.data;
+}
+
 export function toChatMessageView(
   chatID: string,
   message: EncryptedChatMessage,
   currentUserID: string,
 ): ChatMessageView {
+  const plaintext = decryptChatMessage(chatID, message);
+  const location = message.content_type === "location" ? parseChatLocationPayload(plaintext, message.expires_at) : null;
   return {
     ...message,
-    plaintext: decryptChatMessage(chatID, message),
+    plaintext,
+    location,
+    locationExpired: message.content_type === "location" && location === null,
     mine: message.sender_user_id === currentUserID,
   };
 }

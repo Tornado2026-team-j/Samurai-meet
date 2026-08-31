@@ -2,7 +2,7 @@ import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import { StatusBar } from "expo-status-bar";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Header } from "../../components/ui";
 import { useAuth } from "../../hooks/useAuth";
@@ -183,7 +183,9 @@ export default function ChatListScreen() {
     };
   }, []);
 
-  useEffect(() => load("initial"), [load]);
+  useFocusEffect(
+    useCallback(() => load("initial"), [load]),
+  );
 
   useEffect(() => {
     if (!targetMatchID || loading || loadError || navigatedMatchRef.current === targetMatchID) return;

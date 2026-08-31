@@ -74,6 +74,8 @@ type Message struct {
 	Nonce           string      `json:"nonce"`
 	Algorithm       string      `json:"algorithm"`
 	KeyVersion      string      `json:"key_version"`
+	ContentType     string      `json:"content_type"`
+	ExpiresAt       string      `json:"expires_at,omitempty"`
 	CreatedAt       string      `json:"created_at"`
 	Attachment      *Attachment `json:"attachment,omitempty"`
 }
@@ -90,6 +92,10 @@ type SendMessageInput struct {
 	Nonce           string `json:"nonce"`
 	Algorithm       string `json:"algorithm"`
 	KeyVersion      string `json:"key_version"`
+	// ContentType is metadata only. Location coordinates are encrypted inside
+	// Ciphertext and are never accepted as a server-readable field.
+	ContentType     string `json:"content_type"`
+	ExpiresAt       string `json:"expires_at,omitempty"`
 	// AttachmentID optionally references a chat photo the caller already
 	// uploaded to this chat. REST only; WebSocket message.send ignores it.
 	AttachmentID string `json:"attachment_id"`
@@ -227,7 +233,7 @@ func (s *Service) ListMessages(ctx context.Context, userID, chatID string, after
 		return MessagePage{}, err
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT m.id,m.chat_id,m.sender_user_id,m.client_message_id,m.sequence,m.ciphertext,m.nonce,m.algorithm,m.key_version,m.created_at,
+		SELECT m.id,m.chat_id,m.sender_user_id,m.client_message_id,m.sequence,m.ciphertext,m.nonce,m.algorithm,m.key_version,m.content_type,COALESCE(m.expires_at,''),m.created_at,
 		       a.id,a.content_type,a.size_bytes,a.cipher_sha256,a.nonce,a.algorithm,a.key_version,a.created_at
 		FROM messages m
 		LEFT JOIN chat_attachments a ON a.message_id=m.id AND a.deleted_at IS NULL
@@ -243,7 +249,7 @@ func (s *Service) ListMessages(ctx context.Context, userID, chatID string, after
 		var item Message
 		var attID, attType, attHash, attNonce, attAlg, attKeyVersion, attCreated sql.NullString
 		var attSize sql.NullInt64
-		if err := rows.Scan(&item.ID, &item.ChatID, &item.SenderUserID, &item.ClientMessageID, &item.Sequence, &item.Ciphertext, &item.Nonce, &item.Algorithm, &item.KeyVersion, &item.CreatedAt,
+		if err := rows.Scan(&item.ID, &item.ChatID, &item.SenderUserID, &item.ClientMessageID, &item.Sequence, &item.Ciphertext, &item.Nonce, &item.Algorithm, &item.KeyVersion, &item.ContentType, &item.ExpiresAt, &item.CreatedAt,
 			&attID, &attType, &attSize, &attHash, &attNonce, &attAlg, &attKeyVersion, &attCreated); err != nil {
 			return MessagePage{}, err
 		}
@@ -289,6 +295,9 @@ func (s *Service) SendMessage(ctx context.Context, userID, chatID string, input 
 // the send (nil for REST); it is the only connection excluded from the
 // message.created fan-out, so the sender's other devices stay in sync.
 func (s *Service) sendMessage(ctx context.Context, userID, chatID string, input SendMessageInput, now time.Time, origin *wsConn) (Message, bool, error) {
+	if input.ContentType == "" {
+		input.ContentType = "text"
+	}
 	if err := validateMessageInput(input); err != nil {
 		return Message{}, false, err
 	}
@@ -318,21 +327,21 @@ func (s *Service) sendMessage(ctx context.Context, userID, chatID string, input 
 	var message Message
 	isNew := true
 	err = tx.QueryRowContext(ctx, `
-		INSERT INTO messages (id,chat_id,sender_user_id,client_message_id,ciphertext,nonce,algorithm,key_version,created_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+		INSERT INTO messages (id,chat_id,sender_user_id,client_message_id,ciphertext,nonce,algorithm,key_version,content_type,expires_at,created_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NULLIF($10,''),$11)
 		ON CONFLICT (chat_id,sender_user_id,client_message_id) DO NOTHING
-		RETURNING id,chat_id,sender_user_id,client_message_id,sequence,ciphertext,nonce,algorithm,key_version,created_at`,
-		id, access.ChatID, userID, input.ClientMessageID, input.Ciphertext, input.Nonce, input.Algorithm, input.KeyVersion, timestamp).Scan(
+		RETURNING id,chat_id,sender_user_id,client_message_id,sequence,ciphertext,nonce,algorithm,key_version,content_type,COALESCE(expires_at,''),created_at`,
+		id, access.ChatID, userID, input.ClientMessageID, input.Ciphertext, input.Nonce, input.Algorithm, input.KeyVersion, input.ContentType, input.ExpiresAt, timestamp).Scan(
 		&message.ID, &message.ChatID, &message.SenderUserID, &message.ClientMessageID, &message.Sequence,
-		&message.Ciphertext, &message.Nonce, &message.Algorithm, &message.KeyVersion, &message.CreatedAt)
+		&message.Ciphertext, &message.Nonce, &message.Algorithm, &message.KeyVersion, &message.ContentType, &message.ExpiresAt, &message.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		isNew = false
 		if err = tx.QueryRowContext(ctx, `
-			SELECT id,chat_id,sender_user_id,client_message_id,sequence,ciphertext,nonce,algorithm,key_version,created_at
+			SELECT id,chat_id,sender_user_id,client_message_id,sequence,ciphertext,nonce,algorithm,key_version,content_type,COALESCE(expires_at,''),created_at
 			FROM messages WHERE chat_id=$1 AND sender_user_id=$2 AND client_message_id=$3`,
 			access.ChatID, userID, input.ClientMessageID).Scan(
 			&message.ID, &message.ChatID, &message.SenderUserID, &message.ClientMessageID, &message.Sequence,
-			&message.Ciphertext, &message.Nonce, &message.Algorithm, &message.KeyVersion, &message.CreatedAt); err != nil {
+			&message.Ciphertext, &message.Nonce, &message.Algorithm, &message.KeyVersion, &message.ContentType, &message.ExpiresAt, &message.CreatedAt); err != nil {
 			return Message{}, false, err
 		}
 	} else if err != nil {
@@ -629,6 +638,20 @@ func validateMessageInput(input SendMessageInput) error {
 		return ErrChatInvalidInput
 	}
 	if input.AttachmentID != "" && !validIdentifier(input.AttachmentID, maxClientMessageID) {
+		return ErrChatInvalidInput
+	}
+	if input.ContentType == "" {
+		input.ContentType = "text"
+	}
+	if input.ContentType != "text" && input.ContentType != "location" {
+		return ErrChatInvalidInput
+	}
+	if input.ContentType == "location" {
+		expiresAt, err := time.Parse(time.RFC3339Nano, input.ExpiresAt)
+		if err != nil || !expiresAt.After(time.Now().UTC()) || expiresAt.After(time.Now().UTC().Add(24*time.Hour)) {
+			return ErrChatInvalidInput
+		}
+	} else if strings.TrimSpace(input.ExpiresAt) != "" {
 		return ErrChatInvalidInput
 	}
 	ciphertext, err := base64.RawURLEncoding.DecodeString(input.Ciphertext)
