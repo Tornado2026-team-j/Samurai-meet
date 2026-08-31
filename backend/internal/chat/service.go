@@ -40,7 +40,7 @@ type Service struct {
 	db                 *sql.DB
 	signer             *auth.Signer
 	notifications      *notification.Service
-	hub                *Hub
+	wtHub              *webTransportHub
 	sendLimiter        *sendRateLimiter
 	blobs              BlobStore
 	maxAttachmentBytes int64
@@ -74,6 +74,8 @@ type Message struct {
 	Nonce           string      `json:"nonce"`
 	Algorithm       string      `json:"algorithm"`
 	KeyVersion      string      `json:"key_version"`
+	ContentType     string      `json:"content_type"`
+	ExpiresAt       string      `json:"expires_at,omitempty"`
 	CreatedAt       string      `json:"created_at"`
 	Attachment      *Attachment `json:"attachment,omitempty"`
 }
@@ -90,6 +92,10 @@ type SendMessageInput struct {
 	Nonce           string `json:"nonce"`
 	Algorithm       string `json:"algorithm"`
 	KeyVersion      string `json:"key_version"`
+	// ContentType is metadata only. Location coordinates are encrypted inside
+	// Ciphertext and are never accepted as a server-readable field.
+	ContentType string `json:"content_type"`
+	ExpiresAt   string `json:"expires_at,omitempty"`
 	// AttachmentID optionally references a chat photo the caller already
 	// uploaded to this chat. REST only; WebSocket message.send ignores it.
 	AttachmentID string `json:"attachment_id"`
@@ -115,7 +121,7 @@ func NewService(database *sql.DB, signer *auth.Signer, notificationServices ...*
 	if len(notificationServices) > 0 {
 		notifications = notificationServices[0]
 	}
-	return &Service{db: database, signer: signer, notifications: notifications, hub: newHub(), sendLimiter: newSendRateLimiter(), instanceID: newInstanceID(), retentionDays: defaultMessageRetentionDays, maxAttachmentBytes: defaultMaxAttachmentBytes}
+	return &Service{db: database, signer: signer, notifications: notifications, wtHub: newWebTransportHub(), sendLimiter: newSendRateLimiter(), instanceID: newInstanceID(), retentionDays: defaultMessageRetentionDays, maxAttachmentBytes: defaultMaxAttachmentBytes}
 }
 
 // WithAttachments enables chat photo attachments backed by blobs. maxBytes <= 0
@@ -227,7 +233,7 @@ func (s *Service) ListMessages(ctx context.Context, userID, chatID string, after
 		return MessagePage{}, err
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT m.id,m.chat_id,m.sender_user_id,m.client_message_id,m.sequence,m.ciphertext,m.nonce,m.algorithm,m.key_version,m.created_at,
+		SELECT m.id,m.chat_id,m.sender_user_id,m.client_message_id,m.sequence,m.ciphertext,m.nonce,m.algorithm,m.key_version,m.content_type,COALESCE(m.expires_at,''),m.created_at,
 		       a.id,a.content_type,a.size_bytes,a.cipher_sha256,a.nonce,a.algorithm,a.key_version,a.created_at
 		FROM messages m
 		LEFT JOIN chat_attachments a ON a.message_id=m.id AND a.deleted_at IS NULL
@@ -243,7 +249,7 @@ func (s *Service) ListMessages(ctx context.Context, userID, chatID string, after
 		var item Message
 		var attID, attType, attHash, attNonce, attAlg, attKeyVersion, attCreated sql.NullString
 		var attSize sql.NullInt64
-		if err := rows.Scan(&item.ID, &item.ChatID, &item.SenderUserID, &item.ClientMessageID, &item.Sequence, &item.Ciphertext, &item.Nonce, &item.Algorithm, &item.KeyVersion, &item.CreatedAt,
+		if err := rows.Scan(&item.ID, &item.ChatID, &item.SenderUserID, &item.ClientMessageID, &item.Sequence, &item.Ciphertext, &item.Nonce, &item.Algorithm, &item.KeyVersion, &item.ContentType, &item.ExpiresAt, &item.CreatedAt,
 			&attID, &attType, &attSize, &attHash, &attNonce, &attAlg, &attKeyVersion, &attCreated); err != nil {
 			return MessagePage{}, err
 		}
@@ -280,15 +286,27 @@ func (s *Service) ListMessages(ctx context.Context, userID, chatID string, after
 // SendMessage stores one ciphertext message from a REST caller. It is
 // idempotent on (chat, sender, client_message_id): a repeated client_message_id
 // returns the original row with created=false. When a new row is stored, every
-// live WebSocket connection on the chat receives a message.created frame.
+// live WebTransport session on the chat receives a message.created frame.
 func (s *Service) SendMessage(ctx context.Context, userID, chatID string, input SendMessageInput, now time.Time) (Message, bool, error) {
-	return s.sendMessage(ctx, userID, chatID, input, now, nil)
+	return s.sendMessage(ctx, userID, chatID, input, now)
 }
 
-// sendMessage is the shared implementation. origin is the socket that issued
-// the send (nil for REST); it is the only connection excluded from the
-// message.created fan-out, so the sender's other devices stay in sync.
-func (s *Service) sendMessage(ctx context.Context, userID, chatID string, input SendMessageInput, now time.Time, origin *wsConn) (Message, bool, error) {
+// AuthorizeMessageSend verifies the same accepted-match participant and block
+// boundary as SendMessage without writing a message. It is used before a
+// plaintext-only moderation request so unauthorized callers never send chat
+// text to an external provider.
+func (s *Service) AuthorizeMessageSend(ctx context.Context, userID, chatID string) error {
+	_, err := s.loadChat(ctx, userID, chatID, false)
+	return err
+}
+
+// sendMessage is the shared implementation used by REST and WebTransport.
+// Every currently connected participant receives the durable event; the sender
+// also receives an acknowledgement on its request stream for idempotent UI.
+func (s *Service) sendMessage(ctx context.Context, userID, chatID string, input SendMessageInput, now time.Time) (Message, bool, error) {
+	if input.ContentType == "" {
+		input.ContentType = "text"
+	}
 	if err := validateMessageInput(input); err != nil {
 		return Message{}, false, err
 	}
@@ -318,21 +336,21 @@ func (s *Service) sendMessage(ctx context.Context, userID, chatID string, input 
 	var message Message
 	isNew := true
 	err = tx.QueryRowContext(ctx, `
-		INSERT INTO messages (id,chat_id,sender_user_id,client_message_id,ciphertext,nonce,algorithm,key_version,created_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+		INSERT INTO messages (id,chat_id,sender_user_id,client_message_id,ciphertext,nonce,algorithm,key_version,content_type,expires_at,created_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NULLIF($10,''),$11)
 		ON CONFLICT (chat_id,sender_user_id,client_message_id) DO NOTHING
-		RETURNING id,chat_id,sender_user_id,client_message_id,sequence,ciphertext,nonce,algorithm,key_version,created_at`,
-		id, access.ChatID, userID, input.ClientMessageID, input.Ciphertext, input.Nonce, input.Algorithm, input.KeyVersion, timestamp).Scan(
+		RETURNING id,chat_id,sender_user_id,client_message_id,sequence,ciphertext,nonce,algorithm,key_version,content_type,COALESCE(expires_at,''),created_at`,
+		id, access.ChatID, userID, input.ClientMessageID, input.Ciphertext, input.Nonce, input.Algorithm, input.KeyVersion, input.ContentType, input.ExpiresAt, timestamp).Scan(
 		&message.ID, &message.ChatID, &message.SenderUserID, &message.ClientMessageID, &message.Sequence,
-		&message.Ciphertext, &message.Nonce, &message.Algorithm, &message.KeyVersion, &message.CreatedAt)
+		&message.Ciphertext, &message.Nonce, &message.Algorithm, &message.KeyVersion, &message.ContentType, &message.ExpiresAt, &message.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		isNew = false
 		if err = tx.QueryRowContext(ctx, `
-			SELECT id,chat_id,sender_user_id,client_message_id,sequence,ciphertext,nonce,algorithm,key_version,created_at
+			SELECT id,chat_id,sender_user_id,client_message_id,sequence,ciphertext,nonce,algorithm,key_version,content_type,COALESCE(expires_at,''),created_at
 			FROM messages WHERE chat_id=$1 AND sender_user_id=$2 AND client_message_id=$3`,
 			access.ChatID, userID, input.ClientMessageID).Scan(
 			&message.ID, &message.ChatID, &message.SenderUserID, &message.ClientMessageID, &message.Sequence,
-			&message.Ciphertext, &message.Nonce, &message.Algorithm, &message.KeyVersion, &message.CreatedAt); err != nil {
+			&message.Ciphertext, &message.Nonce, &message.Algorithm, &message.KeyVersion, &message.ContentType, &message.ExpiresAt, &message.CreatedAt); err != nil {
 			return Message{}, false, err
 		}
 	} else if err != nil {
@@ -377,8 +395,8 @@ func (s *Service) sendMessage(ctx context.Context, userID, chatID string, input 
 		}
 		message.Attachment = attachment
 	}
-	if isNew && s.hub != nil {
-		s.hub.broadcastExcept(access.ChatID, origin, mustFrame(messageFrame{Type: serverFrameMessageCreated, Message: message}))
+	if isNew && s.wtHub != nil {
+		s.wtHub.broadcast(access.ChatID, encodeFrame(messageFrame{Type: serverFrameMessageCreated, Message: message}))
 	}
 	if isNew {
 		s.publishClusterEvent(clusterEvent{Kind: serverFrameMessageCreated, ChatID: access.ChatID, Sequence: message.Sequence})
@@ -403,13 +421,12 @@ func (s *Service) notificationActorNameTx(ctx context.Context, tx *sql.Tx, userI
 // ever moves forward. The receipt is fanned out to every live socket on the
 // chat with the effective stored marker.
 func (s *Service) MarkRead(ctx context.Context, userID, chatID string, sequence int64, now time.Time) error {
-	return s.markRead(ctx, userID, chatID, sequence, now, nil)
+	return s.markRead(ctx, userID, chatID, sequence, now)
 }
 
-// markRead is the shared implementation. origin is the socket that issued the
-// read (nil for REST) and is the only connection excluded from the receipt
-// fan-out, so the reader's other devices also advance their read watermark.
-func (s *Service) markRead(ctx context.Context, userID, chatID string, sequence int64, now time.Time, origin *wsConn) error {
+// markRead is the shared REST/WebTransport implementation. Receipts go to
+// every connected device, including the reader's other devices.
+func (s *Service) markRead(ctx context.Context, userID, chatID string, sequence int64, now time.Time) error {
 	if sequence <= 0 {
 		return ErrChatInvalidInput
 	}
@@ -437,11 +454,26 @@ func (s *Service) markRead(ctx context.Context, userID, chatID string, sequence 
 		RETURNING last_read_sequence`, access.ChatID, userID, sequence, now.UTC().Format(time.RFC3339Nano)).Scan(&stored); err != nil {
 		return err
 	}
-	if s.hub != nil {
-		s.hub.broadcastExcept(access.ChatID, origin, mustFrame(readFrame{Type: serverFrameMessageRead, UserID: userID, LastMessageSequence: stored}))
+	if s.wtHub != nil {
+		s.wtHub.broadcast(access.ChatID, encodeFrame(readFrame{Type: serverFrameMessageRead, UserID: userID, LastMessageSequence: stored}))
 	}
 	s.publishClusterEvent(clusterEvent{Kind: serverFrameMessageRead, ChatID: access.ChatID, UserID: userID, Sequence: stored})
 	return nil
+}
+
+// BroadcastTyping forwards a short-lived typing signal without persisting it.
+// The signal is not chat content, therefore it must never enter message
+// history or the audit trail.  It is delivered through WebTransport and,
+// when enabled, replicated to other API instances through the cluster event.
+func (s *Service) BroadcastTyping(chatID, userID, state string) {
+	if s == nil || (state != "start" && state != "stop") {
+		return
+	}
+	payload := encodeFrame(typingFrame{Type: serverFrameTyping, UserID: userID, State: state})
+	if s.wtHub != nil {
+		s.wtHub.broadcastExceptUser(chatID, userID, payload)
+	}
+	s.publishClusterEvent(clusterEvent{Kind: serverFrameTyping, ChatID: chatID, UserID: userID, State: state})
 }
 
 func (s *Service) IssueTransportToken(ctx context.Context, userID, sessionID, chatID, transport string, now time.Time) (TransportToken, error) {
@@ -450,13 +482,11 @@ func (s *Service) IssueTransportToken(ctx context.Context, userID, sessionID, ch
 	}
 	transport = strings.TrimSpace(transport)
 	if transport == "" {
-		transport = "websocket"
+		transport = QUICTransport
 	}
-	// Only WebSocket delivery exists today. `webtransport` / `quic` are
-	// reserved for a future transport and are rejected until a server that
-	// terminates them ships, so a Chat Token is never issued for a path that
-	// nothing serves.
-	if transport != "websocket" {
+	// WebTransport is the only realtime transport. REST remains available for
+	// history and explicit recovery, but a WebSocket Chat Token is never issued.
+	if transport != QUICTransport {
 		return TransportToken{}, ErrChatInvalidInput
 	}
 	access, err := s.loadChat(ctx, userID, chatID, false)
@@ -489,6 +519,26 @@ func (s *Service) nextTokenSeq(ctx context.Context, sessionID, chatID string, no
 			seq=chat_token_sequences.seq+1, updated_at=EXCLUDED.updated_at
 		RETURNING seq`, sessionID, chatID, now.UTC().Format(time.RFC3339Nano)).Scan(&seq)
 	return seq, err
+}
+
+// transportTokenCurrent binds a live WebTransport connection to the latest
+// token generation for its (session, chat) pair. Issuing a replacement token
+// therefore causes the old connection to close on its next watchdog pass.
+func (s *Service) transportTokenCurrent(ctx context.Context, sessionID, chatID string, sequence int64) error {
+	if sequence <= 0 {
+		return ErrChatForbidden
+	}
+	var current int64
+	if err := s.db.QueryRowContext(ctx, `SELECT seq FROM chat_token_sequences WHERE session_id=$1 AND chat_id=$2`, sessionID, chatID).Scan(&current); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrChatForbidden
+		}
+		return err
+	}
+	if current != sequence {
+		return ErrChatForbidden
+	}
+	return nil
 }
 
 func (s *Service) ensureChat(ctx context.Context, userID, matchID string, now time.Time) (chatAccess, error) {
@@ -629,6 +679,20 @@ func validateMessageInput(input SendMessageInput) error {
 		return ErrChatInvalidInput
 	}
 	if input.AttachmentID != "" && !validIdentifier(input.AttachmentID, maxClientMessageID) {
+		return ErrChatInvalidInput
+	}
+	if input.ContentType == "" {
+		input.ContentType = "text"
+	}
+	if input.ContentType != "text" && input.ContentType != "location" {
+		return ErrChatInvalidInput
+	}
+	if input.ContentType == "location" {
+		expiresAt, err := time.Parse(time.RFC3339Nano, input.ExpiresAt)
+		if err != nil || !expiresAt.After(time.Now().UTC()) || expiresAt.After(time.Now().UTC().Add(24*time.Hour)) {
+			return ErrChatInvalidInput
+		}
+	} else if strings.TrimSpace(input.ExpiresAt) != "" {
 		return ErrChatInvalidInput
 	}
 	ciphertext, err := base64.RawURLEncoding.DecodeString(input.Ciphertext)

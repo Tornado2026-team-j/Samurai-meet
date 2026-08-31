@@ -8,11 +8,26 @@
 
 - `GET /api/v1/me` と `PATCH /api/v1/me/profile` を追加した。名前・国コード・自己紹介をDBへ保存し、APIから後日変更できる。プロフィール編集画面はまだこのAPIへ接続しない。
 - マッチングAPIと`0019_profiles_matching.sql`を追加した。募集カード、検索、現在地、関心、応募一覧、詳細、承認、辞退、完了をGo側で認証・認可・期限・重複・ブロック検証する。
-- acceptedマッチ向けのRESTチャット、暗号文メッセージ、既読、短命Chat Token、会合セッション、Bluetooth／位置推測の距離補助APIと`0020_chat_meetings.sql`を追加した。QUIC配送とネイティブBluetooth測定は未実装。
+- acceptedマッチ向けのRESTチャット、暗号文メッセージ、既読、短命Chat Token、会合セッション、Bluetooth／位置推測の距離補助APIと`0020_chat_meetings.sql`を追加した。会合支援は双方の明示開始後だけactiveになり、距離帯以外の位置・BLE識別子は保存しない。ネイティブBluetooth測定はDevelopment Buildのfeature flagでのみ接続し、Expo Goでは偽計測しない。
+
+  - フロントの有効化フラグは`EXPO_PUBLIC_MEETING_PROXIMITY_ENABLED=true`。ただしBLE native module未導入の間は、Development Buildでも測定を開始せず要件を画面に表示する。
 - フロントの既存モック、言語選択画面、ログアウト後のナビゲーションは、このバックエンド実装メモの対象外である。現行フロントでは募集日時・JST入力・通知画面接続などを別作業で変更中のため、「モックを変更していない」とは扱わない。
 - 募集画面はAPI接続済みで、日時入力のISO内部値／`Asia/Tokyo`固定と自動テストは完了している。日時選択から公開・応募・通知遷移までのiOS実機全通しE2Eを確認する。
 - 募集日時の壁時計は`Asia/Tokyo`固定、絶対時刻はUTC。通常のネイティブ接続先はproduction domainで、LAN URLは明示設定時だけ使う。通知はアプリ内RESTまでで、OSプッシュは未実装。
-- chat transport tokenはhandler既定値・サービス受理値ともに`websocket`で一致し、`websocket`のみ発行する（`webtransport`／`quic`は終端サーバー未実装のため400で拒否）。WebSocket配送は実装済みだが、QUIC／HTTP/3 WebTransport配送の実装完了は意味しない。
+- chat transport tokenはhandler既定値・サービス受理値ともに`webtransport`で一致し、HTTP/3 WebTransportだけに発行する。旧WebSocket endpointは410でありfallbackではない。native Development BuildでのWebTransport module実装、UDP/TLS公開、実機E2Eは残タスク。
+
+## 緊急認証ローテーション（未実装）
+
+侵害疑い時に全セッション・全Refresh Tokenを本人の現在セッションも含めて失効し、Passkey再認証後に新しいPasskeyと新しいセッション／Tokenだけで復帰する緊急ローテーションは、現行契約のままでは安全に実装できないため、UI/APIを追加していない。
+
+受入条件は次のとおりとする。
+
+- 同一ユーザーの現在セッション、user/device ID、ブラウザのCSRF/Origin、ネイティブのdevice proofを検証し、Passkey再認証と一回限りのoperation IDを要求する。
+- 状態を `idle -> passkey_reauth_started -> new_passkey_registered -> all_old_sessions_revoked -> new_session_issued -> old_passkey_revoked -> active` とし、各遷移を監査イベントへ記録する。秘密情報、assertion、Token、鍵素材は監査ログへ残さない。
+- 新Passkeyの登録・検証・保存が完了するまで旧Passkeyと旧セッションを失効させない。全旧session/refresh familyの失効と、新session・Access/Refresh Tokenの発行はtransactionまたは再試行可能なoperation状態で整合させ、成功時は新Token組だけを有効にする。
+- 同じoperation IDの再送は同じ安全な結果を返し、異なるoperationの並行実行、二重発行、旧Tokenによる復帰を拒否する。途中失敗時は旧資格情報で再認証を再開でき、旧Passkeyを先に失効させた後の復旧不能状態を作らない。
+
+未実装理由は、現行のreauthが既存sessionの `last_passkey_at` 更新だけで新しいsession/Tokenを発行せず、現行のPasskey登録も同じsessionへ資格情報を追加するだけで旧Passkey失効・全session失効・新Token発行を一つの契約として提供していないためである。まず専用のrotation operation、Passkey登録ceremony、監査イベント、原子的なsession/token切替契約を設計・テストしてから実装する。
 
 ## フロント追従時に引き継ぐ課題（今回の変更対象外）
 
@@ -27,12 +42,12 @@
 
 3. **残りの業務API・フロント接続**
    - 募集公開、募集検索・詳細、募集管理、関心送信、応募履歴、応募取り下げ、承認・辞退は`frontend/`から接続済み。プロフィール編集画面は引き続きローカル表示のため、`PATCH /api/v1/me/profile`との完全同期を行う。
-   - チャット、会合、距離補助のネイティブ測定を画面へ接続し、送信中・QUIC packet再送・同じ`client_message_id`によるアプリ自動再送・既読・期限切れ状態を扱う。
-   - 評価、チャットのQUICリアルタイム配送、チャット内写真送信は未実装。通知一覧・未読管理、応募／承認／辞退／チャット送信通知、表示言語に依存しない通知遷移は実装済みだが、iOS実機E2Eを残す。
+	- チャット、会合、距離補助のネイティブ測定を画面へ接続し、送信中・QUIC packet再送・同じ`client_message_id`によるアプリ自動再送・既読・期限切れ状態を扱う。
+	- 評価とnative WebTransport実機E2Eは未完。通知一覧・未読管理、応募／承認／辞退／チャット送信通知、表示言語に依存しない通知遷移は実装済みだが、iOS実機E2Eを残す。
 
 4. **バックエンドの残課題**
    - API／アプリ双方のレート制限、PostGIS化、ブロック登録API、評価を追加する。
-   - チャットのQUIC配送、チャット内写真送信を追加する。通知連携は応募／承認／辞退／暗号化チャット送信について実装済み。
+	- native WebTransportクライアントと実機UDP経路を追加・検証する。チャット内写真送信と通知連携は実装済み。
    - Stripe Identity等の本人確認を追加する。サーバーでVerification Sessionを発行し、Stripe Webhookの署名・イベント重複・対象ユーザーの紐付けを検証した後だけ`profiles.identity_status=verified`へ遷移させる。クライアントからの自己申告や戻りURLだけでは認証済みマークを付けない。
    - 本人確認の再確認期限、否認・再申請、参照IDの保持期限、Webhook監査ログ、Stripe障害時の保留状態を決める。本人確認済みでも安全を保証しない表示を行う。
    - PostgreSQL統合テストでプロフィール・募集・関心・承認・期限・ブロック・位置期限を通しで検証する。

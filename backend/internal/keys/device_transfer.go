@@ -43,6 +43,7 @@ var (
 	ErrDeviceTransferExpired          = errors.New("device transfer expired")
 	ErrDeviceTransferNotPending       = errors.New("device transfer is not pending")
 	ErrDeviceTransferNotApproved      = errors.New("device transfer is not approved")
+	ErrDeviceTransferNotCancellable   = errors.New("device transfer is not cancellable")
 	ErrDeviceTransferTargetMismatch   = errors.New("device transfer target does not match")
 	ErrInvalidDeviceTransfer          = errors.New("invalid device transfer")
 	ErrInvalidWrappedMasterKey        = errors.New("invalid wrapped master key")
@@ -225,6 +226,56 @@ func (s *DeviceTransferService) GetForTarget(ctx context.Context, userID, transf
 	return item, nil
 }
 
+// Cancel revokes a transfer request from the target device that created it.
+// It deliberately accepts only pending or approved transfers; the row lock
+// makes cancellation race-safe with approval and completion.
+func (s *DeviceTransferService) Cancel(ctx context.Context, userID, transferID, targetDeviceID string, now time.Time) error {
+	if s == nil || s.db == nil || strings.TrimSpace(userID) == "" || strings.TrimSpace(transferID) == "" || !deviceIDPattern.MatchString(targetDeviceID) {
+		return ErrInvalidDeviceTransfer
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var storedTarget, status, expiresAt string
+	err = tx.QueryRowContext(ctx, `
+		SELECT target_device_id,status,expires_at
+		FROM device_key_transfers WHERE id=$1 AND user_id=$2 FOR UPDATE`, transferID, userID).
+		Scan(&storedTarget, &status, &expiresAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrDeviceTransferNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if storedTarget != targetDeviceID {
+		return ErrDeviceTransferTargetMismatch
+	}
+	if status != "pending" && status != "approved" {
+		return ErrDeviceTransferNotCancellable
+	}
+	expires, parseErr := time.Parse(time.RFC3339Nano, expiresAt)
+	if parseErr != nil || !now.Before(expires) {
+		if _, err = tx.ExecContext(ctx, `UPDATE device_key_transfers SET status='expired' WHERE id=$1 AND user_id=$2 AND status IN ('pending','approved')`, transferID, userID); err != nil {
+			return err
+		}
+		if err = tx.Commit(); err != nil {
+			return err
+		}
+		return ErrDeviceTransferExpired
+	}
+	if _, err = tx.ExecContext(ctx, `
+		UPDATE device_key_transfers
+		SET status='cancelled',cancelled_at=$1,source_device_id=NULL,wrapped_master_key='',wrapping_algorithm=''
+		WHERE id=$2 AND user_id=$3 AND target_device_id=$4 AND status IN ('pending','approved')`,
+		now.UTC().Format(time.RFC3339Nano), transferID, userID, targetDeviceID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *DeviceTransferService) Approve(ctx context.Context, userID, transferID, sourceDeviceID, verificationCode, wrappedMasterKey, wrappingAlgorithm string, now time.Time) (DeviceTransfer, error) {
 	if s == nil || s.db == nil || strings.TrimSpace(userID) == "" || strings.TrimSpace(transferID) == "" ||
 		!deviceIDPattern.MatchString(sourceDeviceID) || !validDeviceTransferCode(verificationCode) ||
@@ -272,6 +323,9 @@ func (s *DeviceTransferService) Approve(ctx context.Context, userID, transferID,
 	if status != "pending" {
 		if status == "approved" || status == "completed" {
 			return DeviceTransfer{}, ErrDeviceTransferNotPending
+		}
+		if status == "cancelled" {
+			return DeviceTransfer{}, ErrDeviceTransferNotCancellable
 		}
 		return DeviceTransfer{}, ErrDeviceTransferExpired
 	}

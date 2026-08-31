@@ -6,7 +6,52 @@ import { StatusBar } from "expo-status-bar";
 import { Header, colors, radius } from "../components/ui";
 import { useAuth } from "../hooks/useAuth";
 import { createIdentityVerificationSession } from "../services/identity";
+import { loadLanguage, subscribeLanguage, type AppLanguage } from "../services/onboarding";
 import { getMyProfile } from "../services/profile";
+
+const COPY: Record<AppLanguage, {
+  title: string;
+  heading: string;
+  body: string;
+  status: string;
+  verified: string;
+  pending: string;
+  rejected: string;
+  unverified: string;
+  preparing: string;
+  start: string;
+  caution: string;
+  error: string;
+}> = {
+  ja: {
+    title: "本人確認",
+    heading: "安心して会うための本人確認",
+    body: "公的な本人確認書類と顔写真をStripe Identityで確認します。書類や正確な住所は他のユーザーに公開されません。",
+    status: "現在の状態",
+    verified: "確認済み",
+    pending: "確認中",
+    rejected: "再確認が必要",
+    unverified: "未確認",
+    preparing: "準備中...",
+    start: "Stripeで本人確認を始める",
+    caution: "本人確認済み表示は、相手の安全性を保証するものではありません。",
+    error: "本人確認を開始できませんでした。サーバーのStripe設定を確認してください。",
+  },
+  en: {
+    title: "Identity verification",
+    heading: "Verify your identity for safer meetings",
+    body: "Stripe Identity checks your government-issued ID and selfie. Your documents and precise address are not shown to other users.",
+    status: "Current status",
+    verified: "Verified",
+    pending: "Pending",
+    rejected: "Verification required again",
+    unverified: "Not verified",
+    preparing: "Preparing...",
+    start: "Start verification with Stripe",
+    caution: "A verification badge does not guarantee another person's safety.",
+    error: "Identity verification could not be started. Check the server's Stripe configuration.",
+  },
+};
 
 export default function IdentityVerificationScreen() {
   const router = useRouter();
@@ -14,6 +59,24 @@ export default function IdentityVerificationScreen() {
   const [identityStatus, setIdentityStatus] = useState("unverified");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [language, setLanguage] = useState<AppLanguage>("ja");
+  const copy = COPY[language];
+
+  useEffect(() => {
+    let active = true;
+    const unsubscribe = subscribeLanguage((nextLanguage) => {
+      if (active) setLanguage(nextLanguage ?? "ja");
+    });
+    void loadLanguage().then((storedLanguage) => {
+      if (active) setLanguage(storedLanguage ?? "ja");
+    }).catch(() => {
+      if (active) setLanguage("ja");
+    });
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, []);
 
   useEffect(() => {
     const activeSession = getCurrentSession() ?? session;
@@ -30,25 +93,25 @@ export default function IdentityVerificationScreen() {
       const url = await createIdentityVerificationSession(activeSession);
       await Linking.openURL(url);
     } catch {
-      setError("本人確認を開始できませんでした。サーバーのStripe設定を確認してください。");
+      setError(copy.error);
     } finally {
       setLoading(false);
     }
   };
 
-  const statusLabel = identityStatus === "verified" ? "確認済み" : identityStatus === "pending" ? "確認中" : identityStatus === "rejected" ? "再確認が必要" : "未確認";
+  const statusLabel = identityStatus === "verified" ? copy.verified : identityStatus === "pending" ? copy.pending : identityStatus === "rejected" ? copy.rejected : copy.unverified;
   return (
     <View style={styles.screen}>
       <StatusBar style="light" />
-      <Header iconName="verified-user" onBack={() => router.back()} title="本人確認" variant="hero" />
+      <Header iconName="verified-user" onBack={() => router.back()} title={copy.title} variant="hero" />
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.icon}><MaterialIcons color={colors.brand.sky} name="verified-user" size={54} /></View>
-        <Text style={styles.title}>安心して会うための本人確認</Text>
-        <Text style={styles.body}>公的な本人確認書類と顔写真をStripe Identityで確認します。書類や正確な住所は他のユーザーに公開されません。</Text>
-        <View style={styles.statusRow}><Text style={styles.statusLabel}>現在の状態</Text><Text style={styles.status}>{statusLabel}</Text></View>
+        <Text style={styles.title}>{copy.heading}</Text>
+        <Text style={styles.body}>{copy.body}</Text>
+        <View style={styles.statusRow}><Text style={styles.statusLabel}>{copy.status}</Text><Text style={styles.status}>{statusLabel}</Text></View>
         {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
-        {identityStatus !== "verified" ? <Pressable disabled={loading} onPress={() => void begin()} style={[styles.button, loading && styles.disabled]}><Text style={styles.buttonText}>{loading ? "準備中..." : "Stripeで本人確認を始める"}</Text></Pressable> : null}
-        <Text style={styles.caution}>本人確認済み表示は、相手の安全性を保証するものではありません。</Text>
+        {identityStatus !== "verified" ? <Pressable disabled={loading} onPress={() => void begin()} style={[styles.button, loading && styles.disabled]}><Text style={styles.buttonText}>{loading ? copy.preparing : copy.start}</Text></Pressable> : null}
+        <Text style={styles.caution}>{copy.caution}</Text>
       </ScrollView>
     </View>
   );

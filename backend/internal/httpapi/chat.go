@@ -41,7 +41,7 @@ func chatCollection(service *chat.Service, sessions *auth.SessionService) http.H
 	}
 }
 
-func chatItem(service *chat.Service, sessions *auth.SessionService) http.HandlerFunc {
+func chatItem(service *chat.Service, moderation chat.ModerationProvider, sessions *auth.SessionService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		claims, ok := accessClaims(r, sessions)
 		if !ok {
@@ -58,6 +58,8 @@ func chatItem(service *chat.Service, sessions *auth.SessionService) http.Handler
 			return
 		}
 		switch {
+		case rest[0] == "moderation" && len(rest) == 1:
+			chatModeration(service, moderation, sessions)(w, r)
 		case rest[0] == "messages" && len(rest) == 1:
 			chatMessages(w, r, service, claims.Subject, chatID)
 		case rest[0] == "read" && len(rest) == 1:
@@ -132,7 +134,7 @@ func chatTransportToken(w http.ResponseWriter, r *http.Request, service *chat.Se
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	transport := "websocket"
+	transport := chat.QUICTransport
 	if r.Body != nil && (r.ContentLength != 0 || r.Header.Get("Transfer-Encoding") != "") {
 		var input struct {
 			Transport string `json:"transport"`

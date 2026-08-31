@@ -140,6 +140,34 @@ func TestRecruitmentExpiryUsesJSTAbsoluteTimeWithUTCNow(t *testing.T) {
 	}
 }
 
+func TestNormalizeRecruitmentInputAllowsPastDraft(t *testing.T) {
+	now := time.Date(2026, time.August, 26, 8, 0, 0, 0, time.UTC)
+	input := RecruitmentInput{
+		Category:           "Food",
+		AvailableDate:      "2026-08-25",
+		StartTime:          "18:00",
+		EndTime:            "20:00",
+		Timezone:           recruitmentTimezone,
+		Keywords:           []string{"食事"},
+		Description:        "駅の近くで交流しましょう",
+		VisibilityRadiusKM: 3,
+		Status:             "draft",
+	}
+
+	normalized, expiresAt, err := normalizeRecruitmentInput(input, now)
+	if err != nil {
+		t.Fatalf("past draft error = %v, want nil", err)
+	}
+	if normalized.Status != "draft" || expiresAt == "" {
+		t.Fatalf("normalized draft status/expiresAt = %q/%q", normalized.Status, expiresAt)
+	}
+
+	input.Status = "open"
+	if _, _, err := normalizeRecruitmentInput(input, now); !errors.Is(err, ErrRecruitmentExpired) {
+		t.Fatalf("past open error = %v, want ErrRecruitmentExpired", err)
+	}
+}
+
 func TestNormalizeSearchParams(t *testing.T) {
 	latitude, longitude := 35.681236, 139.767125
 	params, err := normalizeSearchParams(SearchParams{
@@ -167,6 +195,25 @@ func TestNormalizeSearchParams(t *testing.T) {
 	}
 	if _, err := normalizeSearchParams(SearchParams{Category: "Heritage"}); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("retired search category error = %v, want ErrInvalidInput", err)
+	}
+}
+
+func TestNormalizeSearchParamsDateRange(t *testing.T) {
+	valid, err := normalizeSearchParams(SearchParams{AvailableFrom: "2026-09-01", AvailableTo: "2026-09-30"})
+	if err != nil {
+		t.Fatalf("valid date range rejected: %v", err)
+	}
+	if valid.AvailableFrom != "2026-09-01" || valid.AvailableTo != "2026-09-30" {
+		t.Fatalf("date range changed: %#v", valid)
+	}
+	for _, invalid := range []SearchParams{
+		{AvailableFrom: "2026-09-30", AvailableTo: "2026-09-01"},
+		{AvailableFrom: "2026-09-01", AvailableTo: "2026-11-01"},
+		{AvailableFrom: "2026-09-01"},
+	} {
+		if _, err := normalizeSearchParams(invalid); !errors.Is(err, ErrInvalidInput) {
+			t.Fatalf("invalid date range %#v returned %v", invalid, err)
+		}
 	}
 }
 

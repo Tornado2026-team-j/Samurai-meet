@@ -15,7 +15,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Header, colors, radius, shadows, typography } from "../components/ui";
 import { useAuth } from "../hooks/useAuth";
 import { APIError } from "../services/api-client";
-import { createMeeting, endMeeting, startMeeting, type Meeting } from "../services/meeting";
+import { cancelMeeting, createMeeting, endMeeting, meetingProximityCapability, startMeeting, type Meeting } from "../services/meeting";
 import { completeMatch, listMatches, type MatchView } from "../services/matching";
 import { loadLanguage, subscribeLanguage, type AppLanguage } from "../services/onboarding";
 import { formatTimeRange } from "../utils/time";
@@ -34,6 +34,9 @@ const COPY = {
     profile: "プロフィール",
     start: "会合を開始",
     end: "案内を終了",
+    waiting: "相手の開始を待っています",
+    cancel: "会合支援を中止",
+    proximityUnavailable: "近接補助は現在利用できません。Expo Goでは現在地・Bluetoothを測定も共有もせず、開発ビルドでもOSの許可と監査済みアダプタが必要です。",
     processing: "更新中...",
     actionError: "予定を更新できませんでした。通信状況を確認してください。",
     people: (count: number) => `募集 ${count}人`,
@@ -49,6 +52,9 @@ const COPY = {
     profile: "Profile",
     start: "Start meeting",
     end: "End guide",
+    waiting: "Waiting for the other person to start",
+    cancel: "Cancel meeting assistance",
+    proximityUnavailable: "Nearby assistance is unavailable. Expo Go never measures or shares location or Bluetooth; a development build also needs OS permission and an audited adapter.",
     processing: "Updating...",
     actionError: "The plan could not be updated. Check your connection.",
     people: (count: number) => `${count} people needed`,
@@ -89,6 +95,7 @@ export default function PlansScreen() {
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const copy = COPY[language];
+  const proximityCapability = meetingProximityCapability();
 
   useEffect(() => {
     let active = true;
@@ -239,10 +246,14 @@ export default function PlansScreen() {
                 </Pressable>
               </View>
               {activeTab === "today" && plan.status === "accepted" ? (
-                <Pressable disabled={busy} onPress={() => void updateMeeting(plan)} style={[styles.primaryAction, busy && styles.disabled]}>
-                  <MaterialIcons color={colors.text.inverse} name={meeting?.status === "active" ? "stop-circle" : "play-circle-filled"} size={21} />
-                  <Text style={styles.primaryActionText}>{busy ? copy.processing : meeting?.status === "active" ? copy.end : copy.start}</Text>
-                </Pressable>
+                <>
+                  <Pressable disabled={busy} onPress={() => void updateMeeting(plan)} style={[styles.primaryAction, busy && styles.disabled]}>
+                    <MaterialIcons color={colors.text.inverse} name={meeting?.status === "active" ? "stop-circle" : "play-circle-filled"} size={21} />
+                    <Text style={styles.primaryActionText}>{busy ? copy.processing : meeting?.status === "active" ? copy.end : meeting?.owner_started_at || meeting?.requester_started_at ? copy.waiting : copy.start}</Text>
+                  </Pressable>
+                  {meeting?.status === "active" && !proximityCapability.enabled ? <Text accessibilityLiveRegion="polite" accessibilityRole="text" style={styles.proximityNotice}>{copy.proximityUnavailable}</Text> : null}
+                  {meeting?.status === "planned" && (meeting.owner_started_at || meeting.requester_started_at) ? <Pressable disabled={busy} onPress={() => { const activeSession = getCurrentSession() ?? session; if (!activeSession) return; setBusyMatchId(plan.id); void cancelMeeting(meeting.id, activeSession).then((next) => setMeetings((items) => ({ ...items, [plan.id]: next }))).catch(() => setActionError(copy.actionError)).finally(() => setBusyMatchId(null)); }} style={styles.secondaryAction}><Text style={styles.secondaryActionText}>{copy.cancel}</Text></Pressable> : null}
+                </>
               ) : null}
             </View>
           );
@@ -282,4 +293,5 @@ const styles = StyleSheet.create({
   primaryActionText: { color: colors.text.inverse, fontSize: 14, fontWeight: "800" },
   disabled: { opacity: 0.55 },
   error: { color: colors.state.danger, fontSize: 13, fontWeight: "700", textAlign: "center" },
+  proximityNotice: { marginTop: 8, color: colors.text.subtle, fontSize: 12, lineHeight: 18, textAlign: "center" },
 });

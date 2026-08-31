@@ -154,8 +154,17 @@ func deviceTransferItem(service *keys.DeviceTransferService, sessions *auth.Sess
 				return
 			}
 			w.WriteHeader(http.StatusNoContent)
+		case len(parts) == 1 && r.Method == http.MethodDelete:
+			if !requireDeviceProof(w, r, devices, claims, emptyBodyHash()) {
+				return
+			}
+			if err := service.Cancel(r.Context(), claims.Subject, transferID, deviceID, now()); err != nil {
+				writeDeviceTransferError(w, err, false)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
 		default:
-			w.Header().Set("Allow", http.MethodGet+", "+http.MethodPost)
+			w.Header().Set("Allow", http.MethodGet+", "+http.MethodPost+", "+http.MethodDelete)
 			w.WriteHeader(http.StatusMethodNotAllowed)
 		}
 	}
@@ -196,6 +205,8 @@ func writeDeviceTransferError(w http.ResponseWriter, err error, targetRequest bo
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "device_transfer_not_pending"})
 	case errors.Is(err, keys.ErrDeviceTransferNotApproved):
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "device_transfer_not_approved"})
+	case errors.Is(err, keys.ErrDeviceTransferNotCancellable):
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "device_transfer_not_cancellable"})
 	case errors.Is(err, keys.ErrDeviceTransferTargetMismatch):
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "device_transfer_target_mismatch"})
 	case errors.Is(err, keys.ErrDeviceAgreementMismatch):

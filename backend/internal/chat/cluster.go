@@ -16,8 +16,8 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 )
 
-// The in-process Hub only reaches sockets on the same API process. With more
-// than one instance, a message sent through process A is invisible to a socket
+// The in-process WebTransport hub only reaches sessions on the same API process. With more
+// than one instance, a message sent through process A is invisible to a session
 // on process B. clusterFanout closes that gap with PostgreSQL LISTEN/NOTIFY:
 // every durable fan-out (message.created, message.read) and typing signal is
 // also announced on a NOTIFY channel; each instance's listener rebuilds the
@@ -159,8 +159,8 @@ func (s *Service) handleClusterNotification(payload string) {
 	if err := json.Unmarshal([]byte(payload), &event); err != nil {
 		return
 	}
-	if event.Instance == s.instanceID || s.hub == nil {
-		// Local sockets were already served directly.
+	if event.Instance == s.instanceID || s.wtHub == nil {
+		// Local WebTransport sessions were already served directly.
 		return
 	}
 	switch event.Kind {
@@ -169,11 +169,11 @@ func (s *Service) handleClusterNotification(payload string) {
 		if err != nil {
 			return
 		}
-		s.hub.broadcastExcept(event.ChatID, nil, mustFrame(messageFrame{Type: serverFrameMessageCreated, Message: message}))
+		s.wtHub.broadcast(event.ChatID, encodeFrame(messageFrame{Type: serverFrameMessageCreated, Message: message}))
 	case serverFrameMessageRead:
-		s.hub.broadcastExcept(event.ChatID, nil, mustFrame(readFrame{Type: serverFrameMessageRead, UserID: event.UserID, LastMessageSequence: event.Sequence}))
+		s.wtHub.broadcast(event.ChatID, encodeFrame(readFrame{Type: serverFrameMessageRead, UserID: event.UserID, LastMessageSequence: event.Sequence}))
 	case serverFrameTyping:
-		s.hub.broadcastExceptUser(event.ChatID, event.UserID, mustFrame(typingFrame{Type: serverFrameTyping, UserID: event.UserID, State: event.State}))
+		s.wtHub.broadcastExceptUser(event.ChatID, event.UserID, encodeFrame(typingFrame{Type: serverFrameTyping, UserID: event.UserID, State: event.State}))
 	}
 }
 
@@ -182,10 +182,10 @@ func (s *Service) loadMessageBySequence(chatID string, sequence int64) (Message,
 	defer cancel()
 	var message Message
 	err := s.db.QueryRowContext(ctx, `
-		SELECT id,chat_id,sender_user_id,client_message_id,sequence,ciphertext,nonce,algorithm,key_version,created_at
+		SELECT id,chat_id,sender_user_id,client_message_id,sequence,ciphertext,nonce,algorithm,key_version,content_type,COALESCE(expires_at,''),created_at
 		FROM messages WHERE chat_id=$1 AND sequence=$2 AND deleted_at IS NULL`, chatID, sequence).Scan(
 		&message.ID, &message.ChatID, &message.SenderUserID, &message.ClientMessageID, &message.Sequence,
-		&message.Ciphertext, &message.Nonce, &message.Algorithm, &message.KeyVersion, &message.CreatedAt)
+		&message.Ciphertext, &message.Nonce, &message.Algorithm, &message.KeyVersion, &message.ContentType, &message.ExpiresAt, &message.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Message{}, ErrMessageNotFound
 	}

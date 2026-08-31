@@ -7,6 +7,7 @@ import { useAuth } from "../hooks/useAuth";
 import {
   loadLanguage,
   loadLocalProfile,
+  subscribeLanguage,
   type AppLanguage,
   type LocalProfile,
 } from "../services/onboarding";
@@ -20,7 +21,7 @@ const SOFT_BLUE = "#eff8ff";
 
 const COPY = {
   ja: {
-    title: "Monsters",
+    title: "モンスター",
     loading: "読み込み中…",
     emptyTitle: "プロフィール情報がまだありません",
     emptyBody: "プロフィール設定で得意なこと・好きなことを登録すると、ここに表示されます。",
@@ -106,6 +107,13 @@ export default function MonstersScreen() {
   const [loading, setLoading] = useState(true);
   const loadedUserID = useRef<string | null>(null);
   const copy = COPY[language];
+
+  useEffect(() => {
+    const unsubscribe = subscribeLanguage((nextLanguage) => {
+      if (nextLanguage) setLanguage(nextLanguage);
+    });
+    return unsubscribe;
+  }, []);
 
   useEffect(() => {
     let active = true;

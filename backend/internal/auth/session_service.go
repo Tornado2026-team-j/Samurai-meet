@@ -217,6 +217,13 @@ func (s *SessionService) RevokeAll(ctx context.Context, userID, reason string, n
 	return s.store.RevokeAllForUser(ctx, userID, reason, now)
 }
 
+func (s *SessionService) RevokeOther(ctx context.Context, userID, currentSessionID, reason string, now time.Time) error {
+	if s == nil || s.store == nil || strings.TrimSpace(userID) == "" || strings.TrimSpace(currentSessionID) == "" {
+		return errors.New("session is invalid")
+	}
+	return s.store.RevokeOtherForUser(ctx, userID, currentSessionID, reason, now)
+}
+
 func (s *SessionService) Refresh(ctx context.Context, token, requestID string, now time.Time) (SessionTokens, error) {
 	if s == nil || s.db == nil || s.signer == nil {
 		return SessionTokens{}, errors.New("session signer is not configured")

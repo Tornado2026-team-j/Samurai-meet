@@ -43,6 +43,7 @@ type RouterOptions struct {
 	Matching              *matching.Service
 	RecruitmentClassifier *classification.Service
 	Chats                 *chat.Service
+	ChatModeration        chat.ModerationProvider
 	Meetings              *meeting.Service
 	Notifications         *notification.Service
 	Safety                *safety.Service
@@ -72,6 +73,7 @@ func NewRouterWithOptions(o RouterOptions) http.Handler {
 		m.HandleFunc(APIV1Prefix+"/auth/refresh", refreshSession(o.Sessions))
 		m.HandleFunc(APIV1Prefix+"/auth/logout", logoutSession(o.Sessions))
 		m.HandleFunc(APIV1Prefix+"/auth/logout-all", logoutAllSessions(o.Sessions))
+		m.HandleFunc(APIV1Prefix+"/me/sessions/logout-other", logoutOtherSessions(o.Sessions))
 		m.HandleFunc(APIV1Prefix+"/me/sessions", listSessions(o.Sessions))
 		m.HandleFunc(APIV1Prefix+"/me/sessions/", revokeSession(o.Sessions))
 	}
@@ -141,8 +143,8 @@ func NewRouterWithOptions(o RouterOptions) http.Handler {
 	}
 	if o.Sessions != nil && o.Chats != nil {
 		m.HandleFunc(chatPath, chatCollection(o.Chats, o.Sessions))
-		m.HandleFunc(chatPath+"/", chatItem(o.Chats, o.Sessions))
-		m.HandleFunc(chatWebSocketPrefix, chatWebSocket(o.Chats, originHostPatterns(clientOrigins(o.Environment, o.ClientOrigin, o.DevClientOrigin))))
+		m.HandleFunc(chatPath+"/", chatItem(o.Chats, o.ChatModeration, o.Sessions))
+		m.HandleFunc(chatWebSocketPrefix, chatWebSocket())
 	}
 	if o.Sessions != nil && o.Notifications != nil {
 		m.HandleFunc(notificationPath, notificationCollection(o.Notifications, o.Sessions))

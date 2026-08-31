@@ -13,6 +13,7 @@ import {
   View,
 } from "react-native";
 import { MONSTER_INPUT_LIMITS, type AppLanguage, type LocalProfile } from "../services/onboarding-contract";
+import DismissKeyboardView from "./DismissKeyboardView";
 import { Button, colors, opacity, radius, typography } from "./ui";
 
 const MAX_INTEREST_ITEMS = MONSTER_INPUT_LIMITS?.interestMax ?? 2;
@@ -448,7 +449,7 @@ export default function ProfileForm({
   };
 
   return (
-    <View style={styles.form}>
+    <DismissKeyboardView style={styles.form}>
       <View style={styles.fieldGroup}>
         <Text style={styles.label}>{copy.name}</Text>
         <TextInput
@@ -649,7 +650,7 @@ export default function ProfileForm({
           </View>
         </KeyboardAvoidingView>
       </Modal>
-    </View>
+    </DismissKeyboardView>
   );
 }
 
@@ -714,16 +715,18 @@ function MonsterItemGroup({
                 {count} / {itemLimit}
               </Text>
             </View>
-            {index > 0 || removableFirstItem ? (
-              <Pressable
-                accessibilityLabel={removeLabel}
-                accessibilityRole="button"
-                onPress={() => onRemove(index)}
-                style={({ pressed }) => [styles.removeItemButton, pressed && styles.pressed]}
-              >
-                <MaterialIcons color={colors.text.subtle} name="close" size={18} />
-              </Pressable>
-            ) : null}
+            <View style={styles.removeItemSlot}>
+              {index > 0 || removableFirstItem ? (
+                <Pressable
+                  accessibilityLabel={removeLabel}
+                  accessibilityRole="button"
+                  onPress={() => onRemove(index)}
+                  style={({ pressed }) => [styles.removeItemButton, pressed && styles.pressed]}
+                >
+                  <MaterialIcons color={colors.text.subtle} name="close" size={18} />
+                </Pressable>
+              ) : null}
+            </View>
           </View>
         );
       })}
@@ -799,6 +802,11 @@ const styles = StyleSheet.create({
   monsterInputWrap: {
     flex: 1,
     minWidth: 0,
+  },
+  removeItemSlot: {
+    width: 36,
+    height: 36,
+    flexShrink: 0,
   },
   monsterItemInput: {
     paddingRight: 72,

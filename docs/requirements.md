@@ -215,7 +215,7 @@ flowchart LR
 - 現在地取得はユーザーの明示的な許可を必要とする。
 - 外国人ユーザーも利用するため、初期 UI は日本語・英語対応を前提とする。
 - DB エンジンは PostgreSQL のみとする。PostGIS は将来の性能改善候補であり、現行の距離判定はGoのHaversineで行う。
-- チャットのリアルタイム配送は将来QUICを標準候補とし、HTTP/3 WebTransportを含むQUIC上の実装で実現する。現行はRESTの履歴・送信・既読であり、QUIC／WebTransport／WebSocket配送は未実装である。WebSocketは標準経路にせず、QUICが技術的に成立しない場合だけ、理由・代替案・運用影響をチームで合意したうえで例外採用を決定する。
+- チャットのリアルタイム配送は将来QUICを標準候補とし、HTTP/3 WebTransportを含むQUIC上の実装で実現する。現行はRESTの履歴・送信・既読とWebSocket配送が実装済みで、QUIC／WebTransportは未実装である。WebSocketのフロントは初回接続経路までで、再接続・token更新は未実装。WebSocketを標準経路として固定する場合は、QUICが技術的に成立しない理由・代替案・運用影響をチームで合意する。
 - QUICの採用理由、QUIC/TLS 1.3とJWSの役割、リプレイ攻撃対策、packet再送とアプリ再送の境界は [チャット通信仕様](features/chat-transport.md) を正本とする。
 - 画像は DB にバイナリを直接保存せず、ストレージキーとメタデータを DB に保存する。
 - 個人情報の取扱いは、適用される個人情報保護法・GDPR 等を確認して確定する。法的判断は専門家レビューを受ける。

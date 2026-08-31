@@ -1,21 +1,32 @@
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { StatusBar } from "expo-status-bar";
+import DismissKeyboardView from "../components/DismissKeyboardView";
 import { Header, colors, radius } from "../components/ui";
 import { useAuth } from "../hooks/useAuth";
 import type { ChatReportReason, SafetyReportTargetType } from "../services/chat";
+import { loadLanguage, subscribeLanguage, type AppLanguage } from "../services/onboarding";
 import { reportSafetyIssue } from "../services/safety";
 
-const REASONS: Array<{ key: ChatReportReason; label: string }> = [
-  { key: "nuisance", label: "迷惑行為・スパム" },
-  { key: "harassment", label: "嫌がらせ・差別的な言動" },
-  { key: "impersonation", label: "なりすまし" },
-  { key: "inappropriate_photo", label: "不適切な画像" },
-  { key: "dangerous", label: "危険な行為・場所" },
-  { key: "other", label: "その他" },
-];
+const REASONS: Record<AppLanguage, Array<{ key: ChatReportReason; label: string }>> = {
+  ja: [
+    { key: "nuisance", label: "迷惑行為・スパム" }, { key: "harassment", label: "嫌がらせ・差別的な言動" },
+    { key: "impersonation", label: "なりすまし" }, { key: "inappropriate_photo", label: "不適切な画像" },
+    { key: "dangerous", label: "危険な行為・場所" }, { key: "other", label: "その他" },
+  ],
+  en: [
+    { key: "nuisance", label: "Nuisance or spam" }, { key: "harassment", label: "Harassment or discriminatory behavior" },
+    { key: "impersonation", label: "Impersonation" }, { key: "inappropriate_photo", label: "Inappropriate photo" },
+    { key: "dangerous", label: "Dangerous behavior or location" }, { key: "other", label: "Other" },
+  ],
+};
+
+const COPY: Record<AppLanguage, { title: string; namedTitle: (name: string) => string; description: string; optionalDetails: string; placeholder: string; submitting: string; submit: string; error: string }> = {
+  ja: { title: "通報", namedTitle: (name) => `${name}について報告`, description: "相手には通報者の情報は表示されません。最も近い理由を1つ選んでください。", optionalDetails: "補足（任意）", placeholder: "状況を具体的に入力してください", submitting: "送信中...", submit: "運営へ送信", error: "通報を送信できませんでした。時間をおいて再試行してください。" },
+  en: { title: "Report", namedTitle: (name) => `Report ${name}`, description: "The person you report will not see your information. Choose the closest reason.", optionalDetails: "Additional details (optional)", placeholder: "Describe what happened", submitting: "Sending...", submit: "Send to Operations", error: "The report could not be sent. Please try again later." },
+};
 
 export default function ReportScreen() {
   const router = useRouter();
@@ -25,7 +36,16 @@ export default function ReportScreen() {
   const [comment, setComment] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [language, setLanguage] = useState<AppLanguage>("ja");
+  const copy = COPY[language];
   const targetType = (params.targetType === "recruitment_card" ? "recruitment_card" : "user") as SafetyReportTargetType;
+
+  useEffect(() => {
+    let active = true;
+    const unsubscribe = subscribeLanguage((nextLanguage) => { if (active) setLanguage(nextLanguage ?? "ja"); });
+    void loadLanguage().then((storedLanguage) => { if (active) setLanguage(storedLanguage ?? "ja"); }).catch(() => { if (active) setLanguage("ja"); });
+    return () => { active = false; unsubscribe(); };
+  }, []);
 
   const submit = async () => {
     const activeSession = getCurrentSession() ?? session;
@@ -41,33 +61,33 @@ export default function ReportScreen() {
       });
       router.back();
     } catch {
-      setError("通報を送信できませんでした。時間をおいて再試行してください。");
+      setError(copy.error);
     } finally {
       setSubmitting(false);
     }
   };
 
   return (
-    <View style={styles.screen}>
+    <DismissKeyboardView style={styles.screen}>
       <StatusBar style="light" />
-      <Header iconName="report-problem" onBack={() => router.back()} title="通報" variant="hero" />
+      <Header iconName="report-problem" onBack={() => router.back()} title={copy.title} variant="hero" />
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        <Text style={styles.title}>{params.name ? `${params.name}について報告` : "問題を報告"}</Text>
-        <Text style={styles.description}>相手には通報者の情報は表示されません。最も近い理由を1つ選んでください。</Text>
+        <Text style={styles.title}>{params.name ? copy.namedTitle(params.name) : copy.title}</Text>
+        <Text style={styles.description}>{copy.description}</Text>
         <View style={styles.reasons}>
-          {REASONS.map((item) => (
+          {REASONS[language].map((item) => (
             <Pressable key={item.key} onPress={() => setReason(item.key)} style={[styles.reason, reason === item.key && styles.reasonSelected]}>
               <MaterialIcons color={reason === item.key ? colors.brand.sky : colors.text.muted} name={reason === item.key ? "radio-button-checked" : "radio-button-unchecked"} size={22} />
               <Text style={styles.reasonText}>{item.label}</Text>
             </Pressable>
           ))}
         </View>
-        <Text style={styles.label}>補足（任意）</Text>
+        <Text style={styles.label}>{copy.optionalDetails}</Text>
         <TextInput
           maxLength={500}
           multiline
           onChangeText={setComment}
-          placeholder="状況を具体的に入力してください"
+          placeholder={copy.placeholder}
           placeholderTextColor={colors.text.muted}
           style={styles.input}
           value={comment}
@@ -75,10 +95,10 @@ export default function ReportScreen() {
         <Text style={styles.count}>{comment.length} / 500</Text>
         {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
         <Pressable disabled={!reason || submitting} onPress={() => void submit()} style={[styles.submit, (!reason || submitting) && styles.disabled]}>
-          <Text style={styles.submitText}>{submitting ? "送信中..." : "運営へ送信"}</Text>
+          <Text style={styles.submitText}>{submitting ? copy.submitting : copy.submit}</Text>
         </Pressable>
       </ScrollView>
-    </View>
+    </DismissKeyboardView>
   );
 }
 

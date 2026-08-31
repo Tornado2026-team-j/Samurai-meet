@@ -20,9 +20,9 @@ import {
   type AppLanguage,
 } from "../../services/onboarding";
 import {
-  getNotificationNavigation,
   listNotifications,
   markNotificationRead,
+  navigateFromJapaneseNotifications,
   toNotificationView,
 } from "../../services/notifications";
 import type {
@@ -323,8 +323,7 @@ export default function JapaneseNotificationsScreen() {
       }
     }
 
-    const navigation = getNotificationNavigation(notification);
-    if (navigation) router.push(navigation);
+    navigateFromJapaneseNotifications(router, notification);
   };
 
   if (!language) {

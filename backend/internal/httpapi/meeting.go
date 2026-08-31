@@ -66,6 +66,18 @@ func meetingItem(service *meeting.Service, sessions *auth.SessionService) http.H
 				return
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"data": result})
+		case "cancel":
+			if r.Method != http.MethodPost {
+				w.Header().Set("Allow", http.MethodPost)
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				return
+			}
+			result, err := service.Cancel(r.Context(), claims.Subject, meetingID, time.Now())
+			if err != nil {
+				writeMeetingError(w, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"data": result})
 		case "proximity":
 			meetingProximity(w, r, service, claims.Subject, meetingID)
 		default:

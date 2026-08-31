@@ -34,6 +34,10 @@ export async function revokeSession(sessionId: string, session: Session, signal?
   await requestAPI<null>(`/me/sessions/${encodeURIComponent(sessionId)}`, session, { method: "DELETE", signal });
 }
 
+export async function revokeOtherSessions(session: Session, signal?: AbortSignal): Promise<void> {
+  await requestAPI<null>("/me/sessions/logout-other", session, { method: "POST", signal });
+}
+
 export async function listPasskeys(session: Session, signal?: AbortSignal): Promise<PasskeySummary[]> {
   return requireArray(
     await requestAPI<DataResponse<PasskeySummary[]>>("/auth/passkey", session, { method: "GET", signal }),

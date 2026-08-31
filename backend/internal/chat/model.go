@@ -1,6 +1,6 @@
 package chat
 
-// WebSocket delivery wire types.
+// Realtime delivery wire types shared by HTTP/3 WebTransport frames.
 //
 // Every frame is a JSON object with a "type" discriminator. The transport is
 // ciphertext-only, exactly like the REST API: the server never receives or
@@ -40,6 +40,7 @@ type inboundFrame struct {
 	Nonce               string `json:"nonce"`
 	Algorithm           string `json:"algorithm"`
 	KeyVersion          string `json:"key_version"`
+	ContentType         string `json:"content_type"`
 	LastMessageSequence int64  `json:"last_message_sequence"`
 }
 

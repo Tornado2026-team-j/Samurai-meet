@@ -26,8 +26,8 @@
 | 処理 | 言語 / 場所 | 状態 |
 | --- | --- | --- |
 | 通報・ブロック画面 | TypeScript / TSX | 未 |
-| API 入力・対象権限・遮断判定 | Go（`backend/internal/safety`、`backend/internal/httpapi/safety.go`） | 実装済み |
-| 画像・本文の検査連携 | Go + 専用検査サービスの検討 | 未 |
+| API 入力・対象オブジェクト権限・遮断判定 | Go（`backend/internal/safety`、`backend/internal/httpapi/safety.go`） | 実装済み（対象種別ごとに存在・閲覧範囲を検証） |
+| 画像・本文の検査連携 | Go + 専用検査サービスの検討 | 未（厳密E2EEとサーバーAI検査は両立しないため、通報データの明示的同意境界が必要） |
 | 運営キュー・状態更新 | Go / 管理画面 | 未（`reports.status`列は用意済み） |
 | 原票・処理履歴 | PostgreSQL / SQL（`0027_reports.sql`、既存`blocks`） | `reports` 実装済み、`audit_logs` 未 |
 
@@ -35,7 +35,7 @@
 
 実装済み（すべて Access Token 必須）:
 
-- `POST /reports` — body `{target_type, target_id, reason, comment?}`。`target_type` は `user` / `recruitment_card` / `message` / `photo`、`reason` は `nuisance` / `harassment` / `impersonation` / `inappropriate_photo` / `dangerous` / `other`。`comment` は最大2000。同一通報者×同一対象で未処理の通報がある場合は既存の通報を返す（201）。自分自身・存在しないユーザーの通報は拒否。
+- `POST /reports` — body `{target_type, target_id, reason, comment?}`。`target_type` は `user` / `recruitment_card` / `message` / `photo`、`reason` は `nuisance` / `harassment` / `impersonation` / `inappropriate_photo` / `dangerous` / `other`。`comment` は最大2000。同一通報者×同一対象で未処理の通報がある場合は既存の通報を返す（201）。自分自身・存在しない対象・報告者が閲覧権限を持たない対象は拒否する。メッセージはチャット参加者、募集カードは公開中または自分が参加したマッチ、写真は公開プロフィール画像または参加中チャット添付に限定し、未知対象と権限外対象は同じエラーへ畳み込む。
 - `GET /me/blocks` — 自分がブロックした相手の一覧（`user_id`, `name`, `created_at`）。
 - `POST /blocks` — body `{user_id}`。冪等（204）。
 - `DELETE /blocks/{user_id}` — 解除（204、未ブロックは404）。
@@ -58,13 +58,14 @@
 
 - 通報者の情報を対象者へ不用意に開示しない。
 - 通報対象のメッセージ・写真への運営アクセス範囲を定義する。
-- E2EE を採用する場合、ユーザーが明示的に通報したデータだけを検査可能にする設計を検討する。
+- 厳密E2EEを維持する場合、サーバーはチャット本文・添付画像を復号して自動Moderation／翻訳してはならない。自動処理はクライアント側に置くか、ユーザーが明示的に通報して同意したデータだけを別の復号・保管境界へ渡す方式を設計する。
+- 現行のサーバーGemini処理は募集分類に限定され、チャット本文・画像のModeration／翻訳処理は存在しない。
 - 緊急時は警察・救急等へ連絡することを UI と利用規約に明記する。
 - アカウント停止、復旧、削除の判断と問い合わせ窓口を用意する。
 
 ## 7. 受け入れ条件
 
-- ユーザー、カード、メッセージ、写真を通報できる。（API実装済み・`TestSafetyReportAndBlock`）
+- ユーザー、カード、メッセージ、写真を、対象種別ごとの閲覧権限を満たした場合に通報できる。（API実装済み・`TestSafetyReportAndBlock`、`TestSafetyReportTargetAuthorization`）
 - ブロック後に相手のカードとチャットが表示されない。（`matching` / `chat` の読み取りが`blocks`を参照。新規関心の遮断はテスト済み。既存match/カード非表示のフロント反映は未）
 - 通報が運営キューへ登録される。（`reports`行として登録。運営キューUIは未）
 - 管理者の処理履歴が改ざん困難な監査ログに残る。（未・`audit_logs`）

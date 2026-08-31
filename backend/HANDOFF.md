@@ -7,8 +7,8 @@
 - 通常のネイティブAPI Base URLは `https://samurai-meet.disnana.com/api/v1`。`127.0.0.1:8080`やLAN URLへは自動切替しない。別環境は `EXPO_PUBLIC_API_BASE_URL` 等を明示する。
 - 募集・マッチングのGo APIと、外国人／日本人画面からの募集フロー接続コードは存在する。日時入力はISO内部値と `Asia/Tokyo` 固定へ統一し、フロント／Goの自動テストで確認済み。募集作成から通知遷移までのiOS実機全通しE2Eは未確認。絶対時刻はUTC。
 - 通知はDB永続化、一覧・既読、応募／承認／辞退／暗号化チャット送信のイベント生成、通知画面接続まで。OSプッシュ通知は未実装。
-- チャットはRESTの暗号文送信・履歴・既読・短命token発行に加え、WebSocketリアルタイム配送（`internal/chat/websocket.go`、単一インスタンス前提のプロセス内ハブ）を実装済み。QUIC／HTTP/3 WebTransport配送は未実装。
-- `POST /api/v1/chats/{id}/transport-token` はhandler既定値・サービス受理値ともに `websocket` で一致（実装済み・動作確認済み）。`webtransport`／`quic` は終端サーバーが無いため `ErrChatInvalidInput`（HTTP 400）で拒否する。QUIC採用時にサーバー実装と同じ変更で受理値を追加する。
+- チャットの唯一のリアルタイム配送経路はHTTP/3 WebTransport（`internal/chat/quic*.go`）です。旧WebSocket実装・Hub・依存は削除済みで、`/api/v1/ws/chats/{id}` は410を返します。RESTの暗号文送信・履歴・既読は同期・復旧経路として残します。
+- `POST /api/v1/chats/{id}/transport-token` は省略時・明示時とも `webtransport` だけを発行します。WebTransport listenerはTLS 1.3/UDPとOrigin allowlist、Authorization header token、0-RTT mutation拒否、15秒ごとのtoken/session/match/token世代再検証、PostgreSQL LISTEN/NOTIFYによる複数インスタンスfan-outを提供します。実機native moduleとUDP公開経路は別途E2E確認が必要です。
 
 ## 変更時の注意
 

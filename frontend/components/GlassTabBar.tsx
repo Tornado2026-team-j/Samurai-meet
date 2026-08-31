@@ -1,10 +1,15 @@
 import { Ionicons } from "@expo/vector-icons";
 import { BlurView } from "expo-blur";
-import { useRouter, type Href } from "expo-router";
-import type { ComponentProps } from "react";
+import { usePathname, useRouter, type Href } from "expo-router";
+import { useEffect, useRef, useState, type ComponentProps } from "react";
 import { Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import type { AppMode } from "../services/onboarding";
+import {
+  loadLanguage,
+  subscribeLanguage,
+  type AppLanguage,
+  type AppMode,
+} from "../services/onboarding";
 
 const BLUE = "#5EC5F5";
 const TEXT = "#535353";
@@ -22,18 +27,39 @@ type GlassTabBarProps = {
   plansHref?: Href;
 };
 
+function hrefKey(href: Href): string {
+  if (typeof href === "string") return href;
+  return JSON.stringify(href) ?? "";
+}
+
 const TAB_ITEMS: Array<{
   key: TabKey;
-  label: string;
   icon: IoniconName;
   activeIcon: IoniconName;
 }> = [
-  { key: "home", label: "Home", icon: "home-outline", activeIcon: "home" },
-  { key: "chat", label: "Chat", icon: "chatbubbles-outline", activeIcon: "chatbubbles" },
-  { key: "plans", label: "Plans", icon: "calendar-outline", activeIcon: "calendar" },
-  { key: "monsters", label: "Monsters", icon: "sparkles-outline", activeIcon: "sparkles" },
-  { key: "profile", label: "Profile", icon: "person-circle-outline", activeIcon: "person-circle" },
+  { key: "home", icon: "home-outline", activeIcon: "home" },
+  { key: "chat", icon: "chatbubbles-outline", activeIcon: "chatbubbles" },
+  { key: "plans", icon: "calendar-outline", activeIcon: "calendar" },
+  { key: "monsters", icon: "sparkles-outline", activeIcon: "sparkles" },
+  { key: "profile", icon: "person-circle-outline", activeIcon: "person-circle" },
 ];
+
+const TAB_LABELS: Record<AppLanguage, Record<TabKey, string>> = {
+  ja: {
+    home: "ホーム",
+    chat: "チャット",
+    plans: "予定",
+    monsters: "モンスター",
+    profile: "プロフィール",
+  },
+  en: {
+    home: "Home",
+    chat: "Chat",
+    plans: "Plans",
+    monsters: "Monsters",
+    profile: "Profile",
+  },
+};
 
 export default function GlassTabBar({
   activeTab,
@@ -42,10 +68,37 @@ export default function GlassTabBar({
   plansHref,
 }: GlassTabBarProps) {
   const insets = useSafeAreaInsets();
+  const pathname = usePathname();
   const router = useRouter();
+  const pendingHref = useRef<string | null>(null);
+  const [language, setLanguage] = useState<AppLanguage | null>(null);
   const bottom = Math.max(insets.bottom + 8, 18);
   const defaultHomeHref: Href = appMode === "traveler" ? "/foreigner" : "/japanese";
   const defaultPlansHref: Href = "/plans";
+  const fallbackLanguage: AppLanguage = appMode === "traveler" ? "en" : "ja";
+  const labels = TAB_LABELS[language ?? fallbackLanguage];
+
+  useEffect(() => {
+    pendingHref.current = null;
+  }, [pathname]);
+
+  useEffect(() => {
+    let active = true;
+    const unsubscribe = subscribeLanguage((nextLanguage) => {
+      if (active && nextLanguage) setLanguage(nextLanguage);
+    });
+    void loadLanguage()
+      .then((storedLanguage) => {
+        if (active) setLanguage(storedLanguage ?? fallbackLanguage);
+      })
+      .catch(() => {
+        if (active) setLanguage(fallbackLanguage);
+      });
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [fallbackLanguage]);
 
   const hrefFor = (key: TabKey): Href => {
     switch (key) {
@@ -62,19 +115,30 @@ export default function GlassTabBar({
     }
   };
 
+  const navigateToTab = (key: TabKey) => {
+    const href = hrefFor(key);
+    const targetKey = hrefKey(href);
+    const targetPath = typeof href === "string" ? href.split(/[?#]/u, 1)[0] : null;
+    if (targetPath === pathname || pendingHref.current === targetKey) return;
+
+    pendingHref.current = targetKey;
+    router.replace(href);
+  };
+
   return (
     <View pointerEvents="box-none" style={[styles.wrapper, { bottom }]}>
       <BlurView intensity={Platform.OS === "ios" ? 42 : 22} tint="light" style={styles.bar}>
         <View style={styles.tint} />
         {TAB_ITEMS.map((item) => {
           const selected = item.key === activeTab;
+          const label = labels[item.key];
           return (
             <Pressable
               key={item.key}
-              accessibilityLabel={item.label}
+              accessibilityLabel={label}
               accessibilityRole="tab"
               accessibilityState={{ selected }}
-              onPress={() => router.replace(hrefFor(item.key))}
+              onPress={() => navigateToTab(item.key)}
               style={({ pressed }) => [
                 styles.tab,
                 pressed && styles.pressed,
@@ -88,7 +152,7 @@ export default function GlassTabBar({
                 />
               </View>
               <Text numberOfLines={1} style={[styles.label, selected && styles.labelSelected]}>
-                {item.label}
+                {label}
               </Text>
             </Pressable>
           );

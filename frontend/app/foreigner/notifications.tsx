@@ -20,9 +20,9 @@ import {
   type AppLanguage,
 } from "../../services/onboarding";
 import {
-  getNotificationNavigation,
   listNotifications,
   markNotificationRead,
+  navigateFromForeignerNotifications,
   toNotificationView,
 } from "../../services/notifications";
 import type {
@@ -339,8 +339,7 @@ export default function ForeignerNotificationsScreen() {
       }
     }
 
-    const navigation = getNotificationNavigation(notification);
-    if (navigation) router.push(navigation);
+    navigateFromForeignerNotifications(router, notification);
   };
 
   if (!language) {

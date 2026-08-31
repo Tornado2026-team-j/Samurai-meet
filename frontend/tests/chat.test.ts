@@ -1,19 +1,28 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import {
+  parseChatLocationPayload,
   blockUser,
-  chatWebSocketURL,
+  chatRealtimeMode,
+  chatWebTransportURL,
+  connectChatWebTransport,
   createSafetyReport,
   decryptChatMessage,
   encryptChatPlaintext,
+  filterChatsByStatus,
   issueChatTransportToken,
+  registerChatWebTransportAdapter,
   listChatMessages,
   listChats,
   markChatRead,
+  moderateAndSendChatMessage,
+  moderateChatMessage,
   moderateChatText,
   sendChatMessage,
+  sendChatLocation,
   toChatMessageView,
   validateChatDraft,
   type EncryptedChatMessage,
+  type ChatSummary,
 } from "../services/chat";
 
 const originalFetch = globalThis.fetch;
@@ -28,6 +37,7 @@ const fixedRandom = async (length: number) => new Uint8Array(Array.from({ length
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
+  registerChatWebTransportAdapter(null);
 });
 
 describe("チャットAPIクライアント", () => {
@@ -54,7 +64,9 @@ describe("チャットAPIクライアント", () => {
       }), { status: 200 });
     }) as typeof fetch;
 
-    await expect(listChats(session)).resolves.toHaveLength(1);
+    const chats = await listChats(session);
+    expect(chats).toHaveLength(1);
+    expect(chats).toMatchObject([{ status: "accepted" }]);
     await expect(listChatMessages("chat-1", session, { after: 3, limit: 50 })).resolves.toMatchObject({
       items: [],
       has_more: false,
@@ -66,7 +78,37 @@ describe("チャットAPIクライアント", () => {
     expect(requests[1]).toContain("limit=50");
   });
 
-  it("WebSocket用Chat Tokenを発行し、URL queryへ載せない接続先を作る", async () => {
+  it("チャット一覧の絞り込みはAPIのstatusだけを根拠にする", () => {
+    const chats: ChatSummary[] = [
+      {
+        id: "chat-active",
+        match_id: "match-active",
+        status: "accepted",
+        other_user_id: "user-2",
+        other_user_name: "Sofia",
+        unread_count: 0,
+        updated_at: "2026-08-30T00:00:00Z",
+      },
+      {
+        id: "chat-completed",
+        match_id: "match-completed",
+        status: "completed",
+        other_user_id: "user-3",
+        other_user_name: "Haruto",
+        unread_count: 2,
+        updated_at: "2026-08-30T00:00:00Z",
+      },
+    ];
+
+    expect(filterChatsByStatus(chats, "all").map((chat) => chat.id)).toEqual([
+      "chat-active",
+      "chat-completed",
+    ]);
+    expect(filterChatsByStatus(chats, "active").map((chat) => chat.id)).toEqual(["chat-active"]);
+    expect(filterChatsByStatus(chats, "completed").map((chat) => chat.id)).toEqual(["chat-completed"]);
+  });
+
+  it("WebTransport用Chat Tokenだけを要求し、ネイティブ未対応時はREST同期を使う", async () => {
     let requestedBody = "";
     globalThis.fetch = (async (_input, init) => {
       requestedBody = String(init?.body);
@@ -74,19 +116,56 @@ describe("チャットAPIクライアント", () => {
         data: {
           chat_token: "chat-jws",
           expires_at: "2026-08-30T00:02:00Z",
-          transport: "websocket",
+          transport: "webtransport",
         },
       }), { status: 200 });
     }) as typeof fetch;
 
     await expect(issueChatTransportToken("chat-1", session)).resolves.toMatchObject({
       chat_token: "chat-jws",
-      transport: "websocket",
+      transport: "webtransport",
     });
 
-    expect(JSON.parse(requestedBody)).toEqual({ transport: "websocket" });
-    expect(chatWebSocketURL("chat-1", "https://example.com/api/v1")).toBe("wss://example.com/api/v1/ws/chats/chat-1");
-    expect(chatWebSocketURL("chat 1", "http://127.0.0.1:8080/api/v1")).toBe("ws://127.0.0.1:8080/api/v1/ws/chats/chat%201");
+    expect(JSON.parse(requestedBody)).toEqual({ transport: "webtransport" });
+    expect(chatRealtimeMode()).toBe("rest_sync");
+  });
+
+  it("Development BuildのアダプタにはWebTransport URLとAuthorizationヘッダーだけを渡す", async () => {
+    const captured = {
+      value: undefined as {
+      url: string;
+      headers: Record<string, string>;
+      } | undefined,
+    };
+    globalThis.fetch = (async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({
+      data: {
+        chat_token: "short-lived-chat-token",
+        expires_at: "2026-08-30T00:02:00Z",
+        transport: "webtransport",
+      },
+    }), { status: 200 })) as unknown as typeof fetch;
+    registerChatWebTransportAdapter({
+      connect: async (input) => {
+        captured.value = { url: input.url, headers: input.headers };
+        return { close: () => undefined };
+      },
+    });
+
+    const transport = await connectChatWebTransport("chat 1", session, {
+      onFrame: () => undefined,
+      onClose: () => undefined,
+    });
+
+    expect(chatRealtimeMode()).toBe("webtransport");
+    expect(chatWebTransportURL("chat 1", "https://example.com/api/v1")).toBe("https://example.com/api/v1/wt/chats/chat%201");
+    const actualAdapterInput = captured.value;
+    if (!actualAdapterInput) throw new Error("adapter did not receive a connection request");
+    expect(actualAdapterInput).toEqual({
+      url: expect.stringContaining("/wt/chats/chat%201"),
+      headers: { Authorization: "Bearer short-lived-chat-token" },
+    });
+    expect(actualAdapterInput.url).not.toContain("short-lived-chat-token");
+    expect(transport.expiresAt).toBe("2026-08-30T00:02:00Z");
   });
 
   it("通報とブロックは#27の安全API契約を呼び出す", async () => {
@@ -182,6 +261,96 @@ describe("チャットAPIクライアント", () => {
     expect(parsed.algorithm).toBe("AES-256-GCM");
     expect(requestedBody).not.toContain("改札前");
     expect(decryptChatMessage("chat-1", message)).toBe("改札前で待ち合わせしましょう。");
+  });
+
+  it("送信前Moderationは平文を専用endpointだけへ送り、blocked時は暗号文送信を開始しない", async () => {
+    const requests: { url: string; body: string }[] = [];
+    globalThis.fetch = (async (input, init) => {
+      const url = String(input);
+      const body = String(init?.body ?? "");
+      requests.push({ url, body });
+      if (url.includes("/moderation")) {
+        return new Response(JSON.stringify({ data: { decision: "blocked" } }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ data: {} }), { status: 201 });
+    }) as typeof fetch;
+
+    const result = await moderateAndSendChatMessage("chat-1", "危険な本文", session);
+    expect(result).toEqual({ decision: "blocked" });
+    // The helper is the UI's send gate. Its request trace proves blocked text
+    // never reaches encryption-backed /messages delivery.
+    expect(requests).toEqual([{ url: expect.stringContaining("/chats/chat-1/moderation"), body: JSON.stringify({ text: "危険な本文" }) }]);
+    expect(requests[0]?.body).not.toContain("ciphertext");
+  });
+
+  it("moderation_unavailableでは暗号文送信を中断する", async () => {
+    const requests: string[] = [];
+    globalThis.fetch = (async () => new Response(JSON.stringify({
+      data: { decision: "unavailable", code: "moderation_unavailable" },
+    }), { status: 200 })) as unknown as typeof fetch;
+
+    await expect(moderateChatMessage("chat-1", "確認したいです", session)).resolves.toBe("unavailable");
+    globalThis.fetch = (async (input) => {
+      requests.push(String(input));
+      return new Response(JSON.stringify({ data: { decision: "unavailable", code: "moderation_unavailable" } }), { status: 200 });
+    }) as typeof fetch;
+    await expect(moderateAndSendChatMessage("chat-1", "確認したいです", session)).resolves.toEqual({ decision: "unavailable" });
+    expect(requests).toEqual([expect.stringContaining("/chats/chat-1/moderation")]);
+  });
+
+  it("moderation endpointの5xxでは暗号文送信を開始しない", async () => {
+    const requests: string[] = [];
+    globalThis.fetch = (async (input) => {
+      requests.push(String(input));
+      return new Response(JSON.stringify({ error: "moderation_unavailable" }), { status: 503 });
+    }) as typeof fetch;
+
+    await expect(moderateAndSendChatMessage("chat-1", "確認したいです", session)).rejects.toMatchObject({ status: 503 });
+    expect(requests).toEqual([expect.stringContaining("/chats/chat-1/moderation")]);
+  });
+
+  it("位置共有も座標を平文API bodyへ入れず、期限付き型付きメッセージとして送る", async () => {
+    let requestedBody = "";
+    globalThis.fetch = (async (_input, init) => {
+      requestedBody = String(init?.body);
+      const body = JSON.parse(requestedBody) as Partial<EncryptedChatMessage>;
+      return new Response(JSON.stringify({ data: { ...body, id: "location-1", chat_id: "chat-1", sender_user_id: "user-1", sequence: 2, created_at: "2026-08-30T00:00:00Z" } }), { status: 201 });
+    }) as typeof fetch;
+    const expiresAt = new Date(Date.now() + 60_000).toISOString();
+    const message = await sendChatLocation("chat-1", { latitude: 35.681236, longitude: 139.767125, display_name: "Tokyo Station", accuracy_m: 20 }, session, expiresAt, "location-client-1", undefined, fixedRandom);
+    expect(JSON.parse(requestedBody)).toMatchObject({ content_type: "location", expires_at: expiresAt });
+    expect(requestedBody).not.toContain("35.681236");
+    expect(toChatMessageView("chat-1", message, "user-1").location).toMatchObject({ latitude: 35.681236, longitude: 139.767125, display_name: "Tokyo Station" });
+  });
+
+  it("期限切れの位置共有は座標を画面用データとして返さない", () => {
+    const expiredAt = new Date(Date.now() - 60_000).toISOString();
+    const payload = JSON.stringify({
+      type: "location",
+      latitude: 35.681236,
+      longitude: 139.767125,
+      display_name: "Tokyo Station",
+      expires_at: expiredAt,
+    });
+    expect(parseChatLocationPayload(payload, expiredAt)).toBeNull();
+
+    const message: EncryptedChatMessage = {
+      id: "location-expired",
+      chat_id: "chat-1",
+      sender_user_id: "user-2",
+      client_message_id: "location-expired-client",
+      sequence: 3,
+      ciphertext: "",
+      nonce: "",
+      algorithm: "AES-256-GCM",
+      key_version: "v1",
+      content_type: "location",
+      expires_at: expiredAt,
+      created_at: "2026-08-30T00:00:00Z",
+    };
+    const view = toChatMessageView("chat-1", message, "user-1");
+    expect(view.location).toBeNull();
+    expect(view.locationExpired).toBe(true);
   });
 
   it("暗号化メッセージを画面用に復号し、自分の送信か判定する", async () => {

@@ -104,10 +104,19 @@ export type NotificationNavigation =
       params: { matchId: string; recruitmentId?: string };
     };
 
+type NotificationRouter = {
+  push: (navigation: NotificationNavigation) => void;
+};
+
+type NotificationPressInput = Pick<
+  NotificationView,
+  "type" | "targetId" | "recruitmentId"
+>;
+
 // Navigation is determined from the server's stable notification contract.
 // Localized title/message text must never affect the destination.
 export function getNotificationNavigation(
-  notification: Pick<NotificationView, "type" | "targetId" | "recruitmentId">,
+  notification: NotificationPressInput,
 ): NotificationNavigation | null {
   const targetID = notification.targetId.trim();
   if (!targetID) return null;
@@ -143,6 +152,32 @@ export function getNotificationNavigation(
     default:
       return null;
   }
+}
+
+function navigateFromNotificationScreen(
+  mode: "japanese" | "foreigner",
+  router: NotificationRouter,
+  notification: NotificationPressInput,
+): void {
+  // Keep the screen role explicit at the call site. Destinations are based on
+  // the server contract, not on the display language or role-specific copy.
+  if (mode !== "japanese" && mode !== "foreigner") return;
+  const navigation = getNotificationNavigation(notification);
+  if (navigation) router.push(navigation);
+}
+
+export function navigateFromJapaneseNotifications(
+  router: NotificationRouter,
+  notification: NotificationPressInput,
+): void {
+  navigateFromNotificationScreen("japanese", router, notification);
+}
+
+export function navigateFromForeignerNotifications(
+  router: NotificationRouter,
+  notification: NotificationPressInput,
+): void {
+  navigateFromNotificationScreen("foreigner", router, notification);
 }
 
 const ENGLISH_COPY: Record<NotificationType, NotificationCopy> = {

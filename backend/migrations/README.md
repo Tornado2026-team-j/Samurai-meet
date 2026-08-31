@@ -27,6 +27,7 @@
 - `0031_recruitment_details.sql` は既存の募集カテゴリ（`Food` / `Places` / `Activity` / `Other`）を維持したまま、募集人数と公開用の場所表示名を追加する。正確な座標は従来どおりAPIレスポンスへ含めない。
 - `0032_identity_verifications.sql` はStripe IdentityのセッションIDと確認状態を保存する。本人確認書類や住所は保存しない。
 - `0033_push_devices.sql` はOSプッシュ通知用のExpo Push Tokenと通知種別ごとの設定を端末単位で保存する。
+- `0036_device_transfer_cancellation.sql` は端末引き継ぎの`pending`／未受取`approved`を`cancelled`へ遷移できるようにし、キャンセル時刻と検索用indexを追加する。完了・拒否・期限切れ・キャンセル済みからの再遷移はAPIとtransactionで拒否する。
 - `0034_chat_attachments.sql` はチャット写真の暗号文メタデータ`chat_attachments`を追加する。画像本体はDBに保存せず暗号文BLOBストレージへ置き、平文・EXIF・暗号鍵は保存しない。`message_id`が`NULL`の未参照アップロードは起動時スイープで削除する。`--`コメント内に`;`を書かない（runnerは`;`で文を分割する）。
 - `0035_restore_places_category.sql` は、短期間導入された`Heritage`カテゴリを正式カテゴリの`Places`へ戻す。0031が既に適用済みの環境にも、既存募集を失わず適用できる。
 - runnerは`schema_migrations`へファイル名と正規化SQLのSHA-256を記録し、適用済みSQLを再実行しない。起動が同時になった場合もPostgreSQL advisory lockで直列化する。適用済みファイルの内容が変わった場合はchecksum mismatchで停止する。

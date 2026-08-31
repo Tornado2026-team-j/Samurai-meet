@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import type { Session } from "../services/auth-contract";
-import { listPasskeys, listSessions, removePasskey, revokeSession } from "../services/security";
+import { listPasskeys, listSessions, removePasskey, revokeOtherSessions, revokeSession } from "../services/security";
 
 const session: Session = {
   user_id: "user-1",
@@ -29,10 +29,12 @@ test("セッションとPasskeyの管理APIを呼び分ける", async () => {
 
   expect((await listSessions(session))[0]?.current).toBe(true);
   expect((await listPasskeys(session))[0]?.credential_id).toBe("credential-1");
+  await revokeOtherSessions(session);
   await revokeSession("session-other", session);
   await removePasskey("credential-1", session);
 
-  expect(requests.map((request) => request.method)).toEqual(["GET", "GET", "DELETE", "DELETE"]);
-  expect(requests[2]?.url).toContain("/me/sessions/session-other");
-  expect(requests[3]?.url).toContain("/auth/passkey/credential-1");
+  expect(requests.map((request) => request.method)).toEqual(["GET", "GET", "POST", "DELETE", "DELETE"]);
+  expect(requests[2]?.url).toContain("/me/sessions/logout-other");
+  expect(requests[3]?.url).toContain("/me/sessions/session-other");
+  expect(requests[4]?.url).toContain("/auth/passkey/credential-1");
 });

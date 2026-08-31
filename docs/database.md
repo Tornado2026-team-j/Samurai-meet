@@ -48,6 +48,9 @@
 | `0031_recruitment_details.sql` | 募集カテゴリを`Heritage`へ統一し、募集人数と公開用場所表示名を追加する |
 | `0032_identity_verifications.sql` | Stripe IdentityのセッションIDと確認状態を保存する。本人確認書類や住所は保存しない |
 | `0033_push_devices.sql` | Expo Push Tokenと通知種別ごとの端末設定を保存する |
+| `0034_chat_attachments.sql` | チャット暗号文添付のメタデータを追加する |
+| `0035_restore_places_category.sql` | `Heritage`カテゴリを既存の正式カテゴリ`Places`へ戻す |
+| `0036_device_transfer_cancellation.sql` | 端末引き継ぎを`cancelled`へ遷移できる状態と`cancelled_at`、キャンセル済み行の検索用indexを追加する |
 
 注意: 現行のmigration runnerはSQLファイルを順番に正規化して実行し、`schema_migrations`へファイル名と正規化SQLのSHA-256 checksum、適用時刻を記録する。同じchecksumの適用済みmigrationはスキップし、PostgreSQL advisory lockで同時起動を直列化する。適用済みファイルの内容が変わった場合はchecksum mismatchで起動を停止する。適用済みmigrationを編集・置換してはいけない。DDL変更は新しい番号のSQLを追加する。
 
@@ -143,6 +146,8 @@ Access Token検証時も`sessions.status`、`expires_at`、アイドル期限、
 | `used_at` / `revoked_at` | text | rotation・失効 |
 
 Refreshは対象行を`FOR UPDATE`し、旧token使用済み化、新token追加、session最終利用更新をtransactionで行う。
+
+`POST /api/v1/me/sessions/logout-other`は直近Passkey認証を要求し、claimsの現在sessionを除外して同一user_idの他sessionとrefresh tokenを失効させる。有効Access Tokenだけでは実行できない。再送はno-opで、現在sessionとそのrefresh tokenは残す。全sessionを含む緊急認証ローテーションは専用のoperation/Passkey交換契約が未設計のため未実装とする。
 
 ### `refresh_attempts`
 
@@ -252,6 +257,8 @@ verification codeのhash、状態、期限、opaqueなwrapped Master Key、ア�
 `device_key_transfers.wrapped_master_key`はJSONをBase64URL化した暗号文envelopeであり、サーバーは復号しない。
 `verification_code`、X25519秘密鍵、Master Key、Recovery Phraseは列にもログにも存在しない。`pending`中はwrapped値を空にし、
 `approved`後も対象device proofが一致したGETだけに返す。期限、最大試行回数、同時要求数をAPIとDB transactionの両方で確認する。
+
+`0036_device_transfer_cancellation.sql`により`cancelled`と`cancelled_at`を追加する。キャンセルは申請者のuser_id・対象device_id・device proofを検証したtransactionだけが行い、`pending`または未受取の`approved`からのみ遷移する。成功時はwrapped envelopeとwrap metadataを消去し、`completed`、`rejected`、`expired`、`cancelled`からの再遷移は拒否する。
 
 既存の`account_wrapped_image_key`はアカウントrootで包んだ画像DEKであり、機種変更時の画像再包みに使う。
 画像ciphertextの再暗号化や旧画像DEK envelopeの即時削除は行わない。`key_b_materials`はv2 cutoverで空にする。

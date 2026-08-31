@@ -5,6 +5,7 @@ import { useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { Header, colors, radius } from "../components/ui";
 import { useAuth } from "../hooks/useAuth";
+import { loadLanguage, subscribeLanguage, type AppLanguage } from "../services/onboarding";
 import { getPushSettings, requestPushToken, savePushSettings, type PushSettings } from "../services/push-notifications";
 
 const DEFAULTS: PushSettings = {
@@ -16,12 +17,68 @@ const DEFAULTS: PushSettings = {
   reminder_enabled: true,
 };
 
+const COPY: Record<AppLanguage, {
+  title: string;
+  description: string;
+  push: string;
+  chat: string;
+  match: string;
+  reminder: string;
+  saving: string;
+  permissionDenied: string;
+  saveError: string;
+  openSettings: string;
+}> = {
+  ja: {
+    title: "通知設定",
+    description: "チャットや承認、当日の予定を見逃さないよう、端末のプッシュ通知を設定できます。",
+    push: "プッシュ通知",
+    chat: "新着チャット",
+    match: "応募・承認結果",
+    reminder: "案内予定のリマインド",
+    saving: "保存中...",
+    permissionDenied: "通知が許可されていません。iOSの設定から通知を許可してください。",
+    saveError: "通知設定を保存できませんでした。実機とサーバー設定を確認してください。",
+    openSettings: "端末の設定を開く",
+  },
+  en: {
+    title: "Notification settings",
+    description: "Configure push notifications so you do not miss chats, application results, or upcoming plans.",
+    push: "Push notifications",
+    chat: "New chats",
+    match: "Applications and decisions",
+    reminder: "Plan reminders",
+    saving: "Saving...",
+    permissionDenied: "Notifications are not allowed. Enable them in your iOS settings.",
+    saveError: "Notification settings could not be saved. Check the device and server settings.",
+    openSettings: "Open device settings",
+  },
+};
+
 export default function NotificationSettingsScreen() {
   const router = useRouter();
   const { getCurrentSession, session } = useAuth();
   const [settings, setSettings] = useState(DEFAULTS);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [language, setLanguage] = useState<AppLanguage>("ja");
+  const copy = COPY[language];
+
+  useEffect(() => {
+    let active = true;
+    const unsubscribe = subscribeLanguage((nextLanguage) => {
+      if (active) setLanguage(nextLanguage ?? "ja");
+    });
+    void loadLanguage().then((storedLanguage) => {
+      if (active) setLanguage(storedLanguage ?? "ja");
+    }).catch(() => {
+      if (active) setLanguage("ja");
+    });
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, []);
 
   useEffect(() => {
     const activeSession = getCurrentSession() ?? session;
@@ -41,8 +98,8 @@ export default function NotificationSettingsScreen() {
       setSettings(await savePushSettings(activeSession, next));
     } catch (updateError) {
       const message = updateError instanceof Error && updateError.message === "notification_permission_denied"
-        ? "通知が許可されていません。iOSの設定から通知を許可してください。"
-        : "通知設定を保存できませんでした。実機とサーバー設定を確認してください。";
+        ? copy.permissionDenied
+        : copy.saveError;
       setError(message);
     } finally {
       setSaving(false);
@@ -52,16 +109,16 @@ export default function NotificationSettingsScreen() {
   return (
     <View style={styles.screen}>
       <StatusBar style="light" />
-      <Header iconName="notifications-none" onBack={() => router.back()} title="通知設定" variant="hero" />
+      <Header iconName="notifications-none" onBack={() => router.back()} title={copy.title} variant="hero" />
       <ScrollView contentContainerStyle={styles.content}>
-        <Text style={styles.description}>チャットや承認、当日の予定を見逃さないよう、端末のプッシュ通知を設定できます。</Text>
-        <SettingRow label="プッシュ通知" onValueChange={(value) => void update({ enabled: value })} value={settings.enabled} />
-        <SettingRow disabled={!settings.enabled} label="新着チャット" onValueChange={(value) => void update({ chat_enabled: value })} value={settings.chat_enabled} />
-        <SettingRow disabled={!settings.enabled} label="応募・承認結果" onValueChange={(value) => void update({ match_enabled: value })} value={settings.match_enabled} />
-        <SettingRow disabled={!settings.enabled} label="案内予定のリマインド" onValueChange={(value) => void update({ reminder_enabled: value })} value={settings.reminder_enabled} />
-        {saving ? <Text style={styles.saving}>保存中...</Text> : null}
+        <Text style={styles.description}>{copy.description}</Text>
+        <SettingRow label={copy.push} onValueChange={(value) => void update({ enabled: value })} value={settings.enabled} />
+        <SettingRow disabled={!settings.enabled} label={copy.chat} onValueChange={(value) => void update({ chat_enabled: value })} value={settings.chat_enabled} />
+        <SettingRow disabled={!settings.enabled} label={copy.match} onValueChange={(value) => void update({ match_enabled: value })} value={settings.match_enabled} />
+        <SettingRow disabled={!settings.enabled} label={copy.reminder} onValueChange={(value) => void update({ reminder_enabled: value })} value={settings.reminder_enabled} />
+        {saving ? <Text style={styles.saving}>{copy.saving}</Text> : null}
         {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
-        {error ? <Pressable onPress={() => Linking.openSettings()} style={styles.settingsButton}><MaterialIcons color={colors.brand.sky} name="settings" size={19} /><Text style={styles.settingsButtonText}>端末の設定を開く</Text></Pressable> : null}
+        {error ? <Pressable onPress={() => Linking.openSettings()} style={styles.settingsButton}><MaterialIcons color={colors.brand.sky} name="settings" size={19} /><Text style={styles.settingsButtonText}>{copy.openSettings}</Text></Pressable> : null}
       </ScrollView>
     </View>
   );
