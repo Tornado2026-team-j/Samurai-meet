@@ -194,13 +194,7 @@ jobs:
             EXISTING_TAG_SHA=$(git rev-parse "refs/tags/${TAG_NAME}" 2>/dev/null || echo "")
             if [ "$EXISTING_TAG_SHA" != "$FULL_SHA" ]; then
               BUILD_STATUS="🔄 再ビルド更新版 (Run #${{ github.run_number }})"
-              REBUILD_NOTICE=$(cat <<NOTE_EOF
-> [!NOTE]
-> **🔄 再ビルド・更新版 (Updated Build)**
-> このバージョンは **${BUILD_TIME_JST}** に最新コミット (\`${SHORT_SHA}\`) で再ビルド・上書き更新された最新のパッケージです。
-
-NOTE_EOF
-              )
+              REBUILD_NOTICE="$(printf '> [!NOTE]\n> **🔄 再ビルド・更新版 (Updated Build)**\n> このバージョンは **%s** に最新コミット (`%s`) で再ビルド・上書き更新された最新のパッケージです。\n' "$BUILD_TIME_JST" "$SHORT_SHA")"
             fi
           fi
 
