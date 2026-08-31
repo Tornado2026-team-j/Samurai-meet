@@ -24,7 +24,81 @@ RESTの履歴取得、暗号文送信、既読更新は削除しません。こ�
 `github.com/quic-go/quic-go` と `github.com/quic-go/webtransport-go` がサーバーの実装依存です。
 native WebTransport module はこのリポジトリにまだ同梱していないため、実機での接続成功は
 未検証です。`frontend/services/chat.ts` の connector interface に、TLS証明書検証とCONNECT header
-を扱えるnative moduleを接続する必要があります。
+を扱えるnative moduleを接続する必要があります。WebSocket fallbackはこの契約に追加しません。
+
+## iOS Development Build の調査結果（2026-08-31）
+
+### 判定
+
+今回の変更は、ビルド不能なスタブを追加せず、native module の導入条件と制約をこの文書に固定する
+docs-onlyとします。現在のExpoプロジェクトはCNG（`ios/`ディレクトリを同梱しない構成）です。
+Expoの[公式ドキュメント](https://docs.expo.dev/workflow/customizing/)では、この構成で単一アプリ用の
+native codeを追加する場合はlocal Expo moduleを作成し、prebuildでnativeプロジェクトへリンクする
+流れになっています。
+
+しかし、Appleの標準APIだけでは現在のbridge契約を満たす最小実装になりません。
+
+- [`URLSession`](https://developer.apple.com/documentation/foundation/urlsession) はHTTP/3を
+  扱えますが、WebTransportのsession、unidirectional/bidirectional stream、datagramを公開する
+  APIではありません。
+- [`NWProtocolQUIC`](https://developer.apple.com/documentation/network/nwprotocolquic) はQUIC上の
+  custom protocolを実装するためのAPIです。HTTP/3とWebTransportのセッション層を別途実装する
+  必要があり、今回のnative module候補を数ファイルで成立させる代替にはなりません。
+- WebKitはSafari 26.4でJavaScriptのWebTransport APIを提供しています（[`WebKitの変更点`](https://webkit.org/blog/17862/webkit-features-for-safari-26-4/)）。
+  これはWKWebView／ブラウザのJavaScript APIであり、HermesのReact Native runtimeに
+  `NativeModules.SamuraiMeetWebTransport`として提供されるAPIではありません。WKWebViewを
+  経由する場合は、別のWebView transport、認証引き渡し、イベント寿命管理を設計する必要が
+  あるため、現在のnative bridgeの実装にはなりません。
+
+`frontend/services/chat.ts` が要求する `connect({url, headers:{Authorization}})` を満たすには、
+CONNECT requestにBearer tokenをheaderとして設定できる、TLS証明書検証付きのHTTP/3 WebTransport
+実装が必要です。tokenをqueryやcookieへ移す方法は、上記の接続契約により禁止されています。
+
+### 調査した外部native候補
+
+候補としてmoq-devの[`web-transport-ffi`](https://github.com/moq-dev/web-transport) v0.1.2
+（[`公開リリース`](https://github.com/moq-dev/web-transport/releases/tag/web-transport-ffi-v0.1.2)）を
+確認しました。UniFFI経由でSwiftへWebTransportのsession／stream／datagramを公開し、iOS向けの
+XCFrameworkも配布されています。
+
+ただし、公開されているFFIの`Client.connect`はURLだけを受け取るAPIで、CONNECT requestの
+任意headerを受け取る引数がありません。`ClientConfig`にもrequest headerの設定はありません。
+そのため現行サーバーの`Authorization: Bearer <token>`契約を満たせず、この依存をそのまま
+Expo moduleへ組み込むことはできません。必要な外部変更は次のいずれかです。
+
+1. upstreamがCONNECT headersを公開したリリースを採用する。
+2. forkでheaders対応を追加し、UniFFI生成物とSwift APIを固定したうえで利用する。
+
+さらに、Swift wrapperはGitHub Releaseのpackage artifactを介してXCFrameworkを取得する形で、
+アプリへそのまま追加できる小さなSwift Packageではありません。採用時はバイナリを社内／CIで
+検証可能なartifactとして固定し、依存元・ライセンス・checksumをレビューします。現時点で確認
+したXCFrameworkのchecksumは以下です。
+
+```text
+asset: WebTransportFFI.xcframework.zip
+release: web-transport-ffi-v0.1.2
+sha256: 65e33f05ec645c1e50c1322e77ffe8869139bc67c9684cdec189f299e85f4c9d
+```
+
+### 最小の代替と次の実装条件
+
+native moduleが利用できないiOSでは、既存のHTTPS RESTによる履歴取得・暗号文送信・既読更新と
+`sequence` cursor同期を使います。RESTはHTTP/3で接続可能な経路を維持する同期・復旧手段であり、
+WebSocket fallbackではありません。WebTransportが使えないことを理由にtokenをquery／cookieへ
+移したり、WebSocketを再導入したりしません。
+
+実際のnative実装へ進む条件は以下です。
+
+1. CONNECT headersを設定できる外部WebTransport実装を、上記のようにversion／checksum固定する。
+2. local Expo module（`SamuraiMeetWebTransport`）を追加し、既存bridgeの`connect`、`close`、
+   `samuraiMeetWebTransportFrame`、`samuraiMeetWebTransportClose`契約を変更せず接続する。
+3. 本番証明書を通常検証し、`no_cert_verification`相当の設定をDevelopment Buildにも持ち込まない。
+4. 実機Development BuildでHTTP/3 CONNECT、Authorization header、stream frame、切断、再接続、
+   REST cursor回収を確認する。Windows上のTypeScript／Goテストだけではこのゲートを通過した
+   ことにしない。
+
+今回の作業環境にはXcodeとiOS Development Build実行環境がないため、native build／iPhone実機
+E2Eは未実施です。したがって、native WebTransportが実機で利用可能になったとは判定しません。
 
 ## 認可と失効
 
