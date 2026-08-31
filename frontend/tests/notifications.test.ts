@@ -87,15 +87,19 @@ describe("通知APIクライアント", () => {
     expect(isNotificationRecord({ ...record, destination: "unknown" })).toBe(false);
   });
 
-  it("新しい応募は表示言語に関係なく構造化IDから承認画面へ遷移する", () => {
-    const english = getNotificationNavigation(toNotificationView(record, "en"));
-    const japanese = getNotificationNavigation(toNotificationView(record, "ja"));
-
-    expect(english).toEqual({
-      pathname: "/foreigner/applications/[id]",
+  it("通知画面の利用モードと言語に関係なく構造化IDから承認画面へ遷移する", () => {
+    const expectedNavigation = {
+      pathname: "/foreigner/applications/[id]" as const,
       params: { id: "match-1", recruitmentId: "recruitment-1" },
-    });
-    expect(japanese).toEqual(english);
+    };
+
+    for (const mode of ["japanese", "foreigner"] as const) {
+      for (const language of ["ja", "en"] as const) {
+        const navigation = getNotificationNavigation(toNotificationView(record, language));
+
+        expect(navigation, `${mode}/${language}`).toEqual(expectedNavigation);
+      }
+    }
   });
 
   it("応募結果は表示文言を使わずmatch_idで応募状態画面へ遷移する", () => {
