@@ -254,7 +254,7 @@ POST /api/v1/matches/{match_id}/withdraw   -> 200
 
 本番の実データを使わず、ステージングの運用承認済みprovider stubまたはテストプロキシで判定結果を固定して実行します。プロキシには本文を保存せず、method・path・status・時刻・相関ID・呼出順だけを証跡へ残します。
 
-| ケース | Moderationの期待値 | `POST /messages` | 画面の期待値 |
+| ケース | Moderationの期待値 | `POST /api/v1/chats/{id}/messages` | 画面の期待値 |
 | --- | --- | --- | --- |
 | allowed | `200`、`decision=allowed` | 1回だけ`201` | 通常どおり送信済み表示 |
 | blocked | `200`、`decision=blocked` | **呼ばれない** | 一般化された安全上の理由を表示 |
