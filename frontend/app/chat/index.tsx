@@ -24,7 +24,7 @@ const SOFT_BLUE = "#eff8ff";
 
 const COPY = {
   ja: {
-    title: "チャット",
+    title: "Chat",
     back: "戻る",
     loading: "チャットを読み込み中…",
     retry: "再試行",
@@ -212,7 +212,9 @@ export default function ChatListScreen() {
       <StatusBar style="light" />
       <Header
         iconName="chat-bubble-outline"
+        style={[styles.header, { paddingTop: Math.max(insets.top, 20) }]}
         title={copy.title}
+        titleStyle={styles.headerTitle}
         variant="hero"
       />
 
@@ -361,6 +363,21 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "#ffffff",
+  },
+  header: {
+    minHeight: 178,
+    paddingHorizontal: 24,
+    paddingBottom: 26,
+    borderBottomLeftRadius: 42,
+    borderBottomRightRadius: 42,
+  },
+  headerTitle: {
+    marginTop: 8,
+    color: "#ffffff",
+    fontSize: 28,
+    fontWeight: "800",
+    letterSpacing: 0,
+    lineHeight: 34,
   },
   content: {
     minHeight: 620,

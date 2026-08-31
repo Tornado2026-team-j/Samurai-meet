@@ -21,7 +21,7 @@ const SOFT_BLUE = "#eff8ff";
 
 const COPY = {
   ja: {
-    title: "モンスター",
+    title: "Monsters",
     loading: "読み込み中…",
     emptyTitle: "プロフィール情報がまだありません",
     emptyBody: "プロフィール設定で得意なこと・好きなことを登録すると、ここに表示されます。",

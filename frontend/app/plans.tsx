@@ -24,7 +24,7 @@ type PlanTab = "today" | "upcoming" | "past";
 
 const COPY = {
   ja: {
-    title: "案内予定",
+    title: "Plans",
     tabs: { today: "今日", upcoming: "今後", past: "過去" },
     loading: "予定を読み込み中...",
     loadError: "予定を読み込めませんでした。",
@@ -188,7 +188,13 @@ export default function PlansScreen() {
   return (
     <View style={styles.screen}>
       <StatusBar style="light" />
-      <Header iconName="event-available" title={copy.title} variant="hero" />
+      <Header
+        iconName="event-available"
+        style={[styles.header, { paddingTop: Math.max(insets.top, 20) }]}
+        title={copy.title}
+        titleStyle={styles.headerTitle}
+        variant="hero"
+      />
 
       <View accessibilityRole="tablist" style={styles.tabs}>
         {(["today", "upcoming", "past"] as const).map((tab) => (
@@ -266,6 +272,21 @@ export default function PlansScreen() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.surface.screen },
+  header: {
+    minHeight: 178,
+    paddingHorizontal: 24,
+    paddingBottom: 26,
+    borderBottomLeftRadius: 42,
+    borderBottomRightRadius: 42,
+  },
+  headerTitle: {
+    marginTop: 8,
+    color: colors.text.inverse,
+    fontSize: 28,
+    fontWeight: "800",
+    letterSpacing: 0,
+    lineHeight: 34,
+  },
   tabs: { flexDirection: "row", marginHorizontal: 20, marginTop: 14, padding: 4, borderRadius: radius.lg, backgroundColor: colors.surface.subtle },
   tab: { flex: 1, minHeight: 40, alignItems: "center", justifyContent: "center", borderRadius: radius.md },
   tabSelected: { backgroundColor: colors.surface.default, ...shadows.control },

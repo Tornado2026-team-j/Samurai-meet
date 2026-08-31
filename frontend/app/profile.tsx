@@ -15,6 +15,7 @@ import {
 import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { RecoveryCompletion, RecoveryKeyDisplay } from "../components/RecoveryFlow";
+import { Header } from "../components/ui";
 import { useAuth } from "../hooks/useAuth";
 import {
   completeRecoveryKeyRotation,
@@ -49,7 +50,7 @@ const BORDER_GRAY = "#d4d4d4";
 
 const COPY = {
   ja: {
-    title: "プロフィール",
+    title: "Profile",
     back: "戻る",
     loading: "プロフィールを読み込んでいます…",
     name: "名前",
@@ -614,34 +615,13 @@ export default function ProfileScreen() {
     <View style={styles.screen}>
       <StatusBar style="light" />
 
-      <View style={[styles.header, { paddingTop: Math.max(insets.top, 20) }]}>
-        <View style={styles.headerContent}>
-          <Pressable
-            accessibilityLabel={copy.back}
-            accessibilityRole="button"
-            onPress={() => {
-              if (router.canGoBack()) {
-                router.back();
-              } else {
-                router.replace(appMode === "local" ? "/japanese" : "/foreigner");
-              }
-            }}
-            style={({ pressed }) => [styles.headerButton, pressed && styles.pressed]}
-          >
-            <MaterialIcons color="#ffffff" name="arrow-back-ios-new" size={20} />
-          </Pressable>
-          <Text style={styles.headerTitle}>{copy.title}</Text>
-          <Pressable
-            accessibilityLabel={copy.editProfile}
-            accessibilityRole="button"
-            onPress={() => router.push("/profile-edit")}
-            style={({ pressed }) => [styles.headerEditButton, pressed && styles.pressed]}
-          >
-            <MaterialIcons color="#ffffff" name="edit" size={17} />
-            <Text style={styles.headerEditText}>{copy.editProfile}</Text>
-          </Pressable>
-        </View>
-      </View>
+      <Header
+        iconName="person"
+        style={[styles.header, { paddingTop: Math.max(insets.top, 20) }]}
+        title={copy.title}
+        titleStyle={styles.headerTitle}
+        variant="hero"
+      />
 
       <ScrollView
         style={styles.profileScrollView}
@@ -1243,52 +1223,21 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
   header: {
-    minHeight: 104,
-    paddingHorizontal: 20,
-    paddingBottom: 18,
-    justifyContent: "flex-end",
+    minHeight: 178,
+    paddingHorizontal: 24,
+    paddingBottom: 26,
     zIndex: 10,
     elevation: 4,
-    backgroundColor: BLUE,
-    borderBottomLeftRadius: 36,
-    borderBottomRightRadius: 36,
-  },
-  headerContent: {
-    minHeight: 34,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-  headerButton: {
-    width: 38,
-    height: 38,
-    alignItems: "center",
-    justifyContent: "center",
+    borderBottomLeftRadius: 42,
+    borderBottomRightRadius: 42,
   },
   headerTitle: {
-    flex: 1,
+    marginTop: 8,
     color: "#ffffff",
-    fontSize: 24,
-    fontWeight: "700",
-    textAlign: "center",
-  },
-  headerEditButton: {
-    minHeight: 38,
-    maxWidth: 148,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 4,
-    paddingHorizontal: 9,
-    borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.75)",
-    borderRadius: 19,
-  },
-  headerEditText: {
-    flexShrink: 1,
-    color: "#ffffff",
-    fontSize: 12,
-    fontWeight: "700",
+    fontSize: 28,
+    fontWeight: "800",
+    letterSpacing: 0,
+    lineHeight: 34,
     textAlign: "center",
   },
   content: {

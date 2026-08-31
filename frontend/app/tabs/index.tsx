@@ -71,7 +71,7 @@ const TEXT_GRAY = "#535353";
 const PLACEHOLDER_GRAY = "#949494";
 const BORDER_GRAY = "#d4d4d4";
 const COLLAPSED_HEADER_HEIGHT = 156;
-const EXPANDED_HEADER_HEIGHT = 724;
+const EXPANDED_HEADER_HEIGHT = 760;
 const CONFIRMATION_HEADER_HEIGHT = 542;
 const EXPANSION_DURATION = 360;
 const RECRUITMENT_CATEGORIES = MATCH_CATEGORIES;
@@ -2140,7 +2140,7 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     zIndex: 1,
-    backgroundColor: colors.brand.sky,
+    backgroundColor: "transparent",
   },
   panel: {
     width: "100%",

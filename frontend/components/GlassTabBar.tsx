@@ -46,11 +46,11 @@ const TAB_ITEMS: Array<{
 
 const TAB_LABELS: Record<AppLanguage, Record<TabKey, string>> = {
   ja: {
-    home: "ホーム",
-    chat: "チャット",
-    plans: "予定",
-    monsters: "モンスター",
-    profile: "プロフィール",
+    home: "Home",
+    chat: "Chat",
+    plans: "Plans",
+    monsters: "Monsters",
+    profile: "Profile",
   },
   en: {
     home: "Home",
