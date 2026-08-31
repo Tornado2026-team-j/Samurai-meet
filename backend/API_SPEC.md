@@ -485,6 +485,7 @@ Request body:
 | --- | --- | --- | --- |
 | GET | `/api/v1/chats` | Access Token | 自分のaccepted/completedチャット一覧 |
 | GET | `/api/v1/chats/{id}/messages?after=0&limit=50` | Access Token | 暗号化メッセージ履歴。最大100件 |
+| POST | `/api/v1/chats/{id}/moderation` | Access Token | 暗号化前本文の送信前安全判定。acceptedマッチの参加者だけ |
 | POST | `/api/v1/chats/{id}/messages` | Access Token | 暗号化メッセージ送信 |
 | POST | `/api/v1/chats/{id}/read` | Access Token | `last_message_sequence`まで既読（クライアントが見た最大`sequence`。最新messageへクランプし前進のみ） |
 | POST | `/api/v1/chats/{id}/transport-token` | Access Token | WebTransport用短命Chat Token発行（省略時・明示ともに`webtransport`のみ） |
@@ -506,6 +507,10 @@ Request body:
 ```
 
 サーバーは`ciphertext`を復号せず、平文本文・検索用プレビュー・暗号鍵を受け付けません。`client_message_id`は送信者とチャット単位で一意で、同じIDの再送は元のメッセージを返します。暗号文は復号前128KiBまでです。履歴は`sequence`をcursorにして再接続時に補完します。
+
+`POST /api/v1/chats/{id}/moderation` は、クライアントが**暗号化前**に本文を`{"text":"..."}`として送る唯一の平文経路です。サーバーは認可済みのacceptedチャット参加者だけを先に確認し、OpenAI Moderations APIへ公式JSON契約`{"model":"omni-moderation-latest","input":"..."}`で同期転送します。本文はこのリクエスト処理中だけ参照し、DB、キュー、ログ、監査イベントへ保存しません。OpenAIの生応答・カテゴリ・スコアも保存・返却しません。成功レスポンスは`{"data":{"decision":"allowed"|"blocked"}}`だけで、`blocked`時クライアントは**暗号化・`/messages`呼出を開始してはなりません**。APIキー未設定、上流タイムアウト、上流障害、契約外応答は`200 {"data":{"decision":"unavailable","code":"moderation_unavailable"}}`となり、クライアントはローカライズ済みの再試行案内を表示し、**暗号化・`/messages`呼出を開始してはなりません**。ネットワーク障害・HTTP 4xx/5xxも同じfail-closed契約です。`OPENAI_API_KEY`はサーバー環境変数だけに設定します。
+
+この送信前平文判定を有効にするチャットは、厳密な完全E2EEではありません。保存・配送は引き続きKey Bで保護されたAES-256-GCM暗号文だけですが、送信者端末が送信前に本文をサーバー経由でOpenAIへ提示する明示的な例外があります。
 
 `POST /read` の `last_message_sequence` は「クライアントが受信した最大`sequence`」を渡すハイウォーターマークで、message行との厳密一致は不要です（`sequence`は全チャット横断の`BIGSERIAL`で1チャット内は歯抜け）。サーバーはその値をそのチャットの最新live messageへクランプし、保存マーカーは前進のみ（`GREATEST`）。`message.read`レシートはクランプ後の実効値を通知します。1未満は`invalid_chat_request`、messageが無いチャットは`chat_not_found`。
 
@@ -575,7 +580,7 @@ DBには会合中の参加者ごと・方式ごとに最新1件だけを保持�
 
 通報bodyは`{"target_type","target_id","reason","comment"}`。`target_type`は`user` / `recruitment_card` / `message` / `photo`、`reason`は`nuisance` / `harassment` / `impersonation` / `inappropriate_photo` / `dangerous` / `other`、`comment`は任意で最大2000 Unicode。自分自身・存在しない対象・報告者が閲覧権限を持たない対象への通報は拒否します。メッセージはチャット参加者、募集カードは公開中または報告者が参加したマッチ、写真は公開プロフィール画像または報告者が参加するチャット添付だけを対象にできます。未知対象と権限外対象は同じ`target_not_found`系の応答へ畳み込み、対象存在の推測に使えないようにします。同一通報者×同一対象で未処理（`received` / `reviewing`）の通報がある場合は、新規作成せず既存の通報を`data`に入れて201で返します。通報者情報は対象者へ返しません。ブロックは`0019`の`blocks`テーブルを使い、`matching` / `chat` が既にアクセス制御で参照しています。運営キュー（`GET/PATCH /admin/reports`）と`audit_logs`は次の作業です。
 
-チャット本文・チャット添付は暗号文のまま保存し、サーバーAIのModeration／翻訳は実行しません。`frontend/services/chat.ts`の現行本文キーは`chat_id`から導出されるため、サーバーが現在復号していないことだけでは厳密E2EEの証明になりません。厳密E2EEを成立させる端末間鍵共有・ローテーション・通報時の明示的同意境界が確定するまで、サーバーへ平文または復号鍵を追加してはなりません。
+チャット本文・チャット添付は暗号文のまま保存します。本文だけは`POST /api/v1/chats/{id}/moderation`の送信前安全判定で、暗号化前にOpenAIへ同期転送する明示的な例外です。この平文は判定リクエスト中だけ参照し、DB、キュー、ログ、監査イベントへ保存しません。翻訳・画像Moderationは現時点で実行しません。`frontend/services/chat.ts`の現行本文キーは`chat_id`から導出されるため、サーバーが現在復号していないことだけでは厳密E2EEの証明になりません。厳密E2EEを成立させる端末間鍵共有・ローテーション・通報時の明示的同意境界が確定するまで、送信前Moderation以外の平文または復号鍵をサーバーへ追加してはなりません。
 
 ### 6.11 未実装業務API
 

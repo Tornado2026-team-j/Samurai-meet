@@ -14,6 +14,8 @@ import {
   listChatMessages,
   listChats,
   markChatRead,
+  moderateAndSendChatMessage,
+  moderateChatMessage,
   moderateChatText,
   sendChatMessage,
   sendChatLocation,
@@ -259,6 +261,52 @@ describe("チャットAPIクライアント", () => {
     expect(parsed.algorithm).toBe("AES-256-GCM");
     expect(requestedBody).not.toContain("改札前");
     expect(decryptChatMessage("chat-1", message)).toBe("改札前で待ち合わせしましょう。");
+  });
+
+  it("送信前Moderationは平文を専用endpointだけへ送り、blocked時は暗号文送信を開始しない", async () => {
+    const requests: { url: string; body: string }[] = [];
+    globalThis.fetch = (async (input, init) => {
+      const url = String(input);
+      const body = String(init?.body ?? "");
+      requests.push({ url, body });
+      if (url.includes("/moderation")) {
+        return new Response(JSON.stringify({ data: { decision: "blocked" } }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ data: {} }), { status: 201 });
+    }) as typeof fetch;
+
+    const result = await moderateAndSendChatMessage("chat-1", "危険な本文", session);
+    expect(result).toEqual({ decision: "blocked" });
+    // The helper is the UI's send gate. Its request trace proves blocked text
+    // never reaches encryption-backed /messages delivery.
+    expect(requests).toEqual([{ url: expect.stringContaining("/chats/chat-1/moderation"), body: JSON.stringify({ text: "危険な本文" }) }]);
+    expect(requests[0]?.body).not.toContain("ciphertext");
+  });
+
+  it("moderation_unavailableでは暗号文送信を中断する", async () => {
+    const requests: string[] = [];
+    globalThis.fetch = (async () => new Response(JSON.stringify({
+      data: { decision: "unavailable", code: "moderation_unavailable" },
+    }), { status: 200 })) as unknown as typeof fetch;
+
+    await expect(moderateChatMessage("chat-1", "確認したいです", session)).resolves.toBe("unavailable");
+    globalThis.fetch = (async (input) => {
+      requests.push(String(input));
+      return new Response(JSON.stringify({ data: { decision: "unavailable", code: "moderation_unavailable" } }), { status: 200 });
+    }) as typeof fetch;
+    await expect(moderateAndSendChatMessage("chat-1", "確認したいです", session)).resolves.toEqual({ decision: "unavailable" });
+    expect(requests).toEqual([expect.stringContaining("/chats/chat-1/moderation")]);
+  });
+
+  it("moderation endpointの5xxでは暗号文送信を開始しない", async () => {
+    const requests: string[] = [];
+    globalThis.fetch = (async (input) => {
+      requests.push(String(input));
+      return new Response(JSON.stringify({ error: "moderation_unavailable" }), { status: 503 });
+    }) as typeof fetch;
+
+    await expect(moderateAndSendChatMessage("chat-1", "確認したいです", session)).rejects.toMatchObject({ status: 503 });
+    expect(requests).toEqual([expect.stringContaining("/chats/chat-1/moderation")]);
   });
 
   it("位置共有も座標を平文API bodyへ入れず、期限付き型付きメッセージとして送る", async () => {

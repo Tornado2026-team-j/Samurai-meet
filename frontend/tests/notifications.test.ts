@@ -4,8 +4,11 @@ import {
   isNotificationRecord,
   listNotifications,
   markNotificationRead,
+  navigateFromForeignerNotifications,
+  navigateFromJapaneseNotifications,
   toNotificationView,
 } from "../services/notifications";
+import type { NotificationNavigation } from "../services/notifications";
 import type { NotificationRecord } from "../types/notification";
 
 const originalFetch = globalThis.fetch;
@@ -93,11 +96,21 @@ describe("通知APIクライアント", () => {
       params: { id: "match-1", recruitmentId: "recruitment-1" },
     };
 
-    for (const mode of ["japanese", "foreigner"] as const) {
-      for (const language of ["ja", "en"] as const) {
-        const navigation = getNotificationNavigation(toNotificationView(record, language));
+    const screenNavigators = [
+      { mode: "japanese", navigate: navigateFromJapaneseNotifications },
+      { mode: "foreigner", navigate: navigateFromForeignerNotifications },
+    ] as const;
 
-        expect(navigation, `${mode}/${language}`).toEqual(expectedNavigation);
+    for (const { mode, navigate } of screenNavigators) {
+      for (const language of ["ja", "en"] as const) {
+        const pushed: NotificationNavigation[] = [];
+        const router = {
+          push: (navigation: NotificationNavigation) => pushed.push(navigation),
+        };
+
+        navigate(router, toNotificationView(record, language));
+
+        expect(pushed, `${mode}/${language}`).toEqual([expectedNavigation]);
       }
     }
   });

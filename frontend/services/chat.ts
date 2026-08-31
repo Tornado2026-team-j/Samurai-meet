@@ -92,6 +92,11 @@ export type ChatModerationResult = {
   severity: "none" | "warn" | "block";
 };
 
+// The server intentionally exposes no provider categories, scores, or raw
+// response. Any non-allowed decision is fail-closed: ciphertext delivery must
+// not begin until a later moderation attempt returns allowed.
+export type ChatModerationDecision = "allowed" | "blocked" | "unavailable";
+
 export type ChatReportReason =
   | "nuisance"
   | "harassment"
@@ -506,6 +511,45 @@ export async function sendChatLocation(
   );
   if (!response.data) throw new Error("chat location response is empty");
   return response.data;
+}
+
+export async function moderateChatMessage(
+  chatID: string,
+  plaintext: string,
+  session: Session,
+  signal?: AbortSignal,
+): Promise<ChatModerationDecision> {
+  const response = await requestAPI<DataResponse<{ decision?: unknown; code?: unknown }>>(
+    `/chats/${encodeURIComponent(chatID)}/moderation`,
+    session,
+    { method: "POST", body: JSON.stringify({ text: plaintext }), signal },
+  );
+  const decision = response.data?.decision;
+  if (decision === "allowed" || decision === "blocked" || decision === "unavailable") return decision;
+  throw new Error("invalid_chat_moderation_response");
+}
+
+export type ModeratedChatMessageSend = {
+  decision: ChatModerationDecision;
+  message?: EncryptedChatMessage;
+};
+
+// Keep the moderation gate beside encryption so a future caller cannot encrypt
+// or call /messages after a blocked or unavailable moderation result.
+export async function moderateAndSendChatMessage(
+  chatID: string,
+  plaintext: string,
+  session: Session,
+  clientMessageID = createClientMessageID(),
+  signal?: AbortSignal,
+  random: (length: number) => Promise<Uint8Array> = randomBytes,
+): Promise<ModeratedChatMessageSend> {
+  const decision = await moderateChatMessage(chatID, plaintext, session, signal);
+  if (decision !== "allowed") return { decision };
+  return {
+    decision,
+    message: await sendChatMessage(chatID, plaintext, session, clientMessageID, signal, random),
+  };
 }
 
 export function toChatMessageView(

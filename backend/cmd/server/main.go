@@ -121,6 +121,7 @@ func main() {
 	chatService.ConfigureSendRateLimit(cfg.Chat.SendBurst, float64(cfg.Chat.SendRefillPerMinute)/60.0)
 	chatService.ConfigureMessageRetention(cfg.Chat.MessageRetentionDays)
 	chatService.SetClusterLogger(log.Printf)
+	chatModeration := chat.NewOpenAIModerationProvider(os.Getenv("OPENAI_API_KEY"), nil)
 	webTransport, err := chat.StartWebTransport(context.Background(), chatService, chat.WebTransportConfig{Enabled: strings.EqualFold(strings.TrimSpace(os.Getenv("ENABLE_CHAT_WEBTRANSPORT")), "true"), UDPAddr: strings.TrimSpace(os.Getenv("CHAT_WEBTRANSPORT_UDP_ADDR")), CertFile: strings.TrimSpace(os.Getenv("CHAT_WEBTRANSPORT_TLS_CERT_FILE")), KeyFile: strings.TrimSpace(os.Getenv("CHAT_WEBTRANSPORT_TLS_KEY_FILE")), AllowedOrigins: []string{cfg.ClientOrigin, cfg.DevClientOrigin}, Logf: log.Printf})
 	if err != nil {
 		log.Fatalf("WebTransport initialization failed: %v", err)
@@ -151,7 +152,7 @@ func main() {
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       60 * time.Second,
 		MaxHeaderBytes:    32 * 1024,
-		Handler:           httpapi.NewRouterWithOptions(httpapi.RouterOptions{Environment: cfg.Environment, AllowExpoGoRedirect: cfg.AllowExpoGoRedirect, DevClientOrigin: cfg.DevClientOrigin, ClientOrigin: cfg.ClientOrigin, OAuthLogin: oauthLogin, PreAuth: preauth, Sessions: sessions, SessionHandoffs: handoffs, PasskeyBootstraps: bootstraps, Recovery: recovery, Passkeys: passkeys, KeyEnvelopes: envelopes, Devices: devices, DeviceTransfers: deviceTransfers, Images: images, Accounts: accounts, Profiles: profiles, Matching: matchingService, RecruitmentClassifier: recruitmentClassifier, Chats: chatService, Meetings: meetingService, Notifications: notifications, Safety: safetyService, Identity: identityService, Push: pushService}),
+		Handler:           httpapi.NewRouterWithOptions(httpapi.RouterOptions{Environment: cfg.Environment, AllowExpoGoRedirect: cfg.AllowExpoGoRedirect, DevClientOrigin: cfg.DevClientOrigin, ClientOrigin: cfg.ClientOrigin, OAuthLogin: oauthLogin, PreAuth: preauth, Sessions: sessions, SessionHandoffs: handoffs, PasskeyBootstraps: bootstraps, Recovery: recovery, Passkeys: passkeys, KeyEnvelopes: envelopes, Devices: devices, DeviceTransfers: deviceTransfers, Images: images, Accounts: accounts, Profiles: profiles, Matching: matchingService, RecruitmentClassifier: recruitmentClassifier, Chats: chatService, ChatModeration: chatModeration, Meetings: meetingService, Notifications: notifications, Safety: safetyService, Identity: identityService, Push: pushService}),
 	}
 	log.Printf("chat message retention window: %d days", chatService.RetentionDays())
 	log.Printf("backend server listening on %s (environment=%s)", cfg.HTTPAddr, cfg.Environment)

@@ -32,14 +32,12 @@ import {
   listChats,
   installNativeChatWebTransportBridge,
   markChatRead,
-  moderateChatText,
-  sendChatMessage,
+  moderateAndSendChatMessage,
   sendChatLocation,
   toChatMessageView,
   translateChatText,
   validateChatDraft,
   type ChatMessageView,
-  type ChatModerationCategory,
   type ChatReportReason,
   type ChatSummary,
 } from "../../services/chat";
@@ -122,8 +120,8 @@ const COPY = {
     openAppleMaps: "Appleマップで開く",
     openGoogleMaps: "Googleマップで開く",
     locationExpires: "共有期限",
-    blockedDraft: "外部連絡先や個人情報を含む可能性があるため送信できません。",
-    warningDraft: "安全確認が必要な内容を検知しました。内容を見直してください。",
+    moderationBlocked: "安全上送信できません。表現を見直してください。",
+    moderationUnavailable: "安全確認サービスを利用できないため送信できません。時間をおいて再試行してください。",
     safetyNotice: "個人情報、外部連絡先、人気のない場所への誘導は送らないでください。",
     restSyncOnly: "リアルタイム接続にはDevelopment Buildが必要です。Expo Goでは画面を下に引いて手動更新してください。",
     remoteTyping: "相手が入力中です…",
@@ -201,8 +199,8 @@ const COPY = {
     openAppleMaps: "Open in Apple Maps",
     openGoogleMaps: "Open in Google Maps",
     locationExpires: "Expires",
-    blockedDraft: "This may include external contact details or personal information, so it cannot be sent.",
-    warningDraft: "This message needs a safety check. Please review it before sending.",
+    moderationBlocked: "This message cannot be sent for safety reasons. Please revise the wording.",
+    moderationUnavailable: "Safety checking is unavailable, so this message cannot be sent. Please try again later.",
     safetyNotice: "Do not share personal information, external contacts, or unsafe meeting places.",
     restSyncOnly: "A Development Build is required for real-time chat. In Expo Go, pull down to refresh manually.",
     remoteTyping: "The other person is typing…",
@@ -313,11 +311,10 @@ export default function ChatDetailScreen() {
   const [safetySubmitting, setSafetySubmitting] = useState(false);
   const safetySubmittingRef = useRef(false);
   const copy = COPY[language ?? "ja"];
-  const moderation = useMemo(() => moderateChatText(draft), [draft]);
   const displayMessages = useMemo(() => deduplicateChatMessages(messages), [messages]);
   const validation = validateChatDraft(draft);
   const readOnly = chat?.status === "completed" || locallyClosed !== null;
-  const canSend = safetyModal === null && !readOnly && !sending && !sharingLocation && !validation && moderation.severity !== "block";
+  const canSend = safetyModal === null && !readOnly && !sending && !sharingLocation && !validation;
 
   const runWithSession = useCallback(async <T,>(
     action: (activeSession: NonNullable<typeof session>, signal: AbortSignal) => Promise<T>,
@@ -489,10 +486,6 @@ export default function ChatDetailScreen() {
       setSendError(validation === "empty" ? copy.draftEmpty : copy.draftTooLong);
       return;
     }
-    if (moderation.severity === "block") {
-      setSendError(copy.blockedDraft);
-      return;
-    }
     if (readOnly) {
       setSendError(locallyClosed === "blocked" ? copy.blockedLocal : locallyClosed === "declined" ? copy.declinedLocal : copy.readOnly);
       return;
@@ -501,7 +494,24 @@ export default function ChatDetailScreen() {
     const messageText = draft.trim();
     setSending(true);
     try {
-      const sent = await runWithSession((activeSession, signal) => sendChatMessage(chatID, messageText, activeSession, undefined, signal), new AbortController().signal);
+      let sent;
+      try {
+        const result = await runWithSession(
+          (activeSession, signal) => moderateAndSendChatMessage(chatID, messageText, activeSession, undefined, signal),
+          new AbortController().signal,
+        );
+        if (result.decision !== "allowed") {
+          setSendError(result.decision === "blocked" ? copy.moderationBlocked : copy.moderationUnavailable);
+          return;
+        }
+        sent = result.message;
+      } catch {
+        // Any moderation transport or API failure is fail-closed. Do not
+        // encrypt or call /messages when the plaintext was not evaluated.
+        setSendError(copy.moderationUnavailable);
+        return;
+      }
+      if (!sent) throw new Error("chat_message_missing_after_moderation");
       const activeSession = getCurrentSession() ?? session;
       if (activeSession) {
         setMessages((current) => mergeChatMessage(current, toChatMessageView(chatID, sent, activeSession.user_id)));
@@ -709,7 +719,6 @@ export default function ChatDetailScreen() {
     );
   }
 
-  const categoryLabels = moderation.categories.map((category: ChatModerationCategory) => copy.categories[category]).join(" / ");
   const quickReplies = [copy.quickWhere, copy.quickGate, copy.quickThanks];
   const latestOwnMessage = [...displayMessages].reverse().find((message) => message.mine);
 
@@ -866,10 +875,6 @@ export default function ChatDetailScreen() {
 
         {readOnly ? (
           <Text style={styles.readOnlyText}>{locallyClosed === "blocked" ? copy.blockedLocal : locallyClosed === "declined" ? copy.declinedLocal : copy.readOnly}</Text>
-        ) : moderation.severity !== "none" ? (
-          <Text accessibilityRole="alert" style={[styles.moderationText, moderation.severity === "block" && styles.blockedModerationText]}>
-            {moderation.severity === "block" ? copy.blockedDraft : copy.warningDraft} {categoryLabels}
-          </Text>
         ) : sendError ? (
           <Text accessibilityRole="alert" style={styles.moderationText}>{sendError}</Text>
         ) : null}

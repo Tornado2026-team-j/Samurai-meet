@@ -291,6 +291,15 @@ func (s *Service) SendMessage(ctx context.Context, userID, chatID string, input 
 	return s.sendMessage(ctx, userID, chatID, input, now)
 }
 
+// AuthorizeMessageSend verifies the same accepted-match participant and block
+// boundary as SendMessage without writing a message. It is used before a
+// plaintext-only moderation request so unauthorized callers never send chat
+// text to an external provider.
+func (s *Service) AuthorizeMessageSend(ctx context.Context, userID, chatID string) error {
+	_, err := s.loadChat(ctx, userID, chatID, false)
+	return err
+}
+
 // sendMessage is the shared implementation used by REST and WebTransport.
 // Every currently connected participant receives the durable event; the sender
 // also receives an acknowledgement on its request stream for idempotent UI.

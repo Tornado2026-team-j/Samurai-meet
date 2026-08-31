@@ -93,7 +93,8 @@ MVP のリアルタイム配送は WebSocket。QUIC / HTTP/3 WebTransport は将
 - 現行のチャット本文キーは `frontend/services/chat.ts` の `chatKey(chatID)` が公開される `chat_id` から導出するため、暗号文を送っていても**厳密な E2EE とは扱わない**。サーバーは現在復号していないが、`chat_id` を知るサーバーが同じ導出を再現できるためである。
 - 厳密な E2EE の成立には、チャットIDから導出しない端末間の鍵共有（Key-B／X25519等）と、鍵ローテーション・新規端末参加・失効の契約が先に必要である。この不足を埋めるためにサーバーへ復号鍵や平文を送る変更は行わない。
 - API へは平文本文ではなく暗号化 payload、nonce、key version を送る。Go API は配送・権限・保存を担当し、暗号鍵を持たない境界を維持する。
-- 厳密 E2EE と、サーバーで平文を必要とする自動モデレーション／翻訳は同時には成立しない。現行のサーバーGemini処理は募集分類だけであり、チャット本文・画像のModeration／翻訳には使わない。将来必要な場合は、クライアント処理またはユーザーが明示的に通報したデータだけを対象にする別途同意・復号境界を設計する。
+- 本文送信前のOpenAI Moderationは例外である。クライアントは暗号化前に本文を`POST /chats/{id}/moderation`へ送り、サーバーは認可済みaccepted参加者の本文だけをOpenAIへ同期転送する。本文とOpenAI生応答はこの処理中だけ参照し、DB、キュー、ログ、監査イベントには保存しない。返すのは`allowed` / `blocked` / `unavailable`だけで、カテゴリやスコアは表示しない。`blocked`、`unavailable`（未設定・timeout・上流障害）、ネットワーク障害、HTTP 4xx/5xxのすべてでfail-closedとし、暗号化・配送を開始せずローカライズ済みの再試行案内を表示する。
+- この送信前平文判定が有効なため、現行チャットは**完全E2EEではない**。保存・配送がKey B保護の暗号文のみであることと、送信前にOpenAIへ平文を提示することは別の境界である。翻訳や画像解析を追加する場合も、同じく平文境界・同意・保持なしを別途設計する。
 - QUIC / TLS 1.3が通信路の暗号化・完全性を担い、Chat Token（JWS）がチャット単位の認証・認可・接続管理を担う、という構成は将来仕様である。JWSの署名を通信路暗号化の代わりにしない。
 - 0-RTTでは状態変更を受け付けず、JWSの期限・対象chat・セッション・token世代と`client_message_id`の冪等性でリプレイと重複登録を抑止する。
 - 暗号化方式、端末間鍵共有、検索・通報時の扱いはセキュリティレビューで確定する。厳密 E2EE を採用するまでは、現在のチャット暗号を E2EE の証拠として表示・文書化してはならない。
@@ -105,6 +106,7 @@ QUICの理由、JWS claimの検証、heartbeat、失敗時の自動再送、WebS
 - `GET /chats`（`accepted` / `completed`）
 - `GET /chats/{id}/messages`（`accepted` / `completed`）
 - `POST /chats/{id}/messages`（`accepted` のみ。任意で `attachment_id` を含む）
+- `POST /chats/{id}/moderation`（`accepted` のみ。暗号化前本文の送信前安全判定。本文・生応答は永続化しない）
 - `POST /chats/{id}/read`（`accepted` / `completed`）
 - `POST /chats/{id}/transport-token`（`accepted` のみ）
 - `GET /ws/chats/{id}`（`accepted` のみ）
@@ -139,7 +141,7 @@ WebSocketの配送はプロセス内ハブ（`hub.go`）で行い、複数イン
 ## 9. 要確認
 
 - メッセージの保存期間の**具体日数**（実装は完了。既定180日・`CHAT_MESSAGE_RETENTION_DAYS`で調整、期限超過で暗号文消去＋`chat_message_deletions`へ監査。最終日数は運用・法務判断）。
-- 厳密 E2EE の鍵共有・ローテーション・端末失効と、通報時の検査方法。サーバーAIによる本文／画像Moderation・翻訳は、厳密E2EEを維持する限り現行境界へ追加しない。
+- 厳密 E2EE の鍵共有・ローテーション・端末失効と、通報時の検査方法。現行の本文Moderationは暗号化前の送信前判定という明示的な例外であり、本文は判定処理中だけOpenAIへ同期転送する。画像Moderation・翻訳を追加する場合も、平文の経路・保持禁止・ユーザー同意を別途確定する。
 - 既読を相手へ必ず通知するか。
 - タイピング表示、通知、オフライン送信の MVP 対象可否。
 - Expo実機での再接続負荷・失効確認は [chat-load-test.md](chat-load-test.md) の手順書で実施する（ローンチ前QAゲート。バックエンドのWebSocket配送・失効・ローテーションは実装済み・統合テスト済み）。
