@@ -727,6 +727,94 @@ func (s *Service) WithdrawInterest(ctx context.Context, userID, matchID string, 
 	return match, nil
 }
 
+// CancelMatch lets either participant call off a match from the chat screen.
+// Unlike WithdrawInterest (requester, pending only) and RejectMatch (owner,
+// pending only), it also accepts an already-accepted match, moving it to
+// `cancelled`, freeing the recruitment-card slot it held, and notifying the
+// other participant. A completed match can no longer be cancelled.
+func (s *Service) CancelMatch(ctx context.Context, userID, matchID string, now time.Time) (Match, error) {
+	if s == nil || s.db == nil || strings.TrimSpace(userID) == "" || strings.TrimSpace(matchID) == "" {
+		return Match{}, ErrMatchNotFound
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Match{}, err
+	}
+	defer tx.Rollback()
+
+	var match Match
+	var ownerID, requesterID, description, cardStatus string
+	var participantLimit int
+	var matchedAt sql.NullString
+	if err = tx.QueryRowContext(ctx, `
+		SELECT m.id,m.card_id,m.owner_user_id,m.requester_user_id,m.status,
+		       m.matched_at,m.created_at,m.updated_at,r.status,r.description,r.participant_limit
+		FROM matches m JOIN recruitment_cards r ON r.id=m.card_id
+		WHERE m.id=$1 FOR UPDATE`, matchID).Scan(
+		&match.ID, &match.RecruitmentID, &ownerID, &requesterID, &match.Status,
+		&matchedAt, &match.CreatedAt, &match.UpdatedAt, &cardStatus, &description, &participantLimit); errors.Is(err, sql.ErrNoRows) {
+		return Match{}, ErrMatchNotFound
+	} else if err != nil {
+		return Match{}, err
+	}
+	if matchedAt.Valid {
+		match.MatchedAt = matchedAt.String
+	}
+	if userID != ownerID && userID != requesterID {
+		return Match{}, ErrForbidden
+	}
+	previousStatus := match.Status
+	if previousStatus != "pending" && previousStatus != "accepted" {
+		return Match{}, ErrInvalidState
+	}
+
+	updated := now.UTC().Format(time.RFC3339Nano)
+	if _, err = tx.ExecContext(ctx, `
+		UPDATE matches SET status='cancelled',updated_at=$1
+		WHERE id=$2 AND status=$3`, updated, matchID, previousStatus); err != nil {
+		return Match{}, err
+	}
+	// An accepted match consumed a slot; a card that had filled up reopens.
+	if previousStatus == "accepted" && cardStatus == "matched" {
+		if _, err = tx.ExecContext(ctx, `
+			UPDATE recruitment_cards SET status='open',updated_at=$1
+			WHERE id=$2 AND status='matched'`, updated, match.RecruitmentID); err != nil {
+			return Match{}, err
+		}
+	}
+
+	if s.notifications != nil {
+		actorName, nameErr := s.notificationActorNameTx(ctx, tx, userID)
+		if nameErr != nil {
+			return Match{}, nameErr
+		}
+		notifyInput := notification.CreateInput{
+			EventKey:      "match_cancelled:" + matchID,
+			TargetID:      matchID,
+			RecruitmentID: match.RecruitmentID,
+			ActorName:     actorName,
+			Context:       description,
+		}
+		if userID == requesterID {
+			notifyInput.UserID = ownerID
+			notifyInput.Type = notification.TypeApplicationWithdrawn
+			notifyInput.Destination = notification.DestinationApplicants
+		} else {
+			notifyInput.UserID = requesterID
+			notifyInput.Type = notification.TypeGuideCanceled
+			notifyInput.Destination = notification.DestinationApplicationDetail
+		}
+		if err = s.notifications.CreateTx(ctx, tx, notifyInput, now); err != nil {
+			return Match{}, err
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return Match{}, err
+	}
+	match.Status, match.UpdatedAt = "cancelled", updated
+	return match, nil
+}
+
 func (s *Service) ListMatches(ctx context.Context, userID string, params MatchListParams, now time.Time) ([]MatchView, error) {
 	if s == nil || s.db == nil || strings.TrimSpace(userID) == "" {
 		return nil, ErrMatchNotFound

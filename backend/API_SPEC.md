@@ -471,6 +471,7 @@ Request body:
 - `POST /api/v1/matches/{id}/accept`: カード所有者だけが`pending`を`accepted`へ遷移させる。期限切れ・ブロック・不正状態は拒否する。
 - `POST /api/v1/matches/{id}/reject`: カード所有者だけが`pending`を`rejected`へ遷移させる。
 - `POST /api/v1/matches/{id}/withdraw`: 応募者だけが`pending`を`cancelled`へ遷移させる。取り下げ後も履歴上のmatch行は保持する。
+- `POST /api/v1/matches/{id}/cancel`: マッチ参加者のどちらでも`pending`または`accepted`を`cancelled`へ遷移させる（チャット画面の「案件の辞退」）。`accepted`が占有していた募集枠を解放し、`matched`だったカードを`open`へ戻し、相手へ通知する（応募者発=`application_withdrawn` / 募集者発=`guide_canceled`）。`completed`は拒否する。
 - `POST /api/v1/matches/{id}/complete`: マッチ参加者が`accepted`を`completed`へ遷移させる。
 
 応募一覧・マッチ詳細の成功レスポンスは`{ "data": [ ... ] }` / `{ "data": { ... } }`です。各マッチには`other_user`（認証ユーザーから見た相手の公開プロフィール）と`recruitment`（募集カード）が含まれます。正確な位置情報はどの応答にも含めません。
