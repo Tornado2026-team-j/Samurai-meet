@@ -187,19 +187,38 @@ jobs:
             CHANGELOG_TEXT="- バージョン ${VERSION} リリース"
           fi
 
+          # 同一バージョンの再ビルド判定
+          REBUILD_NOTICE=""
+          BUILD_STATUS="✨ 初回リリース"
+          if git rev-parse -q --verify "refs/tags/${TAG_NAME}" >/dev/null 2>&1; then
+            EXISTING_TAG_SHA=$(git rev-parse "refs/tags/${TAG_NAME}" 2>/dev/null || echo "")
+            if [ "$EXISTING_TAG_SHA" != "$FULL_SHA" ]; then
+              BUILD_STATUS="🔄 再ビルド更新版 (Run #${{ github.run_number }})"
+              REBUILD_NOTICE=$(cat <<NOTE_EOF
+> [!NOTE]
+> **🔄 再ビルド・更新版 (Updated Build)**
+> このバージョンは **${BUILD_TIME_JST}** に最新コミット (\`${SHORT_SHA}\`) で再ビルド・上書き更新された最新のパッケージです。
+
+NOTE_EOF
+              )
+            fi
+          fi
+
           # Release Notes Markdownの生成
           cat <<EOF > release_notes.md
           # Samurai Meet ${TAG_NAME} $([ "$IS_PRERELEASE" = "true" ] && echo "(Pre-release / RC)" || echo "")
 
+          ${REBUILD_NOTICE}
           ## 📋 ビルド & リリースメタデータ
           | 項目 | 値 |
           | :--- | :--- |
           | **アプリバージョン** | \`${VERSION}\` |
+          | **ビルド状態** | \`${BUILD_STATUS}\` |
           | **リリース種別** | $([ "$IS_PRERELEASE" = "true" ] && echo "⚠️ Pre-release / RC" || echo "🚀 正式リリース (Production)") |
           | **対象アーキテクチャ** | \`${ARCH_LABEL}\` |
           | **リリースコミット** | \`${SHORT_SHA}\` (\`${FULL_SHA}\`) |
           | **CIワークフロー最終更新** | \`${CI_SHA}\` |
-          | **ビルド日時** | ${BUILD_TIME_JST} (${BUILD_TIME_UTC}) |
+          | **最終ビルド日時** | ${BUILD_TIME_JST} (${BUILD_TIME_UTC}) |
           | **GitHub Actions Run** | [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) |
 
           ## ⏱️ 変更期間
@@ -229,6 +248,7 @@ jobs:
           echo "FULL_SHA=$FULL_SHA" >> "$GITHUB_OUTPUT"
           echo "CI_SHA=$CI_SHA" >> "$GITHUB_OUTPUT"
           echo "BUILD_TIME_JST=$BUILD_TIME_JST" >> "$GITHUB_OUTPUT"
+          echo "BUILD_STATUS=$BUILD_STATUS" >> "$GITHUB_OUTPUT"
 
       - name: 最大レベルの来歴証明 (Artifact Attestations) を生成
         id: attest
@@ -251,10 +271,11 @@ jobs:
             fi
           fi
 
-      - name: GitHub Releases を作成・公開
+      - name: GitHub Releases を作成・公開 (同名バージョンは最新コミットで上書き更新)
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.metadata.outputs.TAG_NAME }}
+          target_commitish: ${{ github.sha }}
           name: Samurai Meet ${{ steps.metadata.outputs.TAG_NAME }}
           body_path: release_notes.md
           prerelease: ${{ steps.metadata.outputs.IS_PRERELEASE == 'true' }}
@@ -273,6 +294,7 @@ jobs:
             echo "| 項目 | 結果 |"
             echo "| --- | --- |"
             echo "| バージョン | \`${{ steps.metadata.outputs.VERSION }}\` (\`${{ steps.metadata.outputs.TAG_NAME }}\`) |"
+            echo "| 状態 | ${{ steps.metadata.outputs.BUILD_STATUS }} |"
             echo "| 種別 | $([ "${{ steps.metadata.outputs.IS_PRERELEASE }}" = "true" ] && echo "Pre-release / RC" || echo "Production Release") |"
             echo "| アーキテクチャ | \`${ARCH_LABEL}\` |"
             echo "| コミット | \`${{ steps.metadata.outputs.SHORT_SHA }}\` |"
