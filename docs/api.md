@@ -159,7 +159,7 @@ Refresh request:
 | POST | `/api/v1/matches/{id}/reject` | カード所有者が辞退 |
 | POST | `/api/v1/matches/{id}/withdraw` | 応募者がpendingの関心を取り下げ |
 | POST | `/api/v1/matches/{id}/complete` | 参加者が完了 |
-| POST | `/api/v1/matches/{id}/meeting` | 承認済みマッチの会合セッション作成 |
+| POST | `/api/v1/matches/{id}/meeting` | 承認済みマッチの会合支援セッション作成 |
 | POST | `/api/v1/me/location` | 現在地を1時間保存 |
 
 募集は`Food` / `Places` / `Activity` / `Other`、公開半径は1/3/5kmに限定します。利用日・開始／終了時刻は`Asia/Tokyo`固定で扱い、timezoneを省略または空にした入力はJSTへ正規化し、他のtimezoneは拒否します。検索結果とカード詳細に正確な緯度・経度は含めず、位置が利用できる場合だけ`distance_band`を返します。現行はGoのHaversine計算で、PostGISは未導入です。募集・応募フローの接続と自動テストは実装済みですが、iOS実機の全通しE2Eは未確認です。重複関心は`409 interest_already_sent`、期限切れは`409 recruitment_expired`、ブロック関係は404相当で返します。
@@ -200,12 +200,13 @@ Refresh request:
 | POST | `/api/v1/chats/{id}/read` | 既読更新 |
 | POST | `/api/v1/chats/{id}/transport-token` | 対象chat専用短命token |
 | GET | `/api/v1/meetings/{id}` | 会合セッション取得 |
-| POST | `/api/v1/meetings/{id}/start` | 会合開始 |
+| POST | `/api/v1/meetings/{id}/start` | 自分の会合支援開始に同意（双方が開始した時だけactive） |
 | POST | `/api/v1/meetings/{id}/end` | 会合終了 |
+| POST | `/api/v1/meetings/{id}/cancel` | 片側から会合支援を即時中止 |
 | GET | `/api/v1/meetings/{id}/proximity` | 直近の距離補助値 |
 | POST | `/api/v1/meetings/{id}/proximity` | Bluetooth／位置推測の補助値送信 |
 
-チャット送信は`accepted`マッチの参加者だけが行え、平文ではなくBase64URLのAES-256-GCM暗号文だけを保存します。同じ`client_message_id`の再送は冪等です。現時点はRESTの履歴取得・送信・既読と短命transport tokenまでで、QUICのリアルタイム配送は未実装です。QUICが一時的に利用できない場合はRESTのポーリングへフォールバックし、WebSocketへの切替はチーム合意なしには行いません。距離補助値はクライアント推定であり、本人確認や安全判定には使いません。
+チャット送信は`accepted`マッチの参加者だけが行え、平文ではなくBase64URLのAES-256-GCM暗号文だけを保存します。同じ`client_message_id`の再送は冪等です。リアルタイム配送はTLS 1.3/UDPのHTTP/3 WebTransportだけです。RESTの履歴取得・送信・既読は同期・明示的な復旧経路として残し、WebSocketへは切り替えません。距離補助値はクライアント推定であり、本人確認や安全判定には使いません。
 
 ### 画像・鍵（実装済み）
 
@@ -228,7 +229,7 @@ Refresh request:
 
 画像平文、画像鍵、Master Key、Key-B、Recovery PhraseはAPIログへ出さない。Key-Bは端末ごとにSecure Storageへ生成・保存し、サーバーへは公開鍵と`device_id`だけを登録する。private画像の各リクエストは端末Key-B由来の署名、時刻、ワンタイムnonce、body hashを要求し、サーバー単独で画像を復号できない。`KEY_B_WRAP_KEY`やサーバーからのKey-B取得APIは使用しない。Key-Bは画像鍵の包みと端末proofに、Master Keyはアカウントrootの包みに、Recovery Phraseはv2 root envelopeの包みに用途を分離する。Recovery challengeはhashのみをDBに保存し、TTL・最大5回の検証試行・1時間あたり10回の発行制限を設ける。profile画像はサーバー公開鍵で画像鍵をwrapして互換配信し、private画像は端末側鍵を使う。画像uploadの正確な`X-Photo-*`ヘッダーは [backend/API_SPEC.md](../backend/API_SPEC.md) を参照する。
 
-Chat Tokenの発行部品はAccess TokenやRefresh Tokenと別audienceのJWSで対象chat・sessionに束縛しますが、現行のリアルタイム配送は未実装です。HTTP handlerの既定`quic`とチャットサービスの受理値`websocket`／`webtransport`が不一致のため、既定経路もコード整合まで動作済みとみなしません。現時点はRESTで、Refresh Tokenをtransportへ送らない契約、同じ`client_message_id`による冪等再送を維持します。正確なbody形式、TTL、暗号文サイズは [backend/API_SPEC.md](../backend/API_SPEC.md) のチャット節を参照する。
+Chat Tokenの発行部品はAccess TokenやRefresh Tokenと別audienceのJWSで対象chat・session・`transport=webtransport`に束縛します。発行時・CONNECT時・state mutation時・15秒ごとの接続監視でtoken世代、期限、session、accepted matchを確認し、失効時はWebTransport sessionを閉じます。Refresh Tokenをtransportへ送らない契約と、同じ`client_message_id`による冪等再送を維持します。正確なbody形式、TTL、暗号文サイズは [backend/API_SPEC.md](../backend/API_SPEC.md) のチャット節を参照する。
 
 ## 4. Token更新タイミング
 

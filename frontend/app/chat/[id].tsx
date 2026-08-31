@@ -25,14 +25,14 @@ import { useAuth } from "../../hooks/useAuth";
 import { APIError } from "../../services/api-client";
 import {
   blockUser,
-  chatWebSocketURL,
+  chatRealtimeMode,
+  connectChatWebTransport,
   createSafetyReport,
-  issueChatTransportToken,
   listChatMessages,
   listChats,
+  installNativeChatWebTransportBridge,
   markChatRead,
   moderateChatText,
-  parseChatSocketFrame,
   sendChatMessage,
   sendChatLocation,
   toChatMessageView,
@@ -125,6 +125,9 @@ const COPY = {
     blockedDraft: "外部連絡先や個人情報を含む可能性があるため送信できません。",
     warningDraft: "安全確認が必要な内容を検知しました。内容を見直してください。",
     safetyNotice: "個人情報、外部連絡先、人気のない場所への誘導は送らないでください。",
+    restSyncOnly: "リアルタイム接続にはDevelopment Buildが必要です。Expo Goでは画面を下に引いて手動更新してください。",
+    remoteTyping: "相手が入力中です…",
+    remoteRead: "既読",
     scheduleTitle: "案内内容",
     date: "日付",
     time: "時刻",
@@ -201,6 +204,9 @@ const COPY = {
     blockedDraft: "This may include external contact details or personal information, so it cannot be sent.",
     warningDraft: "This message needs a safety check. Please review it before sending.",
     safetyNotice: "Do not share personal information, external contacts, or unsafe meeting places.",
+    restSyncOnly: "A Development Build is required for real-time chat. In Expo Go, pull down to refresh manually.",
+    remoteTyping: "The other person is typing…",
+    remoteRead: "Read",
     scheduleTitle: "Guide details",
     date: "Date",
     time: "Time",
@@ -280,11 +286,14 @@ export default function ChatDetailScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const scrollRef = useRef<ScrollView>(null);
-  const socketRef = useRef<WebSocket | null>(null);
   const { id } = useLocalSearchParams<{ id?: string | string[] }>();
   const chatID = Array.isArray(id) ? id[0] : id;
   const { getCurrentSession, refresh, session, status } = useAuth();
   const [language, setLanguage] = useState<AppLanguage | null>(null);
+  const [realtimeMode] = useState(() => {
+    installNativeChatWebTransportBridge();
+    return chatRealtimeMode();
+  });
   const [chat, setChat] = useState<ChatSummary | null>(null);
   const [match, setMatch] = useState<MatchView | null>(null);
   const [messages, setMessages] = useState<ChatMessageView[]>([]);
@@ -296,6 +305,8 @@ export default function ChatDetailScreen() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);
   const [translatedMessages, setTranslatedMessages] = useState<Record<string, string>>({});
+  const [remoteTyping, setRemoteTyping] = useState(false);
+  const [remoteReadSequence, setRemoteReadSequence] = useState(0);
   const [safetyModal, setSafetyModal] = useState<SafetyModal | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [locallyClosed, setLocallyClosed] = useState<"declined" | "blocked" | null>(null);
@@ -401,53 +412,58 @@ export default function ChatDetailScreen() {
   useEffect(() => load("initial"), [load]);
 
   useEffect(() => {
-    if (!chatID || chat?.status !== "accepted" || locallyClosed) return undefined;
-    if (typeof WebSocket === "undefined") return undefined;
+    if (!chatID || chat?.status !== "accepted" || locallyClosed || realtimeMode !== "webtransport") {
+      return undefined;
+    }
 
     const controller = new AbortController();
     let closed = false;
-    let socket: WebSocket | null = null;
+    let connection: { close: () => void | Promise<void> } | null = null;
+    let rotateTimer: ReturnType<typeof setTimeout> | null = null;
 
     const connect = async () => {
       try {
-        const token = await runWithSession(
-          (activeSession, signal) => issueChatTransportToken(chatID, activeSession, signal),
+        const transport = await runWithSession(
+          (activeSession, signal) => connectChatWebTransport(chatID, activeSession, {
+            onFrame: (frame) => {
+              if (closed) return;
+              const activeSession = getCurrentSession() ?? session;
+              if (!activeSession) return;
+              if (frame.type === "message.created" || frame.type === "message.ack") {
+                const view = toChatMessageView(chatID, frame.message, activeSession.user_id);
+                setMessages((current) => mergeChatMessage(current, view));
+                if (!view.mine) {
+                  void runWithSession(
+                    (currentSession, signal) => markChatRead(chatID, view.sequence, currentSession, signal),
+                    new AbortController().signal,
+                  ).catch(() => undefined);
+                }
+              } else if (frame.type === "typing" && frame.user_id !== activeSession.user_id) {
+                setRemoteTyping(frame.state === "start");
+              } else if (frame.type === "message.read" && frame.user_id !== activeSession.user_id) {
+                setRemoteReadSequence((current) => Math.max(current, frame.last_message_sequence));
+              }
+            },
+            onClose: () => {
+              if (!closed) void load("refresh");
+            },
+          }, signal),
           controller.signal,
         );
-        if (closed || controller.signal.aborted) return;
-
-        socket = new WebSocket(chatWebSocketURL(chatID));
-        socketRef.current = socket;
-        socket.onopen = () => {
-          socket?.send(JSON.stringify({ type: "auth", chat_token: token.chat_token }));
-        };
-        socket.onmessage = (event) => {
-          if (closed || !chatID) return;
-          const raw = typeof event.data === "string" ? event.data : String(event.data);
-          const frame = parseChatSocketFrame(raw);
-          if (!frame) return;
-
-          if (frame.type === "message.created" || frame.type === "message.ack") {
-            const activeSession = getCurrentSession() ?? session;
-            if (!activeSession) return;
-            const view = toChatMessageView(chatID, frame.message, activeSession.user_id);
-            setMessages((current) => mergeChatMessage(current, view));
-            if (!view.mine) {
-              void runWithSession(
-                (currentSession, signal) => markChatRead(chatID, view.sequence, currentSession, signal),
-                new AbortController().signal,
-              ).catch(() => undefined);
-            }
-          } else if (frame.type === "error" && frame.code === "blocked") {
-            setLocallyClosed("blocked");
-            setNotice(copy.blockedLocal);
-          }
-        };
-        socket.onclose = () => {
-          if (socketRef.current === socket) socketRef.current = null;
-        };
+        if (closed || controller.signal.aborted) {
+          void transport.connection.close();
+          return;
+        }
+        connection = transport.connection;
+        const rotateIn = Math.max(0, Date.parse(transport.expiresAt) - Date.now() - 15_000);
+        rotateTimer = setTimeout(() => {
+          if (closed) return;
+          void connection?.close();
+          connection = null;
+          void connect();
+        }, rotateIn);
       } catch {
-        // REST history and send remain available when realtime setup fails.
+        if (!closed) void load("refresh");
       }
     };
 
@@ -455,10 +471,10 @@ export default function ChatDetailScreen() {
     return () => {
       closed = true;
       controller.abort();
-      if (socketRef.current === socket) socketRef.current = null;
-      socket?.close();
+      if (rotateTimer) clearTimeout(rotateTimer);
+      void connection?.close();
     };
-  }, [chat?.status, chatID, copy.blockedLocal, getCurrentSession, locallyClosed, runWithSession, session]);
+  }, [chat?.status, chatID, getCurrentSession, load, locallyClosed, realtimeMode, runWithSession, session]);
 
   useEffect(() => {
     if (displayMessages.length === 0) return;
@@ -595,7 +611,6 @@ export default function ChatDetailScreen() {
           (activeSession, signal) => blockUser(blockedUserID, activeSession, signal),
           new AbortController().signal,
         );
-        socketRef.current?.close();
         setLocallyClosed("blocked");
         setNotice(copy.blockedLocal);
         setSafetyModal(null);
@@ -606,7 +621,6 @@ export default function ChatDetailScreen() {
           (activeSession, signal) => declineMatch(matchID, activeSession, signal),
           new AbortController().signal,
         );
-        socketRef.current?.close();
         setSafetyModal(null);
         router.replace("/chat");
       }
@@ -697,6 +711,7 @@ export default function ChatDetailScreen() {
 
   const categoryLabels = moderation.categories.map((category: ChatModerationCategory) => copy.categories[category]).join(" / ");
   const quickReplies = [copy.quickWhere, copy.quickGate, copy.quickThanks];
+  const latestOwnMessage = [...displayMessages].reverse().find((message) => message.mine);
 
   return (
     <KeyboardAvoidingView
@@ -777,11 +792,17 @@ export default function ChatDetailScreen() {
           <Text style={styles.noticeText}>{copy.safetyNotice}</Text>
         </View>
 
+        {realtimeMode === "rest_sync" ? (
+          <Text accessibilityLiveRegion="polite" style={styles.syncNotice}>{copy.restSyncOnly}</Text>
+        ) : null}
+
         {notice ? (
           <View style={styles.localNotice}>
             <Text style={styles.localNoticeText}>{notice}</Text>
           </View>
         ) : null}
+
+        {remoteTyping ? <Text accessibilityLiveRegion="polite" style={styles.syncNotice}>{copy.remoteTyping}</Text> : null}
 
         {displayMessages.length === 0 ? (
           <View style={styles.emptyPanel}>
@@ -821,6 +842,9 @@ export default function ChatDetailScreen() {
             </View>
           ))
         )}
+        {latestOwnMessage && remoteReadSequence >= latestOwnMessage.sequence ? (
+          <Text accessibilityLiveRegion="polite" style={styles.readReceipt}>{copy.remoteRead}</Text>
+        ) : null}
         </ScrollView>
 
         <View style={[styles.bottomBar, { paddingBottom: Math.max(insets.bottom + 12, 22) }]}>
@@ -1317,6 +1341,24 @@ const styles = StyleSheet.create({
     flex: 1,
     zIndex: 1000,
     elevation: 1000,
+  },
+  syncNotice: {
+    marginTop: 8,
+    paddingHorizontal: 24,
+    color: MUTED_GRAY,
+    fontSize: 12,
+    fontWeight: "700",
+    lineHeight: 17,
+    textAlign: "center",
+  },
+  readReceipt: {
+    alignSelf: "flex-end",
+    marginTop: 4,
+    marginRight: 12,
+    color: MUTED_GRAY,
+    fontSize: 11,
+    fontWeight: "700",
+    lineHeight: 16,
   },
   locationButton: {
     width: 46,

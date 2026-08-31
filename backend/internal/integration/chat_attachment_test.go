@@ -11,7 +11,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
@@ -274,42 +273,6 @@ func TestChatAttachmentBlockedAndOrphanSweep(t *testing.T) {
 	}
 	if status, _, _ := f.download(t, f.requesterTok, keep["id"].(string)); status == http.StatusOK {
 		t.Fatal("blocked user downloaded a chat attachment")
-	}
-}
-
-func TestChatAttachmentDeliveredOverWebSocket(t *testing.T) {
-	f := newChatAttachmentFixture(t)
-	ctx := f.ctx
-	nonce := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x09}, 12))
-
-	_, attachment, _ := f.upload(t, f.requesterTok, bytes.Repeat([]byte{0x66}, 80), nonce)
-	attachmentID := attachment["id"].(string)
-
-	wsURL := "ws" + strings.TrimPrefix(f.server.URL, "http") + "/api/v1/ws/chats/" + f.chatID
-	ownerConn := dialChat(t, ctx, wsURL, chatToken(t, ctx, f.chatService, f.ownerID, f.ownerSession, f.chatID, f.now))
-	defer ownerConn.CloseNow()
-
-	// requester posts a photo message over REST; the owner's socket receives it.
-	status, _ := f.sendMessage(t, f.requesterTok, map[string]any{
-		"client_message_id": "ws-att-1",
-		"ciphertext":        base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{1}, 32)),
-		"nonce":             base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{2}, 12)),
-		"algorithm":         "AES-256-GCM",
-		"key_version":       "chat-mvp-v1",
-		"attachment_id":     attachmentID,
-	})
-	if status != http.StatusCreated {
-		t.Fatalf("send status = %d", status)
-	}
-
-	created := readFrameJSON(t, ctx, ownerConn)
-	if created["type"] != "message.created" {
-		t.Fatalf("frame = %v", created)
-	}
-	message := created["message"].(map[string]any)
-	att, ok := message["attachment"].(map[string]any)
-	if !ok || att["id"] != attachmentID {
-		t.Fatalf("delivered attachment = %v", message["attachment"])
 	}
 }
 

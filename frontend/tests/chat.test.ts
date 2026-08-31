@@ -2,12 +2,15 @@ import { afterEach, describe, expect, it } from "bun:test";
 import {
   parseChatLocationPayload,
   blockUser,
-  chatWebSocketURL,
+  chatRealtimeMode,
+  chatWebTransportURL,
+  connectChatWebTransport,
   createSafetyReport,
   decryptChatMessage,
   encryptChatPlaintext,
   filterChatsByStatus,
   issueChatTransportToken,
+  registerChatWebTransportAdapter,
   listChatMessages,
   listChats,
   markChatRead,
@@ -32,6 +35,7 @@ const fixedRandom = async (length: number) => new Uint8Array(Array.from({ length
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
+  registerChatWebTransportAdapter(null);
 });
 
 describe("チャットAPIクライアント", () => {
@@ -102,7 +106,7 @@ describe("チャットAPIクライアント", () => {
     expect(filterChatsByStatus(chats, "completed").map((chat) => chat.id)).toEqual(["chat-completed"]);
   });
 
-  it("WebSocket用Chat Tokenを発行し、URL queryへ載せない接続先を作る", async () => {
+  it("WebTransport用Chat Tokenだけを要求し、ネイティブ未対応時はREST同期を使う", async () => {
     let requestedBody = "";
     globalThis.fetch = (async (_input, init) => {
       requestedBody = String(init?.body);
@@ -110,19 +114,56 @@ describe("チャットAPIクライアント", () => {
         data: {
           chat_token: "chat-jws",
           expires_at: "2026-08-30T00:02:00Z",
-          transport: "websocket",
+          transport: "webtransport",
         },
       }), { status: 200 });
     }) as typeof fetch;
 
     await expect(issueChatTransportToken("chat-1", session)).resolves.toMatchObject({
       chat_token: "chat-jws",
-      transport: "websocket",
+      transport: "webtransport",
     });
 
-    expect(JSON.parse(requestedBody)).toEqual({ transport: "websocket" });
-    expect(chatWebSocketURL("chat-1", "https://example.com/api/v1")).toBe("wss://example.com/api/v1/ws/chats/chat-1");
-    expect(chatWebSocketURL("chat 1", "http://127.0.0.1:8080/api/v1")).toBe("ws://127.0.0.1:8080/api/v1/ws/chats/chat%201");
+    expect(JSON.parse(requestedBody)).toEqual({ transport: "webtransport" });
+    expect(chatRealtimeMode()).toBe("rest_sync");
+  });
+
+  it("Development BuildのアダプタにはWebTransport URLとAuthorizationヘッダーだけを渡す", async () => {
+    const captured = {
+      value: undefined as {
+      url: string;
+      headers: Record<string, string>;
+      } | undefined,
+    };
+    globalThis.fetch = (async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({
+      data: {
+        chat_token: "short-lived-chat-token",
+        expires_at: "2026-08-30T00:02:00Z",
+        transport: "webtransport",
+      },
+    }), { status: 200 })) as unknown as typeof fetch;
+    registerChatWebTransportAdapter({
+      connect: async (input) => {
+        captured.value = { url: input.url, headers: input.headers };
+        return { close: () => undefined };
+      },
+    });
+
+    const transport = await connectChatWebTransport("chat 1", session, {
+      onFrame: () => undefined,
+      onClose: () => undefined,
+    });
+
+    expect(chatRealtimeMode()).toBe("webtransport");
+    expect(chatWebTransportURL("chat 1", "https://example.com/api/v1")).toBe("https://example.com/api/v1/wt/chats/chat%201");
+    const actualAdapterInput = captured.value;
+    if (!actualAdapterInput) throw new Error("adapter did not receive a connection request");
+    expect(actualAdapterInput).toEqual({
+      url: expect.stringContaining("/wt/chats/chat%201"),
+      headers: { Authorization: "Bearer short-lived-chat-token" },
+    });
+    expect(actualAdapterInput.url).not.toContain("short-lived-chat-token");
+    expect(transport.expiresAt).toBe("2026-08-30T00:02:00Z");
   });
 
   it("通報とブロックは#27の安全API契約を呼び出す", async () => {

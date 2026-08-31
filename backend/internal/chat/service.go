@@ -40,7 +40,7 @@ type Service struct {
 	db                 *sql.DB
 	signer             *auth.Signer
 	notifications      *notification.Service
-	hub                *Hub
+	wtHub              *webTransportHub
 	sendLimiter        *sendRateLimiter
 	blobs              BlobStore
 	maxAttachmentBytes int64
@@ -94,8 +94,8 @@ type SendMessageInput struct {
 	KeyVersion      string `json:"key_version"`
 	// ContentType is metadata only. Location coordinates are encrypted inside
 	// Ciphertext and are never accepted as a server-readable field.
-	ContentType     string `json:"content_type"`
-	ExpiresAt       string `json:"expires_at,omitempty"`
+	ContentType string `json:"content_type"`
+	ExpiresAt   string `json:"expires_at,omitempty"`
 	// AttachmentID optionally references a chat photo the caller already
 	// uploaded to this chat. REST only; WebSocket message.send ignores it.
 	AttachmentID string `json:"attachment_id"`
@@ -121,7 +121,7 @@ func NewService(database *sql.DB, signer *auth.Signer, notificationServices ...*
 	if len(notificationServices) > 0 {
 		notifications = notificationServices[0]
 	}
-	return &Service{db: database, signer: signer, notifications: notifications, hub: newHub(), sendLimiter: newSendRateLimiter(), instanceID: newInstanceID(), retentionDays: defaultMessageRetentionDays, maxAttachmentBytes: defaultMaxAttachmentBytes}
+	return &Service{db: database, signer: signer, notifications: notifications, wtHub: newWebTransportHub(), sendLimiter: newSendRateLimiter(), instanceID: newInstanceID(), retentionDays: defaultMessageRetentionDays, maxAttachmentBytes: defaultMaxAttachmentBytes}
 }
 
 // WithAttachments enables chat photo attachments backed by blobs. maxBytes <= 0
@@ -286,15 +286,15 @@ func (s *Service) ListMessages(ctx context.Context, userID, chatID string, after
 // SendMessage stores one ciphertext message from a REST caller. It is
 // idempotent on (chat, sender, client_message_id): a repeated client_message_id
 // returns the original row with created=false. When a new row is stored, every
-// live WebSocket connection on the chat receives a message.created frame.
+// live WebTransport session on the chat receives a message.created frame.
 func (s *Service) SendMessage(ctx context.Context, userID, chatID string, input SendMessageInput, now time.Time) (Message, bool, error) {
-	return s.sendMessage(ctx, userID, chatID, input, now, nil)
+	return s.sendMessage(ctx, userID, chatID, input, now)
 }
 
-// sendMessage is the shared implementation. origin is the socket that issued
-// the send (nil for REST); it is the only connection excluded from the
-// message.created fan-out, so the sender's other devices stay in sync.
-func (s *Service) sendMessage(ctx context.Context, userID, chatID string, input SendMessageInput, now time.Time, origin *wsConn) (Message, bool, error) {
+// sendMessage is the shared implementation used by REST and WebTransport.
+// Every currently connected participant receives the durable event; the sender
+// also receives an acknowledgement on its request stream for idempotent UI.
+func (s *Service) sendMessage(ctx context.Context, userID, chatID string, input SendMessageInput, now time.Time) (Message, bool, error) {
 	if input.ContentType == "" {
 		input.ContentType = "text"
 	}
@@ -386,8 +386,8 @@ func (s *Service) sendMessage(ctx context.Context, userID, chatID string, input 
 		}
 		message.Attachment = attachment
 	}
-	if isNew && s.hub != nil {
-		s.hub.broadcastExcept(access.ChatID, origin, mustFrame(messageFrame{Type: serverFrameMessageCreated, Message: message}))
+	if isNew && s.wtHub != nil {
+		s.wtHub.broadcast(access.ChatID, encodeFrame(messageFrame{Type: serverFrameMessageCreated, Message: message}))
 	}
 	if isNew {
 		s.publishClusterEvent(clusterEvent{Kind: serverFrameMessageCreated, ChatID: access.ChatID, Sequence: message.Sequence})
@@ -412,13 +412,12 @@ func (s *Service) notificationActorNameTx(ctx context.Context, tx *sql.Tx, userI
 // ever moves forward. The receipt is fanned out to every live socket on the
 // chat with the effective stored marker.
 func (s *Service) MarkRead(ctx context.Context, userID, chatID string, sequence int64, now time.Time) error {
-	return s.markRead(ctx, userID, chatID, sequence, now, nil)
+	return s.markRead(ctx, userID, chatID, sequence, now)
 }
 
-// markRead is the shared implementation. origin is the socket that issued the
-// read (nil for REST) and is the only connection excluded from the receipt
-// fan-out, so the reader's other devices also advance their read watermark.
-func (s *Service) markRead(ctx context.Context, userID, chatID string, sequence int64, now time.Time, origin *wsConn) error {
+// markRead is the shared REST/WebTransport implementation. Receipts go to
+// every connected device, including the reader's other devices.
+func (s *Service) markRead(ctx context.Context, userID, chatID string, sequence int64, now time.Time) error {
 	if sequence <= 0 {
 		return ErrChatInvalidInput
 	}
@@ -446,11 +445,26 @@ func (s *Service) markRead(ctx context.Context, userID, chatID string, sequence 
 		RETURNING last_read_sequence`, access.ChatID, userID, sequence, now.UTC().Format(time.RFC3339Nano)).Scan(&stored); err != nil {
 		return err
 	}
-	if s.hub != nil {
-		s.hub.broadcastExcept(access.ChatID, origin, mustFrame(readFrame{Type: serverFrameMessageRead, UserID: userID, LastMessageSequence: stored}))
+	if s.wtHub != nil {
+		s.wtHub.broadcast(access.ChatID, encodeFrame(readFrame{Type: serverFrameMessageRead, UserID: userID, LastMessageSequence: stored}))
 	}
 	s.publishClusterEvent(clusterEvent{Kind: serverFrameMessageRead, ChatID: access.ChatID, UserID: userID, Sequence: stored})
 	return nil
+}
+
+// BroadcastTyping forwards a short-lived typing signal without persisting it.
+// The signal is not chat content, therefore it must never enter message
+// history or the audit trail.  It is delivered through WebTransport and,
+// when enabled, replicated to other API instances through the cluster event.
+func (s *Service) BroadcastTyping(chatID, userID, state string) {
+	if s == nil || (state != "start" && state != "stop") {
+		return
+	}
+	payload := encodeFrame(typingFrame{Type: serverFrameTyping, UserID: userID, State: state})
+	if s.wtHub != nil {
+		s.wtHub.broadcastExceptUser(chatID, userID, payload)
+	}
+	s.publishClusterEvent(clusterEvent{Kind: serverFrameTyping, ChatID: chatID, UserID: userID, State: state})
 }
 
 func (s *Service) IssueTransportToken(ctx context.Context, userID, sessionID, chatID, transport string, now time.Time) (TransportToken, error) {
@@ -459,13 +473,11 @@ func (s *Service) IssueTransportToken(ctx context.Context, userID, sessionID, ch
 	}
 	transport = strings.TrimSpace(transport)
 	if transport == "" {
-		transport = "websocket"
+		transport = QUICTransport
 	}
-	// Only WebSocket delivery exists today. `webtransport` / `quic` are
-	// reserved for a future transport and are rejected until a server that
-	// terminates them ships, so a Chat Token is never issued for a path that
-	// nothing serves.
-	if transport != "websocket" {
+	// WebTransport is the only realtime transport. REST remains available for
+	// history and explicit recovery, but a WebSocket Chat Token is never issued.
+	if transport != QUICTransport {
 		return TransportToken{}, ErrChatInvalidInput
 	}
 	access, err := s.loadChat(ctx, userID, chatID, false)
@@ -498,6 +510,26 @@ func (s *Service) nextTokenSeq(ctx context.Context, sessionID, chatID string, no
 			seq=chat_token_sequences.seq+1, updated_at=EXCLUDED.updated_at
 		RETURNING seq`, sessionID, chatID, now.UTC().Format(time.RFC3339Nano)).Scan(&seq)
 	return seq, err
+}
+
+// transportTokenCurrent binds a live WebTransport connection to the latest
+// token generation for its (session, chat) pair. Issuing a replacement token
+// therefore causes the old connection to close on its next watchdog pass.
+func (s *Service) transportTokenCurrent(ctx context.Context, sessionID, chatID string, sequence int64) error {
+	if sequence <= 0 {
+		return ErrChatForbidden
+	}
+	var current int64
+	if err := s.db.QueryRowContext(ctx, `SELECT seq FROM chat_token_sequences WHERE session_id=$1 AND chat_id=$2`, sessionID, chatID).Scan(&current); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrChatForbidden
+		}
+		return err
+	}
+	if current != sequence {
+		return ErrChatForbidden
+	}
+	return nil
 }
 
 func (s *Service) ensureChat(ctx context.Context, userID, matchID string, now time.Time) (chatAccess, error) {

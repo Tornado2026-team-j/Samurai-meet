@@ -115,18 +115,173 @@ export type SafetyReport = {
 export type ChatTransportToken = {
   chat_token: string;
   expires_at: string;
-  transport: "websocket" | "webtransport";
+  transport: "webtransport";
 };
 
-export type ChatSocketFrame =
-  | { type: "auth.ok"; chat_id: string; token_expires_at: string }
+/**
+ * React Native/Expo does not currently provide a maintained native WebTransport
+ * client that can authenticate CONNECT with an Authorization header. Until one
+ * is adopted in a development build, chat uses explicit REST synchronization.
+ * Never add a WebSocket fallback: it would weaken the transport contract.
+ */
+export type ChatRealtimeMode = "webtransport" | "rest_sync";
+
+export type ChatWebTransportFrame =
   | { type: "message.created"; message: EncryptedChatMessage }
   | { type: "message.ack"; client_message_id: string; message: EncryptedChatMessage; duplicate: boolean }
   | { type: "message.read"; user_id: string; last_message_sequence: number }
   | { type: "typing"; user_id: string; state: "start" | "stop" }
-  | { type: "pong" }
-  | { type: "error"; code: string; message?: string }
-  | { type: "closing"; reason: string };
+  | { type: "closing"; reason: string }
+  | { type: "error"; code: string; message?: string };
+
+export type ChatWebTransportConnection = {
+  close: () => void | Promise<void>;
+};
+
+export type ChatWebTransportSession = {
+  connection: ChatWebTransportConnection;
+  expiresAt: string;
+};
+
+/**
+ * Native modules register here from a Development/production build. The module
+ * must establish HTTP/3 WebTransport with TLS 1.3 and pass the short-lived chat
+ * token only in CONNECT's Authorization header. It must not send state-changing
+ * frames with 0-RTT data.
+ */
+export type ChatWebTransportAdapter = {
+  connect: (input: {
+    url: string;
+    headers: { Authorization: string };
+    onFrame: (frame: ChatWebTransportFrame) => void;
+    onClose: () => void;
+  }) => Promise<ChatWebTransportConnection>;
+};
+
+let registeredWebTransportAdapter: ChatWebTransportAdapter | null = null;
+
+type NativeWebTransportEvent = {
+  connectionID?: unknown;
+  frame?: unknown;
+};
+
+type NativeWebTransportBridge = {
+  connect: (input: {
+    url: string;
+    headers: { Authorization: string };
+  }) => Promise<{ connectionID: string }>;
+  close: (connectionID: string) => Promise<void> | void;
+  addListener: (eventName: string) => void;
+  removeListeners: (count: number) => void;
+};
+
+type NativeEventSubscription = { remove: () => void };
+type NativeEventEmitterBridge = {
+  addListener: (eventName: string, listener: (event: NativeWebTransportEvent) => void) => NativeEventSubscription;
+};
+
+type ReactNativeBridgeRuntime = {
+  NativeModules: { SamuraiMeetWebTransport?: NativeWebTransportBridge };
+  NativeEventEmitter: new (module: NativeWebTransportBridge) => NativeEventEmitterBridge;
+};
+
+function loadReactNativeBridgeRuntime(): ReactNativeBridgeRuntime | null {
+  // Avoid importing react-native in Bun/unit-test and web runtimes. Metro makes
+  // require available in native application code, including Development Builds.
+  if (typeof require !== "function") return null;
+  try {
+    return require("react-native") as ReactNativeBridgeRuntime;
+  } catch {
+    return null;
+  }
+}
+
+function parseNativeWebTransportFrame(value: unknown): ChatWebTransportFrame | null {
+  if (!value || typeof value !== "object" || typeof (value as { type?: unknown }).type !== "string") return null;
+  return value as ChatWebTransportFrame;
+}
+
+/**
+ * Installs the bridge shipped in a Development/production build. Expo Go has no
+ * custom native module, so this returns false and the screen remains in the
+ * explicit REST-only mode. The bridge contract intentionally exposes no send
+ * API: application state changes stay on authenticated REST until a separately
+ * reviewed WebTransport send contract exists without 0-RTT writes.
+ */
+export function installNativeChatWebTransportBridge(): boolean {
+  const runtime = loadReactNativeBridgeRuntime();
+  const candidate = runtime?.NativeModules.SamuraiMeetWebTransport;
+  if (!candidate || typeof candidate.connect !== "function" || typeof candidate.close !== "function"
+    || typeof candidate.addListener !== "function" || typeof candidate.removeListeners !== "function") {
+    registerChatWebTransportAdapter(null);
+    return false;
+  }
+
+  const events = new runtime.NativeEventEmitter(candidate);
+  registerChatWebTransportAdapter({
+    connect: async ({ url, headers, onFrame, onClose }) => {
+      const result = await candidate.connect({ url, headers });
+      if (!result || typeof result.connectionID !== "string" || !result.connectionID) {
+        throw new Error("webtransport_native_connection_invalid");
+      }
+      const connectionID = result.connectionID;
+      const frameSubscription = events.addListener("samuraiMeetWebTransportFrame", (event: NativeWebTransportEvent) => {
+        if (event?.connectionID !== connectionID) return;
+        const frame = parseNativeWebTransportFrame(event.frame);
+        if (frame) onFrame(frame);
+      });
+      const closeSubscription = events.addListener("samuraiMeetWebTransportClose", (event: NativeWebTransportEvent) => {
+        if (event?.connectionID !== connectionID) return;
+        frameSubscription.remove();
+        closeSubscription.remove();
+        onClose();
+      });
+      return {
+        close: async () => {
+          frameSubscription.remove();
+          closeSubscription.remove();
+          await candidate.close(connectionID);
+        },
+      };
+    },
+  });
+  return true;
+}
+
+export function registerChatWebTransportAdapter(adapter: ChatWebTransportAdapter | null): void {
+  registeredWebTransportAdapter = adapter;
+}
+
+export function chatRealtimeMode(): ChatRealtimeMode {
+  return registeredWebTransportAdapter ? "webtransport" : "rest_sync";
+}
+
+export function chatWebTransportURL(chatID: string, baseURL = API_BASE_URL): string {
+  const url = new URL(baseURL);
+  const basePath = url.pathname.replace(/\/+$/, "");
+  url.pathname = `${basePath}/wt/chats/${encodeURIComponent(chatID)}`;
+  url.search = "";
+  url.hash = "";
+  return url.toString();
+}
+
+export async function connectChatWebTransport(
+  chatID: string,
+  session: Session,
+  handlers: Pick<Parameters<ChatWebTransportAdapter["connect"]>[0], "onFrame" | "onClose">,
+  signal?: AbortSignal,
+): Promise<ChatWebTransportSession> {
+  const adapter = registeredWebTransportAdapter;
+  if (!adapter) throw new Error("webtransport_native_client_unavailable");
+  const token = await issueChatTransportToken(chatID, session, signal);
+  if (signal?.aborted) throw new DOMException("The operation was aborted", "AbortError");
+  const connection = await adapter.connect({
+    url: chatWebTransportURL(chatID),
+    headers: { Authorization: `Bearer ${token.chat_token}` },
+    ...handlers,
+  });
+  return { connection, expiresAt: token.expires_at };
+}
 
 function chatQuery(after?: number, limit?: number): string {
   const query = new URLSearchParams();
@@ -207,24 +362,16 @@ export async function issueChatTransportToken(
     session,
     {
       method: "POST",
-      body: JSON.stringify({ transport: "websocket" }),
+      body: JSON.stringify({ transport: "webtransport" }),
       signal,
     },
   );
-  if (!response.data || typeof response.data.chat_token !== "string") {
+  if (!response.data || typeof response.data.chat_token !== "string"
+    || response.data.transport !== "webtransport"
+    || !Number.isFinite(Date.parse(response.data.expires_at))) {
     throw new Error("chat transport token response is invalid");
   }
   return response.data;
-}
-
-export function chatWebSocketURL(chatID: string, baseURL = API_BASE_URL): string {
-  const url = new URL(baseURL);
-  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-  const basePath = url.pathname.replace(/\/+$/, "");
-  url.pathname = `${basePath}/ws/chats/${encodeURIComponent(chatID)}`;
-  url.search = "";
-  url.hash = "";
-  return url.toString();
 }
 
 export async function createSafetyReport(
@@ -264,19 +411,6 @@ export async function blockUser(
       signal,
     },
   );
-}
-
-export function parseChatSocketFrame(value: string): ChatSocketFrame | null {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(value);
-  } catch {
-    return null;
-  }
-  if (!parsed || typeof parsed !== "object" || typeof (parsed as { type?: unknown }).type !== "string") {
-    return null;
-  }
-  return parsed as ChatSocketFrame;
 }
 
 export async function encryptChatPlaintext(

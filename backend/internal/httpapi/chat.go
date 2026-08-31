@@ -132,7 +132,7 @@ func chatTransportToken(w http.ResponseWriter, r *http.Request, service *chat.Se
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	transport := "websocket"
+	transport := chat.QUICTransport
 	if r.Body != nil && (r.ContentLength != 0 || r.Header.Get("Transfer-Encoding") != "") {
 		var input struct {
 			Transport string `json:"transport"`

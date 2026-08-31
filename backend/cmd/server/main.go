@@ -21,6 +21,7 @@ import (
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/user"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
@@ -120,6 +121,14 @@ func main() {
 	chatService.ConfigureSendRateLimit(cfg.Chat.SendBurst, float64(cfg.Chat.SendRefillPerMinute)/60.0)
 	chatService.ConfigureMessageRetention(cfg.Chat.MessageRetentionDays)
 	chatService.SetClusterLogger(log.Printf)
+	webTransport, err := chat.StartWebTransport(context.Background(), chatService, chat.WebTransportConfig{Enabled: strings.EqualFold(strings.TrimSpace(os.Getenv("ENABLE_CHAT_WEBTRANSPORT")), "true"), UDPAddr: strings.TrimSpace(os.Getenv("CHAT_WEBTRANSPORT_UDP_ADDR")), CertFile: strings.TrimSpace(os.Getenv("CHAT_WEBTRANSPORT_TLS_CERT_FILE")), KeyFile: strings.TrimSpace(os.Getenv("CHAT_WEBTRANSPORT_TLS_KEY_FILE")), AllowedOrigins: []string{cfg.ClientOrigin, cfg.DevClientOrigin}, Logf: log.Printf})
+	if err != nil {
+		log.Fatalf("WebTransport initialization failed: %v", err)
+	}
+	if webTransport != nil {
+		defer webTransport.Close()
+		log.Printf("chat WebTransport listening on UDP %s (Expo Go unsupported; development build required)", os.Getenv("CHAT_WEBTRANSPORT_UDP_ADDR"))
+	}
 	if err = chatService.StartClusterFanout(context.Background()); err != nil {
 		log.Fatalf("chat cross-instance fan-out initialization failed: %v", err)
 	}

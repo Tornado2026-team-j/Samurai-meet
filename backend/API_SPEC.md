@@ -477,7 +477,7 @@ Request body:
 
 `accepted`前のチャットAPIはありません。カードは承認後も`matched`として残り、所有者が閉じるか期限切れになるまで追加の関心を受け付けます。
 
-### 6.7 チャット（REST + WebSocket配送 実装済み。フロント接続は未実施）
+### 6.7 チャット（REST同期 + HTTP/3 WebTransport）
 
 チャットは`accepted`になったマッチに対して遅延作成されます。`completed`後は履歴の取得と既読更新だけを許可し、新規送信・transport token発行は停止します。ブロック関係がある場合はチャットの存在を推測できないよう404相当で拒否します。
 
@@ -487,8 +487,8 @@ Request body:
 | GET | `/api/v1/chats/{id}/messages?after=0&limit=50` | Access Token | 暗号化メッセージ履歴。最大100件 |
 | POST | `/api/v1/chats/{id}/messages` | Access Token | 暗号化メッセージ送信 |
 | POST | `/api/v1/chats/{id}/read` | Access Token | `last_message_sequence`まで既読（クライアントが見た最大`sequence`。最新messageへクランプし前進のみ） |
-| POST | `/api/v1/chats/{id}/transport-token` | Access Token | WebSocket用短命Chat Token発行（`transport`は省略時・明示ともに`websocket`のみ。他値は400） |
-| GET | `/api/v1/ws/chats/{id}` | Chat Token（接続後の認証フレーム） | リアルタイム配送のWebSocket |
+| POST | `/api/v1/chats/{id}/transport-token` | Access Token | WebTransport用短命Chat Token発行（省略時・明示ともに`webtransport`のみ） |
+| CONNECT | `https://{CHAT_WEBTRANSPORT_UDP_ADDR}/api/v1/wt/chats/{id}` | Chat Token（`Authorization: Bearer`） | TLS 1.3/UDP上のHTTP/3 WebTransport。URL query・cookieのtokenは拒否 |
 | POST | `/api/v1/chats/{id}/attachments` | Access Token | チャット写真（暗号文BLOB）のアップロード |
 | GET | `/api/v1/chats/{id}/attachments/{attachment_id}` | Access Token | チャット写真の暗号文取得 |
 
@@ -509,9 +509,9 @@ Request body:
 
 `POST /read` の `last_message_sequence` は「クライアントが受信した最大`sequence`」を渡すハイウォーターマークで、message行との厳密一致は不要です（`sequence`は全チャット横断の`BIGSERIAL`で1チャット内は歯抜け）。サーバーはその値をそのチャットの最新live messageへクランプし、保存マーカーは前進のみ（`GREATEST`）。`message.read`レシートはクランプ後の実効値を通知します。1未満は`invalid_chat_request`、messageが無いチャットは`chat_not_found`。
 
-メッセージは作成から `CHAT_MESSAGE_RETENTION_DAYS`（既定180日）を過ぎると、6時間ごとのスイープで `deleted_at` を打たれ、暗号文・nonce が消去され、`chat_message_deletions` に監査行が残ります。以後は履歴・未読数・WebSocket 配送のいずれにも現れません。
+メッセージは作成から `CHAT_MESSAGE_RETENTION_DAYS`（既定180日）を過ぎると、6時間ごとのスイープで `deleted_at` を打たれ、暗号文・nonce が消去され、`chat_message_deletions` に監査行が残ります。以後は履歴・未読数・WebTransport配送のいずれにも現れません。
 
-メッセージ送信はユーザー単位のトークンバケットでレート制限します（`CHAT_SEND_BURST` 既定15、`CHAT_SEND_REFILL_PER_MINUTE` 既定60）。REST/WebSocket で共通の予算を消費し、超過時は REST が `429 {"error":"chat_rate_limited"}` ＋ `Retry-After` ヘッダ、WebSocket が `{"type":"error","code":"rate_limited","retry_after_seconds":N}`（接続は維持、`closing` なし）を返します。クライアントは chat-transport.md §7.2 の自動再送契約に従い `Retry-After` / `retry_after_seconds` を尊重します。
+メッセージ送信はユーザー単位のトークンバケットでレート制限します（`CHAT_SEND_BURST` 既定15、`CHAT_SEND_REFILL_PER_MINUTE` 既定60）。REST/WebTransport で共通の予算を消費します。WebTransportは各state-changing frameでsession・accepted matchを再検証し、0-RTT dataの状態変更を拒否します。同じ`client_message_id`はservice層で冪等です。
 
 ### チャット写真（添付）
 
@@ -522,9 +522,9 @@ Request body:
 
 `GET /api/v1/chats/{id}/attachments/{attachment_id}` は暗号文を `application/octet-stream` で返す（`accepted`/`completed`マッチの参加者のみ、ブロック時は不可）。サーバーは復号せず、EXIF除去はクライアント側の責務。暗号文の上限は `IMAGE_MAX_UPLOAD_BYTES`（既定20MiB）。メッセージから参照されない添付は約24時間後にスイープで削除される。鍵の生成・共有はクライアント契約で、`key_version = "chat-attachment-mvp-v1"` は「添付ごとのランダム鍵を参照元メッセージの暗号化本文で相手へ渡す」前提。
 
-transport tokenはAccess Token・Refresh Tokenと別audience（`samurai-meet-chat`）で、対象chat・session・transportだけに束縛した2分のJWSです。Refresh TokenをWebSocket、WebTransport、URL queryへ送ってはいけません。
+transport tokenはAccess Token・Refresh Tokenと別audience（`samurai-meet-chat`）で、対象chat・session・`transport=webtransport`だけに束縛した2分のJWSです。Refresh TokenをWebTransportやURL queryへ送ってはいけません。Expo GoはWebTransport非対応のためDevelopment Buildまたは本番native buildが必要です。旧`/ws/chats/{id}`は410で拒否します。
 
-`GET /api/v1/ws/chats/{id}` へ接続後、クライアントは5秒以内に `{"type":"auth","chat_token":"<JWS>"}` を送ります（Chat TokenをURL queryに載せない）。サーバーは token・セッション・マッチ・ブロック・チャット状態を検証し `{"type":"auth.ok",…}` を返します。以後のフレームは `message.send` / `message.read` / `typing.start` / `typing.stop` / `ping`（client→server）、`message.created` / `message.ack` / `message.read` / `typing` / `pong` / `error` / `closing`（server→client）。`message.send` は REST の送信と同じ冪等性・バリデーション（暗号文のみ、128KiBまで）で、REST経由の送信・既読も接続中の全ソケットへ配送されます。`message.created` / `message.read` の配送除外はユーザー単位ではなくソケット単位です（送信・既読を発行したソケットだけ除外し、同一ユーザーの他端末には配送する）。`typing` だけは自端末エコー回避のためユーザー単位で除外します。接続中は20秒間隔のheartbeatでセッション・マッチ・ブロックを再確認し、失効時は `closing` を送って切断します。接続維持中の Chat Token ローテーションは `{"type":"token.renew","chat_token":"<新JWS>"}` で行い、成功時 `{"type":"token.renewed","token_seq":N,"token_expires_at":"…"}` を返します。`token_seq` は `(session, chat)` 単位で発行のたびに +1 され、接続は受理済み最大値以下への `token.renew` を `error(stale_token)` で拒否します（接続維持）。期限までに `token.renew` されないと heartbeat が `closing(token_expired)` で切断します。配送はプロセス内ハブで行い、複数APIインスタンス構成は PostgreSQL `LISTEN/NOTIFY` fan-out（`chat_events` チャネル、`cluster.go`）で対応します。他インスタンス発の `message.created` / `message.read` / `typing` は各インスタンスがローカルソケットへ再配送し、NOTIFY 取りこぼしは再接続時の `sequence` cursor 補完で回収します。
+WebTransport接続は`Authorization: Bearer <Chat Token>`を付けたCONNECTだけを受け付けます。tokenは対象chat・session・transportに束縛した2分のJWSで、CONNECT時と各state-changing frameでセッション、accepted match、ブロック状態を再検証します。0-RTTでの状態変更、URL query、cookieによるtoken提示は拒否します。フレームは`message.send` / `message.read` / `typing.start` / `typing.stop`（client→server）、`message.created` / `message.ack` / `message.read` / `typing` / `error` / `closing`（server→client）です。送信・既読・typingは同一インスタンスのWebTransport接続へfan-outし、複数APIインスタンスではPostgreSQL `LISTEN/NOTIFY`の`chat_events`で他インスタンスの接続にも再配送します。NOTIFY取りこぼしはRESTの`sequence` cursorで回収します。
 
 ### 6.8 会合セッション・Bluetooth／位置推測の補助（バックエンド実装済み。実測はクライアント）
 

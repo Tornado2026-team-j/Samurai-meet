@@ -65,8 +65,8 @@ func TestValidateMessageInputRequiresCiphertextContract(t *testing.T) {
 }
 
 // TestIssueTransportTokenRejectsUnsupportedTransport locks the contract that
-// only `websocket` is issuable. `webtransport` / `quic` have no server yet, so
-// a token for them must never be handed out. Transport validation runs before
+// only `webtransport` is issuable. Legacy WebSocket and arbitrary transports
+// must never receive a token. Transport validation runs before
 // any DB access, so a nil-db service is enough to exercise it.
 func TestIssueTransportTokenRejectsUnsupportedTransport(t *testing.T) {
 	signer, err := auth.NewSigner(base64.RawURLEncoding.EncodeToString(make([]byte, 32)), "chat-issuer", "chat-audience")
@@ -74,7 +74,7 @@ func TestIssueTransportTokenRejectsUnsupportedTransport(t *testing.T) {
 		t.Fatalf("NewSigner() error = %v", err)
 	}
 	service := NewService(nil, signer)
-	for _, transport := range []string{"webtransport", "quic", "h3", "grpc"} {
+	for _, transport := range []string{"websocket", "quic", "h3", "grpc"} {
 		if _, err := service.IssueTransportToken(context.Background(), "user-1", "session-1", "chat-1", transport, time.Now()); !errors.Is(err, ErrChatInvalidInput) {
 			t.Fatalf("transport %q error = %v, want ErrChatInvalidInput", transport, err)
 		}
