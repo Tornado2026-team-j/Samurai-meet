@@ -17,6 +17,7 @@ import {
   moderateAndSendChatMessage,
   moderateChatMessage,
   moderateChatText,
+  parseChatAttachmentRecipients,
   sendChatMessage,
   sendChatLocation,
   toChatMessageView,
@@ -24,6 +25,7 @@ import {
   type EncryptedChatMessage,
   type ChatSummary,
 } from "../services/chat";
+import { toBase64URL } from "../services/crypto";
 
 const originalFetch = globalThis.fetch;
 const session = {
@@ -369,6 +371,38 @@ describe("チャットAPIクライアント", () => {
       plaintext: "Hello",
       mine: true,
     });
+  });
+
+  it("画像メッセージは暗号化マーカーを本文として表示せず、recipientはuser_id+device_idを必須にする", () => {
+    const publicKey = toBase64URL(new Uint8Array(32).fill(7));
+    const recipients = parseChatAttachmentRecipients([{
+      user_id: "user-1",
+      device_id: "device-1",
+      key_version: "x25519-v1",
+      public_key: publicKey,
+    }]);
+    expect(recipients[0]).toMatchObject({ user_id: "user-1", device_id: "device-1" });
+    expect(() => parseChatAttachmentRecipients([{
+      device_id: "device-1",
+      key_version: "x25519-v1",
+      public_key: publicKey,
+    }])).toThrow();
+
+    const imageMessage: EncryptedChatMessage = {
+      id: "image-1",
+      chat_id: "chat-1",
+      sender_user_id: "user-1",
+      client_message_id: "image-client-1",
+      sequence: 4,
+      ciphertext: "marker-must-not-render",
+      nonce: "nonce",
+      algorithm: "AES-256-GCM",
+      key_version: "chat-mvp-v1",
+      content_type: "image",
+      attachment_id: "attachment-1",
+      created_at: "2026-08-30T00:00:00Z",
+    };
+    expect(toChatMessageView("chat-1", imageMessage, "user-1").plaintext).toBeNull();
   });
 
   it("外部連絡先と個人情報らしい文面は送信ブロック対象にする", () => {

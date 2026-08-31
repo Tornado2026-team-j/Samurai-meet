@@ -1,5 +1,7 @@
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from "react";
+import * as ImagePicker from "expo-image-picker";
+import { File } from "expo-file-system";
 import {
   ActivityIndicator,
   Alert,
@@ -33,6 +35,8 @@ import {
   installNativeChatWebTransportBridge,
   markChatRead,
   moderateAndSendChatMessage,
+  downloadAndDecryptChatAttachment,
+  sendChatImage,
   sendChatLocation,
   toChatMessageView,
   translateChatText,
@@ -41,6 +45,12 @@ import {
   type ChatReportReason,
   type ChatSummary,
 } from "../../services/chat";
+import {
+  CHAT_ATTACHMENT_MAX_BYTES,
+  isChatAttachmentContentType,
+  toBase64,
+  type ChatAttachmentContentType,
+} from "../../services/crypto";
 import { resolveCurrentLocationDisplay } from "../../services/location";
 import { declineMatch, getMatch, type MatchView } from "../../services/matching";
 import { loadLanguage, subscribeLanguage, type AppLanguage } from "../../services/onboarding";
@@ -111,6 +121,17 @@ const COPY = {
     draftEmpty: "メッセージを入力してください。",
     draftTooLong: "メッセージは2000文字以内で入力してください。",
     sendFailed: "メッセージを送信できませんでした。時間をおいて再試行してください。",
+    photo: "画像",
+    sendPhoto: "画像を送信",
+    photoSelecting: "画像を選択中…",
+    photoSending: "画像を送信中…",
+    photoSent: "画像を送信しました。",
+    photoPermissionDenied: "写真へのアクセスを許可すると画像を送信できます。",
+    photoUnsupported: "JPEG、PNG、WebPの画像のみ送信できます。",
+    photoTooLarge: "画像は20MB以内で選択してください。",
+    photoSendFailed: "画像を送信できませんでした。鍵の準備と通信状態を確認して再試行してください。",
+    photoLoadFailed: "画像を表示できませんでした。",
+    photoRetry: "画像を再読み込み",
     shareLocation: "現在地を共有",
     locationConfirmTitle: "現在地を共有しますか？",
     locationConfirm: "相手は有効期限まで地図でこの場所を開けます。自宅などの正確な位置は共有しないでください。",
@@ -190,6 +211,17 @@ const COPY = {
     draftEmpty: "Enter a message.",
     draftTooLong: "Messages must be 2000 characters or fewer.",
     sendFailed: "Message could not be sent. Please try again later.",
+    photo: "Photo",
+    sendPhoto: "Send photo",
+    photoSelecting: "Selecting photo…",
+    photoSending: "Sending photo…",
+    photoSent: "Photo sent.",
+    photoPermissionDenied: "Allow photo access to send an image.",
+    photoUnsupported: "Only JPEG, PNG, and WebP images can be sent.",
+    photoTooLarge: "Choose an image no larger than 20 MB.",
+    photoSendFailed: "The photo could not be sent. Check key setup and your connection, then try again.",
+    photoLoadFailed: "The image could not be displayed.",
+    photoRetry: "Reload image",
     shareLocation: "Share current location",
     locationConfirmTitle: "Share your current location?",
     locationConfirm: "The recipient can open this location in a map until it expires. Do not share your home or another sensitive location.",
@@ -239,6 +271,29 @@ const REPORT_REASONS: ChatReportReason[] = [
   "dangerous",
   "other",
 ];
+
+function pickedImageContentType(asset: ImagePicker.ImagePickerAsset): ChatAttachmentContentType | null {
+  const declared = asset.mimeType?.split(";", 1)[0]?.trim().toLowerCase();
+  if (declared && isChatAttachmentContentType(declared)) return declared;
+  const source = (asset.fileName ?? asset.uri).toLowerCase().split("?", 1)[0] ?? "";
+  if (source.endsWith(".jpg") || source.endsWith(".jpeg")) return "image/jpeg";
+  if (source.endsWith(".png")) return "image/png";
+  if (source.endsWith(".webp")) return "image/webp";
+  return null;
+}
+
+async function readPickedImage(asset: ImagePicker.ImagePickerAsset): Promise<Uint8Array> {
+  if (Platform.OS === "web" && asset.file) {
+    return new Uint8Array(await asset.file.arrayBuffer());
+  }
+  try {
+    return new Uint8Array(await new File(asset.uri).arrayBuffer());
+  } catch {
+    const response = await fetch(asset.uri);
+    if (!response.ok) throw new Error("chat_attachment_read_failed");
+    return new Uint8Array(await response.arrayBuffer());
+  }
+}
 
 function latestSequence(messages: ChatMessageView[]): number {
   return messages.reduce((max, message) => Math.max(max, message.sequence), 0);
@@ -300,8 +355,12 @@ export default function ChatDetailScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [sending, setSending] = useState(false);
   const [sharingLocation, setSharingLocation] = useState(false);
+  const [sendingPhoto, setSendingPhoto] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);
+  const [attachmentSources, setAttachmentSources] = useState<Record<string, string>>({});
+  const [attachmentLoading, setAttachmentLoading] = useState<Record<string, boolean>>({});
+  const [attachmentErrors, setAttachmentErrors] = useState<Record<string, boolean>>({});
   const [translatedMessages, setTranslatedMessages] = useState<Record<string, string>>({});
   const [remoteTyping, setRemoteTyping] = useState(false);
   const [remoteReadSequence, setRemoteReadSequence] = useState(0);
@@ -310,11 +369,15 @@ export default function ChatDetailScreen() {
   const [locallyClosed, setLocallyClosed] = useState<"declined" | "blocked" | null>(null);
   const [safetySubmitting, setSafetySubmitting] = useState(false);
   const safetySubmittingRef = useRef(false);
+  const mountedRef = useRef(true);
+  const attachmentSourcesRef = useRef<Record<string, string>>({});
+  const loadingAttachmentIDsRef = useRef(new Set<string>());
+  const attachmentControllersRef = useRef(new Map<string, AbortController>());
   const copy = COPY[language ?? "ja"];
   const displayMessages = useMemo(() => deduplicateChatMessages(messages), [messages]);
   const validation = validateChatDraft(draft);
   const readOnly = chat?.status === "completed" || locallyClosed !== null;
-  const canSend = safetyModal === null && !readOnly && !sending && !sharingLocation && !validation;
+  const canSend = safetyModal === null && !readOnly && !sending && !sharingLocation && !sendingPhoto && !validation;
 
   const runWithSession = useCallback(async <T,>(
     action: (activeSession: NonNullable<typeof session>, signal: AbortSignal) => Promise<T>,
@@ -332,6 +395,68 @@ export default function ChatDetailScreen() {
       return action(refreshedSession, signal);
     }
   }, [getCurrentSession, refresh, session, status]);
+
+  const hydrateAttachment = useCallback(async (message: ChatMessageView, force = false) => {
+    const attachment = message.attachment;
+    if (!chatID || !attachment || (!force && attachmentSourcesRef.current[attachment.id])) return;
+    if (loadingAttachmentIDsRef.current.has(attachment.id)) return;
+
+    const controller = new AbortController();
+    loadingAttachmentIDsRef.current.add(attachment.id);
+    attachmentControllersRef.current.set(attachment.id, controller);
+    setAttachmentLoading((current) => ({ ...current, [attachment.id]: true }));
+    setAttachmentErrors((current) => {
+      if (!current[attachment.id]) return current;
+      const next = { ...current };
+      delete next[attachment.id];
+      return next;
+    });
+
+    try {
+      const decrypted = await runWithSession(
+        (activeSession, signal) => downloadAndDecryptChatAttachment(chatID, attachment, activeSession, signal),
+        controller.signal,
+      );
+      try {
+        const source = `data:${attachment.content_type};base64,${toBase64(decrypted)}`;
+        if (mountedRef.current) {
+          setAttachmentSources((current) => {
+            const next = { ...current, [attachment.id]: source };
+            attachmentSourcesRef.current = next;
+            return next;
+          });
+        }
+      } finally {
+        decrypted.fill(0);
+      }
+    } catch {
+      if (mountedRef.current && !controller.signal.aborted) {
+        setAttachmentErrors((current) => ({ ...current, [attachment.id]: true }));
+      }
+    } finally {
+      loadingAttachmentIDsRef.current.delete(attachment.id);
+      attachmentControllersRef.current.delete(attachment.id);
+      if (mountedRef.current) {
+        setAttachmentLoading((current) => {
+          if (!current[attachment.id]) return current;
+          const next = { ...current };
+          delete next[attachment.id];
+          return next;
+        });
+      }
+    }
+  }, [chatID, runWithSession]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      for (const controller of attachmentControllersRef.current.values()) controller.abort();
+      attachmentControllersRef.current.clear();
+      loadingAttachmentIDsRef.current.clear();
+      attachmentSourcesRef.current = {};
+    };
+  }, []);
 
   const load = useCallback((mode: "initial" | "refresh" = "refresh") => {
     const controller = new AbortController();
@@ -479,6 +604,14 @@ export default function ChatDetailScreen() {
     return () => clearTimeout(handle);
   }, [displayMessages.length]);
 
+  useEffect(() => {
+    for (const message of displayMessages) {
+      if (message.content_type === "image" && message.attachment) {
+        void hydrateAttachment(message);
+      }
+    }
+  }, [displayMessages, hydrateAttachment]);
+
   const submit = async () => {
     if (!chatID || sending) return;
     setSendError(null);
@@ -521,6 +654,94 @@ export default function ChatDetailScreen() {
       setSendError(copy.sendFailed);
     } finally {
       setSending(false);
+    }
+  };
+
+  const pickAndSendImage = async () => {
+    if (!chatID || readOnly || sending || sharingLocation || sendingPhoto || safetyModal !== null) return;
+    Keyboard.dismiss();
+    setSendError(null);
+    setNotice(copy.photoSelecting);
+    setSendingPhoto(true);
+    const controller = new AbortController();
+    let selectedBytes: Uint8Array | null = null;
+    try {
+      let permission = await ImagePicker.getMediaLibraryPermissionsAsync();
+      if (!permission.granted) permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) {
+        setSendError(copy.photoPermissionDenied);
+        setNotice(null);
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        allowsMultipleSelection: false,
+        mediaTypes: ["images"],
+        quality: 1,
+      });
+      const asset = result.canceled ? undefined : result.assets?.[0];
+      if (!asset) {
+        setNotice(null);
+        return;
+      }
+      const contentType = pickedImageContentType(asset);
+      if (!contentType) {
+        setSendError(copy.photoUnsupported);
+        setNotice(null);
+        return;
+      }
+      if (asset.fileSize !== undefined && asset.fileSize > CHAT_ATTACHMENT_MAX_BYTES - 16) {
+        setSendError(copy.photoTooLarge);
+        setNotice(null);
+        return;
+      }
+
+      selectedBytes = await readPickedImage(asset);
+      if (selectedBytes.length > CHAT_ATTACHMENT_MAX_BYTES - 16) {
+        setSendError(copy.photoTooLarge);
+        setNotice(null);
+        return;
+      }
+      const bytesForSend = selectedBytes;
+      const resultWithAttachment = await runWithSession(
+        (activeSession, signal) => sendChatImage(chatID, bytesForSend, contentType, activeSession, undefined, signal),
+        controller.signal,
+      );
+      const activeSession = getCurrentSession() ?? session;
+      if (!activeSession) throw new Error("not_signed_in");
+      const source = `data:${contentType};base64,${toBase64(bytesForSend)}`;
+      const sentMessage = resultWithAttachment.message.attachment
+        ? resultWithAttachment.message
+        : {
+          ...resultWithAttachment.message,
+          content_type: "image" as const,
+          attachment_id: resultWithAttachment.attachment.id,
+          attachment: resultWithAttachment.attachment,
+        };
+      if (mountedRef.current) {
+        setAttachmentSources((current) => {
+          const next = { ...current, [resultWithAttachment.attachment.id]: source };
+          attachmentSourcesRef.current = next;
+          return next;
+        });
+        setAttachmentErrors((current) => {
+          if (!current[resultWithAttachment.attachment.id]) return current;
+          const next = { ...current };
+          delete next[resultWithAttachment.attachment.id];
+          return next;
+        });
+        setMessages((current) => mergeChatMessage(current, toChatMessageView(chatID, sentMessage, activeSession.user_id)));
+      }
+      setNotice(copy.photoSent);
+    } catch (error) {
+      if (!(error instanceof Error && error.name === "AbortError")) {
+        setSendError(error instanceof Error && error.message === "not_signed_in" ? copy.signInRequired : copy.photoSendFailed);
+        setNotice(null);
+      }
+    } finally {
+      selectedBytes?.fill(0);
+      controller.abort();
+      setSendingPhoto(false);
     }
   };
 
@@ -819,21 +1040,29 @@ export default function ChatDetailScreen() {
             <Text style={styles.emptyText}>{copy.empty}</Text>
           </View>
         ) : (
-          displayMessages.map((message) => (
-            <View key={chatMessageKey(message)}>
-            <ChatBubble
-              createdAt={message.created_at}
-              encryptedFallback={!message.plaintext}
-              mine={message.mine}
-              onReport={!message.mine
-                ? () => startConfirmation("message_report", { kind: "message", messageID: message.id })
-                : undefined}
-              onTranslate={() => showTranslation(message)}
-              reportLabel={!message.mine ? copy.messageReport : undefined}
-              text={message.location ? copy.locationShared : message.locationExpired ? copy.locationExpired : message.plaintext ?? copy.encryptedMessage}
-              translateLabel={copy.translate}
-              translatedText={translatedMessages[message.id] ?? null}
-            />
+          displayMessages.map((message) => {
+            const imageAttachment = message.content_type === "image" ? message.attachment : undefined;
+            const imageFailed = imageAttachment ? attachmentErrors[imageAttachment.id] === true : false;
+            return (
+              <View key={chatMessageKey(message)}>
+              <ChatBubble
+                createdAt={message.created_at}
+                encryptedFallback={message.content_type !== "image" && !message.plaintext}
+                imageLabel={copy.photo}
+                imageLoading={imageAttachment ? attachmentLoading[imageAttachment.id] === true : false}
+                imageRetryLabel={copy.photoRetry}
+                imageUri={imageAttachment ? attachmentSources[imageAttachment.id] ?? null : null}
+                mine={message.mine}
+                onReport={!message.mine
+                  ? () => startConfirmation("message_report", { kind: "message", messageID: message.id })
+                  : undefined}
+                onRetryImage={imageAttachment && imageFailed ? () => void hydrateAttachment(message, true) : undefined}
+                onTranslate={() => showTranslation(message)}
+                reportLabel={!message.mine ? copy.messageReport : undefined}
+                text={imageAttachment ? (imageFailed ? copy.photoLoadFailed : copy.photo) : message.location ? copy.locationShared : message.locationExpired ? copy.locationExpired : message.plaintext ?? copy.encryptedMessage}
+                translateLabel={copy.translate}
+                translatedText={translatedMessages[message.id] ?? null}
+              />
             {message.location ? (
               <View style={[styles.locationCard, message.mine ? styles.locationCardMine : styles.locationCardOther]}>
                 <Text numberOfLines={2} style={styles.locationName}>{message.location.display_name || `${message.location.latitude.toFixed(5)}, ${message.location.longitude.toFixed(5)}`}</Text>
@@ -848,8 +1077,9 @@ export default function ChatDetailScreen() {
                 </View>
               </View>
             ) : null}
-            </View>
-          ))
+              </View>
+            );
+          })
         )}
         {latestOwnMessage && remoteReadSequence >= latestOwnMessage.sequence ? (
           <Text accessibilityLiveRegion="polite" style={styles.readReceipt}>{copy.remoteRead}</Text>
@@ -881,17 +1111,26 @@ export default function ChatDetailScreen() {
 
         <View style={styles.inputRow}>
           <Pressable
+            accessibilityLabel={copy.sendPhoto}
+            accessibilityRole="button"
+            disabled={readOnly || sending || sharingLocation || sendingPhoto || safetyModal !== null}
+            onPress={() => void pickAndSendImage()}
+            style={({ pressed }) => [styles.locationButton, (readOnly || sending || sharingLocation || sendingPhoto) && styles.sendButtonDisabled, pressed && styles.pressed]}
+          >
+            {sendingPhoto ? <ActivityIndicator color="#ffffff" size="small" /> : <MaterialIcons color="#ffffff" name="photo-library" size={22} />}
+          </Pressable>
+          <Pressable
             accessibilityLabel={copy.shareLocation}
             accessibilityRole="button"
-            disabled={readOnly || sending || sharingLocation || safetyModal !== null}
+            disabled={readOnly || sending || sharingLocation || sendingPhoto || safetyModal !== null}
             onPress={() => void shareCurrentLocation()}
-            style={({ pressed }) => [styles.locationButton, (readOnly || sending || sharingLocation) && styles.sendButtonDisabled, pressed && styles.pressed]}
+            style={({ pressed }) => [styles.locationButton, (readOnly || sending || sharingLocation || sendingPhoto) && styles.sendButtonDisabled, pressed && styles.pressed]}
           >
             {sharingLocation ? <ActivityIndicator color="#ffffff" size="small" /> : <MaterialIcons color="#ffffff" name="location-on" size={22} />}
           </Pressable>
           <TextInput
             accessibilityLabel={copy.input}
-            editable={!readOnly && !sending && safetyModal === null}
+            editable={!readOnly && !sending && !sendingPhoto && safetyModal === null}
             multiline
             onChangeText={setDraft}
             placeholder={copy.input}
@@ -900,7 +1139,7 @@ export default function ChatDetailScreen() {
             value={draft}
           />
           <Pressable
-            accessibilityLabel={sending ? copy.sending : copy.send}
+            accessibilityLabel={sendingPhoto ? copy.photoSending : sending ? copy.sending : copy.send}
             accessibilityRole="button"
             accessibilityState={{ disabled: !canSend }}
             disabled={!canSend}

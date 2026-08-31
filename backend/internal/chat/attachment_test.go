@@ -12,7 +12,7 @@ func TestValidateAttachmentInputContract(t *testing.T) {
 		ContentType: "image/jpeg",
 		Nonce:       base64.RawURLEncoding.EncodeToString(make([]byte, 12)),
 		Algorithm:   "AES-256-GCM",
-		KeyVersion:  "chat-attachment-mvp-v1",
+		KeyVersion:  "chat-attachment-e2ee-v1",
 	}
 	if err := validateAttachmentInput(valid); err != nil {
 		t.Fatalf("valid attachment rejected: %v", err)
@@ -32,6 +32,7 @@ func TestValidateAttachmentInputContract(t *testing.T) {
 		}()},
 		{"non-base64 nonce", func() AttachmentInput { c := valid; c.Nonce = "not base64!!"; return c }()},
 		{"blank key version", func() AttachmentInput { c := valid; c.KeyVersion = ""; return c }()},
+		{"legacy key version", func() AttachmentInput { c := valid; c.KeyVersion = "chat-attachment-mvp-v1"; return c }()},
 		{"whitespace key version", func() AttachmentInput { c := valid; c.KeyVersion = "a b"; return c }()},
 	} {
 		t.Run(test.name, func(t *testing.T) {

@@ -364,7 +364,7 @@ func (s *Service) sendMessage(ctx context.Context, userID, chatID string, input 
 			return Message{}, false, err
 		}
 		if !linked {
-			if err = linkAttachmentTx(ctx, tx, access.ChatID, userID, attachmentID, message.ID, timestamp); err != nil {
+			if err = linkAttachmentTx(ctx, tx, access, userID, attachmentID, message.ID, timestamp); err != nil {
 				return Message{}, false, err
 			}
 		}
@@ -678,13 +678,17 @@ func validateMessageInput(input SendMessageInput) error {
 		!validIdentifier(input.KeyVersion, maxKeyVersion) || input.Algorithm != "AES-256-GCM" {
 		return ErrChatInvalidInput
 	}
+	input.AttachmentID = strings.TrimSpace(input.AttachmentID)
 	if input.AttachmentID != "" && !validIdentifier(input.AttachmentID, maxClientMessageID) {
 		return ErrChatInvalidInput
 	}
 	if input.ContentType == "" {
 		input.ContentType = "text"
 	}
-	if input.ContentType != "text" && input.ContentType != "location" {
+	if input.ContentType != "text" && input.ContentType != "location" && input.ContentType != "image" {
+		return ErrChatInvalidInput
+	}
+	if (input.ContentType == "image") != (input.AttachmentID != "") {
 		return ErrChatInvalidInput
 	}
 	if input.ContentType == "location" {

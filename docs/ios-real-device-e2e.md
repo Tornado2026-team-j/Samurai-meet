@@ -6,6 +6,8 @@
 
 > この手順書の対象は上記コードコミットです。今回の変更はdocsだけで、アプリやサーバーのソースは変更しません。更新時点の作業ツリーには別作業の未コミットソース差分があるため、その作業ツリーを実機ビルドに使わず、対象コードと同じソース状態のクリーンなコミットからビルドしてください。
 
+なお、2026-09-01時点の`HEAD`（`eeec9d468ada63ad33d75f4d32f2a475a1e08142`）は、対象コードコミットから`docs/`以外のコミット済み差分も含むため、このcheckoutのまま実機E2E対象にはしません。下記2.1の判定が成功する対象コードコミット、または`docs/`だけの後続コミットへ切り替えてから実施してください。
+
 この手順書は、現行の画面・API・サーバー設定を使って、iPhone実機で次の受入確認を行うためのものです。
 
 - 募集作成 → 検索 → 応募 → 承認 → アプリ内通知 → 応募取消
@@ -49,19 +51,40 @@
 
 ### 2.1 実機ビルドの対象固定（必須）
 
-実機確認を始める前に、実際に端末へ入れるソースとAPI接続先を固定します。`HEAD`が対象コードコミットそのもの、またはそのソースを変更していないdocsだけの後続コミットであることを確認します。
+実機確認を始める前に、実際に端末へ入れるソースとAPI接続先を固定します。対象コードコミットから`HEAD`までの**コミット済み差分が`docs/`だけ**であり、さらに対象コードコミットから作業ツリーまでの`backend/`・`frontend/`差分（staged、unstaged、未追跡を含む）が空であることを確認します。これにより、対象コードコミットそのものとdocsだけの後続コミットのどちらも許可しつつ、作業中のソース差分は実機対象から除外できます。
 
 ```powershell
+$TargetCommit = 'ef4ae2096ca88b7e6f354c558492f3948941a607'
+$HeadCommit = git rev-parse HEAD
 git rev-parse --show-toplevel
-git rev-parse HEAD
-git status --short
-git diff --name-only -- backend frontend
+git status --short --untracked-files=all
+git merge-base --is-ancestor $TargetCommit $HeadCommit
+if ($LASTEXITCODE -ne 0) { throw 'TargetCommit is not an ancestor of HeadCommit' }
+
+# 対象コードコミットからHEADまでのコミット済み差分。docs/以外があれば不許可。
+$HeadDelta = @(git diff --name-only "${TargetCommit}..${HeadCommit}" -- .)
+$HeadDelta
+$HeadNonDocsDelta = @($HeadDelta | Where-Object { $_ -notlike 'docs/*' })
+$HeadNonDocsDelta
+if ($HeadNonDocsDelta.Count -ne 0) { throw 'HEAD contains a committed non-docs change' }
+
+# 対象コードから実際の作業ツリーまでのbackend/frontend差分。
+# committed、staged、unstaged、未追跡を全て列挙し、最後の出力が空であることを確認する。
+$SourceDelta = @(
+  git diff --name-only "${TargetCommit}..${HeadCommit}" -- backend frontend
+  git diff --name-only -- backend frontend
+  git diff --cached --name-only -- backend frontend
+  git ls-files --others --exclude-standard -- backend frontend
+) | Sort-Object -Unique
+$SourceDelta
+if ($SourceDelta.Count -ne 0) { throw 'backend/frontend contains a source delta' }
 ```
 
 次を満たさない場合、ケースは`NOT RUN`または`BLOCKED`として記録し、画面が表示できてもPASSにしません。
 
-- `git rev-parse HEAD`と実機ビルドに記録した対象コードコミットが一致する。
-- `git diff --name-only -- backend frontend`が空である。未コミットのバックエンド/フロントエンド差分を含む作業ツリーは実機対象にしない。
+- `git merge-base --is-ancestor $TargetCommit $HeadCommit`が成功する。
+- `$HeadNonDocsDelta`が空である。`$HeadCommit`は`$TargetCommit`そのもの、または`docs/`だけを含む後続コミットに限る。実機ビルドの証跡には`TargetCommit`と`HeadCommit`の両方を記録する。
+- `$SourceDelta`が空である。これは対象コードからのbackend/frontend差分を、コミット済み、staged、unstaged、未追跡の全てについて確認した結果である。何か1つでも出力された作業ツリーは実機対象にしない。
 - 実機アプリに埋め込んだ`EXPO_PUBLIC_API_BASE_URL`が、証跡へ記録したAPIホストと一致する。
 - APIエラー時に募集詳細へモックカードが表示されても成功とみなさない。現行`frontend/app/japanese/matches/[id].tsx`には読み込み失敗時のモックフォールバックがあるため、対象`GET /api/v1/recruitments/{id}`の成功レスポンスをサーバー側で確認できないケースはFAILとする。
 
@@ -90,6 +113,8 @@ git diff --name-only -- backend frontend
 - WebTransport実機確認を行う別環境では、`ENABLE_CHAT_WEBTRANSPORT=true`、`CHAT_WEBTRANSPORT_UDP_ADDR`、`CHAT_WEBTRANSPORT_TLS_CERT_FILE`、`CHAT_WEBTRANSPORT_TLS_KEY_FILE`、許可するOriginを設定する。これらは現行`.env.example`に全て掲載されていないため、デプロイ担当者が実効値を確認する。
 
 起動後に、秘密値を含めず次を確認します。
+
+対象コードの`backend/internal/httpapi/router.go`は、rootの`/healthz`・`/readyz`と`/api/v1/healthz`・`/api/v1/readyz`を同じhealth/readiness handlerへ登録しています。したがって、次の4つを確認対象にします。
 
 ```powershell
 curl.exe --fail --silent --show-error https://<API_HOST>/healthz
@@ -285,6 +310,8 @@ POST /api/v1/reports               -> 201
 POST /api/v1/blocks               -> 204（body: `{"user_id":"..."}`）
 ```
 
+対象コードの`blockCollection`はAccess Tokenを要求し、POST bodyの`user_id`を受け付け、ブロック成功時はレスポンスbodyなしのHTTP 204を返します。したがって、このbodyとステータスを実機証跡へ記録します。
+
 ### 6.4 翻訳の現状
 
 現行の`frontend/services/chat.ts`の`translateChatText`は限定的なローカル辞書です。`GEMINI_MODEL=gemini-3.1-flash-lite`は募集分類に使われ、チャット翻訳には接続されていません。したがって、チャット翻訳でGeminiの呼び出し、翻訳時の犯罪可能性検知、翻訳結果を用いた運営自動通知が確認できたとは記録しません。これらは別実装後にこの手順書へ再追加します。
@@ -420,6 +447,6 @@ API base（ホストのみ。tokenなし）:
 - [バックエンド引き継ぎ](../backend/HANDOFF.md)
 - [バックエンドAPI仕様](../backend/API_SPEC.md)
 - [チャット通信（HTTP/3 WebTransport）](features/chat-transport.md)
-- [認証クライアント仕様](auth-client.md)
+- [認証クライアント仕様](features/auth-client.md)
 - [現行進捗](進捗.md)
 - [サーバー環境変数の例](../backend/.env.example)
