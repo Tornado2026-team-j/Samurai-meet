@@ -10,7 +10,7 @@
     "astro": "astro"
   },
   "dependencies": {
-    "astro": "^5.2.0"
+    "astro": "^7.2.9"
   },
   "devDependencies": {
     "@types/node": "^20.10.0"
