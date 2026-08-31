@@ -25,6 +25,7 @@
 | QUIC配送（将来） | `backend/internal/chat/quic.go`（未実装） | Go（標準候補） |
 | 保存・取得・既読 | `backend/internal/chat/service.go` / `backend/internal/httpapi/chat.go` | Go（REST実装済み） |
 | 写真添付（暗号文BLOB） | `backend/internal/chat/attachment.go` / `backend/internal/httpapi/chat_attachment.go` | Go（REST実装済み。サーバーは鍵を持たない） |
+| メッセージ翻訳 | `backend/internal/translation/gemini.go` / `backend/internal/httpapi/translation.go` | Go（`POST /translate`、Geminiキーはサーバーのみ、ユーザー単位レート制限。実装済み） |
 
 ## 3. 利用条件
 
@@ -111,6 +112,7 @@ QUICの理由、JWS claimの検証、heartbeat、失敗時の自動再送、WebS
 - `GET /chats/{id}/attachments/{attachment_id}`（チャット写真の暗号文取得。`accepted` / `completed`）
 - `POST /matches/{id}/meeting`
 - `POST /matches/{id}/cancel`（チャット画面からの案件辞退。`accepted` マッチをどちらの参加者でも `cancelled` にでき、募集枠を解放し相手へ通知する。[matching.md](matching.md)）
+- `POST /translate`（読み手が「翻訳」ボタンを押したメッセージの平文だけを送る。body `{text, target_language: "en"|"ja"}`、応答 `{data:{translated_text, target_language}}`。Geminiキーはサーバーのみ、ユーザー単位で1秒1回。障害時 `502 translation_failed` / 未設定 `503 translation_unavailable`）
 - `GET|POST /meetings/{id}/proximity`
 - QUIC endpoint：将来、環境ごとに設定する（`chat_id`単位。HTTP/3 WebTransportの場合はHTTPS URLとして提供）
 - テーブル：`matches`、`chat_threads`、`messages`、`chat_read_states`、`chat_token_sequences`、`chat_message_deletions`、`chat_attachments`、`photos`

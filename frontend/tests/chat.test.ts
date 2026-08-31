@@ -12,6 +12,7 @@ import {
   moderateChatText,
   sendChatMessage,
   toChatMessageView,
+  translateMessage,
   validateChatDraft,
   type EncryptedChatMessage,
 } from "../services/chat";
@@ -207,6 +208,29 @@ describe("チャットAPIクライアント", () => {
     expect(moderateChatText("電話番号は090-1234-5678です").categories).toContain("external_contact");
     expect(moderateChatText("パスポートを送ってください").categories).toContain("personal_info");
     expect(moderateChatText("チップを先に払って").severity).toBe("warn");
+  });
+
+  it("翻訳ボタンはtext/target_languageをPOSTし、translated_textを返す", async () => {
+    let requestedURL = "";
+    let requestedBody: unknown = null;
+    globalThis.fetch = (async (input, init) => {
+      requestedURL = String(input);
+      requestedBody = init?.body ? JSON.parse(String(init.body)) : null;
+      return new Response(JSON.stringify({
+        data: { translated_text: "Let's meet at the ticket gate.", target_language: "en" },
+      }), { status: 200 });
+    }) as typeof fetch;
+
+    await expect(translateMessage("改札で待ち合わせしましょう。", "en", session)).resolves.toBe(
+      "Let's meet at the ticket gate.",
+    );
+    expect(requestedURL).toContain("/translate");
+    expect(requestedBody).toEqual({ text: "改札で待ち合わせしましょう。", target_language: "en" });
+  });
+
+  it("翻訳レスポンスが空なら例外にする", async () => {
+    globalThis.fetch = (async () => new Response(JSON.stringify({ data: { translated_text: "  " } }), { status: 200 })) as typeof fetch;
+    await expect(translateMessage("hello", "ja", session)).rejects.toThrow("translation response is invalid");
   });
 
   it("空文と長すぎる文を送信前に検証する", () => {

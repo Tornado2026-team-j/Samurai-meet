@@ -17,6 +17,7 @@ import (
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/notification"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/push"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/safety"
+	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/translation"
 	profileuser "github.com/Tornado2026-team-j/Samurai-meet/backend/internal/user"
 )
 
@@ -42,6 +43,7 @@ type RouterOptions struct {
 	Profiles              *profileuser.Service
 	Matching              *matching.Service
 	RecruitmentClassifier *classification.Service
+	Translation           *translation.Service
 	Chats                 *chat.Service
 	Meetings              *meeting.Service
 	Notifications         *notification.Service
@@ -138,6 +140,9 @@ func NewRouterWithOptions(o RouterOptions) http.Handler {
 		m.HandleFunc(APIV1Prefix+"/me/location", updateLocation(o.Matching, o.Sessions))
 	} else if o.Sessions != nil && o.Meetings != nil {
 		m.HandleFunc(APIV1Prefix+"/matches/", matchAction(nil, o.Sessions, o.Meetings))
+	}
+	if o.Sessions != nil && o.Translation != nil {
+		m.HandleFunc(translatePath, translateText(o.Translation, o.Sessions))
 	}
 	if o.Sessions != nil && o.Chats != nil {
 		m.HandleFunc(chatPath, chatCollection(o.Chats, o.Sessions))

@@ -505,6 +505,12 @@ Request body:
 
 サーバーは`ciphertext`を復号せず、平文本文・検索用プレビュー・暗号鍵を受け付けません。`client_message_id`は送信者とチャット単位で一意で、同じIDの再送は元のメッセージを返します。暗号文は復号前128KiBまでです。履歴は`sequence`をcursorにして再接続時に補完します。
 
+#### メッセージ翻訳
+
+`POST /api/v1/translate`
+
+読み手がメッセージの「翻訳」ボタンを押したときだけ、そのメッセージの復号済み平文を送ります。Request body は `{ "text": "...", "target_language": "en" | "ja" }`。サーバーだけが`GEMINI_API_KEY`で`gemini-3.1-flash-lite`へ翻訳を依頼し、`{ "data": { "translated_text": "...", "target_language": "en" } }` を返します。`target_language`が`en`/`ja`以外・空文・2000字超は`400 invalid_translation_request`。ユーザーごとは1秒に1回までで、超過時は`429 translation_rate_limited`（`Retry-After: 1`）。モデル障害・契約外応答は`502 translation_failed`。APIキー未設定は`503 translation_unavailable`。チャットの共有鍵は`chat_id`から導出され、通報検査でもサーバーが平文へ到達できる設計のため、明示操作に限りサーバー翻訳を許容します。
+
 `POST /read` の `last_message_sequence` は「クライアントが受信した最大`sequence`」を渡すハイウォーターマークで、message行との厳密一致は不要です（`sequence`は全チャット横断の`BIGSERIAL`で1チャット内は歯抜け）。サーバーはその値をそのチャットの最新live messageへクランプし、保存マーカーは前進のみ（`GREATEST`）。`message.read`レシートはクランプ後の実効値を通知します。1未満は`invalid_chat_request`、messageが無いチャットは`chat_not_found`。
 
 メッセージは作成から `CHAT_MESSAGE_RETENTION_DAYS`（既定180日）を過ぎると、6時間ごとのスイープで `deleted_at` を打たれ、暗号文・nonce が消去され、`chat_message_deletions` に監査行が残ります。以後は履歴・未読数・WebSocket 配送のいずれにも現れません。

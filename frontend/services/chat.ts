@@ -361,29 +361,42 @@ export function moderateChatText(value: string): ChatModerationResult {
   return { categories, severity: "none" };
 }
 
-export function translateChatText(value: string, targetLanguage: "en" | "ja"): string {
-  const normalized = value.trim().toLocaleLowerCase();
-  const dictionary: Record<string, { en: string; ja: string }> = {
-    "hi! should we meet at inari station?": {
-      en: "Hi! Should we meet at Inari Station?",
-      ja: "こんにちは。稲荷駅で待ち合わせしますか？",
+export type ChatTranslation = {
+  translated_text: string;
+  target_language: "en" | "ja";
+};
+
+/**
+ * Translate one decrypted message into the reader's UI language. The plaintext
+ * is sent to the backend translate endpoint (Gemini), which keeps the API key
+ * server-side and rate limits per user. Only messages the reader explicitly
+ * taps "translate" on are sent.
+ */
+export async function translateMessage(
+  text: string,
+  targetLanguage: "en" | "ja",
+  session: Session,
+  signal?: AbortSignal,
+): Promise<string> {
+  const response = await requestAPI<DataResponse<ChatTranslation>>(
+    "/translate",
+    session,
+    {
+      method: "POST",
+      body: JSON.stringify({ text, target_language: targetLanguage }),
+      signal,
     },
-    "sounds good! i'm excited.": {
-      en: "Sounds good! I'm excited.",
-      ja: "いいですね。楽しみにしています。",
-    },
-    "集合場所はどこですか？": {
-      en: "Where should we meet?",
-      ja: "集合場所はどこですか？",
-    },
-    "改札前で待ち合わせしましょう。": {
-      en: "Let's meet in front of the ticket gates.",
-      ja: "改札前で待ち合わせしましょう。",
-    },
-  };
-  const translated = dictionary[normalized]?.[targetLanguage];
-  if (translated) return translated;
+  );
+  const translated = response.data?.translated_text;
+  if (typeof translated !== "string" || translated.trim() === "") {
+    throw new Error("translation response is invalid");
+  }
+  return translated;
+}
+
+/** Message shown in place of a translation when the service is unavailable. */
+export function translationUnavailableNotice(targetLanguage: "en" | "ja"): string {
   return targetLanguage === "ja"
-    ? "翻訳は準備中です。安全のため、個人情報や外部連絡先は送らないでください。"
-    : "Translation is being prepared. For safety, do not share personal information or external contacts.";
+    ? "翻訳を利用できませんでした。時間をおいて再試行してください。"
+    : "Translation is unavailable right now. Please try again later.";
 }

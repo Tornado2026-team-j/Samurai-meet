@@ -31,7 +31,8 @@ import {
   parseChatSocketFrame,
   sendChatMessage,
   toChatMessageView,
-  translateChatText,
+  translateMessage,
+  translationUnavailableNotice,
   validateChatDraft,
   type ChatMessageView,
   type ChatModerationCategory,
@@ -74,6 +75,7 @@ const COPY = {
     sending: "送信中…",
     encryptedMessage: "暗号化メッセージ",
     translate: "翻訳",
+    translating: "翻訳中…",
     report: "通報",
     decline: "辞退",
     block: "ブロック",
@@ -141,6 +143,7 @@ const COPY = {
     sending: "Sending…",
     encryptedMessage: "Encrypted message",
     translate: "Translate",
+    translating: "Translating…",
     report: "Report",
     decline: "Decline",
     block: "Block",
@@ -243,6 +246,7 @@ export default function ChatDetailScreen() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);
   const [translatedMessages, setTranslatedMessages] = useState<Record<string, string>>({});
+  const [translatingMessages, setTranslatingMessages] = useState<Record<string, boolean>>({});
   const [reportTarget, setReportTarget] = useState<ReportTarget | null>(null);
   const [menuVisible, setMenuVisible] = useState(false);
   const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null);
@@ -443,18 +447,37 @@ export default function ChatDetailScreen() {
     }
   };
 
-  const showTranslation = (message: ChatMessageView) => {
-    setTranslatedMessages((current) => {
-      if (current[message.id]) {
+  const showTranslation = async (message: ChatMessageView) => {
+    const targetLanguage = language === "ja" ? "ja" : "en";
+    const source = message.plaintext?.trim() ?? "";
+    if (translatedMessages[message.id]) {
+      setTranslatedMessages((current) => {
         const next = { ...current };
         delete next[message.id];
         return next;
-      }
-      return {
+      });
+      return;
+    }
+    if (!source || translatingMessages[message.id]) return;
+    setTranslatingMessages((current) => ({ ...current, [message.id]: true }));
+    try {
+      const translated = await runWithSession(
+        (activeSession, signal) => translateMessage(source, targetLanguage, activeSession, signal),
+        new AbortController().signal,
+      );
+      setTranslatedMessages((current) => ({ ...current, [message.id]: translated }));
+    } catch {
+      setTranslatedMessages((current) => ({
         ...current,
-        [message.id]: translateChatText(message.plaintext ?? "", language === "ja" ? "ja" : "en"),
-      };
-    });
+        [message.id]: translationUnavailableNotice(targetLanguage),
+      }));
+    } finally {
+      setTranslatingMessages((current) => {
+        const next = { ...current };
+        delete next[message.id];
+        return next;
+      });
+    }
   };
 
   const startConfirmation = (action: ConfirmAction) => {
@@ -681,10 +704,10 @@ export default function ChatDetailScreen() {
                 setReportTarget({ kind: "message", messageID: message.id });
                 setConfirmAction("message_report");
               } : undefined}
-              onTranslate={() => showTranslation(message)}
+              onTranslate={() => { void showTranslation(message); }}
               reportLabel={!message.mine ? copy.messageReport : undefined}
               text={message.plaintext ?? copy.encryptedMessage}
-              translateLabel={copy.translate}
+              translateLabel={translatingMessages[message.id] ? copy.translating : copy.translate}
               translatedText={translatedMessages[message.id] ?? null}
             />
           ))
