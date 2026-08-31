@@ -2,12 +2,11 @@ package meeting
 
 import (
 	"errors"
-	"math"
 	"testing"
 )
 
 func TestValidateProximityAcceptsOnlyBoundedClientEstimates(t *testing.T) {
-	valid := ProximityInput{Method: "bluetooth_rssi", DistanceM: 2.5, Confidence: 0.8, SampleID: "sample-1"}
+	valid := ProximityInput{Method: "bluetooth_rssi", DistanceBand: "nearby"}
 	if err := validateProximity(valid); err != nil {
 		t.Fatalf("valid proximity rejected: %v", err)
 	}
@@ -15,10 +14,9 @@ func TestValidateProximityAcceptsOnlyBoundedClientEstimates(t *testing.T) {
 		name  string
 		input ProximityInput
 	}{
-		{name: "unknown method", input: ProximityInput{Method: "raw_ble", DistanceM: 1, Confidence: 1, SampleID: "s"}},
-		{name: "nan distance", input: ProximityInput{Method: "bluetooth_rssi", DistanceM: math.NaN(), Confidence: 1, SampleID: "s"}},
-		{name: "confidence over one", input: ProximityInput{Method: "location_inference", DistanceM: 1, Confidence: 1.1, SampleID: "s"}},
-		{name: "empty sample", input: ProximityInput{Method: "bluetooth_uwb", DistanceM: 1, Confidence: 0.5}},
+		{name: "unknown method", input: ProximityInput{Method: "raw_ble", DistanceBand: "nearby"}},
+		{name: "exact distance is not a supported field", input: ProximityInput{Method: "bluetooth_rssi", DistanceBand: ""}},
+		{name: "unknown distance band", input: ProximityInput{Method: "location_inference", DistanceBand: "meters"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if err := validateProximity(test.input); !errors.Is(err, ErrMeetingInvalidInput) {

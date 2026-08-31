@@ -6,11 +6,8 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"errors"
-	"math"
 	"strings"
 	"time"
-	"unicode"
-	"unicode/utf8"
 )
 
 var (
@@ -24,46 +21,44 @@ var (
 
 const (
 	proximityFreshness = 5 * time.Minute
-	maxSampleIDRunes   = 128
-	maxDistanceM       = 1000.0
+	meetingLifetime    = 6 * time.Hour
 )
 
-// Service owns short-lived meeting sessions. Bluetooth is measured by the
-// native client; this service only stores a bounded, explicitly unverified
-// estimate while an accepted match is actively meeting.
+// Service owns short-lived meeting sessions. The native client may derive a
+// coarse distance band from its local Bluetooth/GPS readings, but this service
+// never receives raw coordinates, BLE identifiers, RSSI, or exact distances.
 type Service struct {
 	db *sql.DB
 }
 
 type Meeting struct {
-	ID          string `json:"id"`
-	MatchID     string `json:"match_id"`
-	Status      string `json:"status"`
-	ScheduledAt string `json:"scheduled_at,omitempty"`
-	StartedAt   string `json:"started_at,omitempty"`
-	EndedAt     string `json:"ended_at,omitempty"`
-	CreatedAt   string `json:"created_at"`
-	UpdatedAt   string `json:"updated_at"`
+	ID                 string `json:"id"`
+	MatchID            string `json:"match_id"`
+	Status             string `json:"status"`
+	ScheduledAt        string `json:"scheduled_at,omitempty"`
+	StartedAt          string `json:"started_at,omitempty"`
+	EndedAt            string `json:"ended_at,omitempty"`
+	ExpiresAt          string `json:"expires_at,omitempty"`
+	OwnerStartedAt     string `json:"owner_started_at,omitempty"`
+	RequesterStartedAt string `json:"requester_started_at,omitempty"`
+	CreatedAt          string `json:"created_at"`
+	UpdatedAt          string `json:"updated_at"`
 }
 
 type ProximityInput struct {
-	Method     string  `json:"method"`
-	DistanceM  float64 `json:"distance_m"`
-	Confidence float64 `json:"confidence"`
-	SampleID   string  `json:"sample_id"`
-	CapturedAt string  `json:"captured_at"`
+	Method       string `json:"method"`
+	DistanceBand string `json:"distance_band"`
+	CapturedAt   string `json:"captured_at"`
 }
 
 type ProximityObservation struct {
-	UserID     string  `json:"user_id"`
-	Method     string  `json:"method"`
-	DistanceM  float64 `json:"distance_m"`
-	Confidence float64 `json:"confidence"`
-	SampleID   string  `json:"sample_id"`
-	CapturedAt string  `json:"captured_at"`
-	UpdatedAt  string  `json:"updated_at"`
-	Verified   bool    `json:"verified"`
-	Source     string  `json:"source"`
+	UserID       string `json:"user_id"`
+	Method       string `json:"method"`
+	DistanceBand string `json:"distance_band"`
+	CapturedAt   string `json:"captured_at"`
+	UpdatedAt    string `json:"updated_at"`
+	Verified     bool   `json:"verified"`
+	Source       string `json:"source"`
 }
 
 func NewService(database *sql.DB) *Service {
@@ -107,11 +102,11 @@ func (s *Service) Create(ctx context.Context, userID, matchID, scheduledAt strin
 		return Meeting{}, ErrMeetingBlocked
 	}
 	var meeting Meeting
-	var existingScheduled, startedAt, endedAt sql.NullString
+	var existingScheduled, startedAt, endedAt, expiresAt, ownerStartedAt, requesterStartedAt sql.NullString
 	err = tx.QueryRowContext(ctx, `
-		SELECT id,match_id,status,scheduled_at,started_at,ended_at,created_at,updated_at
+		SELECT id,match_id,status,scheduled_at,started_at,ended_at,expires_at,owner_started_at,requester_started_at,created_at,updated_at
 		FROM meeting_sessions WHERE match_id=$1 FOR UPDATE`, matchID).Scan(
-		&meeting.ID, &meeting.MatchID, &meeting.Status, &existingScheduled, &startedAt, &endedAt, &meeting.CreatedAt, &meeting.UpdatedAt)
+		&meeting.ID, &meeting.MatchID, &meeting.Status, &existingScheduled, &startedAt, &endedAt, &expiresAt, &ownerStartedAt, &requesterStartedAt, &meeting.CreatedAt, &meeting.UpdatedAt)
 	if err == nil {
 		if existingScheduled.Valid {
 			meeting.ScheduledAt = existingScheduled.String
@@ -122,7 +117,8 @@ func (s *Service) Create(ctx context.Context, userID, matchID, scheduledAt strin
 		if endedAt.Valid {
 			meeting.EndedAt = endedAt.String
 		}
-		if meeting.Status == "completed" || meeting.Status == "cancelled" {
+		populateMeetingTimes(&meeting, existingScheduled, startedAt, endedAt, expiresAt, ownerStartedAt, requesterStartedAt)
+		if expireMeetingTx(ctx, tx, &meeting, now) || meeting.Status == "completed" || meeting.Status == "cancelled" {
 			return Meeting{}, ErrMeetingInvalidState
 		}
 		if err = tx.Commit(); err != nil {
@@ -139,10 +135,11 @@ func (s *Service) Create(ctx context.Context, userID, matchID, scheduledAt strin
 	meeting.MatchID, meeting.Status = matchID, "planned"
 	meeting.ScheduledAt = scheduledAt
 	meeting.CreatedAt = now.UTC().Format(time.RFC3339Nano)
+	meeting.ExpiresAt = now.Add(meetingLifetime).UTC().Format(time.RFC3339Nano)
 	meeting.UpdatedAt = meeting.CreatedAt
 	if _, err = tx.ExecContext(ctx, `
-		INSERT INTO meeting_sessions (id,match_id,status,scheduled_at,created_at,updated_at)
-		VALUES ($1,$2,'planned',NULLIF($3,''),$4,$4)`, meeting.ID, matchID, scheduledAt, meeting.CreatedAt); err != nil {
+		INSERT INTO meeting_sessions (id,match_id,status,scheduled_at,expires_at,created_at,updated_at)
+		VALUES ($1,$2,'planned',NULLIF($3,''),$4,$5,$5)`, meeting.ID, matchID, scheduledAt, meeting.ExpiresAt, meeting.CreatedAt); err != nil {
 		return Meeting{}, err
 	}
 	if err = tx.Commit(); err != nil {
@@ -152,15 +149,67 @@ func (s *Service) Create(ctx context.Context, userID, matchID, scheduledAt strin
 }
 
 func (s *Service) Get(ctx context.Context, userID, meetingID string) (Meeting, error) {
-	access, err := s.load(ctx, userID, meetingID, true)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
+		return Meeting{}, err
+	}
+	defer tx.Rollback()
+	access, err := s.loadTx(ctx, tx, userID, meetingID, true)
+	if err != nil {
+		return Meeting{}, err
+	}
+	if expireMeetingTx(ctx, tx, &access.meeting, time.Now()) {
+		if err := tx.Commit(); err != nil {
+			return Meeting{}, err
+		}
+		return access.meeting, nil
+	}
+	if err := tx.Commit(); err != nil {
 		return Meeting{}, err
 	}
 	return access.meeting, nil
 }
 
 func (s *Service) Start(ctx context.Context, userID, meetingID string, now time.Time) (Meeting, error) {
-	return s.transition(ctx, userID, meetingID, "planned", "active", now)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Meeting{}, err
+	}
+	defer tx.Rollback()
+	access, err := s.loadTx(ctx, tx, userID, meetingID, false)
+	if err != nil {
+		return Meeting{}, err
+	}
+	if expireMeetingTx(ctx, tx, &access.meeting, now) {
+		return Meeting{}, ErrMeetingUnavailable
+	}
+	if access.meeting.Status != "planned" {
+		return Meeting{}, ErrMeetingInvalidState
+	}
+	updated := now.UTC().Format(time.RFC3339Nano)
+	column := "owner_started_at"
+	if userID != "" && userID != access.ownerID {
+		column = "requester_started_at"
+	}
+	if _, err = tx.ExecContext(ctx, "UPDATE meeting_sessions SET "+column+"=COALESCE("+column+",$1),updated_at=$1 WHERE id=$2 AND status='planned'", updated, meetingID); err != nil {
+		return Meeting{}, err
+	}
+	if column == "owner_started_at" {
+		access.meeting.OwnerStartedAt = updated
+	} else {
+		access.meeting.RequesterStartedAt = updated
+	}
+	if access.meeting.OwnerStartedAt != "" && access.meeting.RequesterStartedAt != "" {
+		if _, err = tx.ExecContext(ctx, "UPDATE meeting_sessions SET status='active',started_at=$1,updated_at=$1 WHERE id=$2 AND status='planned'", updated, meetingID); err != nil {
+			return Meeting{}, err
+		}
+		access.meeting.Status, access.meeting.StartedAt = "active", updated
+	}
+	access.meeting.UpdatedAt = updated
+	if err = tx.Commit(); err != nil {
+		return Meeting{}, err
+	}
+	return access.meeting, nil
 }
 
 func (s *Service) End(ctx context.Context, userID, meetingID string, now time.Time) (Meeting, error) {
@@ -172,6 +221,12 @@ func (s *Service) End(ctx context.Context, userID, meetingID string, now time.Ti
 	access, err := s.loadTx(ctx, tx, userID, meetingID, true)
 	if err != nil {
 		return Meeting{}, err
+	}
+	if expireMeetingTx(ctx, tx, &access.meeting, now) {
+		if err := tx.Commit(); err != nil {
+			return Meeting{}, err
+		}
+		return access.meeting, nil
 	}
 	if access.meeting.Status != "active" {
 		return Meeting{}, ErrMeetingInvalidState
@@ -190,13 +245,52 @@ func (s *Service) End(ctx context.Context, userID, meetingID string, now time.Ti
 	return access.meeting, nil
 }
 
+// Cancel revokes meeting assistance immediately even while waiting for the other participant.
+func (s *Service) Cancel(ctx context.Context, userID, meetingID string, now time.Time) (Meeting, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Meeting{}, err
+	}
+	defer tx.Rollback()
+	access, err := s.loadTx(ctx, tx, userID, meetingID, false)
+	if err != nil {
+		return Meeting{}, err
+	}
+	if access.meeting.Status != "planned" && access.meeting.Status != "active" {
+		return Meeting{}, ErrMeetingInvalidState
+	}
+	updated := now.UTC().Format(time.RFC3339Nano)
+	if _, err = tx.ExecContext(ctx, "UPDATE meeting_sessions SET status='cancelled',cancelled_at=$1,updated_at=$1 WHERE id=$2", updated, meetingID); err != nil {
+		return Meeting{}, err
+	}
+	if _, err = tx.ExecContext(ctx, "DELETE FROM meeting_proximity_latest WHERE meeting_id=$1", meetingID); err != nil {
+		return Meeting{}, err
+	}
+	access.meeting.Status, access.meeting.EndedAt, access.meeting.UpdatedAt = "cancelled", updated, updated
+	if err = tx.Commit(); err != nil {
+		return Meeting{}, err
+	}
+	return access.meeting, nil
+}
+
 func (s *Service) SubmitProximity(ctx context.Context, userID, meetingID string, input ProximityInput, now time.Time) (ProximityObservation, error) {
 	if err := validateProximity(input); err != nil {
 		return ProximityObservation{}, err
 	}
-	access, err := s.load(ctx, userID, meetingID, false)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return ProximityObservation{}, err
+	}
+	defer tx.Rollback()
+	access, err := s.loadTx(ctx, tx, userID, meetingID, false)
+	if err != nil {
+		return ProximityObservation{}, err
+	}
+	if expireMeetingTx(ctx, tx, &access.meeting, now) {
+		if err := tx.Commit(); err != nil {
+			return ProximityObservation{}, err
+		}
+		return ProximityObservation{}, ErrMeetingUnavailable
 	}
 	if access.meeting.Status != "active" {
 		return ProximityObservation{}, ErrMeetingInvalidState
@@ -211,34 +305,46 @@ func (s *Service) SubmitProximity(ctx context.Context, userID, meetingID string,
 	}
 	capturedText := captured.Format(time.RFC3339Nano)
 	updated := now.UTC().Format(time.RFC3339Nano)
-	_, err = s.db.ExecContext(ctx, `
-		INSERT INTO meeting_proximity_latest (meeting_id,user_id,method,distance_m,confidence,sample_id,captured_at,updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO meeting_proximity_latest (meeting_id,user_id,method,distance_band,captured_at,updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6)
 		ON CONFLICT (meeting_id,user_id,method) DO UPDATE SET
-			distance_m=EXCLUDED.distance_m,confidence=EXCLUDED.confidence,
-			sample_id=EXCLUDED.sample_id,captured_at=EXCLUDED.captured_at,updated_at=EXCLUDED.updated_at
+			distance_band=EXCLUDED.distance_band,captured_at=EXCLUDED.captured_at,updated_at=EXCLUDED.updated_at
 		WHERE EXCLUDED.captured_at >= meeting_proximity_latest.captured_at`,
-		meetingID, userID, input.Method, input.DistanceM, input.Confidence, input.SampleID, capturedText, updated)
+		meetingID, userID, input.Method, input.DistanceBand, capturedText, updated)
 	if err != nil {
 		return ProximityObservation{}, err
 	}
+	if err := tx.Commit(); err != nil {
+		return ProximityObservation{}, err
+	}
 	return ProximityObservation{
-		UserID: userID, Method: input.Method, DistanceM: input.DistanceM, Confidence: input.Confidence,
-		SampleID: input.SampleID, CapturedAt: capturedText, UpdatedAt: updated,
+		UserID: userID, Method: input.Method, DistanceBand: input.DistanceBand, CapturedAt: capturedText, UpdatedAt: updated,
 		Verified: false, Source: "client_estimate",
 	}, nil
 }
 
 func (s *Service) ListProximity(ctx context.Context, userID, meetingID string, now time.Time) ([]ProximityObservation, error) {
-	access, err := s.load(ctx, userID, meetingID, false)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
+	}
+	defer tx.Rollback()
+	access, err := s.loadTx(ctx, tx, userID, meetingID, false)
+	if err != nil {
+		return nil, err
+	}
+	if expireMeetingTx(ctx, tx, &access.meeting, now) {
+		if err := tx.Commit(); err != nil {
+			return nil, err
+		}
+		return nil, ErrMeetingUnavailable
 	}
 	if access.meeting.Status != "active" {
 		return nil, ErrMeetingInvalidState
 	}
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT user_id,method,distance_m,confidence,sample_id,captured_at,updated_at
+	rows, err := tx.QueryContext(ctx, `
+		SELECT user_id,method,distance_band,captured_at,updated_at
 		FROM meeting_proximity_latest
 		WHERE meeting_id=$1 AND captured_at>$2
 		ORDER BY updated_at ASC`, meetingID, now.Add(-proximityFreshness).UTC().Format(time.RFC3339Nano))
@@ -249,17 +355,24 @@ func (s *Service) ListProximity(ctx context.Context, userID, meetingID string, n
 	result := make([]ProximityObservation, 0, 2)
 	for rows.Next() {
 		var item ProximityObservation
-		if err := rows.Scan(&item.UserID, &item.Method, &item.DistanceM, &item.Confidence, &item.SampleID, &item.CapturedAt, &item.UpdatedAt); err != nil {
+		if err := rows.Scan(&item.UserID, &item.Method, &item.DistanceBand, &item.CapturedAt, &item.UpdatedAt); err != nil {
 			return nil, err
 		}
 		item.Verified, item.Source = false, "client_estimate"
 		result = append(result, item)
 	}
-	return result, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 type meetingAccess struct {
 	meeting Meeting
+	ownerID string
 }
 
 func (s *Service) transition(ctx context.Context, userID, meetingID, from, to string, now time.Time) (Meeting, error) {
@@ -307,13 +420,13 @@ type rowQuerier interface {
 func (s *Service) loadWithQuery(ctx context.Context, queryer rowQuerier, userID, meetingID string, allowCompleted bool) (meetingAccess, error) {
 	var access meetingAccess
 	var ownerID, requesterID, matchStatus string
-	var scheduledAt, startedAt, endedAt sql.NullString
+	var scheduledAt, startedAt, endedAt, expiresAt, ownerStartedAt, requesterStartedAt sql.NullString
 	query := `
-		SELECT ms.id,ms.match_id,ms.status,ms.scheduled_at,ms.started_at,ms.ended_at,ms.created_at,ms.updated_at,
+		SELECT ms.id,ms.match_id,ms.status,ms.scheduled_at,ms.started_at,ms.ended_at,ms.expires_at,ms.owner_started_at,ms.requester_started_at,ms.created_at,ms.updated_at,
 		       m.owner_user_id,m.requester_user_id,m.status
 		FROM meeting_sessions ms JOIN matches m ON m.id=ms.match_id
 		WHERE ms.id=$1`
-	err := queryer.QueryRowContext(ctx, query, meetingID).Scan(&access.meeting.ID, &access.meeting.MatchID, &access.meeting.Status, &scheduledAt, &startedAt, &endedAt,
+	err := queryer.QueryRowContext(ctx, query, meetingID).Scan(&access.meeting.ID, &access.meeting.MatchID, &access.meeting.Status, &scheduledAt, &startedAt, &endedAt, &expiresAt, &ownerStartedAt, &requesterStartedAt,
 		&access.meeting.CreatedAt, &access.meeting.UpdatedAt, &ownerID, &requesterID, &matchStatus)
 	if errors.Is(err, sql.ErrNoRows) {
 		return meetingAccess{}, ErrMeetingNotFound
@@ -327,15 +440,8 @@ func (s *Service) loadWithQuery(ctx context.Context, queryer rowQuerier, userID,
 	if matchStatus != "accepted" && (!allowCompleted || matchStatus != "completed") {
 		return meetingAccess{}, ErrMeetingUnavailable
 	}
-	if scheduledAt.Valid {
-		access.meeting.ScheduledAt = scheduledAt.String
-	}
-	if startedAt.Valid {
-		access.meeting.StartedAt = startedAt.String
-	}
-	if endedAt.Valid {
-		access.meeting.EndedAt = endedAt.String
-	}
+	access.ownerID = ownerID
+	populateMeetingTimes(&access.meeting, scheduledAt, startedAt, endedAt, expiresAt, ownerStartedAt, requesterStartedAt)
 	var blocked bool
 	if err := queryer.QueryRowContext(ctx, `
 		SELECT EXISTS(SELECT 1 FROM blocks WHERE (blocker_user_id=$1 AND blocked_user_id=$2) OR (blocker_user_id=$2 AND blocked_user_id=$1))`, ownerID, requesterID).Scan(&blocked); err != nil {
@@ -361,32 +467,51 @@ func blockedTx(ctx context.Context, tx *sql.Tx, first, second string) (bool, err
 
 func validateProximity(input ProximityInput) error {
 	input.Method = strings.TrimSpace(input.Method)
-	input.SampleID = strings.TrimSpace(input.SampleID)
 	if input.Method != "bluetooth_rssi" && input.Method != "bluetooth_uwb" && input.Method != "location_inference" {
 		return ErrMeetingInvalidInput
 	}
-	if !finite(input.DistanceM) || input.DistanceM < 0 || input.DistanceM > maxDistanceM ||
-		!finite(input.Confidence) || input.Confidence < 0 || input.Confidence > 1 ||
-		!validSampleID(input.SampleID) {
+	if input.DistanceBand != "nearby" && input.DistanceBand != "short_walk" && input.DistanceBand != "far" && input.DistanceBand != "unknown" {
 		return ErrMeetingInvalidInput
 	}
 	return nil
 }
 
-func validSampleID(value string) bool {
-	if value == "" || !utf8.ValidString(value) || utf8.RuneCountInString(value) > maxSampleIDRunes {
+func populateMeetingTimes(m *Meeting, scheduledAt, startedAt, endedAt, expiresAt, ownerStartedAt, requesterStartedAt sql.NullString) {
+	if scheduledAt.Valid {
+		m.ScheduledAt = scheduledAt.String
+	}
+	if startedAt.Valid {
+		m.StartedAt = startedAt.String
+	}
+	if endedAt.Valid {
+		m.EndedAt = endedAt.String
+	}
+	if expiresAt.Valid {
+		m.ExpiresAt = expiresAt.String
+	}
+	if ownerStartedAt.Valid {
+		m.OwnerStartedAt = ownerStartedAt.String
+	}
+	if requesterStartedAt.Valid {
+		m.RequesterStartedAt = requesterStartedAt.String
+	}
+}
+func expireMeetingTx(ctx context.Context, tx *sql.Tx, m *Meeting, now time.Time) bool {
+	if m.ExpiresAt == "" || (m.Status != "planned" && m.Status != "active") {
 		return false
 	}
-	for _, r := range value {
-		if unicode.IsControl(r) || unicode.IsSpace(r) {
-			return false
+	expires, err := time.Parse(time.RFC3339Nano, m.ExpiresAt)
+	if err != nil || !expires.After(now) {
+		updated := now.UTC().Format(time.RFC3339Nano)
+		if _, err := tx.ExecContext(ctx, "UPDATE meeting_sessions SET status='cancelled',cancelled_at=$1,updated_at=$1 WHERE id=$2 AND status IN ('planned','active')", updated, m.ID); err == nil {
+			_, _ = tx.ExecContext(ctx, "DELETE FROM meeting_proximity_latest WHERE meeting_id=$1", m.ID)
+			m.Status = "cancelled"
+			m.EndedAt = updated
+			m.UpdatedAt = updated
 		}
+		return true
 	}
-	return true
-}
-
-func finite(value float64) bool {
-	return !math.IsNaN(value) && !math.IsInf(value, 0)
+	return false
 }
 
 func randomID() (string, error) {
