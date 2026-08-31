@@ -63,7 +63,12 @@ jobs:
 
       - name: フロントエンド依存のインストール
         working-directory: frontend
-        run: bun install --frozen-lockfile
+        run: |
+          bun install --frozen-lockfile
+          if [ -f "node_modules/react-native-libsodium/libsodium/build.tgz" ] && [ ! -d "node_modules/react-native-libsodium/libsodium/build" ]; then
+            echo "Extracting libsodium native prebuilts..."
+            tar -xzf node_modules/react-native-libsodium/libsodium/build.tgz --directory node_modules/react-native-libsodium/libsodium
+          fi
 
       - name: フロントエンド型検査
         working-directory: frontend
