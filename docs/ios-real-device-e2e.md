@@ -90,7 +90,7 @@ if ($SourceDelta.Count -ne 0) { throw 'backend/frontend contains a source delta'
 - `$HeadNonDocsDelta`が空である。`$HeadCommit`は`$TargetCommit`そのもの、または`docs/`だけを含む後続コミットに限る。実機ビルドの証跡には`TargetCommit`と`HeadCommit`の両方を記録する。
 - `$SourceDelta`が空である。これは対象コードからのbackend/frontend差分を、コミット済み、staged、unstaged、未追跡の全てについて確認した結果である。何か1つでも出力された作業ツリーは実機対象にしない。
 - 実機アプリに埋め込んだ`EXPO_PUBLIC_API_BASE_URL`が、証跡へ記録したAPIホストと一致する。
-- APIエラー時に募集詳細へモックカードが表示されても成功とみなさない。現行`frontend/app/japanese/matches/[id].tsx`には読み込み失敗時のモックフォールバックがあるため、対象`GET /api/v1/recruitments/{id}`の成功レスポンスをサーバー側で確認できないケースはFAILとする。
+- 募集詳細のPASSには、対象`GET /api/v1/recruitments/{id}`の成功レスポンスをサーバー側で確認できることを含める。API取得に失敗した場合は、明確なエラー表示と再試行導線になり、モック募集を詳細として表示・応募などの操作対象にしないことを確認する。モックデータが表示されたり、そのデータへ操作できたりした場合はFAILとする。
 
 ### 2.2 テストアカウントと端末
 
