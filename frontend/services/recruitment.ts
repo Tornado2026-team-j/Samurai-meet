@@ -1,4 +1,3 @@
-import { buildRecruitmentPreview } from "../mocks/recruitment";
 import type { Session } from "./auth-contract";
 import {
   createRecruitment,
@@ -12,6 +11,7 @@ import type {
   RecruitmentDraft,
   RecruitmentPreview,
 } from "../types/recruitment";
+import { buildRecruitmentPreviewModel } from "./recruitment-preview";
 
 type RecruitmentClassificationResponse = {
   data?: {
@@ -60,7 +60,7 @@ const geminiPreviewProvider: RecruitmentPreviewProvider = {
 			throw new Error("recruitment classification response is invalid");
 		}
 
-		const preview = buildRecruitmentPreview(draft, category);
+		const preview = buildRecruitmentPreviewModel(draft, category);
 		const keywords = normalizeRecruitmentKeywords(response.data?.keywords);
 		return {
 			...preview,

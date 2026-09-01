@@ -19,7 +19,7 @@ const TAG_RULES: ReadonlyArray<{ pattern: RegExp; tag: string }> = [
   { pattern: /bar|nightlife|drink/i, tag: "Nightlife" },
 ];
 
-function extractMockTags(activity: string): string[] {
+function extractPreviewTags(activity: string): string[] {
   const matches = TAG_RULES.filter(({ pattern }) => pattern.test(activity)).map(
     ({ tag }) => tag,
   );
@@ -64,14 +64,18 @@ function formatExpiry(draft: RecruitmentDraft): string {
   return `${date} at ${calculateFinishTime(draft.startTime, draft.durationHours)}`;
 }
 
-export function buildRecruitmentPreview(
-	draft: RecruitmentDraft,
-	category: MatchCategory,
+/**
+ * Builds the local preview model after the classification response is received.
+ * This is a pure transformation; it must not live under the mocks directory.
+ */
+export function buildRecruitmentPreviewModel(
+  draft: RecruitmentDraft,
+  category: MatchCategory,
 ): RecruitmentPreview {
-	return {
-		previewId: "mock-recruitment-preview",
-		category,
-    tags: extractMockTags(draft.activity),
+  return {
+    previewId: "mock-recruitment-preview",
+    category,
+    tags: extractPreviewTags(draft.activity),
     expiresAt: formatExpiry(draft),
     author: {
       id: "mock-current-user",

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { buildRecruitmentPreview } from "../mocks/recruitment";
+import { buildRecruitmentPreviewModel } from "../services/recruitment-preview";
 import {
 	closeRecruitment,
 	classifyRecruitmentDescription,
@@ -124,7 +124,7 @@ describe("募集APIクライアント", () => {
       participantLimit: 1,
       distanceKm: 3 as const,
     };
-    const preview = buildRecruitmentPreview(draft, "Food");
+    const preview = buildRecruitmentPreviewModel(draft, "Food");
     const coordinates = { latitude: 35.68, longitude: 139.76, accuracy_m: 12 };
 
     await saveRecruitmentDraft(draft, preview, session, coordinates);

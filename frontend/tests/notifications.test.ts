@@ -102,6 +102,8 @@ describe("通知APIクライアント", () => {
   it("通知レコードの必須フィールドを検証する", () => {
     expect(isNotificationRecord(record)).toBe(true);
     expect(isNotificationRecord({ ...record, target_id: "" })).toBe(false);
+    expect(isNotificationRecord({ ...record, target_id: "   " })).toBe(false);
+    expect(isNotificationRecord({ ...record, id: "   " })).toBe(false);
     expect(isNotificationRecord({ ...record, destination: "unknown" })).toBe(false);
   });
 
@@ -185,4 +187,23 @@ describe("通知APIクライアント", () => {
       recruitmentId: "recruitment-1",
     })).toBeNull();
   });
+});
+
+describe("通知画面のロード契約", () => {
+  for (const screenPath of [
+    "../app/japanese/notifications.tsx",
+    "../app/foreigner/notifications.tsx",
+  ]) {
+    it(`${screenPath} は復帰フォーカスで再取得しない`, async () => {
+      const source = await Bun.file(new URL(screenPath, import.meta.url)).text();
+
+      expect(source).not.toContain("useFocusEffect");
+      expect(source).toContain('loadNotificationsRef.current("initial")');
+      expect(source).toContain('loadNotifications("refresh")');
+      expect(source).toContain("<RefreshControl");
+      expect(source).toContain('if (status === "loading")');
+      expect(source).toContain('if (status !== "signed_in")');
+      expect(source).toContain("activeLoadRef.current?.cancel()");
+    });
+  }
 });

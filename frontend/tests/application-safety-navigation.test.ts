@@ -46,3 +46,38 @@ describe("応募履歴・募集管理の戻る導線", () => {
     expect(source).toContain("accessibilityLabel={copy.back}");
   });
 });
+
+describe("募集・応募画面の手動更新と操作ガード", () => {
+  it("募集管理は手動Refreshだけで再読み込みし、期限と状態を絞り込める", async () => {
+    const source = await readScreen("app/recruitments/mine.tsx");
+
+    expect(source).toContain("RefreshControl");
+    expect(source).toContain("onRefresh={() => loadManagement()}");
+    expect(source).toContain("loadInFlightRef");
+    expect(source).toContain("isRecruitmentExpired");
+    expect(source).toContain('"expired"');
+    expect(source).not.toContain("useFocusEffect");
+  });
+
+  it("応募履歴は進行中・期限切れ・終了済みを手動で切り替えられる", async () => {
+    const source = await readScreen("app/japanese/applications.tsx");
+
+    expect(source).toContain("APPLICATION_FILTERS");
+    expect(source).toContain("matchesApplicationFilter");
+    expect(source).toContain("RefreshControl");
+    expect(source).toContain("loadInFlightRef");
+    expect(source).toContain("withdrawingIDRef");
+    expect(source).not.toContain("useFocusEffect");
+  });
+
+  it("応募詳細は手動Refreshと承認・却下の同時実行ガードを持つ", async () => {
+    const source = await readScreen("app/foreigner/applications/[id].tsx");
+
+    expect(source).toContain("RefreshControl");
+    expect(source).toContain("onRefresh={loadApplication}");
+    expect(source).toContain("loadInFlightRef");
+    expect(source).toContain("actionInFlightRef");
+    expect(source).toContain('router.replace("/foreigner")');
+    expect(source).not.toContain("useFocusEffect");
+  });
+});

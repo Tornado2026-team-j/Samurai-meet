@@ -38,17 +38,18 @@ function isNotificationDestination(value: unknown): value is NotificationDestina
     && NOTIFICATION_DESTINATIONS.includes(value as NotificationDestination);
 }
 
+function isNonBlankString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
 export function isNotificationRecord(value: unknown): value is NotificationRecord {
   if (!value || typeof value !== "object") return false;
   const candidate = value as Record<string, unknown>;
-  return typeof candidate.id === "string"
-    && candidate.id.length > 0
+  return isNonBlankString(candidate.id)
     && isNotificationType(candidate.type)
-    && typeof candidate.target_id === "string"
-    && candidate.target_id.length > 0
+    && isNonBlankString(candidate.target_id)
     && isNotificationDestination(candidate.destination)
-    && typeof candidate.created_at === "string"
-    && candidate.created_at.length > 0
+    && isNonBlankString(candidate.created_at)
     && (candidate.recruitment_id === undefined || typeof candidate.recruitment_id === "string")
     && (candidate.actor_name === undefined || typeof candidate.actor_name === "string")
     && (candidate.context === undefined || typeof candidate.context === "string")
