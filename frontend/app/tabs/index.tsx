@@ -77,7 +77,6 @@ const PLACEHOLDER_GRAY = "#949494";
 const BORDER_GRAY = "#d4d4d4";
 const COLLAPSED_HEADER_HEIGHT = 156;
 const EXPANDED_HEADER_HEIGHT = 724;
-const CONFIRMATION_HEADER_HEIGHT = 542;
 const EXPANSION_DURATION = 360;
 const RECRUITMENT_CATEGORIES = MATCH_CATEGORIES;
 const MIN_DURATION_HOURS = 0.5;
@@ -632,10 +631,24 @@ export default function SearchPreferencesScreen() {
     EXPANDED_HEADER_HEIGHT,
     Math.max(COLLAPSED_HEADER_HEIGHT, windowHeight),
   );
-  const confirmationPanelHeight = Math.min(
-    CONFIRMATION_HEADER_HEIGHT,
-    Math.max(COLLAPSED_HEADER_HEIGHT, windowHeight),
+  const viewportConfirmationHeight = Math.max(
+    COLLAPSED_HEADER_HEIGHT,
+    windowHeight,
   );
+  const compactConfirmationHeight = Math.min(
+    viewportConfirmationHeight,
+    Math.max(
+      COLLAPSED_HEADER_HEIGHT,
+      insets.top + insets.bottom + 320,
+    ),
+  );
+  // A simple loading/error state should wrap its content. The manual fallback
+  // and a usable preview can exceed that space, so they receive the complete
+  // viewport and stay scrollable instead of being clipped.
+  const confirmationPanelHeight =
+    manualFallbackVisible || previewStatus === "success"
+      ? viewportConfirmationHeight
+      : compactConfirmationHeight;
 
   useEffect(() => {
     let active = true;
@@ -713,6 +726,19 @@ export default function SearchPreferencesScreen() {
     expandedPanelHeight,
     panelHeight,
   ]);
+
+  useEffect(() => {
+    if (!isConfirmationVisible) return;
+
+    const animation = Animated.timing(panelHeight, {
+      duration: 220,
+      easing: Easing.out(Easing.cubic),
+      toValue: confirmationPanelHeight,
+      useNativeDriver: false,
+    });
+    animation.start();
+    return () => animation.stop();
+  }, [confirmationPanelHeight, isConfirmationVisible, panelHeight]);
 
   useEffect(() => {
     if (!useCurrentLocation) return;
@@ -1748,15 +1774,26 @@ export default function SearchPreferencesScreen() {
               },
             ]}
           >
-            <ScrollView
-              contentContainerStyle={[
-                styles.confirmationScrollContent,
-                { paddingTop: Math.max(insets.top + 20, 34) },
-              ]}
-              keyboardShouldPersistTaps="handled"
-              showsVerticalScrollIndicator
-              style={styles.confirmationScroll}
+            <KeyboardAvoidingView
+              behavior={Platform.OS === "ios" ? "padding" : "height"}
+              style={styles.confirmationKeyboardAvoiding}
             >
+              <DismissKeyboardView style={styles.confirmationDismissLayer}>
+                <ScrollView
+                  automaticallyAdjustKeyboardInsets
+                  contentContainerStyle={[
+                    styles.confirmationScrollContent,
+                    {
+                      paddingBottom: Math.max(insets.bottom + 24, 40),
+                      paddingTop: Math.max(insets.top + 20, 34),
+                    },
+                  ]}
+                  keyboardDismissMode="on-drag"
+                  keyboardShouldPersistTaps="handled"
+                  showsVerticalScrollIndicator
+                  style={styles.confirmationScroll}
+                >
+                  <View style={styles.confirmationBody}>
               <Text style={styles.confirmationTitle}>{copy.confirmationTitle}</Text>
               <Text style={styles.confirmationExpiry}>
                 {copy.confirmationExpiry} {preview ? formatPreviewExpiry(preview, language) : copy.expiryFallback}
@@ -2011,25 +2048,23 @@ export default function SearchPreferencesScreen() {
                 </>
               ) : null}
 
-            </ScrollView>
-            <View
-              style={[
-                styles.confirmationFooter,
-                { paddingBottom: Math.max(insets.bottom, 14) },
-              ]}
-            >
-              <Button
-                accessibilityLabel={copy.backToFilters}
-                iconLeft={<MaterialIcons color={colors.brand.gold} name="arrow-back" size={18} />}
-                onPress={showFilters}
-                size="sm"
-                style={styles.backButton}
-                textStyle={styles.backButtonText}
-                variant="secondary"
-              >
-                {copy.back}
-              </Button>
-            </View>
+                  </View>
+                  <View style={styles.confirmationFooter}>
+                    <Button
+                      accessibilityLabel={copy.backToFilters}
+                      iconLeft={<MaterialIcons color={colors.brand.gold} name="arrow-back" size={18} />}
+                      onPress={showFilters}
+                      size="sm"
+                      style={styles.backButton}
+                      textStyle={styles.backButtonText}
+                      variant="secondary"
+                    >
+                      {copy.back}
+                    </Button>
+                  </View>
+                </ScrollView>
+              </DismissKeyboardView>
+            </KeyboardAvoidingView>
           </Animated.View>
         )}
 
@@ -2277,13 +2312,21 @@ export default function SearchPreferencesScreen() {
 
 const styles = StyleSheet.create({
   confirmationScrollContent: {
-    flexGrow: 1,
     alignItems: "center",
     paddingHorizontal: 24,
-    paddingBottom: 24,
   },
   confirmationScroll: {
     flex: 1,
+  },
+  confirmationKeyboardAvoiding: {
+    flex: 1,
+  },
+  confirmationDismissLayer: {
+    flex: 1,
+  },
+  confirmationBody: {
+    width: "100%",
+    alignItems: "center",
   },
   categorySelectionLabel: {
     width: "100%",
@@ -2751,11 +2794,11 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
   confirmationFooter: {
-    flexShrink: 0,
+    width: "100%",
     alignItems: "flex-start",
+    marginTop: spacing.xl,
     paddingHorizontal: 24,
-    paddingTop: 8,
-    backgroundColor: colors.brand.sky,
+    paddingTop: 4,
   },
   backButton: {
     width: 110,
