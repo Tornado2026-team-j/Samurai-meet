@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { buildRecruitmentPreview } from "../mocks/recruitment";
+import { buildRecruitmentPreviewModel } from "../services/recruitment-preview";
 import {
 	closeRecruitment,
 	classifyRecruitmentDescription,
@@ -124,7 +124,7 @@ describe("募集APIクライアント", () => {
       participantLimit: 1,
       distanceKm: 3 as const,
     };
-    const preview = buildRecruitmentPreview(draft, "Food");
+    const preview = buildRecruitmentPreviewModel(draft, "Food");
     const coordinates = { latitude: 35.68, longitude: 139.76, accuracy_m: 12 };
 
     await saveRecruitmentDraft(draft, preview, session, coordinates);
@@ -282,5 +282,12 @@ describe("募集APIクライアント", () => {
       tags: ["local", "culture"],
       expiresAt: "2026/08/27",
     });
+  });
+
+  it("募集期限の日付をJSTのカレンダー日で表示する", () => {
+    expect(recruitmentToMatchCard({
+      ...recruitment,
+      expires_at: "2026-08-27T15:00:00Z",
+    }).expiresAt).toBe("2026/08/28");
   });
 });

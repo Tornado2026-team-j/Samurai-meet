@@ -48,6 +48,7 @@ import {
   formatRecruitmentDateInput,
   formatRecruitmentISODate,
   getRecruitmentScheduleIssue,
+  parseRecruitmentKeywordInput,
   parseRecruitmentDateInput,
   publishRecruitment,
   recruitmentDateTimeToInstant,
@@ -57,6 +58,10 @@ import {
   type RecruitmentSelection,
   type RecruitmentScheduleIssue,
 } from "../../services/recruitment";
+import {
+  buildManualRecruitmentPreviewModel,
+  isManualRecruitmentPreview,
+} from "../../services/recruitment-preview";
 import type {
   RecruitmentDistanceKm,
   RecruitmentDraft,
@@ -72,7 +77,6 @@ const PLACEHOLDER_GRAY = "#949494";
 const BORDER_GRAY = "#d4d4d4";
 const COLLAPSED_HEADER_HEIGHT = 156;
 const EXPANDED_HEADER_HEIGHT = 724;
-const CONFIRMATION_HEADER_HEIGHT = 542;
 const EXPANSION_DURATION = 360;
 const RECRUITMENT_CATEGORIES = MATCH_CATEGORIES;
 const MIN_DURATION_HOURS = 0.5;
@@ -156,9 +160,23 @@ const RECRUITMENT_COPY = {
       "The selected duration crosses midnight. Choose an earlier time or shorter duration.",
     invalidDetails: "Check the recruitment details.",
     previewError: "Preview could not be prepared. Please try again.",
-		classificationUnavailable: "Automatic category selection is not available yet. Please try again later.",
-		classificationRateLimited: "Please wait a moment before checking the category again.",
-		classificationFailed: "We could not determine a guide category. Please reword the activity and try again.",
+    classificationUnavailable: "Automatic category selection is not available yet. Please try again later.",
+    classificationRateLimited: "Please wait a moment before checking the category again.",
+    classificationFailed: "We could not determine a guide category. Please reword the activity and try again.",
+    manualFallbackTitle: "Choose the category and keywords yourself",
+    manualFallbackHint:
+      "Automatic classification is temporarily unavailable. Select one category and enter at least one keyword to continue.",
+    manualKeywordsLabel: "Your keywords",
+    manualKeywordsPlaceholder: "e.g. ramen, Osaka",
+    manualKeywordsHint: "Use commas between 1 and 5 keywords (up to 80 characters each).",
+    manualCategoryRequired: "Select one guide category.",
+    manualKeywordsRequired: "Enter at least one keyword.",
+    manualKeywordsTooMany: "Enter no more than 5 keywords.",
+    manualKeywordTooLong: "Each keyword must be 80 characters or fewer.",
+    manualKeywordInvalid: "Remove control characters from the keywords.",
+    manualPreview: "CREATE PREVIEW WITH MY CHOICES",
+    manualPreviewCreating: "Creating preview...",
+    useManualFallback: "CHOOSE MANUALLY",
     requestTimeout:
       "The server request timed out. Check your connection and try again.",
     expiredSession: "Your session expired. Sign in again on this API environment.",
@@ -251,9 +269,23 @@ const RECRUITMENT_COPY = {
       "所要時間が日付をまたぎます。早い時刻または短い所要時間を選択してください。",
     invalidDetails: "募集内容を確認してください。",
     previewError: "プレビューを作成できませんでした。もう一度お試しください。",
-		classificationUnavailable: "案内カテゴリの自動判定を準備中です。しばらくしてからもう一度お試しください。",
-		classificationRateLimited: "カテゴリを再判定する前に少しお待ちください。",
-		classificationFailed: "案内カテゴリを判定できませんでした。したいことを少し言い換えてもう一度お試しください。",
+    classificationUnavailable: "案内カテゴリの自動判定を準備中です。しばらくしてからもう一度お試しください。",
+    classificationRateLimited: "カテゴリを再判定する前に少しお待ちください。",
+    classificationFailed: "案内カテゴリを判定できませんでした。したいことを少し言い換えてもう一度お試しください。",
+    manualFallbackTitle: "カテゴリとキーワードを手動で選択",
+    manualFallbackHint:
+      "自動判定が一時的に利用できません。カテゴリを1つ選び、キーワードを1つ以上入力すると続行できます。",
+    manualKeywordsLabel: "キーワード",
+    manualKeywordsPlaceholder: "例：ラーメン、大阪",
+    manualKeywordsHint: "1〜5個をカンマ区切りで入力してください（1個80文字以内）。",
+    manualCategoryRequired: "案内カテゴリーを1つ選択してください。",
+    manualKeywordsRequired: "キーワードを1つ以上入力してください。",
+    manualKeywordsTooMany: "キーワードは5個以内で入力してください。",
+    manualKeywordTooLong: "キーワードは1個80文字以内で入力してください。",
+    manualKeywordInvalid: "キーワードから制御文字を削除してください。",
+    manualPreview: "選択内容でプレビューを作成",
+    manualPreviewCreating: "プレビューを作成中…",
+    useManualFallback: "手動で選択する",
     requestTimeout:
       "サーバーへのリクエストがタイムアウトしました。接続を確認してもう一度お試しください。",
     expiredSession: "セッションの有効期限が切れました。このAPI環境で再度ログインしてください。",
@@ -305,6 +337,8 @@ function recruitmentInputMessage(
       return copy.pastDate;
     case "recruitment_must_end_same_day":
       return copy.crossesMidnight;
+    case "recruitment_keywords_required":
+      return copy.manualKeywordsRequired;
     default:
       return null;
   }
@@ -323,6 +357,23 @@ function recruitmentPreviewMessage(error: unknown, language: AppLanguage): strin
 		default:
 			return copy.previewError;
 	}
+}
+
+function manualKeywordMessage(error: unknown, language: AppLanguage): string {
+  const copy = RECRUITMENT_COPY[language];
+  if (!(error instanceof Error)) return copy.manualKeywordsRequired;
+
+  switch (error.message) {
+    case "recruitment_keyword_too_many":
+      return copy.manualKeywordsTooMany;
+    case "recruitment_keyword_too_long":
+      return copy.manualKeywordTooLong;
+    case "recruitment_keyword_invalid":
+      return copy.manualKeywordInvalid;
+    case "recruitment_keywords_required":
+    default:
+      return copy.manualKeywordsRequired;
+  }
 }
 
 function safeParseRecruitmentDate(value: string, fallback: Date): Date {
@@ -543,7 +594,13 @@ export default function SearchPreferencesScreen() {
   const [savedDraftID, setSavedDraftID] = useState<string | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<MatchCategory | null>(null);
   const [selectedKeywords, setSelectedKeywords] = useState<string[]>([]);
+  const [manualFallbackVisible, setManualFallbackVisible] = useState(false);
+  const [manualCategory, setManualCategory] = useState<MatchCategory | null>(null);
+  const [manualKeywordsInput, setManualKeywordsInput] = useState("");
+  const [manualFallbackError, setManualFallbackError] = useState<string | null>(null);
+  const [manualPreviewStatus, setManualPreviewStatus] = useState<"idle" | "creating">("idle");
   const previewRequestRef = useRef<AbortController | null>(null);
+  const manualPreviewRequestRef = useRef(0);
   const panelHeight = useMemo(
     () => new Animated.Value(COLLAPSED_HEADER_HEIGHT),
     [],
@@ -574,10 +631,24 @@ export default function SearchPreferencesScreen() {
     EXPANDED_HEADER_HEIGHT,
     Math.max(COLLAPSED_HEADER_HEIGHT, windowHeight),
   );
-  const confirmationPanelHeight = Math.min(
-    CONFIRMATION_HEADER_HEIGHT,
-    Math.max(COLLAPSED_HEADER_HEIGHT, windowHeight),
+  const viewportConfirmationHeight = Math.max(
+    COLLAPSED_HEADER_HEIGHT,
+    windowHeight,
   );
+  const compactConfirmationHeight = Math.min(
+    viewportConfirmationHeight,
+    Math.max(
+      COLLAPSED_HEADER_HEIGHT,
+      insets.top + insets.bottom + 320,
+    ),
+  );
+  // A simple loading/error state should wrap its content. The manual fallback
+  // and a usable preview can exceed that space, so they receive the complete
+  // viewport and stay scrollable instead of being clipped.
+  const confirmationPanelHeight =
+    manualFallbackVisible || previewStatus === "success"
+      ? viewportConfirmationHeight
+      : compactConfirmationHeight;
 
   useEffect(() => {
     let active = true;
@@ -655,6 +726,19 @@ export default function SearchPreferencesScreen() {
     expandedPanelHeight,
     panelHeight,
   ]);
+
+  useEffect(() => {
+    if (!isConfirmationVisible) return;
+
+    const animation = Animated.timing(panelHeight, {
+      duration: 220,
+      easing: Easing.out(Easing.cubic),
+      toValue: confirmationPanelHeight,
+      useNativeDriver: false,
+    });
+    animation.start();
+    return () => animation.stop();
+  }, [confirmationPanelHeight, isConfirmationVisible, panelHeight]);
 
   useEffect(() => {
     if (!useCurrentLocation) return;
@@ -1015,11 +1099,17 @@ export default function SearchPreferencesScreen() {
 
   const loadPreview = async (draft = createDraft()) => {
     previewRequestRef.current?.abort();
+    manualPreviewRequestRef.current += 1;
     const controller = new AbortController();
     previewRequestRef.current = controller;
     setPreview(null);
     setPreviewError(null);
     setPublishError(null);
+    setManualFallbackVisible(false);
+    setManualCategory(null);
+    setManualKeywordsInput("");
+    setManualFallbackError(null);
+    setManualPreviewStatus("idle");
     setPreviewStatus("loading");
 
 	try {
@@ -1061,6 +1151,69 @@ export default function SearchPreferencesScreen() {
     } finally {
       if (previewRequestRef.current === controller) {
         previewRequestRef.current = null;
+      }
+    }
+  };
+
+  const createManualPreview = async () => {
+    if (manualPreviewStatus === "creating") return;
+
+    const category = manualCategory;
+    if (!category) {
+      setManualFallbackError(RECRUITMENT_COPY[language].manualCategoryRequired);
+      return;
+    }
+
+    let keywords: string[];
+    try {
+      keywords = parseRecruitmentKeywordInput(manualKeywordsInput);
+    } catch (error) {
+      setManualFallbackError(manualKeywordMessage(error, language));
+      return;
+    }
+
+    previewRequestRef.current?.abort();
+    previewRequestRef.current = null;
+    const requestID = manualPreviewRequestRef.current + 1;
+    manualPreviewRequestRef.current = requestID;
+    setManualPreviewStatus("creating");
+    setManualFallbackError(null);
+
+    try {
+      const draft = createDraft();
+      const result = buildManualRecruitmentPreviewModel(draft, category, keywords);
+      const activeSession = getCurrentSession() ?? session;
+      const localProfile = activeSession
+        ? await loadLocalProfile(activeSession.user_id)
+        : null;
+      const personalizedResult = localProfile && activeSession
+        ? {
+            ...result,
+            author: {
+              ...result.author,
+              id: activeSession.user_id,
+              displayName: localProfile.name,
+              countryCode: localProfile.nationalityCode,
+            },
+          }
+        : result;
+
+      if (manualPreviewRequestRef.current !== requestID) return;
+      setPreview(personalizedResult);
+      setPreviewError(null);
+      setSelectedCategory(category);
+      setSelectedKeywords(keywords);
+      setDraftSaveStatus("idle");
+      setDraftSaveError(null);
+      setPublishError(null);
+      setManualFallbackVisible(false);
+      setPreviewStatus("success");
+    } catch (error) {
+      if (manualPreviewRequestRef.current !== requestID) return;
+      setManualFallbackError(manualKeywordMessage(error, language));
+    } finally {
+      if (manualPreviewRequestRef.current === requestID) {
+        setManualPreviewStatus("idle");
       }
     }
   };
@@ -1232,6 +1385,7 @@ export default function SearchPreferencesScreen() {
 
   const showFilters = () => {
     previewRequestRef.current?.abort();
+    manualPreviewRequestRef.current += 1;
     setScheduleWarning(null);
     setFormError(null);
     Animated.parallel([
@@ -1272,6 +1426,11 @@ export default function SearchPreferencesScreen() {
         setPreviewError(null);
         setPublishError(null);
         setFormError(null);
+        setManualFallbackVisible(false);
+        setManualCategory(null);
+        setManualKeywordsInput("");
+        setManualFallbackError(null);
+        setManualPreviewStatus("idle");
         setPreviewStatus("idle");
         setPublishStatus("idle");
       }
@@ -1615,15 +1774,26 @@ export default function SearchPreferencesScreen() {
               },
             ]}
           >
-            <ScrollView
-              contentContainerStyle={[
-                styles.confirmationScrollContent,
-                { paddingTop: Math.max(insets.top + 20, 34) },
-              ]}
-              keyboardShouldPersistTaps="handled"
-              showsVerticalScrollIndicator
-              style={styles.confirmationScroll}
+            <KeyboardAvoidingView
+              behavior={Platform.OS === "ios" ? "padding" : "height"}
+              style={styles.confirmationKeyboardAvoiding}
             >
+              <DismissKeyboardView style={styles.confirmationDismissLayer}>
+                <ScrollView
+                  automaticallyAdjustKeyboardInsets
+                  contentContainerStyle={[
+                    styles.confirmationScrollContent,
+                    {
+                      paddingBottom: Math.max(insets.bottom + 24, 40),
+                      paddingTop: Math.max(insets.top + 20, 34),
+                    },
+                  ]}
+                  keyboardDismissMode="on-drag"
+                  keyboardShouldPersistTaps="handled"
+                  showsVerticalScrollIndicator
+                  style={styles.confirmationScroll}
+                >
+                  <View style={styles.confirmationBody}>
               <Text style={styles.confirmationTitle}>{copy.confirmationTitle}</Text>
               <Text style={styles.confirmationExpiry}>
                 {copy.confirmationExpiry} {preview ? formatPreviewExpiry(preview, language) : copy.expiryFallback}
@@ -1642,6 +1812,22 @@ export default function SearchPreferencesScreen() {
                     <Button onPress={() => void loadPreview()} size="sm" style={styles.retryButton} textStyle={styles.retryButtonText} variant="secondary">
                       {copy.tryAgain}
                     </Button>
+                    {!manualFallbackVisible ? (
+                      <Button
+                        onPress={() => {
+                          setManualFallbackVisible(true);
+                          setManualCategory(null);
+                          setManualKeywordsInput("");
+                          setManualFallbackError(null);
+                        }}
+                        size="sm"
+                        style={styles.manualFallbackOpenButton}
+                        textStyle={styles.manualFallbackOpenButtonText}
+                        variant="secondary"
+                      >
+                        {copy.useManualFallback}
+                      </Button>
+                    ) : null}
                   </View>
                 )}
 
@@ -1679,6 +1865,98 @@ export default function SearchPreferencesScreen() {
                 )}
               </Card>
 
+              {previewStatus === "error" && manualFallbackVisible ? (
+                <View style={styles.manualFallbackPanel}>
+                  <Text style={styles.manualFallbackTitle}>{copy.manualFallbackTitle}</Text>
+                  <Text style={styles.manualFallbackHint}>{copy.manualFallbackHint}</Text>
+                  <Text style={styles.manualFallbackLabel}>{copy.categoryLabel}</Text>
+                  <View
+                    accessibilityLabel={copy.categoryLabel}
+                    accessibilityRole="radiogroup"
+                    style={styles.manualCategoryRow}
+                  >
+                    {RECRUITMENT_CATEGORIES.map((category) => {
+                      const selected = manualCategory === category;
+                      return (
+                        <Pressable
+                          key={category}
+                          accessibilityLabel={category}
+                          accessibilityRole="radio"
+                          accessibilityState={{ selected }}
+                          onPress={() => {
+                            setManualCategory(category);
+                            setManualFallbackError(null);
+                          }}
+                          style={({ pressed }) => [
+                            styles.categorySelectionButton,
+                            selected && styles.categorySelectionButtonSelected,
+                            pressed && styles.pressed,
+                          ]}
+                        >
+                          <Text
+                            adjustsFontSizeToFit
+                            minimumFontScale={0.8}
+                            numberOfLines={1}
+                            style={[
+                              styles.categorySelectionText,
+                              selected && styles.categorySelectionTextSelected,
+                            ]}
+                          >
+                            {category}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+
+                  <Text style={styles.manualFallbackLabel}>{copy.manualKeywordsLabel}</Text>
+                  <TextInput
+                    accessibilityLabel={copy.manualKeywordsLabel}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    blurOnSubmit
+                    onChangeText={(value) => {
+                      setManualKeywordsInput(value);
+                      setManualFallbackError(null);
+                    }}
+                    placeholder={copy.manualKeywordsPlaceholder}
+                    placeholderTextColor={PLACEHOLDER_GRAY}
+                    returnKeyType="done"
+                    style={styles.manualKeywordsInput}
+                    value={manualKeywordsInput}
+                  />
+                  <Text style={styles.manualFallbackHint}>{copy.manualKeywordsHint}</Text>
+                  {manualFallbackError ? (
+                    <Text accessibilityRole="alert" style={styles.manualFallbackError}>
+                      {manualFallbackError}
+                    </Text>
+                  ) : null}
+                  <Button
+                    accessibilityLabel={
+                      manualPreviewStatus === "creating"
+                        ? copy.manualPreviewCreating
+                        : copy.manualPreview
+                    }
+                    accessibilityState={{
+                      disabled:
+                        manualPreviewStatus === "creating" || !manualCategory,
+                      busy: manualPreviewStatus === "creating",
+                    }}
+                    disabled={manualPreviewStatus === "creating" || !manualCategory}
+                    loading={manualPreviewStatus === "creating"}
+                    onPress={() => void createManualPreview()}
+                    size="sm"
+                    style={styles.manualPreviewButton}
+                    textStyle={styles.manualPreviewButtonText}
+                    variant="secondary"
+                  >
+                    {manualPreviewStatus === "creating"
+                      ? copy.manualPreviewCreating
+                      : copy.manualPreview}
+                  </Button>
+                </View>
+              ) : null}
+
               {previewStatus === "success" && preview ? (
                 <>
                   <Text style={styles.categorySelectionLabel}>{copy.categoryLabel}</Text>
@@ -1698,17 +1976,19 @@ export default function SearchPreferencesScreen() {
                   <View style={styles.keywordSelectionRow}>
                     {preview.tags.map((tag) => {
                       const selected = selectedKeywords.includes(tag);
+                      const manualKeywordLocked =
+                        isManualRecruitmentPreview(preview) &&
+                        selected &&
+                        selectedKeywords.length === 1;
                       return (
-                        <Pressable key={tag} accessibilityLabel={translatePreviewTag(tag, language)} accessibilityRole="checkbox" accessibilityState={{ checked: selected }} onPress={() => setSelectedKeywords((current) => selected ? current.filter((keyword) => keyword !== tag) : [...current, tag])} style={({ pressed }) => [styles.keywordSelectionButton, selected && styles.keywordSelectionButtonSelected, pressed && styles.pressed]}>
+                        <Pressable key={tag} accessibilityLabel={translatePreviewTag(tag, language)} accessibilityRole="checkbox" accessibilityState={{ checked: selected, disabled: manualKeywordLocked }} disabled={manualKeywordLocked} onPress={() => setSelectedKeywords((current) => selected ? current.filter((keyword) => keyword !== tag) : [...current, tag])} style={({ pressed }) => [styles.keywordSelectionButton, selected && styles.keywordSelectionButtonSelected, manualKeywordLocked && styles.keywordSelectionButtonDisabled, pressed && styles.pressed]}>
                           <Text adjustsFontSizeToFit minimumFontScale={0.8} numberOfLines={1} style={[styles.keywordSelectionText, selected && styles.keywordSelectionTextSelected]}>{translatePreviewTag(tag, language)}</Text>
                         </Pressable>
                       );
                     })}
                   </View>
-                </>
-              ) : null}
 
-              <Button
+                  <Button
                 accessibilityLabel={draftSaveStatus === "saving" ? copy.savingDraft : copy.saveDraft}
                 accessibilityState={{
                   disabled:
@@ -1765,26 +2045,26 @@ export default function SearchPreferencesScreen() {
                   {publishError}
                 </Text>
               ) : null}
+                </>
+              ) : null}
 
-            </ScrollView>
-            <View
-              style={[
-                styles.confirmationFooter,
-                { paddingBottom: Math.max(insets.bottom, 14) },
-              ]}
-            >
-              <Button
-                accessibilityLabel={copy.backToFilters}
-                iconLeft={<MaterialIcons color={colors.brand.gold} name="arrow-back" size={18} />}
-                onPress={showFilters}
-                size="sm"
-                style={styles.backButton}
-                textStyle={styles.backButtonText}
-                variant="secondary"
-              >
-                {copy.back}
-              </Button>
-            </View>
+                  </View>
+                  <View style={styles.confirmationFooter}>
+                    <Button
+                      accessibilityLabel={copy.backToFilters}
+                      iconLeft={<MaterialIcons color={colors.brand.gold} name="arrow-back" size={18} />}
+                      onPress={showFilters}
+                      size="sm"
+                      style={styles.backButton}
+                      textStyle={styles.backButtonText}
+                      variant="secondary"
+                    >
+                      {copy.back}
+                    </Button>
+                  </View>
+                </ScrollView>
+              </DismissKeyboardView>
+            </KeyboardAvoidingView>
           </Animated.View>
         )}
 
@@ -2032,13 +2312,21 @@ export default function SearchPreferencesScreen() {
 
 const styles = StyleSheet.create({
   confirmationScrollContent: {
-    flexGrow: 1,
     alignItems: "center",
     paddingHorizontal: 24,
-    paddingBottom: 24,
   },
   confirmationScroll: {
     flex: 1,
+  },
+  confirmationKeyboardAvoiding: {
+    flex: 1,
+  },
+  confirmationDismissLayer: {
+    flex: 1,
+  },
+  confirmationBody: {
+    width: "100%",
+    alignItems: "center",
   },
   categorySelectionLabel: {
     width: "100%",
@@ -2116,6 +2404,9 @@ const styles = StyleSheet.create({
   keywordSelectionButtonSelected: {
     backgroundColor: '#F2C94C',
     borderColor: '#F2C94C',
+  },
+  keywordSelectionButtonDisabled: {
+    opacity: opacity.disabled,
   },
   keywordSelectionText: {
     flexShrink: 1,
@@ -2346,6 +2637,81 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     gap: 10,
   },
+  manualFallbackOpenButton: {
+    minWidth: 120,
+    minHeight: 30,
+    borderColor: colors.brand.gold,
+    borderRadius: radius.pill,
+    backgroundColor: colors.surface.default,
+  },
+  manualFallbackOpenButtonText: {
+    color: colors.brand.gold,
+    ...typography.micro,
+    fontWeight: "900",
+  },
+  manualFallbackPanel: {
+    width: "100%",
+    maxWidth: 340,
+    marginTop: 18,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: colors.brand.sky,
+    borderRadius: radius.lg,
+    backgroundColor: colors.surface.blueSoft,
+  },
+  manualFallbackTitle: {
+    color: colors.text.secondary,
+    ...typography.smallStrong,
+    lineHeight: 17,
+  },
+  manualFallbackHint: {
+    marginTop: 6,
+    color: colors.text.secondary,
+    ...typography.micro,
+    lineHeight: 15,
+  },
+  manualFallbackLabel: {
+    marginTop: 14,
+    marginBottom: 7,
+    color: colors.text.secondary,
+    ...typography.smallStrong,
+  },
+  manualCategoryRow: {
+    width: "100%",
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  manualKeywordsInput: {
+    width: "100%",
+    minHeight: 42,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderWidth: 1,
+    borderColor: colors.border.default,
+    borderRadius: radius.sm,
+    backgroundColor: colors.surface.default,
+    color: colors.text.secondary,
+    ...typography.small,
+  },
+  manualFallbackError: {
+    marginTop: 8,
+    color: colors.border.dangerStrong,
+    ...typography.micro,
+    lineHeight: 15,
+  },
+  manualPreviewButton: {
+    width: "100%",
+    minHeight: 40,
+    marginTop: 14,
+    borderColor: colors.brand.sky,
+    borderRadius: radius.pill,
+  },
+  manualPreviewButtonText: {
+    color: colors.brand.sky,
+    ...typography.small,
+    fontWeight: "900",
+  },
   previewError: {
     color: colors.text.secondary,
     ...typography.small,
@@ -2428,11 +2794,11 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
   confirmationFooter: {
-    flexShrink: 0,
+    width: "100%",
     alignItems: "flex-start",
+    marginTop: spacing.xl,
     paddingHorizontal: 24,
-    paddingTop: 8,
-    backgroundColor: colors.brand.sky,
+    paddingTop: 4,
   },
   backButton: {
     width: 110,

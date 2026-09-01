@@ -1,4 +1,3 @@
-import * as Crypto from 'expo-crypto';
 import * as Linking from 'expo-linking';
 import * as SecureStore from 'expo-secure-store';
 import * as WebBrowser from 'expo-web-browser';
@@ -21,6 +20,7 @@ import {
 import { API_BASE_URL, WEB_APP_ORIGIN, WEB_PASSKEY_URL } from './api-config';
 import { completeWebPasskey, reauthWebPasskey } from './passkey-web';
 import type { AppLanguage } from './onboarding-contract';
+import { secureRandomUUID, sha256Base64 } from './runtime-crypto';
 
 export { buildPasskeyURL, encodeBase64URL, isPasskeyBootstrap, isPreAuth, isStoredSession, storedSession } from './auth-contract';
 export { API_BASE_URL, WEB_APP_ORIGIN, WEB_PASSKEY_URL } from './api-config';
@@ -179,7 +179,7 @@ export async function clearAuthStorage(): Promise<void> {
 }
 
 async function refreshStoredSession(value: StoredSession): Promise<Session> {
-  const requestID = (await getStoredItem(REFRESH_REQUEST_KEY)) ?? Crypto.randomUUID();
+  const requestID = (await getStoredItem(REFRESH_REQUEST_KEY)) ?? await secureRandomUUID();
   await setStoredItem(REFRESH_REQUEST_KEY, requestID);
   const response = await request<SessionResponse>('/auth/refresh', {
     method: 'POST',
@@ -284,8 +284,8 @@ export async function refreshSession(session: Session): Promise<Session> {
   return pending;
 }
 
-export function createVerifier(): string {
-  return `${Crypto.randomUUID()}${Crypto.randomUUID()}`;
+export async function createVerifier(): Promise<string> {
+  return `${await secureRandomUUID()}${await secureRandomUUID()}`;
 }
 
 function authRedirectURI(): string {
@@ -304,10 +304,8 @@ export function parseAuthRedirect(value: string): AuthRedirect {
 }
 
 export async function beginGoogleLogin(): Promise<AuthSnapshot | null> {
-  const verifier = createVerifier();
-  const digest = await Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, verifier, {
-    encoding: Crypto.CryptoEncoding.BASE64,
-  });
+  const verifier = await createVerifier();
+  const digest = sha256Base64(verifier);
   const challenge = encodeBase64URL(digest);
   const redirectURI = authRedirectURI();
   await setStoredItem(OAUTH_VERIFIER_KEY, verifier);
@@ -327,7 +325,7 @@ async function completeAuthRedirectInternal(redirect: AuthRedirect): Promise<Aut
 
   if (redirect.sessionHandoffCode) {
     if (!sessionHandoffVerifier) throw new Error('session handoff verifier is missing');
-    const sessionHandoffRequestID = (await getStoredItem(SESSION_HANDOFF_REQUEST_KEY)) ?? Crypto.randomUUID();
+    const sessionHandoffRequestID = (await getStoredItem(SESSION_HANDOFF_REQUEST_KEY)) ?? await secureRandomUUID();
     await setStoredItem(SESSION_HANDOFF_REQUEST_KEY, sessionHandoffRequestID);
     const response = await request<SessionResponse>('/auth/session-handoff/exchange', {
       method: 'POST',
@@ -405,10 +403,8 @@ export async function beginPasskey(
 
   const currentSession = session ? await refreshSession(session) : null;
 
-  const verifier = createVerifier();
-  const digest = await Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, verifier, {
-    encoding: Crypto.CryptoEncoding.BASE64,
-  });
+  const verifier = await createVerifier();
+  const digest = sha256Base64(verifier);
   const challenge = encodeBase64URL(digest);
   const redirectURI = authRedirectURI();
   const scope = preAuth

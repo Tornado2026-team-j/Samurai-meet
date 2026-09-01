@@ -279,6 +279,9 @@ func (s *Service) SearchRecruitments(ctx context.Context, userID string, params 
 		params.Latitude, params.Longitude = s.currentLocation(ctx, userID, now)
 	}
 	nowText := now.UTC().Format(time.RFC3339Nano)
+	// Keyword, date/time, identity, and distance matching is finalized below
+	// in Go. Do not cap this candidate query before those filters run: doing so
+	// would make the page boundary depend on unrelated newer cards.
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT r.id, r.owner_user_id, r.category, COALESCE(p.name,''),
 		       COALESCE(p.nationality_code,''), r.available_date, r.start_time,
@@ -298,8 +301,7 @@ func (s *Service) SearchRecruitments(ctx context.Context, userID string, params 
 				WHERE (b.blocker_user_id = $1 AND b.blocked_user_id = r.owner_user_id)
 				   OR (b.blocker_user_id = r.owner_user_id AND b.blocked_user_id = $1)
 		  )
-		ORDER BY r.created_at DESC
-		LIMIT $3`, userID, nowText, maxSearchLimit)
+		ORDER BY r.created_at DESC`, userID, nowText)
 	if err != nil {
 		return nil, err
 	}
@@ -899,6 +901,26 @@ func (s *Service) AcceptMatch(ctx context.Context, userID, matchID string, now t
 		return Match{}, err
 	}
 	defer tx.Rollback()
+
+	// Every acceptance for a recruitment must serialize on the recruitment
+	// row, not only on its individual match row. Otherwise two different
+	// pending matches can both observe the same accepted count and exceed the
+	// participant limit. Lock the card first so this path has the same lock
+	// order as SendInterest, then lock the individual match below.
+	var recruitmentID string
+	if err = tx.QueryRowContext(ctx, `
+		SELECT card_id FROM matches WHERE id=$1`, matchID).Scan(&recruitmentID); errors.Is(err, sql.ErrNoRows) {
+		return Match{}, ErrMatchNotFound
+	} else if err != nil {
+		return Match{}, err
+	}
+	if err = tx.QueryRowContext(ctx, `
+		SELECT id FROM recruitment_cards WHERE id=$1 FOR UPDATE`, recruitmentID).Scan(&recruitmentID); errors.Is(err, sql.ErrNoRows) {
+		return Match{}, ErrMatchNotFound
+	} else if err != nil {
+		return Match{}, err
+	}
+
 	var match Match
 	var ownerID, requesterID, expiresAt, cardStatus, description string
 	var participantLimit int
@@ -907,7 +929,7 @@ func (s *Service) AcceptMatch(ctx context.Context, userID, matchID string, now t
 		SELECT m.id,m.card_id,m.owner_user_id,m.requester_user_id,m.status,
 		       m.matched_at,m.created_at,m.updated_at,r.expires_at,r.status,r.description,r.participant_limit
 		FROM matches m JOIN recruitment_cards r ON r.id=m.card_id
-		WHERE m.id=$1 FOR UPDATE`, matchID).Scan(
+		WHERE m.id=$1 FOR UPDATE OF m`, matchID).Scan(
 		&match.ID, &match.RecruitmentID, &ownerID, &requesterID, &match.Status,
 		&matchedAt, &match.CreatedAt, &match.UpdatedAt, &expiresAt, &cardStatus, &description, &participantLimit); errors.Is(err, sql.ErrNoRows) {
 		return Match{}, ErrMatchNotFound

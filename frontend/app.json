@@ -29,6 +29,12 @@
       "expo-notifications",
       "react-native-libsodium",
       [
+        "expo-image-picker",
+        {
+          "photosPermission": "Samurai Meet uses your photos to send encrypted chat attachments."
+        }
+      ],
+      [
         "expo-location",
         {
           "locationWhenInUsePermission": "Samurai Meet uses your location to find nearby recruitments."

@@ -2,14 +2,37 @@ import { gcm } from "@noble/ciphers/aes.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { utf8ToBytes } from "@noble/hashes/utils.js";
 import { API_BASE_URL } from "./api-config";
-import { requestAPI } from "./api-client";
+import { APIError, requestAPI } from "./api-client";
+import { fetchWithAutoRefresh } from "./authenticated-fetch";
 import type { Session } from "./auth-contract";
-import { fromBase64URL, randomBytes, toBase64URL } from "./crypto";
+import {
+  CHAT_ATTACHMENT_ALGORITHM,
+  CHAT_ATTACHMENT_KEY_VERSION,
+  CHAT_ATTACHMENT_MAX_BYTES,
+  CHAT_ATTACHMENT_WRAPPING_ALGORITHM,
+  decryptChatAttachmentBytes,
+  encryptChatAttachmentBytes,
+  fromBase64URL,
+  hashBytesHex,
+  isChatAttachmentContentType,
+  randomBytes,
+  toBase64URL,
+  unwrapChatAttachmentKey,
+  wrapChatAttachmentKey,
+  ensureChatAttachmentEncryptionAvailable,
+  type ChatAttachmentContentType,
+  type EncryptedChatAttachment,
+} from "./crypto";
+import type { DeviceKeyBundle } from "./key-management";
 
 const CHAT_ALGORITHM = "AES-256-GCM";
 const CHAT_KEY_VERSION = "chat-mvp-v1";
 const CHAT_AAD_PREFIX = "samurai-meet:chat-message:mvp-v1";
 const MAX_PLAINTEXT_LENGTH = 2000;
+
+async function loadDeviceKeyManagement() {
+  return import("./key-management");
+}
 
 type DataResponse<T> = { data?: T };
 
@@ -51,7 +74,9 @@ export type EncryptedChatMessage = {
   nonce: string;
   algorithm: typeof CHAT_ALGORITHM;
   key_version: string;
-  content_type?: "text" | "location";
+  content_type?: "text" | "location" | "image";
+  attachment_id?: string;
+  attachment?: ChatAttachment;
   expires_at?: string;
   created_at: string;
 };
@@ -67,6 +92,39 @@ export type ChatMessageView = EncryptedChatMessage & {
   location: ChatLocationPayload | null;
   locationExpired: boolean;
   mine: boolean;
+};
+
+export type ChatAttachment = {
+  id: string;
+  chat_id: string;
+  content_type: ChatAttachmentContentType;
+  size_bytes: number;
+  cipher_sha256: string;
+  nonce: string;
+  algorithm: typeof CHAT_ATTACHMENT_ALGORITHM;
+  key_version: typeof CHAT_ATTACHMENT_KEY_VERSION;
+  created_at: string;
+};
+
+export type ChatAttachmentKeyRecipient = {
+  user_id: string;
+  device_id: string;
+  key_version: "x25519-v1";
+  public_key: string;
+};
+
+export type ChatAttachmentKeyEnvelopeInput = {
+  user_id: string;
+  device_id: string;
+  key_version: "x25519-v1";
+  public_key: string;
+  algorithm: typeof CHAT_ATTACHMENT_WRAPPING_ALGORITHM;
+  envelope: string;
+};
+
+export type ChatImageSendResult = {
+  message: EncryptedChatMessage;
+  attachment: ChatAttachment;
 };
 
 export type ChatLocationPayload = {
@@ -340,6 +398,338 @@ export async function listChatMessages(
   return response.data;
 }
 
+function signedChatAPIPath(path: string): string {
+  const base = new URL(API_BASE_URL).pathname.replace(/\/+$/u, "");
+  return `${base}${path}`;
+}
+
+async function deviceAttachmentRequest(
+  path: string,
+  session: Session,
+  bundle: DeviceKeyBundle,
+  method: "GET" | "PUT" | "POST",
+  body?: Uint8Array,
+  headers: Record<string, string> = {},
+  signal?: AbortSignal,
+): Promise<Response> {
+  const { createDeviceProofHeaders } = await loadDeviceKeyManagement();
+  const proof = await createDeviceProofHeaders(
+    session,
+    bundle.device,
+    method,
+    signedChatAPIPath(path),
+    body ?? new Uint8Array(),
+  );
+  return fetchWithAutoRefresh(path, session, {
+    method,
+    headers: { ...proof, ...headers },
+    ...(body ? { body: body as unknown as BodyInit } : {}),
+    signal,
+  }, 60_000);
+}
+
+async function ensureChatDeviceAgreementKey(session: Session): Promise<DeviceKeyBundle> {
+  const { ensureDeviceAgreementKey } = await loadDeviceKeyManagement();
+  return ensureDeviceAgreementKey(session);
+}
+
+function attachmentResponseErrorCode(body: unknown): string {
+  if (!body || typeof body !== "object" || !("error" in body)) return "request_failed";
+  const code = (body as { error?: unknown }).error;
+  return typeof code === "string" && code ? code : "request_failed";
+}
+
+async function readAttachmentJSON<T>(response: Response): Promise<T> {
+  const text = await response.text();
+  let body: unknown = null;
+  try {
+    body = text ? JSON.parse(text) : null;
+  } catch {
+    body = null;
+  }
+  if (!response.ok) {
+    const data = body && typeof body === "object" && "data" in body
+      ? (body as { data?: unknown }).data
+      : undefined;
+    throw new APIError(response.status, attachmentResponseErrorCode(body), data);
+  }
+  return body as T;
+}
+
+function wipeDeviceBundle(bundle: DeviceKeyBundle): void {
+  bundle.device.keyB.fill(0);
+  bundle.agreement.privateKey.fill(0);
+}
+
+function isAttachmentNonce(value: string): boolean {
+  try {
+    return fromBase64URL(value).length === 12;
+  } catch {
+    return false;
+  }
+}
+
+function parseChatAttachment(value: unknown): ChatAttachment {
+  if (!value || typeof value !== "object") throw new Error("Invalid chat attachment response");
+  const candidate = value as Partial<ChatAttachment>;
+  const contentType = candidate.content_type;
+  const sizeBytes = candidate.size_bytes;
+  const cipherSHA256 = candidate.cipher_sha256;
+  const nonce = candidate.nonce;
+  if (typeof candidate.id !== "string" || !candidate.id
+    || typeof candidate.chat_id !== "string" || !candidate.chat_id
+    || typeof contentType !== "string" || !isChatAttachmentContentType(contentType)
+    || typeof sizeBytes !== "number" || !Number.isSafeInteger(sizeBytes) || sizeBytes < 16 || sizeBytes > CHAT_ATTACHMENT_MAX_BYTES
+    || typeof cipherSHA256 !== "string" || !/^[0-9a-f]{64}$/u.test(cipherSHA256)
+    || typeof nonce !== "string" || !isAttachmentNonce(nonce)
+    || candidate.algorithm !== CHAT_ATTACHMENT_ALGORITHM
+    || candidate.key_version !== CHAT_ATTACHMENT_KEY_VERSION
+    || typeof candidate.created_at !== "string") {
+    throw new Error("Invalid chat attachment response");
+  }
+  return candidate as ChatAttachment;
+}
+
+export function parseChatAttachmentRecipients(value: unknown): ChatAttachmentKeyRecipient[] {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 32) {
+    throw new Error("Invalid chat attachment recipient response");
+  }
+  return value.map((item) => {
+    if (!item || typeof item !== "object") throw new Error("Invalid chat attachment recipient response");
+    const candidate = item as Partial<ChatAttachmentKeyRecipient>;
+    if (typeof candidate.user_id !== "string" || !candidate.user_id
+      || typeof candidate.device_id !== "string" || !candidate.device_id
+      || candidate.key_version !== "x25519-v1" || typeof candidate.public_key !== "string") {
+      throw new Error("Invalid chat attachment recipient response");
+    }
+    try {
+      if (fromBase64URL(candidate.public_key).length !== 32) throw new Error("Invalid key");
+    } catch {
+      throw new Error("Invalid chat attachment recipient response");
+    }
+    return candidate as ChatAttachmentKeyRecipient;
+  });
+}
+
+export async function getChatAttachmentKeyRecipients(
+  chatID: string,
+  session: Session,
+  deviceBundle?: DeviceKeyBundle,
+  signal?: AbortSignal,
+): Promise<ChatAttachmentKeyRecipient[]> {
+  const bundle = deviceBundle ?? await ensureChatDeviceAgreementKey(session);
+  try {
+    const path = `/chats/${encodeURIComponent(chatID)}/attachment-key-recipients`;
+    const response = await deviceAttachmentRequest(path, session, bundle, "GET", undefined, undefined, signal);
+    const payload = await readAttachmentJSON<DataResponse<unknown>>(response);
+    return parseChatAttachmentRecipients(payload.data);
+  } finally {
+    if (!deviceBundle) wipeDeviceBundle(bundle);
+  }
+}
+
+function assertUploadedAttachmentMatches(
+  attachment: ChatAttachment,
+  encrypted: EncryptedChatAttachment,
+  chatID: string,
+): void {
+  if (attachment.chat_id !== chatID
+    || attachment.content_type !== encrypted.contentType
+    || attachment.size_bytes !== encrypted.ciphertext.length
+    || attachment.nonce !== encrypted.nonce
+    || attachment.algorithm !== encrypted.algorithm
+    || attachment.key_version !== encrypted.keyVersion
+    || attachment.cipher_sha256 !== hashBytesHex(encrypted.ciphertext)) {
+    throw new Error("Invalid chat attachment upload response");
+  }
+}
+
+export async function uploadChatAttachment(
+  chatID: string,
+  encrypted: EncryptedChatAttachment,
+  session: Session,
+  deviceBundle?: DeviceKeyBundle,
+  signal?: AbortSignal,
+): Promise<ChatAttachment> {
+  if (encrypted.ciphertext.length > CHAT_ATTACHMENT_MAX_BYTES) throw new Error("chat_attachment_too_large");
+  const bundle = deviceBundle ?? await ensureChatDeviceAgreementKey(session);
+  try {
+    const path = `/chats/${encodeURIComponent(chatID)}/attachments`;
+    const response = await deviceAttachmentRequest(path, session, bundle, "POST", encrypted.ciphertext, {
+      "Content-Type": "application/octet-stream",
+      "X-Chat-Attachment-Content-Type": encrypted.contentType,
+      "X-Chat-Attachment-Nonce": encrypted.nonce,
+      "X-Chat-Attachment-Algorithm": encrypted.algorithm,
+      "X-Chat-Attachment-Key-Version": encrypted.keyVersion,
+    }, signal);
+    const payload = await readAttachmentJSON<DataResponse<unknown>>(response);
+    const attachment = parseChatAttachment(payload.data);
+    assertUploadedAttachmentMatches(attachment, encrypted, chatID);
+    return attachment;
+  } finally {
+    if (!deviceBundle) wipeDeviceBundle(bundle);
+  }
+}
+
+export async function saveChatAttachmentKeyEnvelopes(
+  chatID: string,
+  attachmentID: string,
+  envelopes: ChatAttachmentKeyEnvelopeInput[],
+  session: Session,
+  deviceBundle?: DeviceKeyBundle,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (envelopes.length === 0 || envelopes.length > 32) throw new Error("Invalid chat attachment envelopes");
+  const bundle = deviceBundle ?? await ensureChatDeviceAgreementKey(session);
+  try {
+    const body = new TextEncoder().encode(JSON.stringify({ envelopes }));
+    const path = `/chats/${encodeURIComponent(chatID)}/attachments/${encodeURIComponent(attachmentID)}/envelopes`;
+    const response = await deviceAttachmentRequest(path, session, bundle, "PUT", body, {
+      "Content-Type": "application/json",
+    }, signal);
+    if (!response.ok) await readAttachmentJSON(response);
+  } finally {
+    if (!deviceBundle) wipeDeviceBundle(bundle);
+  }
+}
+
+export async function sendChatAttachmentMessage(
+  chatID: string,
+  attachmentID: string,
+  session: Session,
+  clientMessageID = createClientMessageID(),
+  signal?: AbortSignal,
+  random: (length: number) => Promise<Uint8Array> = randomBytes,
+): Promise<EncryptedChatMessage> {
+  // The marker is encrypted like all chat message bodies. The image itself is
+  // never placed in this JSON or sent to the message endpoint.
+  const encrypted = await encryptChatPlaintext(chatID, JSON.stringify({ type: "image" }), random);
+  const response = await requestAPI<DataResponse<EncryptedChatMessage>>(
+    `/chats/${encodeURIComponent(chatID)}/messages`,
+    session,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        client_message_id: clientMessageID,
+        ...encrypted,
+        content_type: "image",
+        attachment_id: attachmentID,
+      }),
+      signal,
+    },
+  );
+  if (!response.data) throw new Error("chat attachment message response is empty");
+  return response.data;
+}
+
+/** Executes the complete sender flow and never returns a content key. */
+export async function sendChatImage(
+  chatID: string,
+  plaintext: Uint8Array,
+  contentType: ChatAttachmentContentType,
+  session: Session,
+  clientMessageID = createClientMessageID(),
+  signal?: AbortSignal,
+  random: (length: number) => Promise<Uint8Array> = randomBytes,
+): Promise<ChatImageSendResult> {
+  await ensureChatAttachmentEncryptionAvailable();
+  const bundle = await ensureChatDeviceAgreementKey(session);
+  let encrypted: EncryptedChatAttachment | null = null;
+  try {
+    encrypted = await encryptChatAttachmentBytes(plaintext, contentType, chatID, random);
+    const recipients = await getChatAttachmentKeyRecipients(chatID, session, bundle, signal);
+    const attachment = await uploadChatAttachment(chatID, encrypted, session, bundle, signal);
+    const envelopes: ChatAttachmentKeyEnvelopeInput[] = await Promise.all(recipients.map(async (recipient) => ({
+      user_id: recipient.user_id,
+      device_id: recipient.device_id,
+      key_version: recipient.key_version,
+      public_key: recipient.public_key,
+      algorithm: CHAT_ATTACHMENT_WRAPPING_ALGORITHM,
+      envelope: await wrapChatAttachmentKey(
+        encrypted!.imageKey,
+        recipient.public_key,
+        chatID,
+        attachment.id,
+        recipient.device_id,
+        attachment.cipher_sha256,
+        attachment.nonce,
+        random,
+      ),
+    })));
+    await saveChatAttachmentKeyEnvelopes(chatID, attachment.id, envelopes, session, bundle, signal);
+    const message = await sendChatAttachmentMessage(chatID, attachment.id, session, clientMessageID, signal, random);
+    return { message, attachment };
+  } finally {
+    encrypted?.imageKey.fill(0);
+    encrypted?.ciphertext.fill(0);
+    wipeDeviceBundle(bundle);
+  }
+}
+
+export async function downloadAndDecryptChatAttachment(
+  chatID: string,
+  attachment: ChatAttachment,
+  session: Session,
+  signal?: AbortSignal,
+): Promise<Uint8Array> {
+  if (attachment.chat_id !== chatID) throw new Error("Invalid chat attachment reference");
+  const bundle = await ensureChatDeviceAgreementKey(session);
+  let ciphertext: Uint8Array | null = null;
+  let imageKey: Uint8Array | null = null;
+  try {
+    const basePath = `/chats/${encodeURIComponent(chatID)}/attachments/${encodeURIComponent(attachment.id)}`;
+    const envelopeResponse = await deviceAttachmentRequest(`${basePath}/envelope`, session, bundle, "GET", undefined, undefined, signal);
+    const envelopePayload = await readAttachmentJSON<DataResponse<unknown>>(envelopeResponse);
+    if (!envelopePayload.data || typeof envelopePayload.data !== "object") {
+      throw new Error("Invalid chat attachment envelope response");
+    }
+    const envelopeData = envelopePayload.data as { attachment?: unknown; envelope?: unknown };
+    const envelopeAttachment = parseChatAttachment(envelopeData.attachment);
+    if (envelopeAttachment.id !== attachment.id
+      || envelopeAttachment.chat_id !== attachment.chat_id
+      || envelopeAttachment.content_type !== attachment.content_type
+      || envelopeAttachment.size_bytes !== attachment.size_bytes
+      || envelopeAttachment.cipher_sha256 !== attachment.cipher_sha256
+      || envelopeAttachment.nonce !== attachment.nonce
+      || envelopeAttachment.algorithm !== attachment.algorithm
+      || envelopeAttachment.key_version !== attachment.key_version
+      || typeof envelopeData.envelope !== "string"
+      || envelopeData.envelope.length === 0
+      || envelopeData.envelope.length > 16 * 1024) {
+      throw new Error("Invalid chat attachment envelope metadata");
+    }
+    const envelope = envelopeData.envelope;
+    const response = await deviceAttachmentRequest(basePath, session, bundle, "GET", undefined, undefined, signal);
+    if (!response.ok) await readAttachmentJSON(response);
+    ciphertext = new Uint8Array(await response.arrayBuffer());
+    if (ciphertext.length !== attachment.size_bytes
+      || ciphertext.length > CHAT_ATTACHMENT_MAX_BYTES
+      || hashBytesHex(ciphertext) !== attachment.cipher_sha256) {
+      throw new Error("Invalid chat attachment ciphertext");
+    }
+    const nonce = response.headers.get("X-Chat-Attachment-Nonce");
+    const algorithm = response.headers.get("X-Chat-Attachment-Algorithm");
+    const keyVersion = response.headers.get("X-Chat-Attachment-Key-Version");
+    if (nonce !== attachment.nonce || algorithm !== attachment.algorithm || keyVersion !== attachment.key_version) {
+      throw new Error("Invalid chat attachment metadata");
+    }
+    imageKey = unwrapChatAttachmentKey(
+      envelope,
+      bundle.agreement.privateKey,
+      chatID,
+      attachment.id,
+      bundle.device.deviceID,
+      attachment.cipher_sha256,
+      attachment.nonce,
+    );
+    return decryptChatAttachmentBytes(ciphertext, attachment.nonce, imageKey, attachment.content_type, chatID);
+  } finally {
+    ciphertext?.fill(0);
+    imageKey?.fill(0);
+    wipeDeviceBundle(bundle);
+  }
+}
+
 export async function markChatRead(
   chatID: string,
   lastMessageSequence: number,
@@ -557,7 +947,10 @@ export function toChatMessageView(
   message: EncryptedChatMessage,
   currentUserID: string,
 ): ChatMessageView {
-  const plaintext = decryptChatMessage(chatID, message);
+  // Image messages carry an encrypted marker only. Never render that marker
+  // as chat text; the attachment is downloaded and decrypted separately after
+  // its recipient envelope is opened on this device.
+  const plaintext = message.content_type === "image" ? null : decryptChatMessage(chatID, message);
   const location = message.content_type === "location" ? parseChatLocationPayload(plaintext, message.expires_at) : null;
   return {
     ...message,

@@ -6,7 +6,7 @@ import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "../../hooks/useAuth";
 import { APIError } from "../../services/api-client";
-import { getMatch, listMatches, type MatchView } from "../../services/matching";
+import { getMatch, type MatchView } from "../../services/matching";
 import { loadLanguage, subscribeLanguage } from "../../services/onboarding";
 import type { AppLanguage } from "../../services/onboarding-contract";
 
@@ -58,12 +58,10 @@ export default function JapaneseGuideRequestedScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { getCurrentSession, refresh, session, status } = useAuth();
-  const { matchId, recruitmentId } = useLocalSearchParams<{
+  const { matchId } = useLocalSearchParams<{
     matchId?: string | string[];
-    recruitmentId?: string | string[];
   }>();
-  const currentMatchID = Array.isArray(matchId) ? matchId[0] : matchId;
-  const currentRecruitmentID = Array.isArray(recruitmentId) ? recruitmentId[0] : recruitmentId;
+  const currentMatchID = (Array.isArray(matchId) ? matchId[0] : matchId)?.trim();
   const [match, setMatch] = useState<MatchView | null>(null);
   const [matchLoadState, setMatchLoadState] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [matchLoadError, setMatchLoadError] = useState<MatchLoadErrorKey | null>(null);
@@ -89,7 +87,11 @@ export default function JapaneseGuideRequestedScreen() {
   }, []);
 
   const loadMatch = useCallback(async (signal?: AbortSignal) => {
-    if (!currentMatchID) return;
+    if (!currentMatchID) {
+      setMatchLoadState("error");
+      setMatchLoadError("failed");
+      return;
+    }
 
     const auth = authRef.current;
     const activeSession = auth.getCurrentSession() ?? auth.session;
@@ -102,25 +104,8 @@ export default function JapaneseGuideRequestedScreen() {
     setMatchLoadState("loading");
     setMatchLoadError(null);
     try {
-      const loadWithSession = async (currentSession: typeof activeSession) => {
-        try {
-          return await getMatch(currentMatchID, currentSession, signal);
-        } catch (error) {
-          if (!(error instanceof APIError) || error.status !== 404) throw error;
-          const requesterMatches = await listMatches(
-            currentSession,
-            { role: "requester", limit: 50 },
-            signal,
-          );
-          const fallback = requesterMatches.find((item) =>
-            item.id === currentMatchID
-            || item.recruitment.id === currentMatchID
-            || item.recruitment.id === currentRecruitmentID,
-          );
-          if (!fallback) throw error;
-          return fallback;
-        }
-      };
+      const loadWithSession = (currentSession: typeof activeSession) =>
+        getMatch(currentMatchID, currentSession, signal);
       let result: MatchView;
       try {
         result = await loadWithSession(activeSession);
@@ -138,14 +123,13 @@ export default function JapaneseGuideRequestedScreen() {
       setMatchLoadState("error");
       setMatchLoadError("failed");
     }
-  }, [currentMatchID, currentRecruitmentID]);
+  }, [currentMatchID]);
 
   useEffect(() => {
-    if (!currentMatchID) return;
     const controller = new AbortController();
     void loadMatch(controller.signal);
     return () => controller.abort();
-  }, [currentMatchID, loadMatch, status]);
+  }, [loadMatch, status]);
 
   const matched = match?.status === "accepted" || match?.status === "completed";
   const unavailable = match?.status === "rejected"
