@@ -67,6 +67,12 @@ func ApplyInitialMigration(ctx context.Context, database *sql.DB, path string) e
 const migrationLockSQL = `SELECT pg_advisory_lock(hashtext('samurai-meet/schema-migrations'))`
 const migrationUnlockSQL = `SELECT pg_advisory_unlock(hashtext('samurai-meet/schema-migrations'))`
 
+const (
+	legacyChatAttachmentKeyEnvelopesVersion   = "0040_chat_attachment_key_envelopes.sql"
+	legacyChatAttachmentKeyEnvelopesChecksum  = "1209bdf3b377f78a6e37c1098d2085b4c9bc3fa5cbb890d9625abd56bf14f86f"
+	currentChatAttachmentKeyEnvelopesChecksum = "b787ad462354d9fa6067bebd0a5bdb7c1c5cb971cf6e28a358a3da2c96925ca2"
+)
+
 // ApplyMigrations applies ordered .sql migrations exactly once. The checksum
 // makes an already-applied migration immutable: silently editing a migration
 // after production has seen it would make different databases have different
@@ -109,14 +115,14 @@ func ApplyMigrations(ctx context.Context, database *sql.DB, directory string) er
 			return fmt.Errorf("read %s: %w", entry.Name(), err)
 		}
 		migrationSQL := strings.ReplaceAll(strings.ReplaceAll(string(contents), "\r\n", "\n"), "\r", "\n")
-		digest := sha256.Sum256([]byte(migrationSQL))
-		checksum := hex.EncodeToString(digest[:])
+		checksum := migrationChecksum(migrationSQL)
 		var storedChecksum string
 		err = connection.QueryRowContext(ctx, `SELECT checksum FROM schema_migrations WHERE version=$1`, entry.Name()).Scan(&storedChecksum)
 		switch {
-		case err == nil && storedChecksum != checksum:
-			return fmt.Errorf("migration %s checksum mismatch", entry.Name())
 		case err == nil:
+			if err := validateMigrationChecksum(entry.Name(), storedChecksum, checksum); err != nil {
+				return err
+			}
 			continue
 		case err != sql.ErrNoRows:
 			return fmt.Errorf("read migration history for %s: %w", entry.Name(), err)
@@ -138,6 +144,27 @@ func ApplyMigrations(ctx context.Context, database *sql.DB, directory string) er
 		}
 	}
 	return nil
+}
+
+func migrationChecksum(contents string) string {
+	normalized := strings.ReplaceAll(strings.ReplaceAll(contents, "\r\n", "\n"), "\r", "\n")
+	digest := sha256.Sum256([]byte(normalized))
+	return hex.EncodeToString(digest[:])
+}
+
+func validateMigrationChecksum(version, storedChecksum, currentChecksum string) error {
+	if storedChecksum == currentChecksum {
+		return nil
+	}
+	// 0040 was applied locally before its final primary-key definition was
+	// committed. Accept only that one audited checksum so the migration record
+	// remains immutable; every other mismatch must still stop startup.
+	if version == legacyChatAttachmentKeyEnvelopesVersion &&
+		storedChecksum == legacyChatAttachmentKeyEnvelopesChecksum &&
+		currentChecksum == currentChatAttachmentKeyEnvelopesChecksum {
+		return nil
+	}
+	return fmt.Errorf("migration %s checksum mismatch", version)
 }
 
 type migrationExecutor interface {
