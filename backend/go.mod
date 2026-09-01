@@ -6,8 +6,8 @@ require (
 	github.com/coreos/go-oidc/v3 v3.20.0
 	github.com/go-webauthn/webauthn v0.17.4
 	github.com/jackc/pgx/v5 v5.10.0
-	github.com/quic-go/quic-go v0.60.0
-	github.com/quic-go/webtransport-go v0.11.1
+	github.com/quic-go/quic-go v0.61.0
+	github.com/quic-go/webtransport-go v0.12.0
 	golang.org/x/oauth2 v0.36.0
 )
 
