@@ -1,5 +1,8 @@
 import { describe, expect, it } from "bun:test";
-import { buildRecruitmentPreviewModel } from "../services/recruitment-preview";
+import {
+  buildManualRecruitmentPreviewModel,
+  buildRecruitmentPreviewModel,
+} from "../services/recruitment-preview";
 import {
   buildRecruitmentCreateRequest,
   defaultRecruitmentSchedule,
@@ -8,6 +11,7 @@ import {
   formatRecruitmentISODate,
   getRecruitmentScheduleIssue,
   normalizeRecruitmentDate,
+  parseRecruitmentKeywordInput,
   parseRecruitmentDateInput,
   recruitmentDateTimeToInstant,
   shiftRecruitmentDate,
@@ -26,6 +30,37 @@ const draft: RecruitmentDraft = {
 };
 
 describe("募集プレビュー", () => {
+	it("Gemini失敗時の手動プレビューは選択したカテゴリとキーワードだけを使う", () => {
+		const keywords = parseRecruitmentKeywordInput(" ramen, 大阪, ramen ");
+		const preview = buildManualRecruitmentPreviewModel(draft, "Food", keywords);
+
+		expect(preview.previewId).toBe("manual-recruitment-preview");
+		expect(preview.category).toBe("Food");
+		expect(preview.tags).toEqual(["ramen", "大阪"]);
+	});
+
+	it("手動キーワード入力は空・過剰・長すぎる値を黙って丸めない", () => {
+		expect(() => parseRecruitmentKeywordInput("  ")).toThrow(
+			"recruitment_keywords_required",
+		);
+		expect(() =>
+			parseRecruitmentKeywordInput("a,b,c,d,e,f"),
+		).toThrow("recruitment_keyword_too_many");
+		expect(() => parseRecruitmentKeywordInput("a".repeat(81))).toThrow(
+			"recruitment_keyword_too_long",
+		);
+	});
+
+	it("手動プレビューは4カテゴリ以外を受け入れない", () => {
+		expect(() =>
+			buildManualRecruitmentPreviewModel(
+				draft,
+				"Culture" as never,
+				["temple"],
+			),
+		).toThrow("invalid_recruitment_category");
+	});
+
 	it("Geminiで確定したカテゴリと入力条件を確認カード用データへ変換する", () => {
 		const preview = buildRecruitmentPreviewModel(draft, "Food");
 
@@ -171,6 +206,43 @@ describe("募集プレビュー", () => {
 
     expect(request.category).toBe("Places");
     expect(request.keywords).toEqual(["temple", "sightseeing"]);
+  });
+
+  it("手動プレビューのキーワード全解除は下書き・公開前に拒否する", () => {
+    const preview = buildManualRecruitmentPreviewModel(
+      { ...draft, date: "2026-08-27" },
+      "Activity",
+      ["walking"],
+    );
+
+    expect(() =>
+      buildRecruitmentCreateRequest(
+        { ...draft, date: "2026-08-27" },
+        preview,
+        new Date("2026-08-26T00:00:00.000Z"),
+        undefined,
+        undefined,
+        { category: "Activity", keywords: [] },
+      ),
+    ).toThrow("recruitment_keywords_required");
+  });
+
+  it("非手動プレビューの既存キーワードfallbackは維持する", () => {
+    const preview = {
+      ...buildRecruitmentPreviewModel(
+        { ...draft, date: "2026-08-27" },
+        "Other",
+      ),
+      tags: [],
+    };
+
+    const request = buildRecruitmentCreateRequest(
+      { ...draft, date: "2026-08-27" },
+      preview,
+      new Date("2026-08-26T00:00:00.000Z"),
+    );
+
+    expect(request.keywords).toEqual(["Experience"]);
   });
 
   it("下書き保存は過去日時を保持し、公開時だけ過去日時を拒否する", () => {

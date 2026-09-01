@@ -77,6 +77,32 @@ func TestGeminiPlaceholderKeyIsUnavailable(t *testing.T) {
 	}
 }
 
+func TestGeminiClassifyDistinguishesProviderFailures(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		code int
+		want error
+	}{
+		{name: "rate limited", code: http.StatusTooManyRequests, want: ErrProviderRateLimited},
+		{name: "unauthorized", code: http.StatusUnauthorized, want: ErrProviderUnavailable},
+		{name: "forbidden", code: http.StatusForbidden, want: ErrProviderUnavailable},
+		{name: "other upstream failure", code: http.StatusBadGateway, want: ErrUpstream},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(test.code)
+				_, _ = w.Write([]byte(`{"error":"provider detail must stay server-side"}`))
+			}))
+			defer server.Close()
+
+			service := NewGeminiWithClient("test-key", DefaultModel, server.URL, server.Client())
+			if _, err := service.Classify(context.Background(), "user-1", "ramen"); !errors.Is(err, test.want) {
+				t.Fatalf("Classify() error = %v, want %v", err, test.want)
+			}
+		})
+	}
+}
+
 func TestParseClassificationJSON(t *testing.T) {
 	longKeyword := strings.Repeat("あ", maxClassificationKeywordRunes+1)
 	tests := []struct {
