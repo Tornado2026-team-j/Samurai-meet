@@ -1,0 +1,178 @@
+---
+import Layout from '../layouts/Layout.astro';
+---
+
+<Layout title="セキュリティ">
+  <div class="container">
+    <h1>セキュリティ & プライバシー</h1>
+    <p style="font-size: 1.1rem; margin-bottom: 2rem;">
+      Samurai Meetはあなたのプライバシーとセキュリティを最優先に設計されています。
+    </p>
+
+    <h2>🔐 認証・アカウント保護</h2>
+    <section class="security-section">
+      <div class="security-item">
+        <h3>🔑 Passkey認証</h3>
+        <p>パスワード不要の次世代認証。生体認証またはセキュリティキーでログイン。フィッシング攻撃に強い。</p>
+      </div>
+      <div class="security-item">
+        <h3>🔒 Google OAuth</h3>
+        <p>Googleの安全な認証を使用。既存のGoogleアカウントで簡単にログイン可能。</p>
+      </div>
+      <div class="security-item">
+        <h3>🛡️ セッション管理</h3>
+        <p>安全なセッションとリフレッシュトークン。不正アクセスから自動的に保護。</p>
+      </div>
+      <div class="security-item">
+        <h3>🔄 24語Recovery Phrase</h3>
+        <p>アカウント復旧用の24語フレーズ。デバイスを失っても安全に復旧可能。</p>
+      </div>
+      <div class="security-item">
+        <h3>📱 デバイスProof</h3>
+        <p>端末の正当性を検証。不正なアクセスをブロック。</p>
+      </div>
+      <div class="security-item">
+        <h3>🔑 クライアント所有の根暗号鍵</h3>
+        <p>暗号化キーはあなたのデバイスにのみ存在。サーバーは絶対に暗号鍵を持たない。</p>
+      </div>
+    </section>
+
+    <h2>💬 チャット・通信のセキュリティ</h2>
+    <section class="security-section">
+      <div class="security-item">
+        <h3>🔐 E2E暗号化</h3>
+        <p>すべてのチャットメッセージはエンドツーエンド暗号化。送信者と受信者以外は絶対に内容を見ることはできません。</p>
+      </div>
+      <div class="security-item">
+        <h3>⏱️ 短命Chat Token</h3>
+        <p>チャット送信トークンは短時間のみ有効。トークン盗聴のリスクを最小化。</p>
+      </div>
+      <div class="security-item">
+        <h3>📨 REST送信</h3>
+        <p>安全なREST APIを使用した通信。標準的なセキュリティプロトコル準拠。</p>
+      </div>
+      <div class="security-item">
+        <h3>✅ 既読管理</h3>
+        <p>メッセージの既読状態を追跡。相手が実際にメッセージを読んだか確認可能。</p>
+      </div>
+      <div class="security-item">
+        <h3>📜 チャット履歴保存</h3>
+        <p>暗号化されたチャット履歴をデバイスに保存。オフラインでも過去の会話を参照可能。</p>
+      </div>
+      <div class="security-item">
+        <h3>🔜 リアルタイム配送（開発中）</h3>
+        <p>QUIC/WebTransportによる低遅延・高信頼性の通信を計画中。</p>
+      </div>
+    </section>
+
+    <h2>👤 プロフィール・個人情報</h2>
+    <section class="security-section">
+      <div class="security-item">
+        <h3>🛡️ プロフィール保護</h3>
+        <p>あなたのプロフィール情報は暗号化されて保存。必要な情報のみ共有可能。</p>
+      </div>
+      <div class="security-item">
+        <h3>🔄 自動同期</h3>
+        <p>オンボーディング時にプロフィール情報を自動同期。入力の手間を削減しながらセキュリティを維持。</p>
+      </div>
+      <div class="security-item">
+        <h3>🆔 Go API更新</h3>
+        <p>バックエンドAPIを通じた安全な情報更新。検証済みのサーバーを経由。</p>
+      </div>
+      <div class="security-item">
+        <h3>❌ プロフィール削除</h3>
+        <p>いつでもプロフィール情報を削除可能。あなたのデータはあなたの手で管理。</p>
+      </div>
+    </section>
+
+    <h2>🌐 ネットワーク・インフラ</h2>
+    <section class="security-section">
+      <div class="security-item">
+        <h3>🔒 HTTPS/TLS</h3>
+        <p>すべての通信を暗号化。中間者攻撃から保護。</p>
+      </div>
+      <div class="security-item">
+        <h3>🗄️ PostgreSQL</h3>
+        <p>業界標準の堅牢なデータベース。データ整合性を確保。</p>
+      </div>
+      <div class="security-item">
+        <h3>🛡️ Go言語バックエンド</h3>
+        <p>メモリセーフな言語で実装。バッファオーバーフローなどの脆弱性を排除。</p>
+      </div>
+      <div class="security-item">
+        <h3>🔐 QUIC対応予定</h3>
+        <p>次世代プロトコルQUICに対応予定。より安全で高速な通信。</p>
+      </div>
+    </section>
+
+    <h2>📋 透明性と監査</h2>
+    <section class="security-section">
+      <div class="security-item">
+        <h3>📖 オープンソース</h3>
+        <p><a href="https://github.com/Tornado2026-team-j/Samurai-meet" target="_blank">GitHubで完全なソースコードを公開</a>。コミュニティによる監査を歓迎。</p>
+      </div>
+      <div class="security-item">
+        <h3>🔍 セキュリティ監査</h3>
+        <p>定期的なセキュリティレビュー。脆弱性が見つかった場合は迅速に修正。</p>
+      </div>
+      <div class="security-item">
+        <h3>🐛 バグ報告</h3>
+        <p>セキュリティ脆弱性を発見した場合は、<a href="https://github.com/Tornado2026-team-j/Samurai-meet/security" target="_blank">責任あるディスクロージャー</a>でお知らせください。</p>
+      </div>
+    </section>
+
+    <h2>🔄 データプライバシー</h2>
+    <section class="security-section">
+      <div class="security-item">
+        <h3>📍 位置情報</h3>
+        <p>位置情報はマッチング処理にのみ使用。外部と共有されません。</p>
+      </div>
+      <div class="security-item">
+        <h3>🗑️ データ削除</h3>
+        <p>アカウント削除時は全データを安全に削除。バックアップからも復旧不可。</p>
+      </div>
+      <div class="security-item">
+        <h3>🚫 第三者共有なし</h3>
+        <p>あなたのデータが第三者に売却・共有されることはありません。</p>
+      </div>
+    </section>
+
+    <hr style="margin: 4rem 0; border: none; border-top: 2px solid var(--color-border);">
+
+    <div style="background-color: #f3f4f6; padding: 2rem; border-radius: 0.5rem; margin: 2rem 0;">
+      <h2 style="margin-top: 0;">セキュリティに関するご質問</h2>
+      <p>
+        セキュリティについて質問や懸念事項がある場合は、
+        <a href="https://github.com/Tornado2026-team-j/Samurai-meet/discussions" target="_blank">GitHub Discussions</a>
+        でお気軽にお問い合わせください。
+      </p>
+    </div>
+  </div>
+</Layout>
+
+<style>
+  .security-section {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 2rem;
+    margin: 2rem 0;
+  }
+
+  .security-item {
+    padding: 1.5rem;
+    border: 1px solid var(--color-border);
+    border-radius: 0.5rem;
+    background-color: #fafafa;
+  }
+
+  .security-item h3 {
+    color: var(--color-primary);
+    margin-top: 0;
+    margin-bottom: 0.5rem;
+  }
+
+  .security-item p {
+    margin: 0;
+    line-height: 1.6;
+  }
+</style>

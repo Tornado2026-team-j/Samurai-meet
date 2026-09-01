@@ -1,0 +1,64 @@
+---
+import Layout from '../layouts/Layout.astro';
+---
+
+<Layout title="ドキュメント">
+  <div class="container">
+    <h1>ドキュメント</h1>
+    <p>Samurai Meetの詳細ドキュメントはGitHub上で管理されています。</p>
+
+    <h2>開発者向け</h2>
+    <ul>
+      <li><a href="https://github.com/Tornado2026-team-j/Samurai-meet/tree/main/docs/ai" target="_blank">AI/実装契約</a> - 実装時の基準と契約</li>
+      <li><a href="https://github.com/Tornado2026-team-j/Samurai-meet/blob/main/backend/API_SPEC.md" target="_blank">API仕様書</a> - REST API の詳細</li>
+      <li><a href="https://github.com/Tornado2026-team-j/Samurai-meet/blob/main/docs/database.md" target="_blank">DB仕様</a> - データベース設計</li>
+      <li><a href="https://github.com/Tornado2026-team-j/Samurai-meet/blob/main/backend/HANDOFF.md" target="_blank">バックエンド引き継ぎ</a> - 開発引き継ぎガイド</li>
+    </ul>
+
+    <h2>ユーザー向け</h2>
+    <ul>
+      <li><a href="https://github.com/Tornado2026-team-j/Samurai-meet/tree/main/docs/human" target="_blank">ユーザーガイド</a> - アプリの使い方</li>
+    </ul>
+
+    <h2>リポジトリ</h2>
+    <ul>
+      <li><a href="https://github.com/Tornado2026-team-j/Samurai-meet" target="_blank">GitHub - Samurai Meet</a></li>
+      <li><a href="https://github.com/Tornado2026-team-j/Samurai-meet/issues" target="_blank">Issues - バグ報告・機能リクエスト</a></li>
+      <li><a href="https://github.com/Tornado2026-team-j/Samurai-meet/discussions" target="_blank">Discussions - コミュニティ</a></li>
+    </ul>
+
+    <h2>技術スタック</h2>
+    <table style="width: 100%; border-collapse: collapse; margin: 2rem 0;">
+      <tr style="background-color: var(--color-border);">
+        <th style="padding: 1rem; text-align: left; border: 1px solid #d1d5db;">領域</th>
+        <th style="padding: 1rem; text-align: left; border: 1px solid #d1d5db;">技術</th>
+        <th style="padding: 1rem; text-align: left; border: 1px solid #d1d5db;">詳細</th>
+      </tr>
+      <tr>
+        <td style="padding: 1rem; border: 1px solid #d1d5db;">フロントエンド</td>
+        <td style="padding: 1rem; border: 1px solid #d1d5db;">TypeScript, React, Expo</td>
+        <td style="padding: 1rem; border: 1px solid #d1d5db;">iOS/Android/Web</td>
+      </tr>
+      <tr style="background-color: #f9fafb;">
+        <td style="padding: 1rem; border: 1px solid #d1d5db;">バックエンド</td>
+        <td style="padding: 1rem; border: 1px solid #d1d5db;">Go</td>
+        <td style="padding: 1rem; border: 1px solid #d1d5db;">REST API, WebSocket対応</td>
+      </tr>
+      <tr>
+        <td style="padding: 1rem; border: 1px solid #d1d5db;">データベース</td>
+        <td style="padding: 1rem; border: 1px solid #d1d5db;">PostgreSQL</td>
+        <td style="padding: 1rem; border: 1px solid #d1d5db;">事業データベース</td>
+      </tr>
+      <tr style="background-color: #f9fafb;">
+        <td style="padding: 1rem; border: 1px solid #d1d5db;">認証</td>
+        <td style="padding: 1rem; border: 1px solid #d1d5db;">Passkey, Google OAuth</td>
+        <td style="padding: 1rem; border: 1px solid #d1d5db;">セキュアな認証実装</td>
+      </tr>
+      <tr>
+        <td style="padding: 1rem; border: 1px solid #d1d5db;">暗号化</td>
+        <td style="padding: 1rem; border: 1px solid #d1d5db;">E2E, クライアント所有鍵</td>
+        <td style="padding: 1rem; border: 1px solid #d1d5db;">プライバシー保護</td>
+      </tr>
+    </table>
+  </div>
+</Layout>

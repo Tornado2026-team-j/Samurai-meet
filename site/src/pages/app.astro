@@ -1,0 +1,236 @@
+---
+import Layout from '../layouts/Layout.astro';
+---
+
+<Layout title="アプリ">
+  <div class="container">
+    <h1>Samurai Meetアプリ</h1>
+    <p style="font-size: 1.1rem; margin-bottom: 2rem;">
+      iOS・Android・Webで利用可能。全デバイスで同期。
+    </p>
+
+    <h2>📱 対応プラットフォーム</h2>
+    <div class="platforms">
+      <div class="platform-card">
+        <h3>🍎 iOS</h3>
+        <p>iPhone・iPad対応</p>
+        <p>完全なネイティブ体験。App Storeでダウンロード。</p>
+        <a href="#" class="btn" style="background-color: #000;">App Store</a>
+      </div>
+      <div class="platform-card">
+        <h3>🤖 Android</h3>
+        <p>Android 10+対応</p>
+        <p>Google Playで配信。スムーズな動作を実現。</p>
+        <a href="#" class="btn" style="background-color: #3ddc84;">Google Play</a>
+      </div>
+      <div class="platform-card">
+        <h3>🌐 Web</h3>
+        <p>ブラウザで利用可能</p>
+        <p>Passkey認証対応。どのデバイスからでも。</p>
+        <a href="https://samurai-meet.disnana.com" class="btn" style="background-color: #4f46e5;">Webアプリを開く</a>
+      </div>
+    </div>
+
+    <hr style="margin: 4rem 0; border: none; border-top: 2px solid var(--color-border);">
+
+    <h2>🛠️ 技術スタック</h2>
+    <div class="tech-stack">
+      <div class="tech-item">
+        <h3>フロントエンド</h3>
+        <ul>
+          <li>TypeScript</li>
+          <li>React Native (Expo)</li>
+          <li>Web: React</li>
+          <li>状態管理: Redux</li>
+        </ul>
+      </div>
+      <div class="tech-item">
+        <h3>バックエンド</h3>
+        <ul>
+          <li>Go</li>
+          <li>REST API</li>
+          <li>PostgreSQL</li>
+          <li>E2E暗号化</li>
+        </ul>
+      </div>
+      <div class="tech-item">
+        <h3>認証・セキュリティ</h3>
+        <ul>
+          <li>Passkey (WebAuthn)</li>
+          <li>Google OAuth</li>
+          <li>TLS/HTTPS</li>
+          <li>Client-side encryption</li>
+        </ul>
+      </div>
+    </div>
+
+    <hr style="margin: 4rem 0; border: none; border-top: 2px solid var(--color-border);">
+
+    <h2>📥 インストール・セットアップ</h2>
+    <section class="setup-section">
+      <h3>はじめたばかりの方へ</h3>
+      <ol>
+        <li>
+          <strong>アプリをダウンロード</strong>
+          <p>App Store、Google Play、またはWebから。</p>
+        </li>
+        <li>
+          <strong>アカウント作成</strong>
+          <p>Passkey認証またはGoogle OAuthで登録。</p>
+        </li>
+        <li>
+          <strong>プロフィール設定</strong>
+          <p>言語、関心、位置情報などを設定。</p>
+        </li>
+        <li>
+          <strong>募集を閲覧・応募</strong>
+          <p>近くの人の募集を検索・応募。</p>
+        </li>
+        <li>
+          <strong>マッチング・チャット</strong>
+          <p>相手と暗号化チャットで交流開始。</p>
+        </li>
+      </ol>
+    </section>
+
+    <hr style="margin: 4rem 0; border: none; border-top: 2px solid var(--color-border);">
+
+    <h2>🌟 主な使用例</h2>
+    <div class="use-cases">
+      <div class="use-case-card">
+        <h3>☕ コーヒーチャット</h3>
+        <p>平日の昼休みに、近くのカフェで外国人と言語交換。気軽に文化交流。</p>
+      </div>
+      <div class="use-case-card">
+        <h3>🍜 ランチ交流</h3>
+        <p>ローカルレストランで新しい友達とランチ。言語交換とグルメが両立。</p>
+      </div>
+      <div class="use-case-card">
+        <h3>🎓 言語学習</h3>
+        <p>ネイティブスピーカーと会話練習。実践的な語学学習の場を提供。</p>
+      </div>
+      <div class="use-case-card">
+        <h3>🌍 異文化体験</h3>
+        <p>日本文化を紹介したり、相手の文化を学んだり。世界が身近に。</p>
+      </div>
+      <div class="use-case-card">
+        <h3>👫 友達づくり</h3>
+        <p>新しい友達ネットワークを構築。同じ関心を持つ人とのつながり。</p>
+      </div>
+      <div class="use-case-card">
+        <h3>🤝 ビジネスネットワーキング</h3>
+        <p>プロフェッショナルな交流。仕事の機会や情報交換。</p>
+      </div>
+    </div>
+
+    <hr style="margin: 4rem 0; border: none; border-top: 2px solid var(--color-border);">
+
+    <h2>📲 ダウンロード</h2>
+    <div style="background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-secondary) 100%); color: white; padding: 3rem 2rem; border-radius: 0.5rem; text-align: center; margin: 2rem 0;">
+      <p style="font-size: 1.2rem; margin-bottom: 1.5rem;">
+        Samurai Meetをダウンロードして、今すぐ交流を始めましょう！
+      </p>
+      <div style="display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap;">
+        <a href="#" class="btn" style="background-color: white; color: var(--color-primary);">App Store</a>
+        <a href="#" class="btn" style="background-color: white; color: var(--color-primary);">Google Play</a>
+        <a href="https://samurai-meet.disnana.com" class="btn" style="background-color: white; color: var(--color-primary);">Web版を開く</a>
+      </div>
+    </div>
+  </div>
+</Layout>
+
+<style>
+  .platforms {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 2rem;
+    margin: 2rem 0;
+  }
+
+  .platform-card {
+    padding: 2rem;
+    border: 1px solid var(--color-border);
+    border-radius: 0.5rem;
+    text-align: center;
+    background-color: #fafafa;
+  }
+
+  .platform-card h3 {
+    margin-top: 0;
+    color: var(--color-primary);
+    font-size: 1.3rem;
+  }
+
+  .tech-stack {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 2rem;
+    margin: 2rem 0;
+  }
+
+  .tech-item {
+    padding: 2rem;
+    border: 1px solid var(--color-border);
+    border-radius: 0.5rem;
+    background-color: #fafafa;
+  }
+
+  .tech-item h3 {
+    margin-top: 0;
+    color: var(--color-primary);
+  }
+
+  .tech-item ul {
+    list-style: none;
+    padding: 0;
+  }
+
+  .tech-item li {
+    padding: 0.5rem 0;
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .tech-item li:last-child {
+    border-bottom: none;
+  }
+
+  .setup-section {
+    background-color: #f3f4f6;
+    padding: 2rem;
+    border-radius: 0.5rem;
+    margin: 2rem 0;
+  }
+
+  .setup-section ol {
+    margin: 1rem 0;
+    padding-left: 2rem;
+  }
+
+  .setup-section li {
+    margin-bottom: 1.5rem;
+    line-height: 1.6;
+  }
+
+  .setup-section strong {
+    color: var(--color-primary);
+  }
+
+  .use-cases {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 2rem;
+    margin: 2rem 0;
+  }
+
+  .use-case-card {
+    padding: 1.5rem;
+    border-left: 4px solid var(--color-primary);
+    background-color: #f9fafb;
+    border-radius: 0.25rem;
+  }
+
+  .use-case-card h3 {
+    margin-top: 0;
+    color: var(--color-primary);
+  }
+</style>
