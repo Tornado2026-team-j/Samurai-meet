@@ -1,8 +1,26 @@
-import Constants from "expo-constants";
-import * as Device from "expo-device";
-import { Platform } from "react-native";
+import type { Platform } from "react-native";
 import type { Session } from "./auth-contract";
 import { requestAPI } from "./api-client";
+
+type ConstantsModule = typeof import("expo-constants");
+type DeviceModule = typeof import("expo-device");
+type NotificationsModule = typeof import("expo-notifications");
+
+export type PushUnavailableReason =
+  | "unsupported_platform"
+  | "expo_go"
+  | "physical_device_required"
+  | "native_module_unavailable"
+  | "permission_denied"
+  | "token_unavailable";
+
+export type PushCapability =
+  | { available: true }
+  | { available: false; reason: PushUnavailableReason };
+
+export type PushTokenResult =
+  | { available: true; token: string }
+  | { available: false; reason: PushUnavailableReason };
 
 export type PushSettings = {
   token: string;
@@ -15,11 +33,61 @@ export type PushSettings = {
 
 type DataResponse<T> = { data?: T };
 
+function runtimePlatform(): typeof Platform.OS | undefined {
+  try {
+    // Push is optional; do not evaluate the native platform module until a
+    // push capability is explicitly requested.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const native = require("react-native") as { Platform?: typeof Platform };
+    return native.Platform?.OS;
+  } catch {
+    return undefined;
+  }
+}
+
+type PushModules = {
+  Constants: ConstantsModule;
+  Device: DeviceModule;
+  Notifications: NotificationsModule;
+};
+
+type PushModulesResult =
+  | { available: true; modules: PushModules }
+  | { available: false; reason: PushUnavailableReason };
+
+async function loadPushModules(): Promise<PushModulesResult> {
+  const platform = runtimePlatform();
+  if (platform !== "ios" && platform !== "android") {
+    return { available: false, reason: "unsupported_platform" };
+  }
+
+  const Constants = await import("expo-constants").catch(() => null);
+  if (!Constants) return { available: false, reason: "native_module_unavailable" };
+
+  if (Constants.default?.appOwnership === "expo") {
+    return { available: false, reason: "expo_go" };
+  }
+
+  const Device = await import("expo-device").catch(() => null);
+  if (!Device) return { available: false, reason: "native_module_unavailable" };
+  if (!Device.isDevice) return { available: false, reason: "physical_device_required" };
+
+  const Notifications = await import("expo-notifications").catch(() => null);
+  if (!Notifications
+    || typeof Notifications.getPermissionsAsync !== "function"
+    || typeof Notifications.requestPermissionsAsync !== "function"
+    || typeof Notifications.getExpoPushTokenAsync !== "function") {
+    return { available: false, reason: "native_module_unavailable" };
+  }
+
+  return { available: true, modules: { Constants, Device, Notifications } };
+}
+
 export async function getPushSettings(session: Session, signal?: AbortSignal): Promise<PushSettings> {
   const response = await requestAPI<DataResponse<PushSettings>>("/me/push-settings", session, { method: "GET", signal });
   return response.data ?? {
     token: "",
-    platform: Platform.OS === "android" ? "android" : "ios",
+    platform: runtimePlatform() === "android" ? "android" : "ios",
     enabled: true,
     chat_enabled: true,
     match_enabled: true,
@@ -27,22 +95,45 @@ export async function getPushSettings(session: Session, signal?: AbortSignal): P
   };
 }
 
-export async function requestPushToken(): Promise<string> {
-  if (Platform.OS !== "ios" && Platform.OS !== "android") throw new Error("push_not_supported");
-  if (!Device.isDevice) throw new Error("physical_device_required");
-  const Notifications = await import("expo-notifications");
-  if (Platform.OS === "android") {
-    await Notifications.setNotificationChannelAsync("default", {
-      name: "Samurai Meet",
-      importance: Notifications.AndroidImportance.DEFAULT,
-    });
+export async function getPushCapability(): Promise<PushCapability> {
+  const result = await loadPushModules();
+  return result.available
+    ? { available: true }
+    : { available: false, reason: result.reason };
+}
+
+export async function requestPushTokenResult(): Promise<PushTokenResult> {
+  const loaded = await loadPushModules();
+  if (!loaded.available) return loaded;
+
+  const { Constants, Notifications } = loaded.modules;
+  try {
+    if (runtimePlatform() === "android" && typeof Notifications.setNotificationChannelAsync === "function") {
+      await Notifications.setNotificationChannelAsync("default", {
+        name: "Samurai Meet",
+        importance: Notifications.AndroidImportance.DEFAULT,
+      });
+    }
+    const current = await Notifications.getPermissionsAsync();
+    const permission = current.status === "granted" ? current : await Notifications.requestPermissionsAsync();
+    if (permission.status !== "granted") {
+      return { available: false, reason: "permission_denied" };
+    }
+    const projectId = Constants.default?.easConfig?.projectId ?? Constants.default?.expoConfig?.extra?.eas?.projectId;
+    const result = await Notifications.getExpoPushTokenAsync(projectId ? { projectId } : undefined);
+    if (!result.data) return { available: false, reason: "token_unavailable" };
+    return { available: true, token: result.data };
+  } catch {
+    return { available: false, reason: "native_module_unavailable" };
   }
-  const current = await Notifications.getPermissionsAsync();
-  const permission = current.status === "granted" ? current : await Notifications.requestPermissionsAsync();
-  if (permission.status !== "granted") throw new Error("notification_permission_denied");
-  const projectId = Constants.easConfig?.projectId ?? Constants.expoConfig?.extra?.eas?.projectId;
-  const result = await Notifications.getExpoPushTokenAsync(projectId ? { projectId } : undefined);
-  return result.data;
+}
+
+// Preserve the existing string API for screens that already handle a failed
+// request. Native import failures are converted to a stable reason first.
+export async function requestPushToken(): Promise<string> {
+  const result = await requestPushTokenResult();
+  if (!result.available) throw new Error(result.reason);
+  return result.token;
 }
 
 export async function savePushSettings(session: Session, settings: PushSettings, signal?: AbortSignal): Promise<PushSettings> {

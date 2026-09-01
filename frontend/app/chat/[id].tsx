@@ -47,6 +47,8 @@ import {
 } from "../../services/chat";
 import {
   CHAT_ATTACHMENT_MAX_BYTES,
+  ensureChatAttachmentEncryptionAvailable,
+  isChatAttachmentCryptoUnavailable,
   isChatAttachmentContentType,
   toBase64,
   type ChatAttachmentContentType,
@@ -129,6 +131,7 @@ const COPY = {
     photoPermissionDenied: "写真へのアクセスを許可すると画像を送信できます。",
     photoUnsupported: "JPEG、PNG、WebPの画像のみ送信できます。",
     photoTooLarge: "画像は20MB以内で選択してください。",
+    photoEncryptionUnavailable: "この環境では安全な乱数生成を利用できないため、画像送信は利用できません。",
     photoSendFailed: "画像を送信できませんでした。鍵の準備と通信状態を確認して再試行してください。",
     photoLoadFailed: "画像を表示できませんでした。",
     photoRetry: "画像を再読み込み",
@@ -219,6 +222,7 @@ const COPY = {
     photoPermissionDenied: "Allow photo access to send an image.",
     photoUnsupported: "Only JPEG, PNG, and WebP images can be sent.",
     photoTooLarge: "Choose an image no larger than 20 MB.",
+    photoEncryptionUnavailable: "Image attachments are unavailable because secure random generation is not available in this environment.",
     photoSendFailed: "The photo could not be sent. Check key setup and your connection, then try again.",
     photoLoadFailed: "The image could not be displayed.",
     photoRetry: "Reload image",
@@ -666,6 +670,7 @@ export default function ChatDetailScreen() {
     const controller = new AbortController();
     let selectedBytes: Uint8Array | null = null;
     try {
+      await ensureChatAttachmentEncryptionAvailable();
       let permission = await ImagePicker.getMediaLibraryPermissionsAsync();
       if (!permission.granted) permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!permission.granted) {
@@ -735,7 +740,9 @@ export default function ChatDetailScreen() {
       setNotice(copy.photoSent);
     } catch (error) {
       if (!(error instanceof Error && error.name === "AbortError")) {
-        setSendError(error instanceof Error && error.message === "not_signed_in" ? copy.signInRequired : copy.photoSendFailed);
+        setSendError(error instanceof Error && error.message === "not_signed_in"
+          ? copy.signInRequired
+          : isChatAttachmentCryptoUnavailable(error) ? copy.photoEncryptionUnavailable : copy.photoSendFailed);
         setNotice(null);
       }
     } finally {

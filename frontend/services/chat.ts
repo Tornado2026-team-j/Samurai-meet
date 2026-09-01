@@ -19,6 +19,7 @@ import {
   toBase64URL,
   unwrapChatAttachmentKey,
   wrapChatAttachmentKey,
+  ensureChatAttachmentEncryptionAvailable,
   type ChatAttachmentContentType,
   type EncryptedChatAttachment,
 } from "./crypto";
@@ -631,6 +632,7 @@ export async function sendChatImage(
   signal?: AbortSignal,
   random: (length: number) => Promise<Uint8Array> = randomBytes,
 ): Promise<ChatImageSendResult> {
+  await ensureChatAttachmentEncryptionAvailable();
   const bundle = await ensureChatDeviceAgreementKey(session);
   let encrypted: EncryptedChatAttachment | null = null;
   try {

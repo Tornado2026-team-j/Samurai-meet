@@ -6,6 +6,14 @@ import { argon2idAsync } from '@noble/hashes/argon2.js';
 import { hkdf } from '@noble/hashes/hkdf.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
+import { ensureChatAttachmentEncryptionAvailable, secureRandomBytes } from './runtime-crypto';
+
+export {
+  ChatAttachmentCryptoUnavailableError,
+  canUseChatAttachmentEncryption,
+  ensureChatAttachmentEncryptionAvailable,
+  isChatAttachmentCryptoUnavailable,
+} from './runtime-crypto';
 
 // The API path remains /api/v1 for now, but the client-owned root-key
 // protocol is intentionally v2-only. There is no legacy recovery fallback.
@@ -80,7 +88,11 @@ export type EncryptedChatAttachment = {
 };
 
 export async function randomBytes(length: number): Promise<Uint8Array> {
-  return expoRandomBytes(length);
+  return secureRandomBytes(length);
+}
+
+async function expoRandomBytes(length: number): Promise<Uint8Array> {
+  return secureRandomBytes(length);
 }
 
 export async function createKeyMaterial(
@@ -669,11 +681,6 @@ function constantTimeEqual(left: Uint8Array, right: Uint8Array): boolean {
   let difference = 0;
   for (let index = 0; index < left.length; index += 1) difference |= (left[index] ?? 0) ^ (right[index] ?? 0);
   return difference === 0;
-}
-
-async function expoRandomBytes(length: number): Promise<Uint8Array> {
-  const Crypto = await import('expo-crypto');
-  return Crypto.getRandomBytesAsync(length);
 }
 
 type NativeSodiumModule = typeof import('react-native-libsodium');
