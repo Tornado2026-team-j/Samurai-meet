@@ -1,12 +1,12 @@
 # iPhone実機E2E手順書（現行実装）
 
 最終更新: 2026-09-01
-対象コードコミット: `9e859f2b6b42f2974c0d376b1dc8324ff2303a6a`
+対象コードコミット: `93d396c1bc38d24537bbce047de8a600682f6438`
 判定: **実機未確認のため未完了**
 
-> この手順書の対象は上記コードコミットです。今回の変更はdocsだけで、アプリやサーバーのソースは変更しません。チャット画像・Key B添付と募集/応募の修正は上記コミット群に含まれています。実機ビルドには、対象コードと同じソース状態のコミットを使い、作業中のbackend/frontend差分を混ぜないでください。
+> この手順書の対象は上記コードコミットです。今回の変更はdocsだけで、アプリやサーバーのソースは変更しません。チャット画像・Key B添付、0040互換/0042前方移行、Expo Go SDK54フォールバック、募集/応募の修正は上記コミット群に含まれています。実機ビルドには、対象コードと同じソース状態のコミットを使い、作業中のbackend/frontend差分を混ぜないでください。
 
-2026-09-01時点の`HEAD`は上記の固定対象コードコミットと一致しています。これはこの時点のスナップショットであり、今後のforward migrationなどのソースコミットを対象へ自動的に含めません。今回のdocs修正はこの2ファイルだけですが、作業ツリーに別作業のソース差分がある場合は実機対象から除外します。後でHEADが進んだ場合は、下記2.1で対象コードからの差分とbackend/frontendの作業ツリー差分を再確認し、docs-only条件を満たす場合だけ実機ビルドに使ってください。
+2026-09-01時点の`HEAD`は上記の固定対象コードコミットと一致しています。このスナップショットには`917854d2`のmigration recovery、`05189109`のExpo Go SDK54 repair、`93d396c1`の募集・応募・通知の本番導線統一を含みます。今後のコードコミットを対象へ自動的に含めません。実機ビルドに使えるのはこの対象自身、または下記2.1で対象からHEADまでのコミット済み差分が`docs/`だけだと確認できる後続HEADだけです。今回の監査で変更するのはこの2つのdocsファイルだけですが、作業ツリーに別作業のbackend/frontend差分がある場合は実機対象から除外します。
 
 この手順書は、現行の画面・API・サーバー設定を使って、iPhone実機で次の受入確認を行うためのものです。
 
@@ -16,6 +16,10 @@
 - Key B、HTTP/3 WebTransport、翻訳、認可境界
 
 自動テスト、CI成功、Expo Goで画面が開いたことは、iPhone実機E2EのPASSに置き換えません。各ケースは実機上で操作し、端末・ビルド・API接続先・日時・結果を記録してください。
+
+### 自動検証スナップショット
+
+2026-09-01に対象コード`93d396c1bc38d24537bbce047de8a600682f6438`で確認した自動検証は、`frontend`の`bun test` **135 pass / 0 fail / 414 expect calls** と`bun run typecheck`成功です。これはソース・型・自動テストの証跡であり、iPhone実機、OS通知、公開API、本番データ、native WebTransport、端末間画像復号を確認した証拠ではありません。下表と各ケースの実機判定はこの区別を維持します。
 
 ## 0. 判定ルール
 
@@ -51,10 +55,10 @@
 
 ### 2.1 実機ビルドの対象固定（必須）
 
-実機確認を始める前に、実際に端末へ入れるソースとAPI接続先を固定します。対象コードコミットから`HEAD`までの**コミット済み差分が`docs/`だけ**であり、さらに対象コードコミットから作業ツリーまでの`backend/`・`frontend/`差分（staged、unstaged、未追跡を含む）が空であることを確認します。これにより、固定対象コードそのものとdocsだけの後続コミットのどちらも許可しつつ、forward migrationを含む作業中のソース差分は実機対象から除外できます。今回の固定対象は`9e859f2b6b42f2974c0d376b1dc8324ff2303a6a`で、更新時点のHEADと一致しています。別作業のbackend/frontend差分が残るcheckoutはこのゲートを満たさず、実機ビルドに使いません。
+実機確認を始める前に、実際に端末へ入れるソースとAPI接続先を固定します。対象コードコミットから`HEAD`までの**コミット済み差分が`docs/`だけ**であり、さらに対象コードコミットから作業ツリーまでの`backend/`・`frontend/`差分（staged、unstaged、未追跡を含む）が空であることを確認します。これにより、固定対象コードそのものとdocsだけの後続コミットのどちらも許可しつつ、対象コードに含まれない作業中のソース差分は実機対象から除外できます。今回の固定対象は`93d396c1bc38d24537bbce047de8a600682f6438`で、更新時点のHEADと一致しています。別作業のbackend/frontend差分が残るcheckoutはこのゲートを満たさず、実機ビルドに使いません。
 
 ```powershell
-$TargetCommit = '9e859f2b6b42f2974c0d376b1dc8324ff2303a6a'
+$TargetCommit = '93d396c1bc38d24537bbce047de8a600682f6438'
 $HeadCommit = git rev-parse HEAD
 git rev-parse --show-toplevel
 git status --short --untracked-files=all
@@ -104,9 +108,9 @@ if ($SourceDelta.Count -ne 0) { throw 'backend/frontend contains a source delta'
 
 #### 2.3.1 ローカルE2E用schema
 
-公開`public` schemaの`schema_migrations`には、旧`0040_chat_attachment_key_envelopes.sql`を適用したときのchecksumが残っています。現在の0040ファイルと一致しないため、migration runnerが`checksum mismatch`で起動を停止するのは意図した保護です。適用済みmigration、`schema_migrations`の行、checksumを編集・削除して起動を通してはいけません。
+公開`public` schemaの`schema_migrations`に旧`0040_chat_attachment_key_envelopes.sql`を適用したときのchecksumが残っていても、`917854d2`以降のmigration runnerは、0040について監査済みの旧checksumと現行checksumの組み合わせだけを許容し、履歴を変更せず`0042_chat_attachment_key_envelope_primary_key.sql`を前方適用します。したがって、既知の旧状態でchecksum mismatchにより起動が停止し続ける仕様ではありません。一方、その他の不一致は引き続き停止します。適用済みmigration、`schema_migrations`の行、checksumを編集・削除して起動を通してはいけません。
 
-ローカルE2Eでは、公開schemaを修復・上書きせず、専用の`samurai_meet_e2e` schemaを作成して`DB_SCHEMA`へ指定します。DB接続値はサーバープロセスへexport済みの値、Secret Manager、またはそれらを安全に注入するlauncherから渡します。`.env`に値を置くだけで設定済みとみなさず、パスワードをコマンド・ログへ出しません。
+ローカルE2Eでは、公開schemaを修復・上書きせず、テストデータの分離と再現性のため専用の`samurai_meet_e2e` schemaを作成して`DB_SCHEMA`へ指定します。これは公開schemaの既知の旧0040エラーを回避するためではありません。公開schemaを使う場合も、`917854d2`以降の限定checksum互換と0042前方移行に任せ、履歴を直接変更しません。DB接続値はサーバープロセスへexport済みの値、Secret Manager、またはそれらを安全に注入するlauncherから渡します。`.env`に値を置くだけで設定済みとみなさず、パスワードをコマンド・ログへ出しません。
 
 ```powershell
 # DB_HOST / DB_PORT / DB_NAME / DB_USER / DB_PASSWORD / DB_SSLMODEは
