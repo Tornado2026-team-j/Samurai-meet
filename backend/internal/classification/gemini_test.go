@@ -22,6 +22,7 @@ func TestGeminiClassifyAcceptsOnlySupportedCategory(t *testing.T) {
 		}
 		var requestBody struct {
 			GenerationConfig struct {
+				MaxOutputTokens  int    `json:"maxOutputTokens"`
 				ResponseMIMEType string `json:"responseMimeType"`
 				ResponseSchema   struct {
 					Properties map[string]struct {
@@ -36,6 +37,9 @@ func TestGeminiClassifyAcceptsOnlySupportedCategory(t *testing.T) {
 		}
 		if requestBody.GenerationConfig.ResponseMIMEType != "application/json" {
 			t.Fatalf("responseMimeType = %q, want application/json", requestBody.GenerationConfig.ResponseMIMEType)
+		}
+		if requestBody.GenerationConfig.MaxOutputTokens != maxClassificationOutputTokens {
+			t.Fatalf("maxOutputTokens = %d, want %d", requestBody.GenerationConfig.MaxOutputTokens, maxClassificationOutputTokens)
 		}
 		if got := requestBody.GenerationConfig.ResponseSchema.Required; len(got) != 2 || got[0] != "category" || got[1] != "keywords" {
 			t.Fatalf("required fields = %#v, want category and keywords", got)
