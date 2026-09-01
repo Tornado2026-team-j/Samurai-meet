@@ -32,6 +32,7 @@ const (
 const (
 	maxClassificationKeywords     = 5
 	maxClassificationKeywordRunes = 40
+	maxClassificationOutputTokens = 256
 )
 
 type ClassificationResult struct {
@@ -101,7 +102,7 @@ func (s *Service) ClassifyWithKeywords(ctx context.Context, userID, description 
 		"contents":          []map[string]any{{"role": "user", "parts": []map[string]string{{"text": description}}}},
 		"generationConfig": map[string]any{
 			"temperature":      0,
-			"maxOutputTokens":  64,
+			"maxOutputTokens":  maxClassificationOutputTokens,
 			"responseMimeType": "application/json",
 			"responseSchema": map[string]any{
 				"type": "OBJECT",
