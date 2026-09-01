@@ -1,18 +1,18 @@
 # iPhone実機E2E手順書（現行実装）
 
 最終更新: 2026-09-01
-対象コードコミット: `ef4ae2096ca88b7e6f354c558492f3948941a607`
+対象コードコミット: `9e859f2b6b42f2974c0d376b1dc8324ff2303a6a`
 判定: **実機未確認のため未完了**
 
-> この手順書の対象は上記コードコミットです。今回の変更はdocsだけで、アプリやサーバーのソースは変更しません。更新時点の作業ツリーには別作業の未コミットソース差分があるため、その作業ツリーを実機ビルドに使わず、対象コードと同じソース状態のクリーンなコミットからビルドしてください。
+> この手順書の対象は上記コードコミットです。今回の変更はdocsだけで、アプリやサーバーのソースは変更しません。チャット画像・Key B添付と募集/応募の修正は上記コミット群に含まれています。実機ビルドには、対象コードと同じソース状態のコミットを使い、作業中のbackend/frontend差分を混ぜないでください。
 
-なお、2026-09-01時点の`HEAD`（`eeec9d468ada63ad33d75f4d32f2a475a1e08142`）は、対象コードコミットから`docs/`以外のコミット済み差分も含むため、このcheckoutのまま実機E2E対象にはしません。下記2.1の判定が成功する対象コードコミット、または`docs/`だけの後続コミットへ切り替えてから実施してください。
+2026-09-01時点の`HEAD`は上記の固定対象コードコミットと一致しています。これはこの時点のスナップショットであり、今後のforward migrationなどのソースコミットを対象へ自動的に含めません。今回のdocs修正はこの2ファイルだけですが、作業ツリーに別作業のソース差分がある場合は実機対象から除外します。後でHEADが進んだ場合は、下記2.1で対象コードからの差分とbackend/frontendの作業ツリー差分を再確認し、docs-only条件を満たす場合だけ実機ビルドに使ってください。
 
 この手順書は、現行の画面・API・サーバー設定を使って、iPhone実機で次の受入確認を行うためのものです。
 
 - 募集作成 → 検索 → 応募 → 承認 → アプリ内通知 → 応募取消
 - チャット送信前Moderationと通報・ブロック
-- チャット画像の暗号文保存APIと、現行クライアントで実行できない範囲
+- チャット画像の端末内暗号化、Key B端末証明に紐づくX25519鍵envelope、暗号文保存APIと送受信UI
 - Key B、HTTP/3 WebTransport、翻訳、認可境界
 
 自動テスト、CI成功、Expo Goで画面が開いたことは、iPhone実機E2EのPASSに置き換えません。各ケースは実機上で操作し、端末・ビルド・API接続先・日時・結果を記録してください。
@@ -26,7 +26,7 @@
 | `BLOCKED` | 現行クライアントまたは前提環境に機能がなく、手順を実行できない |
 | `NOT RUN` | 前提不足などでまだ実行していない |
 
-`BLOCKED`と`NOT RUN`は完了扱いにしません。特に画像UI、チャットKey B、native WebTransport、OSプッシュ通知は、現時点で実機PASSを付けてはいけません。
+コードや自動テストが存在しても、iPhone上で実際に期待結果を確認していないケースは`PASS`にしません。特に画像UI・チャットKey B・native WebTransport・OSプッシュ通知は、現時点では実機未確認です。画像Moderationは現行未実装なので、実機確認済みとは記録しません。
 
 ## 1. 現行の画面・API・実機ゲート
 
@@ -39,11 +39,11 @@
 | 応募取消 | `/japanese/applications` の保留中応募 → 「取り下げる」 | `POST /api/v1/matches/{id}/withdraw` | 承認前のみ。実機未確認 |
 | チャット本文 | `/chat` → `/chat/[id]`。送信前にModerationし、許可時だけ暗号化して送信 | `POST /api/v1/chats/{id}/moderation` → `POST /api/v1/chats/{id}/messages` | Expo GoはREST同期。実機Moderation未確認 |
 | チャット通報・ブロック | チャット右上の安全メニュー、メッセージ長押し/タップの通報 | `POST /api/v1/reports`、`POST /api/v1/blocks`（body: `user_id`） | 実機未確認。運営キューは未実装 |
-| チャット画像 | バックエンドの暗号文BLOB APIのみ。現行`/chat/[id]`に画像選択・送信UIなし | `POST /api/v1/chats/{id}/attachments`、`GET /api/v1/chats/{id}/attachments/{attachment_id}` | **BLOCKED** |
-| チャットKey B | 現行Key Bは端末証明・プロフィール画像/端末移行用。チャット本文・添付の共有鍵ではない | — | **BLOCKED（未実装）** |
+| チャット画像 | `/chat/[id]`に画像選択、端末内AES-256-GCM暗号化、参加者デバイスごとのopaque envelope、復号表示・失敗再試行UIがある。サーバーは画像平文・画像鍵を扱わない | `GET /api/v1/chats/{id}/attachment-key-recipients`、`POST /api/v1/chats/{id}/attachments`、`PUT /api/v1/chats/{id}/attachments/{attachment_id}/envelopes`、`GET /api/v1/chats/{id}/attachments/{attachment_id}/envelope`、`GET /api/v1/chats/{id}/attachments/{attachment_id}` | 実機未確認 |
+| チャットKey B | Key B端末証明に紐づくX25519合意公開鍵へ、画像のfresh content keyを端末ごとに包む。秘密鍵は端末外へ送らない | 上記recipient/envelope API | 実機未確認。Keychain/Secure Storage・端末移行・相手端末だけの復号は未確認 |
 | HTTP/3 WebTransport | `ENABLE_CHAT_WEBTRANSPORT=true`で有効化するサーバー経路。iOS側は`SamuraiMeetWebTransport` native moduleが必要 | `POST /api/v1/chats/{id}/transport-token`、HTTP/3 `CONNECT /api/v1/wt/chats/{id}` | **BLOCKED（現行リポジトリにnative bridgeなし）** |
-| チャット翻訳 | 現行画面はローカル辞書による限定表示。サーバーGemini翻訳経路なし | — | **NOT RUN（Gemini翻訳未実装）** |
-| 画像Moderation | 画像ModerationのAPI配線なし | — | **BLOCKED（未実装）** |
+| チャット翻訳 | 現行画面はローカル辞書による限定表示。`gemini-3.1-flash-lite`のチャット翻訳経路なし | — | **NOT RUN（未実装）** |
+| 画像Moderation | 画像ModerationのAPI配線なし。暗号化画像をOpenAIへ送る処理もない | — | **BLOCKED（未実装）** |
 
 根拠となる実装位置は、[フロントエンドREADME](../frontend/README.md)、[バックエンドAPI仕様](../backend/API_SPEC.md)、[チャット通信仕様](features/chat-transport.md)、[現行進捗](進捗.md)、および各画面・サービスのソースです。`backend/API_SPEC.md`に過去のWebSocket表現が残る箇所はありますが、実機確認では対象コードのルーティングと`backend/HANDOFF.md`のWebTransport契約を優先します。
 
@@ -51,10 +51,10 @@
 
 ### 2.1 実機ビルドの対象固定（必須）
 
-実機確認を始める前に、実際に端末へ入れるソースとAPI接続先を固定します。対象コードコミットから`HEAD`までの**コミット済み差分が`docs/`だけ**であり、さらに対象コードコミットから作業ツリーまでの`backend/`・`frontend/`差分（staged、unstaged、未追跡を含む）が空であることを確認します。これにより、対象コードコミットそのものとdocsだけの後続コミットのどちらも許可しつつ、作業中のソース差分は実機対象から除外できます。
+実機確認を始める前に、実際に端末へ入れるソースとAPI接続先を固定します。対象コードコミットから`HEAD`までの**コミット済み差分が`docs/`だけ**であり、さらに対象コードコミットから作業ツリーまでの`backend/`・`frontend/`差分（staged、unstaged、未追跡を含む）が空であることを確認します。これにより、固定対象コードそのものとdocsだけの後続コミットのどちらも許可しつつ、forward migrationを含む作業中のソース差分は実機対象から除外できます。今回の固定対象は`9e859f2b6b42f2974c0d376b1dc8324ff2303a6a`で、更新時点のHEADと一致しています。別作業のbackend/frontend差分が残るcheckoutはこのゲートを満たさず、実機ビルドに使いません。
 
 ```powershell
-$TargetCommit = 'ef4ae2096ca88b7e6f354c558492f3948941a607'
+$TargetCommit = '9e859f2b6b42f2974c0d376b1dc8324ff2303a6a'
 $HeadCommit = git rev-parse HEAD
 git rev-parse --show-toplevel
 git status --short --untracked-files=all
@@ -101,6 +101,33 @@ if ($SourceDelta.Count -ne 0) { throw 'backend/frontend contains a source delta'
 ### 2.3 バックエンド
 
 テスト対象のAPIホストを1つに固定します。本番相当環境で行う場合は、テストデータと専用アカウントを使い、本番の利用者へ通知を出さない運用にしてください。
+
+#### 2.3.1 ローカルE2E用schema
+
+公開`public` schemaの`schema_migrations`には、旧`0040_chat_attachment_key_envelopes.sql`を適用したときのchecksumが残っています。現在の0040ファイルと一致しないため、migration runnerが`checksum mismatch`で起動を停止するのは意図した保護です。適用済みmigration、`schema_migrations`の行、checksumを編集・削除して起動を通してはいけません。
+
+ローカルE2Eでは、公開schemaを修復・上書きせず、専用の`samurai_meet_e2e` schemaを作成して`DB_SCHEMA`へ指定します。DB接続値はサーバープロセスへexport済みの値、Secret Manager、またはそれらを安全に注入するlauncherから渡します。`.env`に値を置くだけで設定済みとみなさず、パスワードをコマンド・ログへ出しません。
+
+```powershell
+# DB_HOST / DB_PORT / DB_NAME / DB_USER / DB_PASSWORD / DB_SSLMODEは
+# サーバープロセスへexportまたはSecret Managerから安全に注入済みであること。
+# .envに置くだけでは前提を満たさない。値を表示しない。
+$env:DB_SCHEMA = 'samurai_meet_e2e'
+psql -h $env:DB_HOST -p $env:DB_PORT -U $env:DB_USER -d $env:DB_NAME -v ON_ERROR_STOP=1 -c 'CREATE SCHEMA IF NOT EXISTS samurai_meet_e2e'
+# 別ターミナルで backend から実行する
+go run ./cmd/server
+```
+
+`DB_SCHEMA`はサーバープロセスへ明示的にexportまたは安全に注入してからサーバーを起動します。このschemaは現行migrationを先頭から適用する空のE2E環境であり、本番データ・本番ユーザー・本番の募集/応募/通知を含みません。ローカルでこの方式により起動したサーバーの`/healthz`・`/readyz`（および`/api/v1/healthz`・`/api/v1/readyz`）は成功を確認済みですが、health/readinessの成功はiPhone実機E2Eや本番データ接続を証明しません。
+
+別ターミナルで次を実行し、4つともHTTP 200になることを確認します。ローカル確認では`/healthz`が`{"status":"ok"}`、`/readyz`が`{"status":"ready"}`を返します。
+
+```powershell
+curl.exe --fail --silent --show-error http://127.0.0.1:8080/healthz
+curl.exe --fail --silent --show-error http://127.0.0.1:8080/readyz
+curl.exe --fail --silent --show-error http://127.0.0.1:8080/api/v1/healthz
+curl.exe --fail --silent --show-error http://127.0.0.1:8080/api/v1/readyz
+```
 
 サーバーのSecret Manager/環境変数に次を設定します。値は手順書、端末画面、CIログへ書きません。
 
@@ -155,7 +182,7 @@ bun test tests/recruitment.test.ts tests/notifications.test.ts tests/chat.test.t
 - ログイン時のGoogle/Passkey操作を完了する。
 - 募集作成で現在地・距離を使う場合だけ、位置情報の前景許可を与える。許可できない場合は公開地点名で続行し、距離検索をPASSにしない。
 - OSプッシュ通知は現行未実装なので、通知ケースはアプリ内通知画面と手動更新で行う。
-- チャットの画像ケースでは、カメラロール権限が表示されないこと自体が現行仕様である。画像選択ボタンがない状態をPASSにしない。
+- チャットの画像ケースでは、カメラロール権限を許可し、選択した画像が端末内で暗号化されることを確認する。画像Moderationは現行未実装なので、その実行をPASS条件にしない。
 
 ## 3. 共通のログインと初期確認
 
@@ -320,25 +347,26 @@ POST /api/v1/blocks               -> 204（body: `{"user_id":"..."}`）
 
 ### 7.1 現行iPhoneクライアントの判定
 
-現行`frontend/app/chat/[id].tsx`には、画像選択、EXIF除去、画像暗号化、添付アップロード、添付受信復号、添付鍵共有のUI/処理がありません。iPhone画面に画像ボタンが見えないことは不具合の実機PASSではなく、現行クライアントの未実装状態です。
+現行`frontend/app/chat/[id].tsx`には、画像選択、端末内AES-256-GCM暗号化、添付アップロード、参加者デバイスごとの鍵envelope、添付受信復号、失敗時の再試行UIがあります。これらはコードと自動テストで確認済みですが、iPhone実機での画像選択・権限・送受信・復号・失敗復帰は未確認です。
 
-このため、次を実行できない間は画像E2Eを`BLOCKED`とします。
+次を実機で確認できるまで、画像E2Eは`NOT RUN`（前提となる端末確認が未実施）として扱います。native依存やAPI接続不能などで手順自体を実行できない場合は`BLOCKED`にします。
 
 - カメラロールから画像を選ぶ
-- クライアントでEXIFを除去し、AES-256-GCMで暗号化する
-- 添付鍵を相手へ暗号化して渡す
+- クライアントでAES-256-GCM暗号化し、Key B端末証明に紐づくX25519公開鍵へ添付鍵を包む
 - 画像を送信・受信し、相手端末だけで復号表示する
-- OpenAI画像Moderationを通す
+- 送信失敗時に平文画像・画像鍵がログやAPI bodyへ出ず、再試行できる
+
+画像Moderationは現行未実装であり、このE2Eで実行した・安全判定できたとは記録しません。EXIF除去も現行の自動/実機証跡に含めず、必要なら別要件として扱います。
 
 ### 7.2 バックエンド契約の確認（現行アプリの実機PASSではない）
 
-クライアント実装または承認済みのQA harnessが別途用意された場合だけ、テスト用画像で次を確認します。平文画像、画像鍵、Key Bをサーバーやログへ渡さないでください。
+現行クライアントで実機確認を行う場合は、テスト用画像だけを使います。平文画像、画像鍵、Key B秘密鍵をサーバーやログへ渡さないでください。
 
-対象コードコミットには添付鍵recipient/envelopeを登録するチャットAPIは含まれていません。作業ツリーに同名の未コミット差分があっても、この手順書の現行APIや実機PASSには含めません。未コミット差分を含む状態で画像E2Eを実行しないでください。
+対象コードコミットには添付鍵recipient/envelope APIと現行フロントの呼び出しが含まれています。未コミットのbackend/frontend差分を含む状態で画像E2Eを実行せず、2.1の対象固定を通してください。
 
-このバックエンド契約は暗号文の保存・取得境界だけを確認するもので、画像の内容をModerationする経路ではありません。画像Moderationの実機ケースは、画像選択UI、端末側の暗号化、サーバー側の安全判定、結果表示が実装されるまで`BLOCKED`です。
+このバックエンド契約は暗号文の保存・取得境界を確認するもので、画像の内容をModerationする経路ではありません。画像Moderationの実機ケースは現行未実装のため`BLOCKED`です。
 
-1. accepted chatの参加者として、クライアントでEXIFを除去した画像をAES-256-GCM暗号化する。
+1. accepted chatの参加者として、テスト用画像をクライアント内でAES-256-GCM暗号化する。EXIF除去は現行の自動/実機証跡に含めず、必要なら別要件として記録する。
 2. raw暗号文を次のエンドポイントへ送る。画像の平文をbodyへ送ってはいけない。
 
    ```text
@@ -346,7 +374,7 @@ POST /api/v1/blocks               -> 204（body: `{"user_id":"..."}`）
    X-Chat-Attachment-Content-Type: image/jpeg|image/png|image/webp
    X-Chat-Attachment-Nonce: 12-byte base64url
    X-Chat-Attachment-Algorithm: AES-256-GCM
-   X-Chat-Attachment-Key-Version: approved client version
+   X-Chat-Attachment-Key-Version: chat-attachment-e2ee-v1
    body: raw AES-256-GCM ciphertext
    ```
 
@@ -355,19 +383,20 @@ POST /api/v1/blocks               -> 204（body: `{"user_id":"..."}`）
 5. accepted/completed chatの参加者としてGETし、レスポンスが`application/octet-stream`、`Cache-Control: private, no-store`、`nosniff`であることを確認する。サーバーは復号しない。
 6. 第三者・ブロック後のユーザーでGETし、404相当になることを確認する。添付をmessageへ関連付けないまま約24時間経過させるテスト環境では、孤児スイープで削除されることを確認する。
 
-これはAPIの認可・保存境界の確認であり、現行iPhoneアプリの画像送受信E2Eを完了したことにはなりません。
+これはAPIの認可・保存境界の自動/QA確認であり、現行iPhoneアプリの画像送受信E2Eを完了したことにはなりません。実機で相手端末だけの復号まで確認して初めて、そのケースを`PASS`にします。
 
 ## 8. Key B・WebTransport（native実機ゲート）
 
 ### 8.1 Key B
 
-現行Key Bは端末証明、端末移行、プロフィール画像のenvelopeに使われます。チャット本文の共有鍵はKey Bから合意されず、現行チャットの本文キー導出もチャットIDベースのクライアント実装です。したがって、次を確認しただけで「チャットKey B保護済み」と報告しません。
+現行Key Bは端末証明、端末移行、プロフィール画像のenvelopeに加え、チャット画像の端末間鍵envelopeに使われます。チャット本文の共有鍵をKey Bで包む実装とは別です。画像についても、コードや自動テストだけで「iPhone実機のチャットKey B保護済み」と報告しません。
 
-- プロフィール画像が暗号化されている
+- チャット画像のrecipient APIから参加者のX25519公開鍵を取得できる
+- 各端末向けenvelopeを作成し、相手端末の秘密鍵だけで画像鍵をunwrapできる
 - 端末移行画面が開く
-- Key Bの公開鍵や署名がAPIへ送られる
+- Key Bの公開鍵や端末proofがAPIへ送られる
 
-チャットでKey Bを使うには、相手の公開鍵への鍵包み、鍵バージョン、ローテーション、失効、通報時の平文例外境界を別途実装・仕様化し、native端末で復号/失敗復帰を確認する必要があります。現行手順では`BLOCKED`です。
+チャット画像のKey B保護は実装・自動検証済みですが、native端末での復号/失敗復帰、端末移行後の既存添付、鍵ローテーション・失効は未確認です。通報・Moderation時の平文例外も別境界であり、画像Moderationが実装済みだとは扱いません。
 
 ### 8.2 WebTransport
 
