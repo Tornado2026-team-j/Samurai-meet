@@ -18,7 +18,6 @@ import type { AppLanguage } from "../../../services/onboarding-contract";
 import {
   acceptMatch,
   getMatch,
-  listMatches,
   rejectMatch,
   type MatchView,
 } from "../../../services/matching";
@@ -137,12 +136,10 @@ export default function ForeignerApplicationDetailScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { getCurrentSession, refresh, session, status } = useAuth();
-  const { id, recruitmentId } = useLocalSearchParams<{
+  const { id } = useLocalSearchParams<{
     id?: string | string[];
-    recruitmentId?: string | string[];
   }>();
-  const applicationId = Array.isArray(id) ? id[0] : id;
-  const recruitmentID = Array.isArray(recruitmentId) ? recruitmentId[0] : recruitmentId;
+  const applicationId = (Array.isArray(id) ? id[0] : id)?.trim();
   const [application, setApplication] = useState<MatchView | null>(null);
   const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading");
   const [loadError, setLoadError] = useState<LoadErrorKey | null>(null);
@@ -190,25 +187,8 @@ export default function ForeignerApplicationDetailScreen() {
       setLoadState("loading");
       setLoadError(null);
       try {
-        const loadWithSession = async (currentSession: typeof activeSession) => {
-          try {
-            return await getMatch(applicationId, currentSession, controller.signal);
-          } catch (error) {
-            if (!(error instanceof APIError) || error.status !== 404) throw error;
-            const ownerMatches = await listMatches(
-              currentSession,
-              { role: "owner", limit: 50 },
-              controller.signal,
-            );
-            const fallback = ownerMatches.find((item) =>
-              item.id === applicationId
-              || item.recruitment.id === recruitmentID
-              || item.recruitment.id === applicationId,
-            );
-            if (!fallback) throw error;
-            return fallback;
-          }
-        };
+        const loadWithSession = (currentSession: typeof activeSession) =>
+          getMatch(applicationId, currentSession, controller.signal);
         const loadWithRefresh = async () => {
           try {
             return await loadWithSession(activeSession);
@@ -239,7 +219,7 @@ export default function ForeignerApplicationDetailScreen() {
       cancelled = true;
       controller.abort();
     };
-  }, [applicationId, recruitmentID, status]);
+  }, [applicationId, status]);
 
   if (!application) {
     return (

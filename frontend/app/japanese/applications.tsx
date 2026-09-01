@@ -121,7 +121,15 @@ export default function JapaneseApplicationsScreen() {
   const hasLoaded = useRef(false);
   const copy = COPY[language];
 	const copyRef = useRef(copy);
-	copyRef.current = copy;
+  copyRef.current = copy;
+
+  const goBack = () => {
+    if (router.canGoBack()) {
+      router.back();
+      return;
+    }
+    router.replace("/japanese");
+  };
 
   useEffect(() => {
     let active = true;
@@ -268,6 +276,15 @@ export default function JapaneseApplicationsScreen() {
     <View style={styles.screen}>
       <StatusBar style="light" />
       <View style={[styles.header, { paddingTop: Math.max(insets.top, 18) }]}>
+        <Pressable
+          accessibilityLabel={copy.back}
+          accessibilityRole="button"
+          hitSlop={10}
+          onPress={goBack}
+          style={({ pressed }) => [styles.backButton, pressed && styles.pressed]}
+        >
+          <MaterialIcons color="#ffffff" name="chevron-left" size={30} />
+        </Pressable>
         <Text style={styles.headerTitle}>{copy.title}</Text>
       </View>
 

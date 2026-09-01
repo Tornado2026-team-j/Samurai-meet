@@ -264,23 +264,40 @@ function actorLabel(actorName: string | undefined, language: "en" | "ja"): strin
   return language === "ja" ? "ユーザー" : "Someone";
 }
 
-function isSameLocalDate(first: Date, second: Date): boolean {
-  return first.getFullYear() === second.getFullYear()
-    && first.getMonth() === second.getMonth()
-    && first.getDate() === second.getDate();
+const JST_TIME_ZONE = "Asia/Tokyo";
+
+function jstDateKey(value: Date): string {
+  if (Number.isNaN(value.getTime())) return "";
+  const parts = new Intl.DateTimeFormat("en-US", {
+    day: "2-digit",
+    month: "2-digit",
+    timeZone: JST_TIME_ZONE,
+    year: "numeric",
+  }).formatToParts(value);
+  const part = (type: Intl.DateTimeFormatPartTypes): string =>
+    parts.find((item) => item.type === type)?.value ?? "";
+  return `${part("year")}-${part("month")}-${part("day")}`;
 }
 
-function isYesterday(first: Date, second: Date): boolean {
-  const yesterday = new Date(second);
-  yesterday.setHours(0, 0, 0, 0);
-  yesterday.setDate(yesterday.getDate() - 1);
-  return first.getFullYear() === yesterday.getFullYear()
-    && first.getMonth() === yesterday.getMonth()
-    && first.getDate() === yesterday.getDate();
+function shiftJstDateKey(dateKey: string, days: number): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateKey);
+  if (!match) return "";
+  const shifted = new Date(Date.UTC(
+    Number(match[1]),
+    Number(match[2]) - 1,
+    Number(match[3]) + days,
+    12,
+  ));
+  return `${shifted.getUTCFullYear()}-${String(shifted.getUTCMonth() + 1).padStart(2, "0")}-${String(shifted.getUTCDate()).padStart(2, "0")}`;
+}
+
+function isYesterdayInJst(first: Date, second: Date): boolean {
+  return jstDateKey(first) === shiftJstDateKey(jstDateKey(second), -1);
 }
 
 function relativeTime(createdAt: Date, now: Date, language: "en" | "ja"): string {
   const elapsed = Math.max(0, now.getTime() - createdAt.getTime());
+  if (isYesterdayInJst(createdAt, now)) return language === "ja" ? "昨日" : "Yesterday";
   if (elapsed < 60_000) return language === "ja" ? "今" : "now";
   if (elapsed < 60 * 60_000) {
     const minutes = Math.floor(elapsed / 60_000);
@@ -290,7 +307,6 @@ function relativeTime(createdAt: Date, now: Date, language: "en" | "ja"): string
     const hours = Math.floor(elapsed / (60 * 60_000));
     return language === "ja" ? `${hours}時間前` : `${hours}h`;
   }
-  if (isYesterday(createdAt, now)) return language === "ja" ? "昨日" : "Yesterday";
   const days = Math.max(1, Math.floor(elapsed / (24 * 60 * 60_000)));
   return language === "ja" ? `${days}日前` : `${days}d`;
 }
@@ -304,6 +320,8 @@ export function toNotificationView(
   const validCreatedAt = Number.isNaN(createdAt.getTime()) ? now : createdAt;
   const copy = (language === "ja" ? JAPANESE_COPY : ENGLISH_COPY)[record.type];
   const actor = actorLabel(record.actor_name, language);
+  const createdDateKey = jstDateKey(validCreatedAt);
+  const nowDateKey = jstDateKey(now);
   return {
     id: record.id,
     type: record.type,
@@ -311,7 +329,7 @@ export function toNotificationView(
     message: copy.message(actor),
     receivedAt: relativeTime(validCreatedAt, now, language),
     unread: !record.read_at,
-    period: isSameLocalDate(validCreatedAt, now) ? "today" : "past_7_days",
+    period: createdDateKey === nowDateKey ? "today" : "past_7_days",
     destination: record.destination,
     targetId: record.target_id,
     recruitmentId: record.recruitment_id,

@@ -165,6 +165,14 @@ export default function MyRecruitmentsScreen() {
 	const copyRef = useRef(copy);
 	copyRef.current = copy;
 
+  const goBack = () => {
+    if (router.canGoBack()) {
+      router.back();
+      return;
+    }
+    router.replace("/profile");
+  };
+
   useEffect(() => {
     let active = true;
     const unsubscribe = subscribeLanguage((nextLanguage) => {
@@ -399,6 +407,15 @@ export default function MyRecruitmentsScreen() {
     <View style={styles.screen}>
       <StatusBar style="light" />
       <View style={[styles.header, { paddingTop: Math.max(insets.top, 18) }]}>
+        <Pressable
+          accessibilityLabel={copy.back}
+          accessibilityRole="button"
+          hitSlop={10}
+          onPress={goBack}
+          style={({ pressed }) => [styles.backButton, pressed && styles.pressed]}
+        >
+          <MaterialIcons color="#ffffff" name="chevron-left" size={30} />
+        </Pressable>
         <Text style={styles.headerTitle}>{copy.title}</Text>
       </View>
 

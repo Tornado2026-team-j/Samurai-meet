@@ -2,7 +2,9 @@ package integration
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -10,6 +12,174 @@ import (
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/meeting"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/notification"
 )
+
+func TestSearchRecruitmentsAppliesFiltersBeforePageLimit(t *testing.T) {
+	database := openIsolatedDatabase(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+	jst := time.FixedZone("Asia/Tokyo", 9*60*60)
+	availableDate := now.In(jst).AddDate(0, 0, 2).Format("2006-01-02")
+	searcherID := randomID(t)
+	ownerID := randomID(t)
+	insertMatchingTestUser(t, database, now, searcherID, "Search user", "US")
+	insertMatchingTestUser(t, database, now, ownerID, "Recruitment owner", "JP")
+
+	service := matching.NewService(database)
+	valid, err := service.CreateRecruitment(ctx, ownerID, matching.RecruitmentInput{
+		Category:           "Food",
+		AvailableDate:      availableDate,
+		StartTime:          "12:00",
+		EndTime:            "13:00",
+		Timezone:           "Asia/Tokyo",
+		Keywords:           []string{"target"},
+		Description:        "The matching result is older than the non-matching cards.",
+		VisibilityRadiusKM: 1,
+		Status:             "open",
+	}, now)
+	if err != nil {
+		t.Fatalf("valid recruitment create error = %v", err)
+	}
+
+	// These cards are newer than valid but fail the requested category and
+	// keyword filters. A SQL LIMIT applied before the Go-side filters would
+	// return none of the valid cards once this exceeds the old 50-row cap.
+	for i := 0; i < 51; i++ {
+		_, err := service.CreateRecruitment(ctx, ownerID, matching.RecruitmentInput{
+			Category:           "Activity",
+			AvailableDate:      availableDate,
+			StartTime:          "12:00",
+			EndTime:            "13:00",
+			Timezone:           "Asia/Tokyo",
+			Keywords:           []string{"noise"},
+			Description:        "This card must be filtered out before pagination.",
+			VisibilityRadiusKM: 1,
+			Status:             "open",
+		}, now.Add(time.Duration(i+1)*time.Second))
+		if err != nil {
+			t.Fatalf("non-matching recruitment %d create error = %v", i, err)
+		}
+	}
+
+	found, err := service.SearchRecruitments(ctx, searcherID, matching.SearchParams{
+		Category:      "Food",
+		Keywords:      []string{"target"},
+		AvailableDate: availableDate,
+		Limit:         1,
+	}, now)
+	if err != nil {
+		t.Fatalf("SearchRecruitments() error = %v", err)
+	}
+	if len(found) != 1 || found[0].ID != valid.ID {
+		t.Fatalf("filtered search result = %+v, want only %s", found, valid.ID)
+	}
+}
+
+func TestAcceptMatchHonorsParticipantLimitConcurrently(t *testing.T) {
+	database := openIsolatedDatabase(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+	jst := time.FixedZone("Asia/Tokyo", 9*60*60)
+	availableDate := now.In(jst).AddDate(0, 0, 2).Format("2006-01-02")
+	ownerID := randomID(t)
+	firstRequesterID := randomID(t)
+	secondRequesterID := randomID(t)
+	insertMatchingTestUser(t, database, now, ownerID, "Recruitment owner", "JP")
+	insertMatchingTestUser(t, database, now, firstRequesterID, "First requester", "US")
+	insertMatchingTestUser(t, database, now, secondRequesterID, "Second requester", "CA")
+
+	service := matching.NewService(database)
+	card, err := service.CreateRecruitment(ctx, ownerID, matching.RecruitmentInput{
+		Category:           "Places",
+		AvailableDate:      availableDate,
+		StartTime:          "12:00",
+		EndTime:            "13:00",
+		Timezone:           "Asia/Tokyo",
+		Keywords:           []string{"meeting"},
+		Description:        "A recruitment with one available participant slot.",
+		ParticipantLimit:   1,
+		VisibilityRadiusKM: 1,
+		Status:             "open",
+	}, now)
+	if err != nil {
+		t.Fatalf("recruitment create error = %v", err)
+	}
+	first, err := service.SendInterest(ctx, firstRequesterID, card.ID, now)
+	if err != nil {
+		t.Fatalf("first interest error = %v", err)
+	}
+	second, err := service.SendInterest(ctx, secondRequesterID, card.ID, now)
+	if err != nil {
+		t.Fatalf("second interest error = %v", err)
+	}
+
+	// Hold a pending -> accepted update long enough for both callers to reach
+	// the critical section. Without a recruitment-row lock, both transactions
+	// can read accepted_count=0 before either update commits.
+	if _, err := database.Exec(`
+		CREATE FUNCTION matching_test_pause_accept() RETURNS trigger
+		LANGUAGE plpgsql AS $$
+		BEGIN
+			IF OLD.status='pending' AND NEW.status='accepted' THEN
+				PERFORM pg_sleep(0.2);
+			END IF;
+			RETURN NEW;
+		END
+		$$`); err != nil {
+		t.Fatalf("create test trigger function error = %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = database.Exec(`DROP TRIGGER IF EXISTS matching_test_pause_accept_trigger ON matches`)
+		_, _ = database.Exec(`DROP FUNCTION IF EXISTS matching_test_pause_accept()`)
+	})
+	if _, err := database.Exec(`
+		CREATE TRIGGER matching_test_pause_accept_trigger
+		BEFORE UPDATE OF status ON matches
+		FOR EACH ROW EXECUTE FUNCTION matching_test_pause_accept()`); err != nil {
+		t.Fatalf("create test trigger error = %v", err)
+	}
+
+	callCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	started := make(chan struct{})
+	results := make(chan error, 2)
+	var waitGroup sync.WaitGroup
+	for _, matchID := range []string{first.ID, second.ID} {
+		waitGroup.Add(1)
+		go func(id string) {
+			defer waitGroup.Done()
+			<-started
+			_, acceptErr := service.AcceptMatch(callCtx, ownerID, id, now)
+			results <- acceptErr
+		}(matchID)
+	}
+	close(started)
+	waitGroup.Wait()
+	close(results)
+
+	acceptedCalls := 0
+	fullCalls := 0
+	for acceptErr := range results {
+		switch {
+		case acceptErr == nil:
+			acceptedCalls++
+		case errors.Is(acceptErr, matching.ErrInvalidState):
+			fullCalls++
+		default:
+			t.Fatalf("concurrent AcceptMatch() error = %v", acceptErr)
+		}
+	}
+	if acceptedCalls != 1 || fullCalls != 1 {
+		t.Fatalf("concurrent acceptance results = accepted %d, full %d; want 1, 1", acceptedCalls, fullCalls)
+	}
+
+	var acceptedCount int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM matches WHERE card_id=$1 AND status='accepted'`, card.ID).Scan(&acceptedCount); err != nil {
+		t.Fatalf("accepted match count error = %v", err)
+	}
+	if acceptedCount != 1 {
+		t.Fatalf("accepted match count = %d, want 1", acceptedCount)
+	}
+}
 
 func TestRecruitmentMatchingLifecycle(t *testing.T) {
 	database := openIsolatedDatabase(t)
@@ -354,6 +524,21 @@ func TestRecruitmentMatchingLifecycle(t *testing.T) {
 	}
 	if !foundWithdrawNotification {
 		t.Fatalf("withdraw notification metadata = %+v", withdrawNotifications)
+	}
+}
+
+func insertMatchingTestUser(t *testing.T, database *sql.DB, now time.Time, userID, name, nationality string) {
+	t.Helper()
+	createdAt := now.UTC().Format(time.RFC3339Nano)
+	if _, err := database.Exec(`
+		INSERT INTO users (id,google_subject_id,display_name,status,created_at,updated_at)
+		VALUES ($1,$2,$3,'active',$4,$4)`, userID, "matching-regression-"+userID, name, createdAt); err != nil {
+		t.Fatalf("insert matching test user %q error = %v", userID, err)
+	}
+	if _, err := database.Exec(`
+		INSERT INTO profiles (user_id,name,nationality_code,bio,created_at,updated_at)
+		VALUES ($1,$2,$3,$4,$5,$5)`, userID, name, nationality, "matching regression profile", createdAt); err != nil {
+		t.Fatalf("insert matching test profile %q error = %v", userID, err)
 	}
 }
 

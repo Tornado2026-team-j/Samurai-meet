@@ -84,6 +84,21 @@ describe("通知APIクライアント", () => {
     });
   });
 
+  it("端末のタイムゾーンに依存せずJSTの日付境界で今日・昨日を判定する", () => {
+    const justAfterMidnightJst = new Date("2026-08-27T15:30:00Z");
+    const justBeforeMidnightJst = { ...record, created_at: "2026-08-27T14:30:00Z" };
+    const sameJstDayAcrossUtcDate = { ...record, created_at: "2026-08-26T23:30:00Z" };
+
+    expect(toNotificationView(justBeforeMidnightJst, "en", justAfterMidnightJst)).toMatchObject({
+      receivedAt: "Yesterday",
+      period: "past_7_days",
+    });
+    expect(toNotificationView(sameJstDayAcrossUtcDate, "ja", new Date("2026-08-27T00:30:00Z"))).toMatchObject({
+      receivedAt: "1時間前",
+      period: "today",
+    });
+  });
+
   it("通知レコードの必須フィールドを検証する", () => {
     expect(isNotificationRecord(record)).toBe(true);
     expect(isNotificationRecord({ ...record, target_id: "" })).toBe(false);

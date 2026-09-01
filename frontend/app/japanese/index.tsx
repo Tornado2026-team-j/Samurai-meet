@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MaterialIcons } from "@expo/vector-icons";
-import { useFocusEffect, useLocalSearchParams } from "expo-router";
+import { useLocalSearchParams } from "expo-router";
 import {
   ActivityIndicator,
   Keyboard,
@@ -169,7 +169,8 @@ export default function JapaneseHomeScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const hasLoaded = useRef(false);
+  const initialLoadStarted = useRef(false);
+  const loadInFlight = useRef(false);
   const [selectedDate, setSelectedDate] = useState(params.date ?? todayDateKey);
   const [sortMode, setSortMode] = useState<SortMode>(params.sort === "deadline" ? "deadline" : "near");
   const [todayPlanCount, setTodayPlanCount] = useState(0);
@@ -177,6 +178,25 @@ export default function JapaneseHomeScreen() {
   const selectedTime = params.time === "morning" || params.time === "afternoon" || params.time === "evening" ? params.time : undefined;
   const selectedRadius = params.radius === "1" || params.radius === "5" ? Number(params.radius) as 1 | 5 : 3;
   const verifiedOnly = false;
+  const searchSignature = useMemo(() => [
+    submittedQuery.trim(),
+    selectedDate,
+    selectedCategory ?? "",
+    selectedTime ?? "",
+    selectedRadius,
+    params.availableFrom ?? "",
+    params.availableTo ?? "",
+    sortMode,
+  ].join("\u001f"), [
+    params.availableFrom,
+    params.availableTo,
+    selectedCategory,
+    selectedDate,
+    selectedRadius,
+    selectedTime,
+    sortMode,
+    submittedQuery,
+  ]);
   const timeRange = useMemo(() => selectedTime === "morning" ? { startTime: "06:00", endTime: "12:00" }
     : selectedTime === "afternoon" ? { startTime: "12:00", endTime: "18:00" }
       : selectedTime === "evening" ? { startTime: "18:00", endTime: "23:59" }
@@ -194,6 +214,7 @@ export default function JapaneseHomeScreen() {
     () => dateButtons.findIndex((item) => item.dateKey === selectedDate),
     [dateButtons, selectedDate],
   );
+  const previousSearchSignature = useRef(searchSignature);
   const filteredMatches = useMemo(() => {
     const normalizedQuery = submittedQuery.trim().toLocaleLowerCase();
 
@@ -211,7 +232,9 @@ export default function JapaneseHomeScreen() {
   const sortTop = dateTop + 76;
   const headerHeight = Math.max(246, sortTop + 58);
 
-  const loadRecruitments = useCallback(() => {
+  const loadRecruitments = useCallback((mode: "initial" | "refresh" = "refresh") => {
+    if (loadInFlight.current) return;
+    loadInFlight.current = true;
     const controller = new AbortController();
     let cancelled = false;
 
@@ -219,15 +242,17 @@ export default function JapaneseHomeScreen() {
       const activeSession = getCurrentSession() ?? session;
       if (status !== "signed_in" || !activeSession) {
         if (!cancelled) {
+          setMatches([]);
+          setTodayPlanCount(0);
           setLoading(false);
-          setRefreshing(false);
+			setRefreshing(false);
 			setLoadError(copyRef.current.signInRequired);
         }
+        loadInFlight.current = false;
         return;
       }
 
-      const initialLoad = !hasLoaded.current;
-      if (initialLoad) {
+      if (mode === "initial") {
         setLoading(true);
       } else {
         setRefreshing(true);
@@ -291,7 +316,6 @@ export default function JapaneseHomeScreen() {
           }));
           setTodayPlanCount(applicationResult.filter((item) => item.status === "accepted" && item.recruitment.available_date === todayDateKey()).length);
           setMatches(apiMatches);
-          hasLoaded.current = true;
         }
       } catch (error) {
         if (error instanceof Error && error.name === "AbortError" && (cancelled || controller.signal.aborted)) return;
@@ -303,6 +327,7 @@ export default function JapaneseHomeScreen() {
           setLoading(false);
           setRefreshing(false);
         }
+        loadInFlight.current = false;
       }
     };
 
@@ -310,8 +335,9 @@ export default function JapaneseHomeScreen() {
     return () => {
       cancelled = true;
       controller.abort();
+      loadInFlight.current = false;
     };
-  }, [getCurrentSession, refresh, selectedCategory, selectedDate, selectedRadius, session, sortMode, status, submittedQuery, timeRange]);
+  }, [getCurrentSession, params.availableFrom, params.availableTo, refresh, selectedCategory, selectedDate, selectedRadius, session, sortMode, status, submittedQuery, timeRange]);
 
   useEffect(() => {
     let active = true;
@@ -329,12 +355,28 @@ export default function JapaneseHomeScreen() {
     };
   }, []);
 
-  useFocusEffect(
-    useCallback(() => {
-      if (status === "loading") return;
-      return loadRecruitments();
-    }, [loadRecruitments, status]),
-  );
+  const loadRecruitmentsRef = useRef(loadRecruitments);
+  loadRecruitmentsRef.current = loadRecruitments;
+
+  useEffect(() => {
+    if (status === "loading") return;
+
+    if (status !== "signed_in") {
+      initialLoadStarted.current = false;
+      previousSearchSignature.current = searchSignature;
+      return loadRecruitmentsRef.current("initial");
+    }
+
+    if (!initialLoadStarted.current) {
+      initialLoadStarted.current = true;
+      previousSearchSignature.current = searchSignature;
+      return loadRecruitmentsRef.current("initial");
+    }
+
+    if (previousSearchSignature.current === searchSignature || loadInFlight.current) return;
+    previousSearchSignature.current = searchSignature;
+    return loadRecruitmentsRef.current("refresh");
+  }, [loading, refreshing, searchSignature, status]);
 
   const moveSelectedDate = useCallback((offset: -1 | 1) => {
     const currentIndex = selectedDateIndex < 0 ? 0 : selectedDateIndex;
@@ -388,7 +430,7 @@ export default function JapaneseHomeScreen() {
         ]}
         refreshControl={
           <RefreshControl
-            onRefresh={() => loadRecruitments()}
+            onRefresh={() => loadRecruitments("refresh")}
             refreshing={refreshing}
             tintColor={BLUE}
           />
@@ -416,7 +458,7 @@ export default function JapaneseHomeScreen() {
             <Text accessibilityRole="alert" style={styles.stateText}>{loadError}</Text>
             <Pressable
               accessibilityRole="button"
-              onPress={loadRecruitments}
+              onPress={() => loadRecruitments("initial")}
               style={({ pressed }) => [styles.retryButton, pressed && styles.pressed]}
             >
               <Text style={styles.retryButtonText}>{copy.retry}</Text>
@@ -429,7 +471,7 @@ export default function JapaneseHomeScreen() {
                 <Text accessibilityRole="alert" style={styles.inlineErrorText}>{loadError}</Text>
                 <Pressable
                   accessibilityRole="button"
-                  onPress={() => loadRecruitments()}
+                  onPress={() => loadRecruitments("refresh")}
                   style={({ pressed }) => [styles.retryButton, pressed && styles.pressed]}
                 >
                   <Text style={styles.retryButtonText}>{copy.retry}</Text>

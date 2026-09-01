@@ -283,4 +283,11 @@ describe("募集APIクライアント", () => {
       expiresAt: "2026/08/27",
     });
   });
+
+  it("募集期限の日付をJSTのカレンダー日で表示する", () => {
+    expect(recruitmentToMatchCard({
+      ...recruitment,
+      expires_at: "2026-08-27T15:00:00Z",
+    }).expiresAt).toBe("2026/08/28");
+  });
 });
