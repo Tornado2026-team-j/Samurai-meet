@@ -281,8 +281,9 @@ func (s *Service) SearchRecruitments(ctx context.Context, userID string, params 
 		params.Latitude, params.Longitude = s.currentLocation(ctx, userID, now)
 	}
 	nowText := now.UTC().Format(time.RFC3339Nano)
-	// Keyword and distance matching is finalized below in Go. SQL predicates
-	// keep normalized schedule/status filters close to the data source.
+	// Keyword and distance matching is finalized below in Go. Do not cap this
+	// candidate query before those filters run, otherwise newer non-matching
+	// cards can hide older matching cards from the final result page.
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT r.id, r.owner_user_id, r.category, COALESCE(p.name,''),
 		       COALESCE(p.nationality_code,''), r.available_date, r.start_time,
@@ -296,21 +297,20 @@ func (s *Service) SearchRecruitments(ctx context.Context, userID string, params 
 		WHERE r.owner_user_id <> $1
 		  AND r.status IN ('open','matched')
 		  AND r.expires_at > $2
-		  AND ($4 = '' OR r.available_date = $4)
-		  AND ($5 = '' OR r.available_date >= $5)
-		  AND ($6 = '' OR r.available_date <= $6)
-		  AND ($7 = '' OR r.category = $7)
-		  AND (NOT $8 OR COALESCE(p.identity_status,'unverified') = 'verified')
-		  AND ($9 = '' OR (r.start_time < $10 AND $9 < r.end_time))
+		  AND ($3 = '' OR r.available_date = $3)
+		  AND ($4 = '' OR r.available_date >= $4)
+		  AND ($5 = '' OR r.available_date <= $5)
+		  AND ($6 = '' OR r.category = $6)
+		  AND (NOT $7 OR COALESCE(p.identity_status,'unverified') = 'verified')
+		  AND ($8 = '' OR (r.start_time < $9 AND $8 < r.end_time))
 		  AND (SELECT COUNT(*) FROM matches accepted WHERE accepted.card_id=r.id AND accepted.status='accepted') < r.participant_limit
 		  AND NOT EXISTS (
 				SELECT 1 FROM blocks b
 				WHERE (b.blocker_user_id = $1 AND b.blocked_user_id = r.owner_user_id)
 				   OR (b.blocker_user_id = r.owner_user_id AND b.blocked_user_id = $1)
 		  )
-		ORDER BY r.created_at DESC
-		LIMIT $3`,
-		userID, nowText, maxSearchLimit, params.AvailableDate, params.AvailableFrom,
+		ORDER BY r.created_at DESC`,
+		userID, nowText, params.AvailableDate, params.AvailableFrom,
 		params.AvailableTo, params.Category, params.VerifiedOnly, params.StartTime,
 		params.EndTime)
 	if err != nil {

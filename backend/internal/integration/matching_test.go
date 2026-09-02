@@ -40,12 +40,12 @@ func TestSearchRecruitmentsAppliesFiltersBeforePageLimit(t *testing.T) {
 		t.Fatalf("valid recruitment create error = %v", err)
 	}
 
-	// These cards are newer than valid but fail the requested category and
-	// keyword filters. A SQL LIMIT applied before the Go-side filters would
-	// return none of the valid cards once this exceeds the old 50-row cap.
+	// These cards are newer than valid and pass the SQL-side category/date
+	// filters, but fail the requested keyword filter that runs in Go. A SQL
+	// LIMIT applied before the Go-side filters would hide the valid older card.
 	for i := 0; i < 51; i++ {
 		_, err := service.CreateRecruitment(ctx, ownerID, matching.RecruitmentInput{
-			Category:           "Activity",
+			Category:           "Food",
 			AvailableDate:      availableDate,
 			StartTime:          "12:00",
 			EndTime:            "13:00",
