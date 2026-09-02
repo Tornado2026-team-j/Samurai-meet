@@ -11,13 +11,13 @@
 - 募集・マッチングの外国人／日本人画面からAPIを呼ぶ実装、募集管理・応募履歴・応募取り下げ、表示言語に依存しない通知遷移が存在する。日時入力はISO内部値と `Asia/Tokyo` 固定へ更新し、自動テストで確認済み。表示言語と利用モードは別の保存設定で、2026-08-29にiPhone上の表示言語即時切替を確認した。募集作成から通知遷移・応募取消・ログアウト後の戻る操作までを同一手順で確認するiOS実機全通しE2Eは未確認である。
 - 通知のDB永続化、一覧・既読API、応募／承認／辞退／暗号化チャット送信に伴う通知生成、外国人／日本人の通知画面・未読バッジ。
 - 通知は現時点でアプリ内REST通知であり、`expo-notifications`等によるOSプッシュ通知は未実装。
-- チャットは暗号文のREST送信・履歴取得・既読更新・短命transport token発行に加え、WebSocketによるリアルタイム配送（マルチデバイス整合、送信レート制限、heartbeat失効、接続中のChat Tokenローテーション、複数インスタンス向け`LISTEN/NOTIFY` fan-out）と、保持期間スイープ（既定180日・`deleted_at`実配線・暗号文消去・`chat_message_deletions`監査）、チャット写真の暗号文BLOB添付（`internal/chat/attachment.go`、`0034_chat_attachments.sql`、`POST/GET /api/v1/chats/{id}/attachments`、未参照アップロードは約24hでスイープ、サーバーは鍵を持たない）をバックエンド実装済み。既読の `last_message_sequence` はハイウォーターマーク方式（最新liveへクランプ・前進のみ）。transport tokenが発行する `transport` は `websocket` のみ（`webtransport` / `quic` は終端サーバーが無いため400で拒否）。チャット画面は初回WebSocket接続経路までで、添付送受信UI・添付鍵共有・再接続・token更新は未実装。現行本文キーは`chat_id`導出であり厳密E2EEとは扱わない。サーバーAIのチャット本文／画像Moderation・翻訳は未実装かつ、厳密E2EEを維持する限り追加しない。保持日数の最終確定は運用・法務判断。
+- チャットは暗号文のREST送信・履歴取得・既読更新・短命transport token発行に加え、WebSocketによるリアルタイム配送（マルチデバイス整合、送信レート制限、heartbeat失効、接続中のChat Tokenローテーション、複数インスタンス向け`LISTEN/NOTIFY` fan-out）と、保持期間スイープ（既定180日・`deleted_at`実配線・暗号文消去・`chat_message_deletions`監査）、チャット写真の暗号文BLOB添付をバックエンド実装済み。メッセージ編集・削除（`PATCH/DELETE /api/v1/chats/{id}/messages/{message_id}`）と、AIによる原言語判定を含む表示言語翻訳（`POST /api/v1/chats/{id}/translate`）も実装済み。翻訳結果はクライアントがKey-Bで暗号化してメッセージrevisionごとに保存し、同じ条件では再利用し、編集・削除・保持期限で消去する。新規本文は端末Key-Bを秘密入力にした`chat-keyb-v1`で暗号化し、既存`chat-mvp-v1`は読み取り互換だけを残す。端末固有Key-Bの参加者・別端末間共有は未完成で、厳密E2EEとは扱わない。Moderationと翻訳は暗号化前に外部AIへ平文を同期転送する明示的な例外で、平文・生応答は永続化しない。既読の `last_message_sequence` はハイウォーターマーク方式（最新liveへクランプ・前進のみ）。transport tokenが発行する `transport` は `websocket` のみ（`webtransport` / `quic` は終端サーバーが無いため400で拒否）。チャット画面のREST同期、Key-B復号、翻訳の`Original`切替、本文編集・削除UIは接続済みだが、添付鍵共有・再接続・token更新と実機E2Eは未実装・未確認。保持日数の最終確定は運用・法務判断。
 - 募集の利用日・壁時計は現在 `Asia/Tokyo` 固定で正規化する方針。DB/APIの絶対時刻はUTCとして扱う。
 
 ## 未完了・本番承認不可
 
 - iOS募集画面の初期日時パース問題はISO内部値／JST固定化で修正し、自動テストを完了した。日時picker、過去時刻、日跨ぎ、公開・応募・通知遷移の実機E2Eは完了していない。
-- native Passkey、Secure Enclave／Android Keystore、端末移行、画像画面統合、削除reconciler、legacy画像移行、プロフィール編集UIとの完全同期、チャット／会合画面を完了していない。
+- native Passkey、Secure Enclave／Android Keystore、端末移行、画像画面統合、削除reconciler、legacy画像移行、プロフィール編集UIとの完全同期、会合画面を完了していない。チャットはREST同期、Key-B復号、翻訳、本文編集・削除まで接続済みだが、端末間Key-B共有と実機E2Eは未完了である。
 - WebSocket配送・heartbeat失効・Chat Tokenローテーションはバックエンド実装済み・統合テスト済み。QUIC／WebTransportのPoC・サーバー配送・0-RTT禁止は未着手。Expo実機での再接続・負荷試験は手順書（`docs/features/chat-load-test.md`）はあるが未実施。
 - OSプッシュ通知、本人確認、評価、監査ログ、PostGIS化は未実装または未確定である。通報登録・ブロックAPIは実装済みで、通報対象のオブジェクト認可も対象種別ごとに検証する（運営キューは未）。レート制限はIPベースHTTPとチャット送信のユーザー単位を実装済み。
 

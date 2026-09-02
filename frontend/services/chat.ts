@@ -1,4 +1,5 @@
 import { gcm } from "@noble/ciphers/aes.js";
+import { hkdf } from "@noble/hashes/hkdf.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { utf8ToBytes } from "@noble/hashes/utils.js";
 import { API_BASE_URL } from "./api-config";
@@ -26,8 +27,14 @@ import {
 import type { DeviceKeyBundle } from "./key-management";
 
 const CHAT_ALGORITHM = "AES-256-GCM";
-const CHAT_KEY_VERSION = "chat-mvp-v1";
-const CHAT_AAD_PREFIX = "samurai-meet:chat-message:mvp-v1";
+const CHAT_KEY_VERSION = "chat-keyb-v1";
+const LEGACY_CHAT_KEY_VERSION = "chat-mvp-v1";
+const CHAT_AAD_PREFIX = "samurai-meet:chat-message:keyb-v1";
+const LEGACY_CHAT_AAD_PREFIX = "samurai-meet:chat-message:mvp-v1";
+const CHAT_KEY_INFO = utf8ToBytes("samurai-meet/chat-message/keyb-v1");
+const CHAT_TRANSLATION_KEY_VERSION = "chat-translation-keyb-v1";
+const CHAT_TRANSLATION_AAD_PREFIX = "samurai-meet:chat-translation:keyb-v1";
+const CHAT_TRANSLATION_KEY_INFO = utf8ToBytes("samurai-meet/chat-translation/keyb-v1");
 const MAX_PLAINTEXT_LENGTH = 2000;
 
 async function loadDeviceKeyManagement() {
@@ -39,6 +46,7 @@ type DataResponse<T> = { data?: T };
 export type ChatStatus = "accepted" | "completed";
 
 export type ChatListFilter = "all" | "active" | "completed";
+export type ChatLanguage = "ja" | "en";
 
 export type ChatSummary = {
   id: string;
@@ -78,7 +86,18 @@ export type EncryptedChatMessage = {
   attachment_id?: string;
   attachment?: ChatAttachment;
   expires_at?: string;
+  edited_at?: string;
+  translations?: EncryptedChatTranslation[];
   created_at: string;
+};
+
+export type EncryptedChatTranslation = {
+  target_language: ChatLanguage;
+  ciphertext: string;
+  nonce: string;
+  algorithm: typeof CHAT_ALGORITHM;
+  key_version: string;
+  message_revision: string;
 };
 
 export type ChatMessagePage = {
@@ -181,6 +200,12 @@ export type ChatTransportToken = {
   transport: "webtransport";
 };
 
+export type ChatTranslationResult = {
+  source_language: string;
+  translated_text: string;
+  target_language: ChatLanguage;
+};
+
 /**
  * React Native/Expo does not currently provide a maintained native WebTransport
  * client that can authenticate CONNECT with an Authorization header. Until one
@@ -192,6 +217,8 @@ export type ChatRealtimeMode = "webtransport" | "rest_sync";
 export type ChatWebTransportFrame =
   | { type: "message.created"; message: EncryptedChatMessage }
   | { type: "message.ack"; client_message_id: string; message: EncryptedChatMessage; duplicate: boolean }
+  | { type: "message.updated"; message: EncryptedChatMessage }
+  | { type: "message.deleted"; message_id: string; sequence: number }
   | { type: "message.read"; user_id: string; last_message_sequence: number }
   | { type: "typing"; user_id: string; state: "start" | "stop" }
   | { type: "closing"; reason: string }
@@ -361,12 +388,150 @@ function requireArrayData<T>(response: DataResponse<T[]>, resource: string): T[]
   return response.data;
 }
 
-function chatKey(chatID: string): Uint8Array {
-  return sha256(utf8ToBytes(`${CHAT_AAD_PREFIX}\n${chatID}`));
+function chatKey(chatID: string, keyB: Uint8Array): Uint8Array {
+  if (keyB.length !== 32) throw new Error("chat_key_unavailable");
+  return hkdf(
+    sha256,
+    keyB,
+    utf8ToBytes(`${CHAT_AAD_PREFIX}\n${chatID}`),
+    CHAT_KEY_INFO,
+    32,
+  );
 }
 
 function chatAAD(chatID: string): Uint8Array {
   return utf8ToBytes(`${CHAT_AAD_PREFIX}\n${chatID}\n${CHAT_KEY_VERSION}`);
+}
+
+function chatTranslationKey(chatID: string, keyB: Uint8Array): Uint8Array {
+  if (keyB.length !== 32) throw new Error("chat_key_unavailable");
+  return hkdf(
+    sha256,
+    keyB,
+    utf8ToBytes(`${CHAT_TRANSLATION_AAD_PREFIX}\n${chatID}`),
+    CHAT_TRANSLATION_KEY_INFO,
+    32,
+  );
+}
+
+function chatTranslationAAD(chatID: string, messageID: string, messageRevision: string, targetLanguage: ChatLanguage): Uint8Array {
+  return utf8ToBytes(`${CHAT_TRANSLATION_AAD_PREFIX}\n${chatID}\n${messageID}\n${messageRevision}\n${targetLanguage}`);
+}
+
+function isChatLanguage(value: string): value is ChatLanguage {
+  return value === "ja" || value === "en";
+}
+
+function isUsableTranslationResult(result: ChatTranslationResult, targetLanguage: ChatLanguage): boolean {
+  return typeof result.source_language === "string" && result.source_language.trim().length > 0
+    && typeof result.translated_text === "string" && result.translated_text.trim().length > 0
+    && result.translated_text.length <= 8000 && result.target_language === targetLanguage;
+}
+
+export function chatMessageRevision(message: Pick<EncryptedChatMessage, "edited_at" | "created_at">): string {
+  return message.edited_at || message.created_at;
+}
+
+export async function encryptChatTranslation(
+  chatID: string,
+  messageID: string,
+  messageRevision: string,
+  result: ChatTranslationResult,
+  keyB: Uint8Array,
+  random: (length: number) => Promise<Uint8Array> = randomBytes,
+): Promise<EncryptedChatTranslation> {
+  if (keyB.length !== 32 || !messageID || !messageRevision || !isUsableTranslationResult(result, result.target_language)) {
+    throw new Error("chat_translation_invalid");
+  }
+  const nonce = await random(12);
+  if (nonce.length !== 12) throw new Error("chat_translation_nonce_invalid");
+  const payload = utf8ToBytes(JSON.stringify({
+    source_language: result.source_language.trim(),
+    translated_text: result.translated_text.trim(),
+    target_language: result.target_language,
+  }));
+  const messageKey = chatTranslationKey(chatID, keyB);
+  try {
+    const ciphertext = gcm(
+      messageKey,
+      nonce,
+      chatTranslationAAD(chatID, messageID, messageRevision, result.target_language),
+    ).encrypt(payload);
+    return {
+      target_language: result.target_language,
+      ciphertext: toBase64URL(ciphertext),
+      nonce: toBase64URL(nonce),
+      algorithm: CHAT_ALGORITHM,
+      key_version: CHAT_TRANSLATION_KEY_VERSION,
+      message_revision: messageRevision,
+    };
+  } finally {
+    payload.fill(0);
+    messageKey.fill(0);
+  }
+}
+
+export function decryptChatTranslation(
+  chatID: string,
+  messageID: string,
+  messageRevision: string,
+  encrypted: EncryptedChatTranslation,
+  keyB?: Uint8Array,
+): ChatTranslationResult | null {
+  if (!keyB || keyB.length !== 32 || encrypted.algorithm !== CHAT_ALGORITHM
+    || encrypted.key_version !== CHAT_TRANSLATION_KEY_VERSION
+    || encrypted.message_revision !== messageRevision || !isChatLanguage(encrypted.target_language)) return null;
+  try {
+    const messageKey = chatTranslationKey(chatID, keyB);
+    try {
+      const plaintext = gcm(
+        messageKey,
+        fromBase64URL(encrypted.nonce),
+        chatTranslationAAD(chatID, messageID, messageRevision, encrypted.target_language),
+      ).decrypt(fromBase64URL(encrypted.ciphertext));
+      try {
+        const parsed = JSON.parse(new TextDecoder().decode(plaintext)) as Partial<ChatTranslationResult>;
+        if (typeof parsed.source_language !== "string" || typeof parsed.translated_text !== "string"
+          || !isChatLanguage(String(parsed.target_language)) || parsed.target_language !== encrypted.target_language) return null;
+        const result: ChatTranslationResult = {
+          source_language: parsed.source_language,
+          translated_text: parsed.translated_text,
+          target_language: parsed.target_language,
+        };
+        return isUsableTranslationResult(result, encrypted.target_language) ? result : null;
+      } finally {
+        plaintext.fill(0);
+      }
+    } finally {
+      messageKey.fill(0);
+    }
+  } catch {
+    return null;
+  }
+}
+
+function legacyChatKey(chatID: string): Uint8Array {
+  return sha256(utf8ToBytes(`${LEGACY_CHAT_AAD_PREFIX}\n${chatID}`));
+}
+
+function legacyChatAAD(chatID: string): Uint8Array {
+  return utf8ToBytes(`${LEGACY_CHAT_AAD_PREFIX}\n${chatID}\n${LEGACY_CHAT_KEY_VERSION}`);
+}
+
+/**
+ * Returns a copy of the device Key-B for chat encryption. The copy is owned by
+ * the caller and can be wiped after a screen/session finishes using it.
+ */
+export async function loadChatMessageKey(session: Session): Promise<Uint8Array> {
+  const { ensureDeviceKeyB, loadStoredDeviceKeyB } = await loadDeviceKeyManagement();
+  let device = await loadStoredDeviceKeyB(session.user_id);
+  if (!device) device = await ensureDeviceKeyB(session);
+  try {
+    if (device.keyB.length !== 32) throw new Error("chat_key_unavailable");
+    return device.keyB.slice();
+  } finally {
+    device.keyB.fill(0);
+  }
 }
 
 export async function listChats(
@@ -600,26 +765,32 @@ export async function sendChatAttachmentMessage(
   clientMessageID = createClientMessageID(),
   signal?: AbortSignal,
   random: (length: number) => Promise<Uint8Array> = randomBytes,
+  keyB?: Uint8Array,
 ): Promise<EncryptedChatMessage> {
   // The marker is encrypted like all chat message bodies. The image itself is
   // never placed in this JSON or sent to the message endpoint.
-  const encrypted = await encryptChatPlaintext(chatID, JSON.stringify({ type: "image" }), random);
-  const response = await requestAPI<DataResponse<EncryptedChatMessage>>(
-    `/chats/${encodeURIComponent(chatID)}/messages`,
-    session,
-    {
-      method: "POST",
-      body: JSON.stringify({
-        client_message_id: clientMessageID,
-        ...encrypted,
-        content_type: "image",
-        attachment_id: attachmentID,
-      }),
-      signal,
-    },
-  );
-  if (!response.data) throw new Error("chat attachment message response is empty");
-  return response.data;
+  const resolvedKeyB = keyB ?? await loadChatMessageKey(session);
+  try {
+    const encrypted = await encryptChatPlaintext(chatID, JSON.stringify({ type: "image" }), resolvedKeyB, random);
+    const response = await requestAPI<DataResponse<EncryptedChatMessage>>(
+      `/chats/${encodeURIComponent(chatID)}/messages`,
+      session,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          client_message_id: clientMessageID,
+          ...encrypted,
+          content_type: "image",
+          attachment_id: attachmentID,
+        }),
+        signal,
+      },
+    );
+    if (!response.data) throw new Error("chat attachment message response is empty");
+    return response.data;
+  } finally {
+    if (!keyB) resolvedKeyB.fill(0);
+  }
 }
 
 /** Executes the complete sender flow and never returns a content key. */
@@ -657,7 +828,7 @@ export async function sendChatImage(
       ),
     })));
     await saveChatAttachmentKeyEnvelopes(chatID, attachment.id, envelopes, session, bundle, signal);
-    const message = await sendChatAttachmentMessage(chatID, attachment.id, session, clientMessageID, signal, random);
+    const message = await sendChatAttachmentMessage(chatID, attachment.id, session, clientMessageID, signal, random, bundle.device.keyB);
     return { message, attachment };
   } finally {
     encrypted?.imageKey.fill(0);
@@ -811,6 +982,7 @@ export async function blockUser(
 export async function encryptChatPlaintext(
   chatID: string,
   plaintext: string,
+  keyB: Uint8Array,
   random: (length: number) => Promise<Uint8Array> = randomBytes,
 ): Promise<{
   ciphertext: string;
@@ -818,28 +990,177 @@ export async function encryptChatPlaintext(
   algorithm: typeof CHAT_ALGORITHM;
   key_version: typeof CHAT_KEY_VERSION;
 }> {
+  if (keyB.length !== 32) throw new Error("chat_key_unavailable");
   const nonce = await random(12);
-  const ciphertext = gcm(chatKey(chatID), nonce, chatAAD(chatID)).encrypt(utf8ToBytes(plaintext));
-  return {
-    ciphertext: toBase64URL(ciphertext),
-    nonce: toBase64URL(nonce),
-    algorithm: CHAT_ALGORITHM,
-    key_version: CHAT_KEY_VERSION,
-  };
+  const messageKey = chatKey(chatID, keyB);
+  try {
+    const ciphertext = gcm(messageKey, nonce, chatAAD(chatID)).encrypt(utf8ToBytes(plaintext));
+    return {
+      ciphertext: toBase64URL(ciphertext),
+      nonce: toBase64URL(nonce),
+      algorithm: CHAT_ALGORITHM,
+      key_version: CHAT_KEY_VERSION,
+    };
+  } finally {
+    messageKey.fill(0);
+  }
 }
 
-export function decryptChatMessage(chatID: string, message: EncryptedChatMessage): string | null {
-  if (message.algorithm !== CHAT_ALGORITHM || message.key_version !== CHAT_KEY_VERSION) return null;
+export function decryptChatMessage(
+  chatID: string,
+  message: EncryptedChatMessage,
+  keyB?: Uint8Array,
+): string | null {
+  if (message.algorithm !== CHAT_ALGORITHM) return null;
+  const isLegacy = message.key_version === LEGACY_CHAT_KEY_VERSION;
+  if (!isLegacy && message.key_version !== CHAT_KEY_VERSION) return null;
+  if (!isLegacy && (!keyB || keyB.length !== 32)) return null;
   try {
-    const plaintext = gcm(
-      chatKey(chatID),
-      fromBase64URL(message.nonce),
-      chatAAD(chatID),
-    ).decrypt(fromBase64URL(message.ciphertext));
-    return new TextDecoder().decode(plaintext);
+    const messageKey = isLegacy ? legacyChatKey(chatID) : chatKey(chatID, keyB as Uint8Array);
+    try {
+      const plaintext = gcm(
+        messageKey,
+        fromBase64URL(message.nonce),
+        isLegacy ? legacyChatAAD(chatID) : chatAAD(chatID),
+      ).decrypt(fromBase64URL(message.ciphertext));
+      return new TextDecoder().decode(plaintext);
+    } finally {
+      messageKey.fill(0);
+    }
   } catch {
     return null;
   }
+}
+
+type ChatTranslationAPIResponse = {
+  cached?: boolean;
+  source_language?: unknown;
+  translated_text?: unknown;
+  target_language?: unknown;
+  message_revision?: unknown;
+  ciphertext?: unknown;
+  nonce?: unknown;
+  algorithm?: unknown;
+  key_version?: unknown;
+};
+
+export async function saveChatMessageTranslation(
+  chatID: string,
+  messageID: string,
+  encrypted: EncryptedChatTranslation,
+  session: Session,
+  signal?: AbortSignal,
+): Promise<void> {
+  await requestAPI<null>(
+    `/chats/${encodeURIComponent(chatID)}/messages/${encodeURIComponent(messageID)}/translations/${encodeURIComponent(encrypted.target_language)}`,
+    session,
+    {
+      method: "PUT",
+      body: JSON.stringify(encrypted),
+      signal,
+    },
+  );
+}
+
+export async function translateChatMessage(
+  chatID: string,
+  messageID: string,
+  messageRevision: string,
+  plaintext: string,
+  targetLanguage: ChatLanguage,
+  session: Session,
+  signal?: AbortSignal,
+  keyB?: Uint8Array,
+  random: (length: number) => Promise<Uint8Array> = randomBytes,
+): Promise<ChatTranslationResult> {
+  const response = await requestAPI<DataResponse<ChatTranslationAPIResponse>>(
+    `/chats/${encodeURIComponent(chatID)}/translate`,
+    session,
+    {
+      method: "POST",
+      body: JSON.stringify({ message_id: messageID, text: plaintext, target_language: targetLanguage }),
+      signal,
+    },
+  );
+  const result = response.data;
+  if (!result || result.target_language !== targetLanguage) {
+    throw new Error("chat translation response is invalid");
+  }
+  if (result.cached === true) {
+    if (!keyB || typeof result.message_revision !== "string"
+      || typeof result.ciphertext !== "string" || typeof result.nonce !== "string"
+      || result.algorithm !== CHAT_ALGORITHM || typeof result.key_version !== "string") {
+      throw new Error("chat translation cache response is invalid");
+    }
+    const decrypted = decryptChatTranslation(chatID, messageID, messageRevision, {
+      target_language: targetLanguage,
+      ciphertext: result.ciphertext,
+      nonce: result.nonce,
+      algorithm: CHAT_ALGORITHM,
+      key_version: result.key_version,
+      message_revision: result.message_revision,
+    }, keyB);
+    if (!decrypted) throw new Error("chat translation cache unavailable");
+    return decrypted;
+  }
+  if (typeof result.source_language !== "string" || typeof result.translated_text !== "string") {
+    throw new Error("chat translation response is invalid");
+  }
+  const translated: ChatTranslationResult = {
+    source_language: result.source_language,
+    translated_text: result.translated_text,
+    target_language: targetLanguage,
+  };
+  if (!isUsableTranslationResult(translated, targetLanguage)) {
+    throw new Error("chat translation response is invalid");
+  }
+  if (keyB) {
+    if (result.message_revision !== messageRevision) throw new Error("chat translation revision mismatch");
+    const encrypted = await encryptChatTranslation(chatID, messageID, messageRevision, translated, keyB, random);
+    await saveChatMessageTranslation(chatID, messageID, encrypted, session, signal);
+  }
+  return translated;
+}
+
+export async function updateChatMessage(
+  chatID: string,
+  messageID: string,
+  plaintext: string,
+  session: Session,
+  signal?: AbortSignal,
+  random: (length: number) => Promise<Uint8Array> = randomBytes,
+  keyB?: Uint8Array,
+): Promise<EncryptedChatMessage> {
+  const resolvedKeyB = keyB ?? await loadChatMessageKey(session);
+  try {
+    const encrypted = await encryptChatPlaintext(chatID, plaintext, resolvedKeyB, random);
+    const response = await requestAPI<DataResponse<EncryptedChatMessage>>(
+      `/chats/${encodeURIComponent(chatID)}/messages/${encodeURIComponent(messageID)}`,
+      session,
+      {
+        method: "PATCH",
+        body: JSON.stringify(encrypted),
+        signal,
+      },
+    );
+    if (!response.data) throw new Error("chat message update response is empty");
+    return response.data;
+  } finally {
+    if (!keyB) resolvedKeyB.fill(0);
+  }
+}
+
+export async function deleteChatMessage(
+  chatID: string,
+  messageID: string,
+  session: Session,
+  signal?: AbortSignal,
+): Promise<void> {
+  await requestAPI<null>(
+    `/chats/${encodeURIComponent(chatID)}/messages/${encodeURIComponent(messageID)}`,
+    session,
+    { method: "DELETE", signal },
+  );
 }
 
 export function parseChatLocationPayload(value: string | null, expiresAt?: string): ChatLocationPayload | null {
@@ -865,22 +1186,28 @@ export async function sendChatMessage(
   clientMessageID = createClientMessageID(),
   signal?: AbortSignal,
   random: (length: number) => Promise<Uint8Array> = randomBytes,
+  keyB?: Uint8Array,
 ): Promise<EncryptedChatMessage> {
-  const encrypted = await encryptChatPlaintext(chatID, plaintext, random);
-  const response = await requestAPI<DataResponse<EncryptedChatMessage>>(
-    `/chats/${encodeURIComponent(chatID)}/messages`,
-    session,
-    {
-      method: "POST",
-      body: JSON.stringify({
-        client_message_id: clientMessageID,
-        ...encrypted,
-      }),
-      signal,
-    },
-  );
-  if (!response.data) throw new Error("chat message response is empty");
-  return response.data;
+  const resolvedKeyB = keyB ?? await loadChatMessageKey(session);
+  try {
+    const encrypted = await encryptChatPlaintext(chatID, plaintext, resolvedKeyB, random);
+    const response = await requestAPI<DataResponse<EncryptedChatMessage>>(
+      `/chats/${encodeURIComponent(chatID)}/messages`,
+      session,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          client_message_id: clientMessageID,
+          ...encrypted,
+        }),
+        signal,
+      },
+    );
+    if (!response.data) throw new Error("chat message response is empty");
+    return response.data;
+  } finally {
+    if (!keyB) resolvedKeyB.fill(0);
+  }
 }
 
 export async function sendChatLocation(
@@ -891,16 +1218,22 @@ export async function sendChatLocation(
   clientMessageID = createClientMessageID(),
   signal?: AbortSignal,
   random: (length: number) => Promise<Uint8Array> = randomBytes,
+  keyB?: Uint8Array,
 ): Promise<EncryptedChatMessage> {
   const payload: ChatLocationPayload = { type: "location", ...location, expires_at: expiresAt };
   if (!parseChatLocationPayload(JSON.stringify(payload), expiresAt)) throw new Error("invalid_chat_location");
-  const encrypted = await encryptChatPlaintext(chatID, JSON.stringify(payload), random);
-  const response = await requestAPI<DataResponse<EncryptedChatMessage>>(
-    `/chats/${encodeURIComponent(chatID)}/messages`, session,
-    { method: "POST", body: JSON.stringify({ client_message_id: clientMessageID, ...encrypted, content_type: "location", expires_at: expiresAt }), signal },
-  );
-  if (!response.data) throw new Error("chat location response is empty");
-  return response.data;
+  const resolvedKeyB = keyB ?? await loadChatMessageKey(session);
+  try {
+    const encrypted = await encryptChatPlaintext(chatID, JSON.stringify(payload), resolvedKeyB, random);
+    const response = await requestAPI<DataResponse<EncryptedChatMessage>>(
+      `/chats/${encodeURIComponent(chatID)}/messages`, session,
+      { method: "POST", body: JSON.stringify({ client_message_id: clientMessageID, ...encrypted, content_type: "location", expires_at: expiresAt }), signal },
+    );
+    if (!response.data) throw new Error("chat location response is empty");
+    return response.data;
+  } finally {
+    if (!keyB) resolvedKeyB.fill(0);
+  }
 }
 
 export async function moderateChatMessage(
@@ -946,11 +1279,12 @@ export function toChatMessageView(
   chatID: string,
   message: EncryptedChatMessage,
   currentUserID: string,
+  keyB?: Uint8Array,
 ): ChatMessageView {
   // Image messages carry an encrypted marker only. Never render that marker
   // as chat text; the attachment is downloaded and decrypted separately after
   // its recipient envelope is opened on this device.
-  const plaintext = message.content_type === "image" ? null : decryptChatMessage(chatID, message);
+  const plaintext = message.content_type === "image" ? null : decryptChatMessage(chatID, message, keyB);
   const location = message.content_type === "location" ? parseChatLocationPayload(plaintext, message.expires_at) : null;
   return {
     ...message,
@@ -1000,7 +1334,7 @@ export function moderateChatText(value: string): ChatModerationResult {
   return { categories, severity: "none" };
 }
 
-export function translateChatText(value: string, targetLanguage: "en" | "ja"): string {
+export function translateChatText(value: string, targetLanguage: ChatLanguage): string {
   const normalized = value.trim().toLocaleLowerCase();
   const dictionary: Record<string, { en: string; ja: string }> = {
     "hi! should we meet at inari station?": {

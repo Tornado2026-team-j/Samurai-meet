@@ -487,6 +487,10 @@ Request body:
 | GET | `/api/v1/chats/{id}/messages?after=0&limit=50` | Access Token | 暗号化メッセージ履歴。最大100件 |
 | POST | `/api/v1/chats/{id}/moderation` | Access Token | 暗号化前本文の送信前安全判定。acceptedマッチの参加者だけ |
 | POST | `/api/v1/chats/{id}/messages` | Access Token | 暗号化メッセージ送信 |
+| PATCH | `/api/v1/chats/{id}/messages/{message_id}` | Access Token | 送信者自身のtext本文を暗号文ごと編集。acceptedマッチのみ |
+| DELETE | `/api/v1/chats/{id}/messages/{message_id}` | Access Token | 送信者自身のメッセージを暗号文消去・監査付きで削除。acceptedマッチのみ |
+| POST | `/api/v1/chats/{id}/translate` | Access Token | accepted/completed参加者の本文をAIで言語判定・表示言語へ翻訳 |
+| PUT | `/api/v1/chats/{id}/messages/{message_id}/translations/{target_language}` | Access Token | Key-Bで暗号化した翻訳結果をメッセージrevisionへ保存 |
 | POST | `/api/v1/chats/{id}/read` | Access Token | `last_message_sequence`まで既読（クライアントが見た最大`sequence`。最新messageへクランプし前進のみ） |
 | POST | `/api/v1/chats/{id}/transport-token` | Access Token | WebTransport用短命Chat Token発行（省略時・明示ともに`webtransport`のみ） |
 | CONNECT | `https://{CHAT_WEBTRANSPORT_UDP_ADDR}/api/v1/wt/chats/{id}` | Chat Token（`Authorization: Bearer`） | TLS 1.3/UDP上のHTTP/3 WebTransport。URL query・cookieのtokenは拒否 |
@@ -501,20 +505,30 @@ Request body:
   "ciphertext": "Base64URL(no padding)",
   "nonce": "12byte AES-GCM nonceのBase64URL",
   "algorithm": "AES-256-GCM",
-  "key_version": "v1",
+  "key_version": "chat-keyb-v1",
   "attachment_id": "任意。事前にアップロードしたチャット写真のID"
 }
 ```
 
+新規クライアントの`chat-keyb-v1`は、端末Secure Storageにある32 byteのKey-Bを秘密入力にしたHKDF-SHA256でチャット本文鍵を導出します。`chat_id`はsalt/AADの公開コンテキストにだけ使い、Key-Bそのもの・導出鍵・平文はAPIへ送信しません。既存の`chat-mvp-v1`はデータ保持のためクライアント側の読み取り互換だけを残し、新規送信・編集では使用しません。Key-Bは端末固有値なので、同じKey-Bを持たない相手端末・別端末では`chat-keyb-v1`を復号できません。端末間・参加者間のKey-B envelope／鍵共有を完成するまで、これは本番のマルチデバイス本文暗号として未完成です。
+
 サーバーは`ciphertext`を復号せず、平文本文・検索用プレビュー・暗号鍵を受け付けません。`client_message_id`は送信者とチャット単位で一意で、同じIDの再送は元のメッセージを返します。暗号文は復号前128KiBまでです。履歴は`sequence`をcursorにして再接続時に補完します。
 
-`POST /api/v1/chats/{id}/moderation` は、クライアントが**暗号化前**に本文を`{"text":"..."}`として送る唯一の平文経路です。サーバーは認可済みのacceptedチャット参加者だけを先に確認し、OpenAI Moderations APIへ公式JSON契約`{"model":"omni-moderation-latest","input":"..."}`で同期転送します。本文はこのリクエスト処理中だけ参照し、DB、キュー、ログ、監査イベントへ保存しません。OpenAIの生応答・カテゴリ・スコアも保存・返却しません。成功レスポンスは`{"data":{"decision":"allowed"|"blocked"}}`だけで、`blocked`時クライアントは**暗号化・`/messages`呼出を開始してはなりません**。APIキー未設定、上流タイムアウト、上流障害、契約外応答は`200 {"data":{"decision":"unavailable","code":"moderation_unavailable"}}`となり、クライアントはローカライズ済みの再試行案内を表示し、**暗号化・`/messages`呼出を開始してはなりません**。ネットワーク障害・HTTP 4xx/5xxも同じfail-closed契約です。`OPENAI_API_KEY`はサーバー環境変数だけに設定します。
+`PATCH /api/v1/chats/{id}/messages/{message_id}` のbodyは`ciphertext`、`nonce`、`algorithm`、`key_version`だけです。送信者本人のtextメッセージだけを更新し、メッセージの`id`、`sequence`、`client_message_id`、`created_at`は維持し、`edited_at`を現在時刻へ更新します。`completed`、相手のメッセージ、location/imageメッセージ、削除済みメッセージは拒否します。
 
-この送信前平文判定を有効にするチャットは、厳密な完全E2EEではありません。保存・配送は引き続きKey Bで保護されたAES-256-GCM暗号文だけですが、送信者端末が送信前に本文をサーバー経由でOpenAIへ提示する明示的な例外があります。
+`DELETE /api/v1/chats/{id}/messages/{message_id}` は送信者本人のメッセージだけを対象にし、成功時は204を返します。サーバーは`messages.deleted_at`を設定して`ciphertext`と`nonce`を直ちに消去し、履歴・未読・配送から除外したうえで`chat_message_deletions.reason = 'user_request'`を追加します。接続中のクライアントには`message.deleted`（`message_id`、`sequence`）を配送します。
+
+`POST /api/v1/chats/{id}/moderation` は、クライアントが**暗号化前**に本文を`{"text":"..."}`として送る平文経路のひとつです。サーバーは認可済みのacceptedチャット参加者だけを先に確認し、OpenAI Moderations APIへ公式JSON契約`{"model":"omni-moderation-latest","input":"..."}`で同期転送します。本文はこのリクエスト処理中だけ参照し、DB、キュー、ログ、監査イベントへ保存しません。OpenAIの生応答・カテゴリ・スコアも保存・返却しません。成功レスポンスは`{"data":{"decision":"allowed"|"blocked"}}`だけで、`blocked`時クライアントは**暗号化・`/messages`呼出を開始してはなりません**。APIキー未設定、上流タイムアウト、上流障害、契約外応答は`200 {"data":{"decision":"unavailable","code":"moderation_unavailable"}}`となり、クライアントはローカライズ済みの再試行案内を表示し、**暗号化・`/messages`呼出を開始してはなりません**。ネットワーク障害・HTTP 4xx/5xxも同じfail-closed契約です。`OPENAI_API_KEY`はサーバー環境変数だけに設定します。
+
+この送信前平文判定を有効にするチャットは、厳密な完全E2EEではありません。保存・配送は引き続き端末Key-B由来のAES-256-GCM暗号文だけですが、送信者端末が送信前に本文をサーバー経由でOpenAIへ提示する明示的な例外があります。
+
+`POST /api/v1/chats/{id}/translate` は`accepted`または`completed`マッチの参加者だけが利用できます。bodyは`{"message_id":"...","text":"...","target_language":"ja"|"en"}`です。サーバーは認可後にGeminiへ本文と対象言語を同期転送し、Geminiが原言語を判定して翻訳します。保存済みの対象言語・現行`message_revision`がある場合はGeminiを呼ばず、`cached:true`と`ciphertext`、`nonce`、`algorithm`、`key_version`、`message_revision`だけを返します。未保存の場合は`{"data":{"cached":false,"source_language":"en","translated_text":"...","target_language":"ja","message_revision":"..."}}`を返し、クライアントが翻訳結果をKey-B由来鍵で暗号化して次のPUTを行います。
+
+`PUT /api/v1/chats/{id}/messages/{message_id}/translations/{target_language}` は、bodyに`target_language`、`ciphertext`、`nonce`、`algorithm`、`key_version`、`message_revision`を受け付けます。サーバーはメッセージの現行revisionをロック確認してから`chat_message_translations`へ暗号文だけをupsertし、revisionが変わっていれば409 `chat_translation_stale`を返します。翻訳本文、原言語、Gemini生応答はDB、キュー、ログ、監査イベントへ保存しません。編集時は対象メッセージの翻訳行を消去し、ユーザー削除・保持期限スイープでも同時に消去します。翻訳自体は暗号化前の平文経路であるため、送信前Moderationと同じく完全E2EEの例外です。provider未設定・障害時は`503 chat_translation_unavailable`、レート制限時は`429 chat_translation_rate_limited`です。
 
 `POST /read` の `last_message_sequence` は「クライアントが受信した最大`sequence`」を渡すハイウォーターマークで、message行との厳密一致は不要です（`sequence`は全チャット横断の`BIGSERIAL`で1チャット内は歯抜け）。サーバーはその値をそのチャットの最新live messageへクランプし、保存マーカーは前進のみ（`GREATEST`）。`message.read`レシートはクランプ後の実効値を通知します。1未満は`invalid_chat_request`、messageが無いチャットは`chat_not_found`。
 
-メッセージは作成から `CHAT_MESSAGE_RETENTION_DAYS`（既定180日）を過ぎると、6時間ごとのスイープで `deleted_at` を打たれ、暗号文・nonce が消去され、`chat_message_deletions` に監査行が残ります。以後は履歴・未読数・WebTransport配送のいずれにも現れません。
+メッセージは作成から `CHAT_MESSAGE_RETENTION_DAYS`（既定180日）を過ぎると、6時間ごとのスイープで `deleted_at` を打たれ、暗号文・nonce・関連する暗号化翻訳envelopeが消去され、`chat_message_deletions` に監査行が残ります。以後は履歴・未読数・WebTransport配送のいずれにも現れません。
 
 メッセージ送信はユーザー単位のトークンバケットでレート制限します（`CHAT_SEND_BURST` 既定15、`CHAT_SEND_REFILL_PER_MINUTE` 既定60）。REST/WebTransport で共通の予算を消費します。WebTransportは各state-changing frameでsession・accepted matchを再検証し、0-RTT dataの状態変更を拒否します。同じ`client_message_id`はservice層で冪等です。
 
@@ -529,7 +543,7 @@ Request body:
 
 transport tokenはAccess Token・Refresh Tokenと別audience（`samurai-meet-chat`）で、対象chat・session・`transport=webtransport`だけに束縛した2分のJWSです。Refresh TokenをWebTransportやURL queryへ送ってはいけません。Expo GoはWebTransport非対応のためDevelopment Buildまたは本番native buildが必要です。旧`/ws/chats/{id}`は410で拒否します。
 
-WebTransport接続は`Authorization: Bearer <Chat Token>`を付けたCONNECTだけを受け付けます。tokenは対象chat・session・transportに束縛した2分のJWSで、CONNECT時と各state-changing frameでセッション、accepted match、ブロック状態を再検証します。0-RTTでの状態変更、URL query、cookieによるtoken提示は拒否します。フレームは`message.send` / `message.read` / `typing.start` / `typing.stop`（client→server）、`message.created` / `message.ack` / `message.read` / `typing` / `error` / `closing`（server→client）です。送信・既読・typingは同一インスタンスのWebTransport接続へfan-outし、複数APIインスタンスではPostgreSQL `LISTEN/NOTIFY`の`chat_events`で他インスタンスの接続にも再配送します。NOTIFY取りこぼしはRESTの`sequence` cursorで回収します。
+WebTransport接続は`Authorization: Bearer <Chat Token>`を付けたCONNECTだけを受け付けます。tokenは対象chat・session・transportに束縛した2分のJWSで、CONNECT時と各state-changing frameでセッション、accepted match、ブロック状態を再検証します。0-RTTでの状態変更、URL query、cookieによるtoken提示は拒否します。フレームは`message.send` / `message.read` / `typing.start` / `typing.stop`（client→server）、`message.created` / `message.ack` / `message.updated` / `message.deleted` / `message.read` / `typing` / `error` / `closing`（server→client）です。送信・編集・削除・既読・typingは同一インスタンスのWebTransport接続へfan-outし、複数APIインスタンスではPostgreSQL `LISTEN/NOTIFY`の`chat_events`で他インスタンスの接続にも再配送します。NOTIFY取りこぼしはRESTの`sequence` cursorで回収します。
 
 ### 6.8 会合セッション・Bluetooth／位置推測の補助（バックエンド実装済み。実測はクライアント）
 
@@ -580,11 +594,11 @@ DBには会合中の参加者ごと・方式ごとに最新1件だけを保持�
 
 通報bodyは`{"target_type","target_id","reason","comment"}`。`target_type`は`user` / `recruitment_card` / `message` / `photo`、`reason`は`nuisance` / `harassment` / `impersonation` / `inappropriate_photo` / `dangerous` / `other`、`comment`は任意で最大2000 Unicode。自分自身・存在しない対象・報告者が閲覧権限を持たない対象への通報は拒否します。メッセージはチャット参加者、募集カードは公開中または報告者が参加したマッチ、写真は公開プロフィール画像または報告者が参加するチャット添付だけを対象にできます。未知対象と権限外対象は同じ`target_not_found`系の応答へ畳み込み、対象存在の推測に使えないようにします。同一通報者×同一対象で未処理（`received` / `reviewing`）の通報がある場合は、新規作成せず既存の通報を`data`に入れて201で返します。通報者情報は対象者へ返しません。ブロックは`0019`の`blocks`テーブルを使い、`matching` / `chat` が既にアクセス制御で参照しています。運営キュー（`GET/PATCH /admin/reports`）と`audit_logs`は次の作業です。
 
-チャット本文・チャット添付は暗号文のまま保存します。本文だけは`POST /api/v1/chats/{id}/moderation`の送信前安全判定で、暗号化前にOpenAIへ同期転送する明示的な例外です。この平文は判定リクエスト中だけ参照し、DB、キュー、ログ、監査イベントへ保存しません。翻訳・画像Moderationは現時点で実行しません。`frontend/services/chat.ts`の現行本文キーは`chat_id`から導出されるため、サーバーが現在復号していないことだけでは厳密E2EEの証明になりません。厳密E2EEを成立させる端末間鍵共有・ローテーション・通報時の明示的同意境界が確定するまで、送信前Moderation以外の平文または復号鍵をサーバーへ追加してはなりません。
+チャット本文・チャット添付は暗号文のまま保存します。新規本文は`frontend/services/chat.ts`の`chat-keyb-v1`で端末Key-Bを秘密入力にして導出し、既存`chat-mvp-v1`は読み取り互換だけを残します。翻訳結果もメッセージごとの現行revision・対象言語に紐づけ、クライアントがKey-B由来鍵で暗号化したenvelopeだけを`chat_message_translations`へ保存します。本文は`POST /api/v1/chats/{id}/moderation`の送信前安全判定と`POST /api/v1/chats/{id}/translate`のAI翻訳で、暗号化前に外部providerへ同期転送する明示的な例外があります。どちらの平文もリクエスト処理中だけ参照し、DB、キュー、ログ、監査イベントへ保存しません。端末固有Key-Bの参加者・別端末間共有は未完成であり、サーバーへKey-Bや復号鍵を追加してはなりません。これらの平文例外と鍵共有未完成のため、現行チャットを厳密な完全E2EEとは扱いません。
 
 ### 6.11 未実装業務API
 
-本人確認（Stripe Identity等）、評価、チャット添付のクライアント送受信UI、通報の運営キューは引き続き予定です。バックエンドのチャット添付暗号文保存APIと保持期間スイープは実装済みですが、現行チャット本文キー導出および添付鍵共有は厳密E2EEの完成契約ではありません。Stripe Identityを採用する場合も、Stripe Webhookの署名検証・イベント冪等性・対象ユーザー紐付けが成功するまで`identity_status=verified`へ遷移させません。画像平文、Key-A、Key-B、Recovery Key、Refresh TokenをAPIログへ出さない不変条件は全機能に適用します。
+本人確認（Stripe Identity等）、評価、チャット添付のクライアント送受信UI、通報の運営キューは引き続き予定です。チャット本文のKey-B導出、編集・削除、AI翻訳は実装済みですが、端末固有Key-Bの参加者・別端末間共有は未完成で、厳密E2EEの完成契約ではありません。Stripe Identityを採用する場合も、Stripe Webhookの署名検証・イベント冪等性・対象ユーザー紐付けが成功するまで`identity_status=verified`へ遷移させません。画像平文、Key-A、Key-B、Recovery Key、Refresh TokenをAPIログへ出さない不変条件は全機能に適用します。
 
 ## 7. クライアント更新手順
 

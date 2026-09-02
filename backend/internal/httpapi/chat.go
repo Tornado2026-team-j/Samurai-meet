@@ -13,6 +13,7 @@ import (
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/auth"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/chat"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/keys"
+	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/translation"
 )
 
 const chatPath = APIV1Prefix + "/chats"
@@ -42,7 +43,7 @@ func chatCollection(service *chat.Service, sessions *auth.SessionService) http.H
 	}
 }
 
-func chatItem(service *chat.Service, moderation chat.ModerationProvider, sessions *auth.SessionService, devices *keys.DeviceService) http.HandlerFunc {
+func chatItem(service *chat.Service, moderation chat.ModerationProvider, translator *translation.Service, sessions *auth.SessionService, devices *keys.DeviceService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		claims, ok := accessClaims(r, sessions)
 		if !ok {
@@ -61,8 +62,14 @@ func chatItem(service *chat.Service, moderation chat.ModerationProvider, session
 		switch {
 		case rest[0] == "moderation" && len(rest) == 1:
 			chatModeration(service, moderation, sessions)(w, r)
+		case rest[0] == "translate" && len(rest) == 1:
+			chatTranslation(service, translator, service, sessions)(w, r)
 		case rest[0] == "messages" && len(rest) == 1:
 			chatMessages(w, r, service, claims.Subject, chatID)
+		case rest[0] == "messages" && len(rest) == 4 && rest[2] == "translations":
+			chatMessageTranslation(service, sessions, claims.Subject, chatID, rest[1], rest[3])(w, r)
+		case rest[0] == "messages" && len(rest) == 2:
+			chatMessageItem(w, r, service, claims.Subject, chatID, rest[1])
 		case rest[0] == "read" && len(rest) == 1:
 			chatRead(w, r, service, claims.Subject, chatID)
 		case rest[0] == "transport-token" && len(rest) == 1:
@@ -111,6 +118,32 @@ func chatMessages(w http.ResponseWriter, r *http.Request, service *chat.Service,
 		writeJSON(w, http.StatusCreated, map[string]any{"data": message})
 	default:
 		w.Header().Set("Allow", "GET, POST")
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+func chatMessageItem(w http.ResponseWriter, r *http.Request, service *chat.Service, userID, chatID, messageID string) {
+	switch r.Method {
+	case http.MethodPatch:
+		var input chat.UpdateMessageInput
+		if err := decodeJSONRequest(w, r, &input, 192*1024); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_chat_request"})
+			return
+		}
+		message, err := service.UpdateMessage(r.Context(), userID, chatID, messageID, input, time.Now())
+		if err != nil {
+			writeChatError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"data": message})
+	case http.MethodDelete:
+		if err := service.DeleteMessage(r.Context(), userID, chatID, messageID, time.Now()); err != nil {
+			writeChatError(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		w.Header().Set("Allow", "PATCH, DELETE")
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
 }
@@ -188,7 +221,7 @@ func chatPathParts(path string) (string, []string, bool) {
 		return "", nil, false
 	}
 	parts := strings.Split(trimmed, "/")
-	if len(parts) < 2 || len(parts) > 4 {
+	if len(parts) < 2 || len(parts) > 5 {
 		return "", nil, false
 	}
 	for _, part := range parts {

@@ -62,6 +62,11 @@ func (s *Service) PurgeExpiredMessages(ctx context.Context, now time.Time) (int,
 		purged_attachments AS (
 			UPDATE chat_attachments a SET deleted_at=$3
 			FROM purged p WHERE a.message_id=p.id AND a.deleted_at IS NULL
+		),
+		purged_translations AS (
+			DELETE FROM chat_message_translations t
+			USING purged p WHERE t.message_id=p.id
+			RETURNING t.message_id
 		)
 		INSERT INTO chat_message_deletions
 			(chat_id, message_id, sequence, sender_user_id, message_created_at, reason, retention_days, deleted_at)

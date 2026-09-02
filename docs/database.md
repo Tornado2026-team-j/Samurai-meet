@@ -51,6 +51,8 @@
 | `0034_chat_attachments.sql` | チャット暗号文添付のメタデータを追加する |
 | `0035_restore_places_category.sql` | `Heritage`カテゴリを既存の正式カテゴリ`Places`へ戻す |
 | `0036_device_transfer_cancellation.sql` | 端末引き継ぎを`cancelled`へ遷移できる状態と`cancelled_at`、キャンセル済み行の検索用indexを追加する |
+| `0043_chat_message_edit_timestamp.sql` | 送信者による暗号化本文編集の`messages.edited_at`を追加する |
+| `0044_chat_message_translations.sql` | メッセージrevisionごとのKey-B暗号化翻訳envelopeを保存する |
 
 注意: 現行のmigration runnerはSQLファイルを順番に正規化して実行し、`schema_migrations`へファイル名と正規化SQLのSHA-256 checksum、適用時刻を記録する。同じchecksumの適用済みmigrationはスキップし、PostgreSQL advisory lockで同時起動を直列化する。適用済みファイルの内容が変わった場合はchecksum mismatchで起動を停止する。適用済みmigrationを編集・置換してはいけない。DDL変更は新しい番号のSQLを追加する。
 
@@ -214,6 +216,7 @@ Recovery Phraseで復号したMaster Keyの所有証明を一時的に受け付�
 - `matches`: 関心、承認、完了の状態。`card_id`と`requester_user_id`を一意にする。
 - `chat_threads`: accepted/completedマッチに遅延作成する1対1チャット。`match_id`を一意にする。利用可否は`matches.status`と`blocks`で判定し、スレッド自体の状態列は持たない（`0029`で`status`/`closed_at`を削除）。
 - `messages`: Base64URLの暗号文、nonce、アルゴリズム、鍵versionだけを保存する。平文本文は列にもログにも存在しない。送信者・チャット・`client_message_id`の組み合わせを一意にして再送を冪等化する。`deleted_at` は保持期間スイープが打ち（§7）、同時に暗号文・nonce を消去する。読み取りは全経路で `deleted_at IS NULL` 済み。
+- `chat_message_translations`: メッセージID・対象言語・現行本文revisionをキーに、Key-B由来鍵でクライアント暗号化した翻訳envelopeだけを保存する。翻訳本文・原言語は保存せず、本文編集・削除・保持期限で関連行も消去する。
 - `chat_read_states`: ユーザーごとの最後の既読`sequence`。
 - `meeting_sessions`: acceptedマッチのplanned/active/completed/cancelled会合状態。
 - `meeting_proximity_latest`: 会合中の参加者ごと・方式ごとの最新1件。Bluetooth MAC、RSSI生値、ビーコンID、緯度経度は保存せず、会合終了時に削除する。
@@ -244,7 +247,8 @@ Recovery Phraseで復号したMaster Keyの所有証明を一時的に受け付�
 `chat_message_deletions` に監査行を 1 件残す。読み取り系クエリ（履歴・未読数・
 複数インスタンス fan-out の再取得）はすべて `deleted_at IS NULL` で除外するため、
 tombstone 済みメッセージは表示・配送されない。スイープは全インスタンスで安全に
-実行でき、`chat_message_deletions.message_id` の UNIQUE で監査行の重複を防ぐ。
+実行でき、関連する`chat_message_translations`も同じtransactionで消去し、
+`chat_message_deletions.message_id` の UNIQUE で監査行の重複を防ぐ。
 
 バックアップ上の物理削除期限、監査ログ保持期間は運用・法務決定後にmigrationと運用手順へ反映する。
 

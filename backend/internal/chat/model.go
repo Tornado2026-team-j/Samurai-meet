@@ -22,6 +22,8 @@ const (
 	serverFrameAuthOK         = "auth.ok"
 	serverFrameMessageCreated = "message.created"
 	serverFrameMessageAck     = "message.ack"
+	serverFrameMessageUpdated = "message.updated"
+	serverFrameMessageDeleted = "message.deleted"
 	serverFrameMessageRead    = "message.read"
 	serverFrameTyping         = "typing"
 	serverFramePong           = "pong"
@@ -60,6 +62,12 @@ type tokenRenewedFrame struct {
 type messageFrame struct {
 	Type    string  `json:"type"`
 	Message Message `json:"message"`
+}
+
+type deletedMessageFrame struct {
+	Type      string `json:"type"`
+	MessageID string `json:"message_id"`
+	Sequence  int64  `json:"sequence"`
 }
 
 type ackFrame struct {

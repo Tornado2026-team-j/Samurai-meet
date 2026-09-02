@@ -31,7 +31,8 @@ const (
 )
 
 // Device is public registration metadata only. The device's Key-B is generated
-// and retained by the client Secure Storage; it never crosses this API.
+// and retained by the client Secure Storage; it never crosses this API. The
+// client also uses that same secret as input to the chat-message KDF.
 type Device struct {
 	DeviceID            string    `json:"device_id"`
 	KeyVersion          string    `json:"key_version"`
