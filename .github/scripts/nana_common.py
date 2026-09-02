@@ -147,14 +147,25 @@ def invocation() -> tuple[int, str, NanaCommand, int | None, str, str]:
     if assoc not in TRUSTED:
         raise SystemExit("Skip: @nana is limited to trusted repository contributors.")
 
-    m = re.search(r"(?i)@nana\b[\s,:：-]*(.*)", comment.get("body", ""), re.S)
+    body = comment.get("body", "")
+    m = re.search(r"(?i)@nana\b[\s,:：-]*(.*)", body, re.S)
     if not m:
         raise SystemExit(0)
+
+    parsed = parse_command(m.group(1))
+    if parsed.name == "apply" and not re.search(r"(?i)@nana\s+apply\s+[a-f0-9]{10}\b", body):
+        # Privileged writes intentionally use one unambiguous syntax so the review/apply workflows
+        # cannot disagree about whether a comment is an apply command.
+        parsed = NanaCommand(
+            "ask",
+            "Applyの構文が不正です。`@nana apply <10桁のplan-id>` の形式を使ってください。",
+            m.group(1).strip(),
+        )
 
     return (
         issue["number"],
         "mention",
-        parse_command(m.group(1)),
+        parsed,
         comment["id"],
         comment.get("user", {}).get("login", ""),
         assoc,
@@ -236,15 +247,22 @@ def diff_context(files: list[dict[str, Any]]) -> tuple[str, str, bool]:
     return summary, "".join(chunks), truncated
 
 
-def recent_comments(number: int, current_id: int | None) -> str:
+def recent_comments(number: int, current_id: int | None, include_nana: bool = False) -> str:
+    """Conversation context only. It must not be treated as authoritative GitHub state."""
     out: list[str] = []
     for c in pages(f"/issues/{number}/comments", limit=5)[-20:]:
         body = (c.get("body") or "").strip()
         if not body:
             continue
+        if not include_nana and "<!-- nana:" in body:
+            # Prevent Nana from reinforcing its own older guesses/findings.
+            continue
         body = body[:3500] + ("\n...[truncated]" if len(body) > 3500 else "")
         here = " ← 今回の呼び出し" if c.get("id") == current_id else ""
-        out.append(f"--- {c.get('user', {}).get('login', 'unknown')}{here}\n{body}")
+        author = c.get("user", {}).get("login", "unknown")
+        out.append(
+            f"--- {author}{here} [UNTRUSTED CONVERSATION; not authoritative GitHub state]\n{body}"
+        )
     return "\n\n".join(out) or "(コメントなし)"
 
 
@@ -433,7 +451,6 @@ def valid_suggestion_lines(files: list[dict[str, Any]]) -> dict[str, set[int]]:
 def post_review_with_suggestions(
     number: int,
     commit_id: str,
-    summary: str,
     suggestions: list[dict[str, Any]],
     files: list[dict[str, Any]],
 ) -> int:
@@ -509,36 +526,47 @@ def ci_context(pr: dict[str, Any]) -> str:
 def help_text() -> str:
     return """## 🌸 Nana Help
 
-PRのレビュー、コードリード、比較、CI確認、修正提案を手伝えます。
+PRのレビュー、コードリード、GitHub状態確認、比較、CI確認、修正提案を手伝えます。
 
-### レビュー
+### レビュー / 提案
 - `@nana` / `@nana review` — PR全体をレビュー
 - `@nana security` — セキュリティ・認証/認可を重点確認
-- `@nana spec` — base/mainの仕様・docsとの整合性を確認
-- `@nana suggest` — 小規模ならFiles changedへGitHub Suggestionを提示
+- `@nana spec` — base/default branchの仕様・docsとの整合性を確認
+- `@nana suggest [依頼]` — 小規模ならFiles changedへGitHub Suggestionを提示
+  - 例: `@nana suggest コンフリクトの対処をお願いします`
+  - Nana自身がmergeability、base/head、競合候補を確認してから判断します
+  - diff上で安全に直せない競合は無理にSuggestion化せず、解消案を返します
 
-### コードリード / 比較
+### コードリード / GitHub調査
 - `@nana read <path|keyword>` — PR head / base / default branchを横断して読む
 - `@nana branches` — ブランチ一覧
 - `@nana branch <branch> [質問]` — 別ブランチの関連実装も確認
 - `@nana compare <base> <head> [path-prefix]` — 2 refを比較
 - `@nana mainと比較して` — 自然言語でもOK
+- `@nana コンフリクトある？` — GitHub APIのmergeabilityを確認して回答
 
 ### CI
-- `@nana ci` — status / checks / workflow runsを確認
+- `@nana ci` — status / checks / workflow runsをGitHub APIで確認
 
 ### 修正
 - `@nana fix [依頼]` — 現在のPR HEAD向け修正Planを生成（この時点では変更しません）
 - `@nana apply <plan-id>` — 別のNana Executorが署名済みPlanをPRへ適用
-  - 同一repository内のPRのみ
-  - PR HEAD一致必須
-  - `.github/workflows/**` 等は自動変更禁止
-  - `NANA_PLAN_SECRET` の設定が必要
 
-### 自然言語
-`@nana この処理nullにならない？` のような普通の質問にも答えます。
+### Nanaが自分で使えるread-only tools
+必要に応じて自分で以下を呼び出します:
+- PR mergeability / state
+- CI statuses / checks / workflow runs
+- PR changed-file patch
+- base / head / default / 任意refのファイル読取
+- branch一覧
+- ref間compare
+- 競合候補ファイルの抽出
+- path検索
+- commit履歴
 
-> 小規模修正はcommitよりSuggestionを優先し、大きな変更だけ`fix → apply`へ回します。
+任意shellやPRコードの実行権限は渡していません。書き込みは`apply`用の別Executorだけです。
+
+> GitHub状態はAPI結果だけを根拠にします。古いPRコメントやNana自身の過去コメントから「CI成功」「コンフリクトなし」などを推測しません。
 """
 
 
