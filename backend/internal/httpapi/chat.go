@@ -275,6 +275,15 @@ func writeChatError(w http.ResponseWriter, err error) {
 		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "chat_rate_limited"})
 		return
 	}
+	if translationRateLimited := (*chat.TranslationRateLimitError)(nil); errors.As(err, &translationRateLimited) {
+		seconds := int(translationRateLimited.RetryAfter.Round(time.Second) / time.Second)
+		if seconds < 1 {
+			seconds = 1
+		}
+		w.Header().Set("Retry-After", strconv.Itoa(seconds))
+		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "chat_translation_rate_limited"})
+		return
+	}
 	switch {
 	case errors.Is(err, chat.ErrChatInvalidInput):
 		status, code = http.StatusBadRequest, "invalid_chat_request"
@@ -296,6 +305,16 @@ func writeChatError(w http.ResponseWriter, err error) {
 		status, code = http.StatusConflict, "chat_key_recipients_unavailable"
 	case errors.Is(err, chat.ErrChatKeyEnvelopeConflict):
 		status, code = http.StatusConflict, "chat_key_envelope_conflict"
+	case errors.Is(err, chat.ErrChatKeyEnvelopeAuthority):
+		status, code = http.StatusForbidden, "chat_key_envelope_authority_required"
+	case errors.Is(err, chat.ErrMessageTranslationStale):
+		status, code = http.StatusConflict, "chat_translation_stale"
+	case errors.Is(err, chat.ErrTranslationBindingMissing):
+		status, code = http.StatusConflict, "chat_translation_binding_unavailable"
+	case errors.Is(err, chat.ErrTranslationBindingMismatch):
+		status, code = http.StatusBadRequest, "chat_translation_message_mismatch"
+	case errors.Is(err, chat.ErrTranslationLimiterUnavailable):
+		status, code = http.StatusServiceUnavailable, "chat_translation_unavailable"
 	case errors.Is(err, chat.ErrChatSignerMissing):
 		status, code = http.StatusServiceUnavailable, "chat_transport_unavailable"
 	case errors.Is(err, chat.ErrChatAttachmentUnavailable):

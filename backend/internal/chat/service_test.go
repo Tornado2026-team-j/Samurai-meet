@@ -22,6 +22,18 @@ func TestValidateMessageInputRequiresCiphertextContract(t *testing.T) {
 	if err := validateMessageInput(valid); err != nil {
 		t.Fatalf("valid message rejected: %v", err)
 	}
+	chatDEKMessage := valid
+	chatDEKMessage.KeyVersion = chatMessageKeyVersion
+	chatDEKMessage.PlaintextCommitment = base64.RawURLEncoding.EncodeToString(make([]byte, 32))
+	chatDEKMessage.PlaintextCommitmentSalt = base64.RawURLEncoding.EncodeToString(make([]byte, 16))
+	if err := validateMessageInput(chatDEKMessage); err != nil {
+		t.Fatalf("chat-dek message rejected: %v", err)
+	}
+	missingBinding := chatDEKMessage
+	missingBinding.PlaintextCommitment = ""
+	if err := validateMessageInput(missingBinding); !errors.Is(err, ErrChatInvalidInput) {
+		t.Fatalf("chat-dek message without plaintext binding error = %v, want %v", err, ErrChatInvalidInput)
+	}
 	for _, test := range []struct {
 		name  string
 		input SendMessageInput
@@ -61,6 +73,20 @@ func TestValidateMessageInputRequiresCiphertextContract(t *testing.T) {
 	location.ExpiresAt = time.Now().Add(25 * time.Hour).UTC().Format(time.RFC3339Nano)
 	if err := validateMessageInput(location); !errors.Is(err, ErrChatInvalidInput) {
 		t.Fatalf("overlong location expiry error = %v, want invalid input", err)
+	}
+}
+
+func TestPlaintextCommitmentBindsCanonicalTextAndSalt(t *testing.T) {
+	salt := base64.RawURLEncoding.EncodeToString(make([]byte, 16))
+	commitment := plaintextCommitment("  Hello  ", salt)
+	if !validPlaintextBinding(commitment, salt) {
+		t.Fatal("generated plaintext commitment is invalid")
+	}
+	if plaintextCommitment("Other", salt) == commitment {
+		t.Fatal("different plaintext reused the same commitment")
+	}
+	if plaintextCommitment("Hello", base64.RawURLEncoding.EncodeToString(make([]byte, 15))) == commitment {
+		t.Fatal("different salt reused the same commitment")
 	}
 }
 

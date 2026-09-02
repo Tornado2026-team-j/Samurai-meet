@@ -3,7 +3,9 @@ package integration
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"strings"
 	"testing"
 	"time"
 
@@ -36,6 +38,9 @@ func TestChatMessageEditAndDelete(t *testing.T) {
 	if err := f.chatService.SaveMessageTranslation(ctx, f.requesterID, f.chatID, message.ID, initialTranslation, now); err != nil {
 		t.Fatalf("SaveMessageTranslation: %v", err)
 	}
+	if _, err := f.chatService.AuthorizeMessageTranslation(ctx, f.requesterID, f.chatID, message.ID, "legacy plaintext"); err != chat.ErrTranslationBindingMissing {
+		t.Fatalf("legacy message translation authorization error = %v, want %v", err, chat.ErrTranslationBindingMissing)
+	}
 	cached, found, revision, err := f.chatService.LookupMessageTranslation(ctx, f.requesterID, f.chatID, message.ID, "ja")
 	if err != nil || !found || revision != message.CreatedAt || cached.Ciphertext != initialTranslation.Ciphertext {
 		t.Fatalf("LookupMessageTranslation = %+v, found=%v, revision=%q, err=%v", cached, found, revision, err)
@@ -51,10 +56,12 @@ func TestChatMessageEditAndDelete(t *testing.T) {
 	}
 
 	updated, err := f.chatService.UpdateMessage(ctx, f.requesterID, f.chatID, message.ID, chat.UpdateMessageInput{
-		Ciphertext: base64Value(0x21, 48),
-		Nonce:      base64Value(0x22, 12),
-		Algorithm:  "AES-256-GCM",
-		KeyVersion: "chat-dek-v1",
+		Ciphertext:              base64Value(0x21, 48),
+		Nonce:                   base64Value(0x22, 12),
+		Algorithm:               "AES-256-GCM",
+		KeyVersion:              "chat-dek-v1",
+		PlaintextCommitment:     testPlaintextCommitment("Updated", base64Value(0x23, 16)),
+		PlaintextCommitmentSalt: base64Value(0x23, 16),
 	}, now.Add(time.Second))
 	if err != nil {
 		t.Fatalf("UpdateMessage: %v", err)
@@ -67,6 +74,12 @@ func TestChatMessageEditAndDelete(t *testing.T) {
 	}
 	if _, found, revision, err := f.chatService.LookupMessageTranslation(ctx, f.requesterID, f.chatID, message.ID, "ja"); err != nil || found || revision != updated.EditedAt {
 		t.Fatalf("translation after edit = found=%v revision=%q err=%v, want cache invalidated at new revision", found, revision, err)
+	}
+	if revision, err := f.chatService.AuthorizeMessageTranslation(ctx, f.requesterID, f.chatID, message.ID, "Updated"); err != nil || revision != updated.EditedAt {
+		t.Fatalf("translation binding for updated text = revision=%q err=%v", revision, err)
+	}
+	if _, err := f.chatService.AuthorizeMessageTranslation(ctx, f.requesterID, f.chatID, message.ID, "arbitrary text"); err != chat.ErrTranslationBindingMismatch {
+		t.Fatalf("arbitrary translation text error = %v, want %v", err, chat.ErrTranslationBindingMismatch)
 	}
 	updatedTranslation := initialTranslation
 	updatedTranslation.Ciphertext = base64Value(0x33, 32)
@@ -128,4 +141,9 @@ func TestChatMessageEditAndDelete(t *testing.T) {
 
 func base64Value(value byte, length int) string {
 	return base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{value}, length))
+}
+
+func testPlaintextCommitment(text, salt string) string {
+	digest := sha256.Sum256([]byte("samurai-meet:chat-message-plaintext-commitment/v1\n" + strings.TrimSpace(salt) + "\n" + strings.TrimSpace(text)))
+	return base64.RawURLEncoding.EncodeToString(digest[:])
 }

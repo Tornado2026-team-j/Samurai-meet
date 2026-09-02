@@ -42,6 +42,7 @@ type Service struct {
 	notifications      *notification.Service
 	wtHub              *webTransportHub
 	sendLimiter        *sendRateLimiter
+	translationLimiter *translationRateLimiter
 	blobs              BlobStore
 	maxAttachmentBytes int64
 
@@ -113,16 +114,22 @@ type SendMessageInput struct {
 	// AttachmentID optionally references a chat photo the caller already
 	// uploaded to this chat. REST only; WebSocket message.send ignores it.
 	AttachmentID string `json:"attachment_id"`
+	// PlaintextCommitment and PlaintextCommitmentSalt bind a client-decrypted
+	// plaintext to this message without sending or storing the plaintext.
+	PlaintextCommitment     string `json:"plaintext_commitment,omitempty"`
+	PlaintextCommitmentSalt string `json:"plaintext_commitment_salt,omitempty"`
 }
 
 // UpdateMessageInput replaces only the encrypted text payload. The sender's
 // client_message_id, sequence, and creation time remain stable so an edit is
 // an update to one logical message rather than a new message.
 type UpdateMessageInput struct {
-	Ciphertext string `json:"ciphertext"`
-	Nonce      string `json:"nonce"`
-	Algorithm  string `json:"algorithm"`
-	KeyVersion string `json:"key_version"`
+	Ciphertext              string `json:"ciphertext"`
+	Nonce                   string `json:"nonce"`
+	Algorithm               string `json:"algorithm"`
+	KeyVersion              string `json:"key_version"`
+	PlaintextCommitment     string `json:"plaintext_commitment,omitempty"`
+	PlaintextCommitmentSalt string `json:"plaintext_commitment_salt,omitempty"`
 }
 
 type TransportToken struct {
@@ -145,7 +152,7 @@ func NewService(database *sql.DB, signer *auth.Signer, notificationServices ...*
 	if len(notificationServices) > 0 {
 		notifications = notificationServices[0]
 	}
-	return &Service{db: database, signer: signer, notifications: notifications, wtHub: newWebTransportHub(), sendLimiter: newSendRateLimiter(), instanceID: newInstanceID(), retentionDays: defaultMessageRetentionDays, maxAttachmentBytes: defaultMaxAttachmentBytes}
+	return &Service{db: database, signer: signer, notifications: notifications, wtHub: newWebTransportHub(), sendLimiter: newSendRateLimiter(), translationLimiter: newTranslationRateLimiter(), instanceID: newInstanceID(), retentionDays: defaultMessageRetentionDays, maxAttachmentBytes: defaultMaxAttachmentBytes}
 }
 
 // WithAttachments enables chat photo attachments backed by blobs. maxBytes <= 0
@@ -177,6 +184,16 @@ func (s *Service) ConfigureSendRateLimit(capacity int, refillPerSecond float64) 
 		return
 	}
 	s.sendLimiter.configure(capacity, refillPerSecond)
+}
+
+// ConfigureTranslationRateLimit overrides the shared account-scoped provider
+// budget. The token bucket is persisted in PostgreSQL, so every API instance
+// applies the same account limit. Non-positive values keep the defaults.
+func (s *Service) ConfigureTranslationRateLimit(accountBurst int, refillPerSecond float64, maxInFlight int) {
+	if s == nil || s.translationLimiter == nil {
+		return
+	}
+	s.translationLimiter.configure(accountBurst, refillPerSecond, maxInFlight)
 }
 
 // sessionActive confirms the session behind a Chat Token is still usable:
@@ -330,9 +347,12 @@ func (s *Service) AuthorizeMessageSend(ctx context.Context, userID, chatID strin
 // AuthorizeMessageTranslation allows a participant to translate an already
 // visible message in an accepted or completed chat. It performs the chat and
 // block checks before any plaintext is sent to the translation provider.
-func (s *Service) AuthorizeMessageTranslation(ctx context.Context, userID, chatID string) error {
-	_, err := s.loadChat(ctx, userID, chatID, true)
-	return err
+func (s *Service) AuthorizeMessageTranslation(ctx context.Context, userID, chatID, messageID, text string) (string, error) {
+	access, err := s.loadChat(ctx, userID, chatID, true)
+	if err != nil {
+		return "", err
+	}
+	return s.messageTranslationRevisionForText(ctx, s.db, access.ChatID, messageID, text, false)
 }
 
 // sendMessage is the shared implementation used by REST and WebTransport.
@@ -342,6 +362,8 @@ func (s *Service) sendMessage(ctx context.Context, userID, chatID string, input 
 	if input.ContentType == "" {
 		input.ContentType = "text"
 	}
+	input.PlaintextCommitment = strings.TrimSpace(input.PlaintextCommitment)
+	input.PlaintextCommitmentSalt = strings.TrimSpace(input.PlaintextCommitmentSalt)
 	if err := validateMessageInput(input); err != nil {
 		return Message{}, false, err
 	}
@@ -371,11 +393,11 @@ func (s *Service) sendMessage(ctx context.Context, userID, chatID string, input 
 	var message Message
 	isNew := true
 	err = tx.QueryRowContext(ctx, `
-		INSERT INTO messages (id,chat_id,sender_user_id,client_message_id,ciphertext,nonce,algorithm,key_version,content_type,expires_at,created_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NULLIF($10,''),$11)
+		INSERT INTO messages (id,chat_id,sender_user_id,client_message_id,ciphertext,nonce,algorithm,key_version,content_type,expires_at,plaintext_commitment,plaintext_commitment_salt,created_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NULLIF($10,''),$11,$12,$13)
 		ON CONFLICT (chat_id,sender_user_id,client_message_id) DO NOTHING
 		RETURNING id,chat_id,sender_user_id,client_message_id,sequence,ciphertext,nonce,algorithm,key_version,content_type,COALESCE(expires_at,''),COALESCE(edited_at,''),created_at`,
-		id, access.ChatID, userID, input.ClientMessageID, input.Ciphertext, input.Nonce, input.Algorithm, input.KeyVersion, input.ContentType, input.ExpiresAt, timestamp).Scan(
+		id, access.ChatID, userID, input.ClientMessageID, input.Ciphertext, input.Nonce, input.Algorithm, input.KeyVersion, input.ContentType, input.ExpiresAt, input.PlaintextCommitment, input.PlaintextCommitmentSalt, timestamp).Scan(
 		&message.ID, &message.ChatID, &message.SenderUserID, &message.ClientMessageID, &message.Sequence,
 		&message.Ciphertext, &message.Nonce, &message.Algorithm, &message.KeyVersion, &message.ContentType, &message.ExpiresAt, &message.EditedAt, &message.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -450,6 +472,8 @@ func (s *Service) sendMessage(ctx context.Context, userID, chatID string, input 
 // the caller. The message keeps its id, sequence, client id, and creation time
 // so clients can reconcile an edit without treating it as a new delivery.
 func (s *Service) UpdateMessage(ctx context.Context, userID, chatID, messageID string, input UpdateMessageInput, now time.Time) (Message, error) {
+	input.PlaintextCommitment = strings.TrimSpace(input.PlaintextCommitment)
+	input.PlaintextCommitmentSalt = strings.TrimSpace(input.PlaintextCommitmentSalt)
 	if err := validateUpdateMessageInput(input); err != nil {
 		return Message{}, err
 	}
@@ -493,9 +517,9 @@ func (s *Service) UpdateMessage(ctx context.Context, userID, chatID, messageID s
 		return Message{}, err
 	}
 	if _, err = tx.ExecContext(ctx, `
-		UPDATE messages SET ciphertext=$1,nonce=$2,algorithm=$3,key_version=$4,edited_at=$5
-		WHERE id=$6 AND chat_id=$7 AND deleted_at IS NULL`,
-		input.Ciphertext, input.Nonce, input.Algorithm, input.KeyVersion, stamp, message.ID, access.ChatID); err != nil {
+		UPDATE messages SET ciphertext=$1,nonce=$2,algorithm=$3,key_version=$4,plaintext_commitment=$5,plaintext_commitment_salt=$6,edited_at=$7
+		WHERE id=$8 AND chat_id=$9 AND deleted_at IS NULL`,
+		input.Ciphertext, input.Nonce, input.Algorithm, input.KeyVersion, input.PlaintextCommitment, input.PlaintextCommitmentSalt, stamp, message.ID, access.ChatID); err != nil {
 		return Message{}, err
 	}
 	if _, err = tx.ExecContext(ctx, `UPDATE chat_threads SET updated_at=$1 WHERE id=$2`, stamp, access.ChatID); err != nil {
@@ -864,6 +888,8 @@ func blockedTx(ctx context.Context, tx *sql.Tx, first, second string) (bool, err
 }
 
 func validateMessageInput(input SendMessageInput) error {
+	input.PlaintextCommitment = strings.TrimSpace(input.PlaintextCommitment)
+	input.PlaintextCommitmentSalt = strings.TrimSpace(input.PlaintextCommitmentSalt)
 	if !validIdentifier(input.ClientMessageID, maxClientMessageID) {
 		return ErrChatInvalidInput
 	}
@@ -878,6 +904,13 @@ func validateMessageInput(input SendMessageInput) error {
 		input.ContentType = "text"
 	}
 	if input.ContentType != "text" && input.ContentType != "location" && input.ContentType != "image" {
+		return ErrChatInvalidInput
+	}
+	if input.KeyVersion == chatMessageKeyVersion {
+		if !validPlaintextBinding(input.PlaintextCommitment, input.PlaintextCommitmentSalt) {
+			return ErrChatInvalidInput
+		}
+	} else if input.PlaintextCommitment != "" || input.PlaintextCommitmentSalt != "" {
 		return ErrChatInvalidInput
 	}
 	if (input.ContentType == "image") != (input.AttachmentID != "") {
@@ -895,7 +928,19 @@ func validateMessageInput(input SendMessageInput) error {
 }
 
 func validateUpdateMessageInput(input UpdateMessageInput) error {
-	return validateEncryptedMessageInput(input.Ciphertext, input.Nonce, input.Algorithm, input.KeyVersion)
+	input.PlaintextCommitment = strings.TrimSpace(input.PlaintextCommitment)
+	input.PlaintextCommitmentSalt = strings.TrimSpace(input.PlaintextCommitmentSalt)
+	if err := validateEncryptedMessageInput(input.Ciphertext, input.Nonce, input.Algorithm, input.KeyVersion); err != nil {
+		return err
+	}
+	if input.KeyVersion == chatMessageKeyVersion {
+		if !validPlaintextBinding(input.PlaintextCommitment, input.PlaintextCommitmentSalt) {
+			return ErrChatInvalidInput
+		}
+	} else if input.PlaintextCommitment != "" || input.PlaintextCommitmentSalt != "" {
+		return ErrChatInvalidInput
+	}
+	return nil
 }
 
 func validateEncryptedMessageInput(ciphertextValue, nonceValue, algorithmValue, keyVersionValue string) error {

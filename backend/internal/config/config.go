@@ -30,15 +30,16 @@ type Config struct {
 	Chat                ChatConfig
 }
 
-// ChatConfig tunes chat message send rate limiting and retention. SendBurst is
-// the per-user token-bucket capacity (absorbs a legitimate burst);
-// SendRefillPerMinute is the sustained per-user send rate the bucket refills
-// at. MessageRetentionDays is the age after which a message's ciphertext is
-// tombstoned by the retention sweep.
+// ChatConfig tunes chat message send rate limiting, translation provider
+// budgets, and retention. Translation limits are account-scoped because the
+// provider cost follows the authenticated account rather than its IP address.
 type ChatConfig struct {
-	SendBurst            int
-	SendRefillPerMinute  int
-	MessageRetentionDays int
+	SendBurst                         int
+	SendRefillPerMinute               int
+	TranslationAccountBurst           int
+	TranslationAccountRefillPerMinute int
+	TranslationMaxInFlight            int
+	MessageRetentionDays              int
 }
 
 type GoogleOIDCConfig struct{ ClientID, ClientSecret, RedirectURI string }
@@ -192,9 +193,12 @@ func Load() Config {
 		WebAuthn:   WebAuthnConfig{valueOrDefault("WEBAUTHN_RP_ID", "localhost"), valueOrDefault("WEBAUTHN_RP_ORIGIN", "http://localhost:8081"), valueOrDefault("WEBAUTHN_RP_DISPLAY_NAME", "Samurai Meet")},
 		JWS:        JWSConfig{os.Getenv("JWS_SIGNING_KEY"), valueOrDefault("JWS_KEY_ID", "v1"), os.Getenv("JWS_VERIFY_KEYS"), valueOrDefault("JWS_ISSUER", "samurai-meet-api"), valueOrDefault("JWS_AUDIENCE", "samurai-meet-mobile")},
 		Chat: ChatConfig{
-			SendBurst:            intValueOrDefault("CHAT_SEND_BURST", 15),
-			SendRefillPerMinute:  intValueOrDefault("CHAT_SEND_REFILL_PER_MINUTE", 60),
-			MessageRetentionDays: intValueOrDefault("CHAT_MESSAGE_RETENTION_DAYS", 180),
+			SendBurst:                         intValueOrDefault("CHAT_SEND_BURST", 15),
+			SendRefillPerMinute:               intValueOrDefault("CHAT_SEND_REFILL_PER_MINUTE", 60),
+			TranslationAccountBurst:           intValueOrDefault("CHAT_TRANSLATION_ACCOUNT_BURST", 30),
+			TranslationAccountRefillPerMinute: intValueOrDefault("CHAT_TRANSLATION_ACCOUNT_REFILL_PER_MINUTE", 30),
+			TranslationMaxInFlight:            intValueOrDefault("CHAT_TRANSLATION_MAX_IN_FLIGHT", 2),
+			MessageRetentionDays:              intValueOrDefault("CHAT_MESSAGE_RETENTION_DAYS", 180),
 		},
 	}
 }

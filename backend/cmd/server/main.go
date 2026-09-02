@@ -120,6 +120,7 @@ func main() {
 	chatService := chat.NewService(database, signer, notifications).
 		WithAttachments(store, int64(cfg.ImageStorage.MaxUploadBytes))
 	chatService.ConfigureSendRateLimit(cfg.Chat.SendBurst, float64(cfg.Chat.SendRefillPerMinute)/60.0)
+	chatService.ConfigureTranslationRateLimit(cfg.Chat.TranslationAccountBurst, float64(cfg.Chat.TranslationAccountRefillPerMinute)/60.0, cfg.Chat.TranslationMaxInFlight)
 	chatService.ConfigureMessageRetention(cfg.Chat.MessageRetentionDays)
 	chatService.SetClusterLogger(log.Printf)
 	chatModeration := chat.NewOpenAIModerationProvider(os.Getenv("OPENAI_API_KEY"), nil)

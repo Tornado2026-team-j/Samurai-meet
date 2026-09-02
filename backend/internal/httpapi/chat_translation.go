@@ -16,7 +16,16 @@ import (
 const maxChatTranslationRequestBytes = 16 * 1024
 
 type chatTranslationAuthorizer interface {
-	AuthorizeMessageTranslation(context.Context, string, string) error
+	AuthorizeMessageTranslation(context.Context, string, string, string, string) (string, error)
+}
+
+type chatTranslationLimiter interface {
+	BeginMessageTranslation(context.Context, string, string, string, string, string, time.Time) (func(), error)
+}
+
+type chatTranslationService interface {
+	chatTranslationAuthorizer
+	chatTranslationLimiter
 }
 
 type chatTranslator interface {
@@ -32,7 +41,7 @@ type chatTranslationCache interface {
 // chatTranslation accepts plaintext only for the request-scoped provider call.
 // The resulting plaintext is returned to the client, which encrypts it with
 // the per-chat DEK before saving the cache through chatMessageTranslation.
-func chatTranslation(service chatTranslationAuthorizer, provider chatTranslator, cache chatTranslationCache, sessions *auth.SessionService) http.HandlerFunc {
+func chatTranslation(service chatTranslationService, provider chatTranslator, cache chatTranslationCache, sessions *auth.SessionService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			w.Header().Set("Allow", http.MethodPost)
@@ -49,12 +58,8 @@ func chatTranslation(service chatTranslationAuthorizer, provider chatTranslator,
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "chat_not_found"})
 			return
 		}
-		// Authorize before decoding plaintext so an unrelated caller never
-		// forwards arbitrary text to Gemini.
-		if err := service.AuthorizeMessageTranslation(r.Context(), claims.Subject, chatID); err != nil {
-			writeChatError(w, err)
-			return
-		}
+		// Parse the request before authorization, then bind the supplied text to
+		// the stored message commitment before any provider call is possible.
 		var input struct {
 			MessageID      string `json:"message_id"`
 			Text           string `json:"text"`
@@ -78,25 +83,36 @@ func chatTranslation(service chatTranslationAuthorizer, provider chatTranslator,
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_chat_translation_request"})
 			return
 		}
+		revision, err := service.AuthorizeMessageTranslation(r.Context(), claims.Subject, chatID, messageID, text)
+		if err != nil {
+			if errors.Is(err, chat.ErrTranslationBindingMissing) && cache != nil {
+				cached, found, _, cacheErr := cache.LookupMessageTranslation(r.Context(), claims.Subject, chatID, messageID, targetLanguage)
+				if cacheErr != nil {
+					writeChatError(w, cacheErr)
+					return
+				}
+				if found {
+					writeCachedChatTranslation(w, targetLanguage, cached)
+					return
+				}
+			}
+			writeChatError(w, err)
+			return
+		}
 
-		var revision string
 		if cache != nil {
 			cached, found, currentRevision, cacheErr := cache.LookupMessageTranslation(r.Context(), claims.Subject, chatID, messageID, targetLanguage)
 			if cacheErr != nil {
 				writeChatError(w, cacheErr)
 				return
 			}
+			if currentRevision != "" && currentRevision != revision {
+				writeJSON(w, http.StatusConflict, map[string]string{"error": "chat_translation_stale"})
+				return
+			}
 			revision = currentRevision
 			if found {
-				writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{
-					"cached":           true,
-					"target_language":  targetLanguage,
-					"message_revision": cached.MessageRevision,
-					"ciphertext":       cached.Ciphertext,
-					"nonce":            cached.Nonce,
-					"algorithm":        cached.Algorithm,
-					"key_version":      cached.KeyVersion,
-				}})
+				writeCachedChatTranslation(w, targetLanguage, cached)
 				return
 			}
 		}
@@ -104,6 +120,12 @@ func chatTranslation(service chatTranslationAuthorizer, provider chatTranslator,
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "chat_translation_unavailable"})
 			return
 		}
+		release, err := service.BeginMessageTranslation(r.Context(), claims.Subject, chatID, messageID, revision, targetLanguage, time.Now())
+		if err != nil {
+			writeChatError(w, err)
+			return
+		}
+		defer release()
 
 		result, err := provider.Translate(r.Context(), claims.Subject, text, targetLanguage)
 		switch {
@@ -129,6 +151,18 @@ func chatTranslation(service chatTranslationAuthorizer, provider chatTranslator,
 			writeJSON(w, http.StatusBadGateway, map[string]string{"error": "chat_translation_failed"})
 		}
 	}
+}
+
+func writeCachedChatTranslation(w http.ResponseWriter, targetLanguage string, cached chat.EncryptedMessageTranslation) {
+	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{
+		"cached":           true,
+		"target_language":  targetLanguage,
+		"message_revision": cached.MessageRevision,
+		"ciphertext":       cached.Ciphertext,
+		"nonce":            cached.Nonce,
+		"algorithm":        cached.Algorithm,
+		"key_version":      cached.KeyVersion,
+	}})
 }
 
 func chatMessageTranslation(
