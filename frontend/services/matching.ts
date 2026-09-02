@@ -97,7 +97,7 @@ export type RecruitmentSearchParams = {
   limit?: number;
 };
 
-export const MAX_RECRUITMENT_SEARCH_RANGE_DAYS = 31;
+export const MAX_RECRUITMENT_SEARCH_RANGE_MONTHS = 2;
 
 export type RecruitmentSearchDateRangeError =
   | "search_date_range_requires_both"
@@ -192,7 +192,7 @@ function appendQueryPart(parts: string[], key: string, value: string | number | 
   parts.push(`${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`);
 }
 
-function parseSearchDate(value: string): number | null {
+function parseSearchDate(value: string): Date | null {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
   if (!match) return null;
 
@@ -206,7 +206,13 @@ function parseSearchDate(value: string): number | null {
   ) {
     return null;
   }
-  return date.getTime();
+  return date;
+}
+
+export function addRecruitmentSearchRangeMonths(date: Date): Date {
+  const next = new Date(date.getTime());
+  next.setUTCMonth(next.getUTCMonth() + MAX_RECRUITMENT_SEARCH_RANGE_MONTHS);
+  return next;
 }
 
 export function validateRecruitmentSearchDateRange(
@@ -221,8 +227,8 @@ export function validateRecruitmentSearchDateRange(
   const fromTime = parseSearchDate(from);
   const toTime = parseSearchDate(to);
   if (fromTime === null || toTime === null) return "search_date_range_invalid";
-  if (toTime < fromTime) return "search_date_range_reversed";
-  if (toTime - fromTime > MAX_RECRUITMENT_SEARCH_RANGE_DAYS * 24 * 60 * 60 * 1000) {
+  if (toTime.getTime() < fromTime.getTime()) return "search_date_range_reversed";
+  if (toTime.getTime() > addRecruitmentSearchRangeMonths(fromTime).getTime()) {
     return "search_date_range_too_long";
   }
   return null;

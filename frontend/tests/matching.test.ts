@@ -75,12 +75,14 @@ describe("募集APIクライアント", () => {
     expect(requestedURL).toContain("limit=50");
   });
 
-  it("募集期間はAPI契約どおり両端と31日差以内を検証する", () => {
+  it("募集期間はAPI契約どおり両端と2暦月以内を検証する", () => {
     expect(validateRecruitmentSearchDateRange("2026-09-01", "2026-09-30")).toBeNull();
-    expect(validateRecruitmentSearchDateRange("2026-09-01", "2026-10-02")).toBeNull();
+    expect(validateRecruitmentSearchDateRange("2026-09-01", "2026-11-01")).toBeNull();
+    expect(validateRecruitmentSearchDateRange("2026-01-31", "2026-03-31")).toBeNull();
     expect(validateRecruitmentSearchDateRange("2026-09-01", undefined)).toBe("search_date_range_requires_both");
     expect(validateRecruitmentSearchDateRange("2026-09-30", "2026-09-01")).toBe("search_date_range_reversed");
-    expect(validateRecruitmentSearchDateRange("2026-09-01", "2026-10-03")).toBe("search_date_range_too_long");
+    expect(validateRecruitmentSearchDateRange("2026-09-01", "2026-11-02")).toBe("search_date_range_too_long");
+    expect(validateRecruitmentSearchDateRange("2026-02-28", "2026-04-29")).toBe("search_date_range_too_long");
     expect(validateRecruitmentSearchDateRange("2026-02-30", "2026-03-01")).toBe("search_date_range_invalid");
   });
 
