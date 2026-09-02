@@ -17,6 +17,7 @@ import {
   CHAT_DEVICE_KEY_WRAPPING_ALGORITHM,
   CHAT_MESSAGE_ALGORITHM,
   CHAT_MESSAGE_KEY_VERSION,
+  chatKeyCommitment,
   deriveAccountDataKey,
   decryptChatAttachmentBytes,
   encryptChatAttachmentBytes,
@@ -52,6 +53,7 @@ const CHAT_TRANSLATION_AAD_PREFIX = "samurai-meet:chat-translation:dek-v1";
 const LEGACY_CHAT_TRANSLATION_AAD_PREFIX = "samurai-meet:chat-translation:keyb-v1";
 const CHAT_TRANSLATION_KEY_INFO = utf8ToBytes("samurai-meet/chat-translation/dek-v1");
 const LEGACY_CHAT_TRANSLATION_KEY_INFO = utf8ToBytes("samurai-meet/chat-translation/keyb-v1");
+const CHAT_PLAINTEXT_COMMITMENT_DOMAIN = "samurai-meet:chat-message-plaintext-commitment/v1";
 const MAX_PLAINTEXT_LENGTH = 2000;
 
 async function loadDeviceKeyManagement() {
@@ -172,6 +174,7 @@ export type ChatKeyEnvelope = {
   public_key: string;
   algorithm: string;
   envelope: string;
+  key_commitment: string;
 };
 
 export type ChatKeyEnvelopeBundle = {
@@ -639,6 +642,7 @@ export async function loadChatContentKey(
     }
 
     const stored = await getChatKeyEnvelope(chatID, session, bundle, signal);
+    const storedCommitment = chatKeyEnvelopeCommitment(stored);
     if (stored.account_envelope && accountDataKey) {
       try {
         contentKey = unwrapChatKeyForAccount(
@@ -648,6 +652,10 @@ export async function loadChatContentKey(
           chatID,
         );
       } catch {
+        contentKey = null;
+      }
+      if (contentKey && storedCommitment && chatKeyCommitment(contentKey) !== storedCommitment) {
+        contentKey.fill(0);
         contentKey = null;
       }
     }
@@ -663,8 +671,13 @@ export async function loadChatContentKey(
       } catch {
         contentKey = null;
       }
+      if (contentKey && storedCommitment && chatKeyCommitment(contentKey) !== storedCommitment) {
+        contentKey.fill(0);
+        contentKey = null;
+      }
     }
     if (contentKey) {
+      const commitment = chatKeyCommitment(contentKey);
       if (!stored.account_envelope && accountDataKey) {
         const accountEnvelope = await wrapChatKeyForAccount(
           contentKey,
@@ -673,15 +686,29 @@ export async function loadChatContentKey(
           chatID,
           random,
         );
-        await saveChatKeyEnvelopes(chatID, [{
-          scope: "account",
-          user_id: session.user_id,
-          device_id: "",
-          key_version: CHAT_ACCOUNT_KEY_ENVELOPE_VERSION,
-          public_key: "",
-          algorithm: CHAT_ACCOUNT_KEY_WRAPPING_ALGORITHM,
-          envelope: accountEnvelope,
-        }], session, bundle, signal);
+        try {
+          await saveChatKeyEnvelopes(chatID, [{
+            scope: "account",
+            user_id: session.user_id,
+            device_id: "",
+            key_version: CHAT_ACCOUNT_KEY_ENVELOPE_VERSION,
+            public_key: "",
+            algorithm: CHAT_ACCOUNT_KEY_WRAPPING_ALGORITHM,
+            envelope: accountEnvelope,
+            key_commitment: commitment,
+          }], session, bundle, signal);
+        } catch (error) {
+          if (signal?.aborted) throw error;
+          if (!(error instanceof APIError) || error.code !== "chat_key_envelope_authority_required") throw error;
+        }
+      }
+      if (!storedCommitment) {
+        try {
+          await ensureChatKeyManifest(chatID, contentKey, stored, session, bundle, signal);
+        } catch (error) {
+          if (signal?.aborted) throw error;
+          if (!(error instanceof APIError) || error.code !== "chat_key_envelope_authority_required") throw error;
+        }
       }
       try {
         await provisionMissingChatDeviceEnvelopes(chatID, contentKey, session, bundle, signal, random);
@@ -706,6 +733,7 @@ export async function loadChatContentKey(
       throw new Error("chat_key_randomness_invalid");
     }
     try {
+      const generatedCommitment = chatKeyCommitment(generatedKey);
       const accountEnvelope = await wrapChatKeyForAccount(
         generatedKey,
         accountDataKey,
@@ -721,6 +749,7 @@ export async function loadChatContentKey(
         key_version: CHAT_DEVICE_KEY_ENVELOPE_VERSION,
         public_key: recipient.public_key,
         algorithm: CHAT_DEVICE_KEY_WRAPPING_ALGORITHM,
+        key_commitment: generatedCommitment,
         envelope: await wrapChatKeyForDevice(
           generatedKey,
           recipient.public_key,
@@ -738,6 +767,7 @@ export async function loadChatContentKey(
         public_key: "",
         algorithm: CHAT_ACCOUNT_KEY_WRAPPING_ALGORITHM,
         envelope: accountEnvelope,
+        key_commitment: generatedCommitment,
       }, ...deviceEnvelopes], session, bundle, signal);
       contentKey = generatedKey.slice();
       returned = true;
@@ -746,9 +776,15 @@ export async function loadChatContentKey(
       // Two devices can initialize the same chat concurrently. Re-read the
       // immutable row once and use the winner instead of creating a split key.
       const winner = await getChatKeyEnvelope(chatID, session, bundle, signal).catch(() => null);
+      const winnerCommitment = winner ? chatKeyEnvelopeCommitment(winner) : "";
       if (winner?.account_envelope && accountDataKey) {
         try {
           contentKey = unwrapChatKeyForAccount(winner.account_envelope.envelope, accountDataKey, session.user_id, chatID);
+          if (winnerCommitment && chatKeyCommitment(contentKey) !== winnerCommitment) {
+            contentKey.fill(0);
+            contentKey = null;
+            throw new Error("chat_key_commitment_mismatch");
+          }
           returned = true;
           return contentKey;
         } catch {
@@ -768,6 +804,11 @@ export async function loadChatContentKey(
             session.user_id,
             bundle.device.deviceID,
           );
+          if (winnerCommitment && chatKeyCommitment(contentKey) !== winnerCommitment) {
+            contentKey.fill(0);
+            contentKey = null;
+            throw new Error("chat_key_commitment_mismatch");
+          }
           returned = true;
           return contentKey;
         } catch {
@@ -855,6 +896,7 @@ async function ensureChatDeviceAgreementKey(session: Session): Promise<DeviceKey
 function parseChatKeyEnvelope(value: unknown): ChatKeyEnvelope {
   if (!value || typeof value !== "object") throw new Error("Invalid chat key envelope response");
   const candidate = value as Partial<ChatKeyEnvelope>;
+  const keyCommitment = candidate.key_commitment === undefined ? "" : candidate.key_commitment;
   if ((candidate.scope !== "account" && candidate.scope !== "device")
     || typeof candidate.user_id !== "string" || !candidate.user_id
     || typeof candidate.device_id !== "string"
@@ -862,6 +904,7 @@ function parseChatKeyEnvelope(value: unknown): ChatKeyEnvelope {
     || typeof candidate.public_key !== "string"
     || typeof candidate.algorithm !== "string"
     || typeof candidate.envelope !== "string"
+    || typeof keyCommitment !== "string"
     || candidate.envelope.length === 0 || candidate.envelope.length > 16 * 1024) {
     throw new Error("Invalid chat key envelope response");
   }
@@ -888,7 +931,14 @@ function parseChatKeyEnvelope(value: unknown): ChatKeyEnvelope {
   } catch {
     throw new Error("Invalid chat key envelope response");
   }
-  return candidate as ChatKeyEnvelope;
+  if (keyCommitment !== "") {
+    try {
+      if (fromBase64URL(keyCommitment).length !== 32) throw new Error("Invalid commitment");
+    } catch {
+      throw new Error("Invalid chat key envelope commitment response");
+    }
+  }
+  return { ...candidate, key_commitment: keyCommitment } as ChatKeyEnvelope;
 }
 
 function parseChatKeyEnvelopeBundle(value: unknown): ChatKeyEnvelopeBundle {
@@ -906,6 +956,31 @@ function parseChatKeyEnvelopeBundle(value: unknown): ChatKeyEnvelopeBundle {
     result.device_envelope = envelope;
   }
   return result;
+}
+
+function chatKeyEnvelopeCommitment(bundle: ChatKeyEnvelopeBundle): string {
+  const commitments = [bundle.account_envelope?.key_commitment, bundle.device_envelope?.key_commitment]
+    .filter((value): value is string => Boolean(value));
+  if (commitments.length > 1 && commitments.some((value) => value !== commitments[0])) {
+    throw new Error("chat_key_commitment_mismatch");
+  }
+  return commitments[0] ?? "";
+}
+
+async function ensureChatKeyManifest(
+  chatID: string,
+  contentKey: Uint8Array,
+  stored: ChatKeyEnvelopeBundle,
+  session: Session,
+  deviceBundle: DeviceKeyBundle,
+  signal: AbortSignal | undefined,
+): Promise<void> {
+  const existing = stored.account_envelope ?? stored.device_envelope;
+  if (!existing || existing.key_commitment) return;
+  await saveChatKeyEnvelopes(chatID, [{
+    ...existing,
+    key_commitment: chatKeyCommitment(contentKey),
+  }], session, deviceBundle, signal);
 }
 
 export async function getChatKeyEnvelope(
@@ -974,13 +1049,14 @@ async function provisionMissingChatDeviceEnvelopes(
   const recipients = await getChatKeyRecipients(chatID, session, deviceBundle, signal);
   const missing = recipients.filter((recipient) => !recipient.envelope_present);
   if (missing.length === 0) return;
-  const envelopes = await Promise.all(missing.map(async (recipient) => ({
+  const buildEnvelopes = (targets: ChatKeyRecipient[]) => Promise.all(targets.map(async (recipient) => ({
     scope: "device" as const,
     user_id: recipient.user_id,
     device_id: recipient.device_id,
     key_version: CHAT_DEVICE_KEY_ENVELOPE_VERSION,
     public_key: recipient.public_key,
     algorithm: CHAT_DEVICE_KEY_WRAPPING_ALGORITHM,
+    key_commitment: chatKeyCommitment(contentKey),
     envelope: await wrapChatKeyForDevice(
       contentKey,
       recipient.public_key,
@@ -990,7 +1066,18 @@ async function provisionMissingChatDeviceEnvelopes(
       random,
     ),
   })));
-  await saveChatKeyEnvelopes(chatID, envelopes, session, deviceBundle, signal);
+  const envelopes = await buildEnvelopes(missing);
+  try {
+    await saveChatKeyEnvelopes(chatID, envelopes, session, deviceBundle, signal);
+  } catch (error) {
+    // A non-owner may be racing an owner provisioning another device. Retry
+    // only the caller's own devices; never ask the participant to write the
+    // other participant's immutable envelope row.
+    if (!(error instanceof APIError) || error.code !== "chat_key_envelope_authority_required") throw error;
+    const ownMissing = missing.filter((recipient) => recipient.user_id === session.user_id);
+    if (ownMissing.length === 0) throw error;
+    await saveChatKeyEnvelopes(chatID, await buildEnvelopes(ownMissing), session, deviceBundle, signal);
+  }
 }
 
 function attachmentResponseErrorCode(body: unknown): string {
@@ -1011,7 +1098,12 @@ async function readAttachmentJSON<T>(response: Response): Promise<T> {
     const data = body && typeof body === "object" && "data" in body
       ? (body as { data?: unknown }).data
       : undefined;
-    throw new APIError(response.status, attachmentResponseErrorCode(body), data);
+    const retryAfterHeader = response.headers.get("Retry-After")?.trim() ?? "";
+    const parsedRetryAfter = /^\d+$/u.test(retryAfterHeader) ? Number(retryAfterHeader) : NaN;
+    const retryAfterSeconds = Number.isSafeInteger(parsedRetryAfter) && parsedRetryAfter > 0
+      ? parsedRetryAfter
+      : undefined;
+    throw new APIError(response.status, attachmentResponseErrorCode(body), data, retryAfterSeconds);
   }
   return body as T;
 }
@@ -1409,9 +1501,18 @@ export async function encryptChatPlaintext(
   nonce: string;
   algorithm: typeof CHAT_ALGORITHM;
   key_version: typeof CHAT_KEY_VERSION;
+  plaintext_commitment: string;
+  plaintext_commitment_salt: string;
 }> {
   if (contentKey.length !== 32) throw new Error("chat_key_unavailable");
   const nonce = await random(12);
+  const salt = await random(16);
+  if (nonce.length !== 12 || salt.length !== 16) {
+    nonce.fill(0);
+    salt.fill(0);
+    throw new Error("chat_message_randomness_invalid");
+  }
+  const plaintextCommitmentSalt = toBase64URL(salt);
   const messageKey = chatKey(chatID, contentKey);
   try {
     const ciphertext = gcm(messageKey, nonce, chatAAD(chatID)).encrypt(utf8ToBytes(plaintext));
@@ -1420,10 +1521,19 @@ export async function encryptChatPlaintext(
       nonce: toBase64URL(nonce),
       algorithm: CHAT_ALGORITHM,
       key_version: CHAT_KEY_VERSION,
+      plaintext_commitment: chatPlaintextCommitment(plaintext, plaintextCommitmentSalt),
+      plaintext_commitment_salt: plaintextCommitmentSalt,
     };
   } finally {
     messageKey.fill(0);
+    nonce.fill(0);
+    salt.fill(0);
   }
+}
+
+/** Commits to the client-visible message text without storing that text. */
+export function chatPlaintextCommitment(plaintext: string, salt: string): string {
+  return toBase64URL(sha256(utf8ToBytes(`${CHAT_PLAINTEXT_COMMITMENT_DOMAIN}\n${salt}\n${plaintext.trim()}`)));
 }
 
 export function decryptChatMessage(

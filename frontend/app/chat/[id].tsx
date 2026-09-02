@@ -1247,7 +1247,7 @@ export default function ChatDetailScreen() {
         } catch (error) {
           if (controller.signal.aborted || attempt === 1
             || !(error instanceof APIError)
-            || ![408, 429, 500, 502, 503, 504].includes(error.status)) {
+            || ![408, 502, 503, 504].includes(error.status)) {
             throw error;
           }
           await waitForTranslationRetry(750 * (2 ** attempt), controller.signal);

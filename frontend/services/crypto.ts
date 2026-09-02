@@ -26,6 +26,7 @@ export const CHAT_ACCOUNT_KEY_ENVELOPE_VERSION = 'chat-account-v1';
 export const CHAT_DEVICE_KEY_ENVELOPE_VERSION = 'x25519-v1';
 export const CHAT_ACCOUNT_KEY_WRAPPING_ALGORITHM = 'AES-256-GCM';
 export const CHAT_DEVICE_KEY_WRAPPING_ALGORITHM = 'X25519-HKDF-SHA256-AES-256-GCM';
+export const CHAT_KEY_COMMITMENT_DOMAIN = 'samurai-meet:chat-key-commitment/v1';
 export const CHAT_ATTACHMENT_ALGORITHM = 'AES-256-GCM';
 export const CHAT_ATTACHMENT_KEY_VERSION = 'chat-attachment-e2ee-v1';
 export const CHAT_ATTACHMENT_WRAPPING_ALGORITHM = 'X25519-HKDF-SHA256-AES-256-GCM';
@@ -48,6 +49,12 @@ export const ARGON2ID_DEFAULTS = {
   iterations: 3,
   parallelism: 1,
 } as const;
+
+/** Returns a public commitment for a random chat DEK without exposing the DEK. */
+export function chatKeyCommitment(chatKey: Uint8Array): string {
+  if (chatKey.length !== KEY_BYTES) throw new Error('Invalid chat key commitment input');
+  return toBase64URL(sha256(utf8ToBytes(`${CHAT_KEY_COMMITMENT_DOMAIN}\n${toBase64URL(chatKey)}`)));
+}
 
 export type RecoveryKDFImplementation = 'native' | 'javascript';
 

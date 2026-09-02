@@ -21,6 +21,7 @@ import {
   moderateChatMessage,
   moderateChatText,
   parseChatAttachmentRecipients,
+  chatPlaintextCommitment,
   sendChatMessage,
   sendChatLocation,
   toChatMessageView,
@@ -30,7 +31,7 @@ import {
   type EncryptedChatMessage,
   type ChatSummary,
 } from "../services/chat";
-import { toBase64URL } from "../services/crypto";
+import { chatKeyCommitment, toBase64URL } from "../services/crypto";
 
 const originalFetch = globalThis.fetch;
 const session = {
@@ -268,6 +269,9 @@ describe("チャットAPIクライアント", () => {
 
     expect(parsed.client_message_id).toBe("client-1");
     expect(parsed.algorithm).toBe("AES-256-GCM");
+    expect(parsed.plaintext_commitment).toBe(chatPlaintextCommitment("改札前で待ち合わせしましょう。", String(parsed.plaintext_commitment_salt)));
+    expect(String(parsed.plaintext_commitment)).toHaveLength(43);
+    expect(String(parsed.plaintext_commitment_salt)).toHaveLength(22);
     expect(requestedBody).not.toContain("改札前");
     expect(decryptChatMessage("chat-1", message, fixedKeyB)).toBe("改札前で待ち合わせしましょう。");
   });
@@ -393,6 +397,7 @@ describe("チャットAPIクライアント", () => {
     };
 
     expect(message.key_version).toBe("chat-dek-v1");
+    expect(chatKeyCommitment(fixedKeyB)).toHaveLength(43);
     expect(decryptChatMessage("chat-1", message)).toBeNull();
     expect(decryptChatMessage("chat-1", message, new Uint8Array(32).fill(8))).toBeNull();
     expect(decryptChatMessage("other-chat", message, fixedKeyB)).toBeNull();
