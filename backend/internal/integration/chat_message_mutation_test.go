@@ -30,7 +30,7 @@ func TestChatMessageEditAndDelete(t *testing.T) {
 		Ciphertext:      base64Value(0x31, 32),
 		Nonce:           base64Value(0x32, 12),
 		Algorithm:       "AES-256-GCM",
-		KeyVersion:      "chat-translation-keyb-v1",
+		KeyVersion:      "chat-translation-dek-v1",
 		MessageRevision: message.CreatedAt,
 	}
 	if err := f.chatService.SaveMessageTranslation(ctx, f.requesterID, f.chatID, message.ID, initialTranslation, now); err != nil {
@@ -54,7 +54,7 @@ func TestChatMessageEditAndDelete(t *testing.T) {
 		Ciphertext: base64Value(0x21, 48),
 		Nonce:      base64Value(0x22, 12),
 		Algorithm:  "AES-256-GCM",
-		KeyVersion: "chat-keyb-v1",
+		KeyVersion: "chat-dek-v1",
 	}, now.Add(time.Second))
 	if err != nil {
 		t.Fatalf("UpdateMessage: %v", err)

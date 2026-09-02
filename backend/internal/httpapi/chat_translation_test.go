@@ -117,7 +117,7 @@ func TestChatTranslationUsesEncryptedCacheBeforeProvider(t *testing.T) {
 			Ciphertext:      "opaque-ciphertext",
 			Nonce:           "opaque-nonce",
 			Algorithm:       "AES-256-GCM",
-			KeyVersion:      "chat-translation-keyb-v1",
+			KeyVersion:      "chat-translation-dek-v1",
 			MessageRevision: "2026-08-30T00:00:00Z",
 		},
 	}
@@ -136,7 +136,7 @@ func TestChatTranslationUsesEncryptedCacheBeforeProvider(t *testing.T) {
 
 func TestChatMessageTranslationStoresOnlyEncryptedEnvelope(t *testing.T) {
 	seed, sessions := newAuthenticatedClassificationRequest(t)
-	request := httptest.NewRequest(http.MethodPut, APIV1Prefix+"/chats/chat-1/messages/message-1/translations/ja", strings.NewReader(`{"target_language":"ja","ciphertext":"opaque-ciphertext","nonce":"opaque-nonce","algorithm":"AES-256-GCM","key_version":"chat-translation-keyb-v1","message_revision":"2026-08-30T00:00:00Z"}`))
+	request := httptest.NewRequest(http.MethodPut, APIV1Prefix+"/chats/chat-1/messages/message-1/translations/ja", strings.NewReader(`{"target_language":"ja","ciphertext":"opaque-ciphertext","nonce":"opaque-nonce","algorithm":"AES-256-GCM","key_version":"chat-translation-dek-v1","message_revision":"2026-08-30T00:00:00Z"}`))
 	request.Header.Set("Authorization", seed.Header.Get("Authorization"))
 	request.Header.Set("Content-Type", "application/json")
 	cache := &chatTranslationCacheStub{}

@@ -13,7 +13,7 @@ import (
 
 func TestGeminiTranslateDetectsLanguageAndReturnsStrictResult(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/v1beta/models/test-model:generateContent" || r.URL.Query().Get("key") != "test-key" {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1beta/models/test-model:generateContent" || r.URL.Query().Get("key") != "" || r.Header.Get("x-goog-api-key") != "test-key" {
 			t.Fatalf("request = %s %s", r.Method, r.URL.String())
 		}
 		body, err := io.ReadAll(r.Body)

@@ -31,7 +31,7 @@ type chatTranslationCache interface {
 
 // chatTranslation accepts plaintext only for the request-scoped provider call.
 // The resulting plaintext is returned to the client, which encrypts it with
-// Key-B before saving the cache through chatMessageTranslation.
+// the per-chat DEK before saving the cache through chatMessageTranslation.
 func chatTranslation(service chatTranslationAuthorizer, provider chatTranslator, cache chatTranslationCache, sessions *auth.SessionService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {

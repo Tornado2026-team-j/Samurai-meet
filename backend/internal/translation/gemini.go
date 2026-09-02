@@ -106,14 +106,12 @@ func (s *Service) Translate(ctx context.Context, userID, text, targetLanguage st
 	if err != nil {
 		return Result{}, ErrUpstream
 	}
-	query := parsedURL.Query()
-	query.Set("key", s.apiKey)
-	parsedURL.RawQuery = query.Encode()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, parsedURL.String(), bytes.NewReader(body))
 	if err != nil {
 		return Result{}, ErrUpstream
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-goog-api-key", s.apiKey)
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
 		return Result{}, ErrUpstream

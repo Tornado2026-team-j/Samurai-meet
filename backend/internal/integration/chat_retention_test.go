@@ -34,7 +34,7 @@ func TestChatMessageRetentionPurge(t *testing.T) {
 			Ciphertext:      base64Value(byte(0x41+index), 32),
 			Nonce:           base64Value(byte(0x51+index), 12),
 			Algorithm:       "AES-256-GCM",
-			KeyVersion:      "chat-translation-keyb-v1",
+			KeyVersion:      "chat-translation-dek-v1",
 			MessageRevision: message.CreatedAt,
 		}, now); err != nil {
 			t.Fatalf("SaveMessageTranslation %s: %v", message.ID, err)

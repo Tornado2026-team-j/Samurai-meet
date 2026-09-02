@@ -31,9 +31,10 @@ import {
 	chatRealtimeMode,
   connectChatWebTransport,
   createSafetyReport,
-  listChatMessages,
-  listChats,
-  installNativeChatWebTransportBridge,
+	listChatMessages,
+	listChats,
+	installNativeChatWebTransportBridge,
+	loadChatContentKey,
 	loadChatMessageKey,
 	markChatRead,
 	moderateChatMessage,
@@ -61,7 +62,14 @@ import {
 } from "../../services/crypto";
 import { resolveCurrentLocationDisplay } from "../../services/location";
 import { declineMatch, getMatch, type MatchView } from "../../services/matching";
-import { loadLanguage, subscribeLanguage, type AppLanguage } from "../../services/onboarding";
+import {
+  loadLanguage,
+  loadTranslationConsent,
+  saveTranslationConsent,
+  subscribeLanguage,
+  type AppLanguage,
+  type TranslationConsent,
+} from "../../services/onboarding";
 import { formatTimeRange } from "../../utils/time";
 import type { MatchCategory } from "../../types/match";
 
@@ -101,8 +109,13 @@ const COPY = {
     encryptedMessage: "暗号化メッセージ",
     translate: "翻訳",
     original: "Original",
-    translationLoading: "翻訳中…",
-    translationNotice: "自動翻訳は初回だけ本文を翻訳サービスへ送信します。結果はKey-Bで暗号化して保存され、次回から再利用されます。Originalをタップすると原文に戻せます。",
+    translationLoading: "翻訳中…（タップで停止）",
+    translationNotice: "自動翻訳は同意後、表示中の本文を少数ずつ翻訳します。結果は暗号化してメッセージと一緒に保存し、次回から再利用します。Originalをタップすると原文に戻せます。",
+    translationConsent: "自動翻訳を使うと、初回だけ本文が外部の翻訳サービスへ送信されます。結果は暗号化して保存します。",
+    enableTranslation: "自動翻訳を許可",
+    disableTranslation: "自動翻訳を停止",
+    translationEnabled: "自動翻訳オン",
+    translationDisabled: "自動翻訳オフ",
     translationUnavailable: "自動翻訳を利用できないため、原文を表示しています。",
     edit: "編集",
     delete: "削除",
@@ -206,8 +219,13 @@ const COPY = {
     encryptedMessage: "Encrypted message",
     translate: "Translate",
     original: "Original",
-    translationLoading: "Translating…",
-    translationNotice: "Automatic translation sends the message to the translation service only on the first translation. The result is saved encrypted with Key-B and reused next time. Tap Original to return to the source.",
+    translationLoading: "Translating… (tap to stop)",
+    translationNotice: "After consent, automatic translation processes a small visible window at a time. Results are saved encrypted with the message and reused next time. Tap Original to return to the source.",
+    translationConsent: "Automatic translation sends each message to an external translation service only when it is first translated. Results are saved encrypted.",
+    enableTranslation: "Allow auto-translate",
+    disableTranslation: "Stop auto-translate",
+    translationEnabled: "Auto-translate on",
+    translationDisabled: "Auto-translate off",
     translationUnavailable: "Automatic translation is unavailable, so the original is shown.",
     edit: "Edit",
     delete: "Delete",
@@ -370,11 +388,14 @@ function cachedChatTranslation(
   chatID: string,
   message: ChatMessageView,
   language: "ja" | "en",
-  keyB: Uint8Array | null,
+  contentKey: Uint8Array | null,
+  legacyKeyB: Uint8Array | null,
 ) {
   const cached = message.translations?.find((item) => item.target_language === language);
-  if (!cached || !keyB) return null;
-  return decryptChatTranslation(chatID, message.id, chatMessageRevision(message), cached, keyB);
+  if (!cached) return null;
+  const key = cached.key_version === "chat-translation-keyb-v1" ? legacyKeyB : contentKey;
+  if (!key) return null;
+  return decryptChatTranslation(chatID, message.id, chatMessageRevision(message), cached, key);
 }
 
 function mergeChatMessage(
@@ -382,6 +403,22 @@ function mergeChatMessage(
   incoming: ChatMessageView,
 ): ChatMessageView[] {
   return deduplicateChatMessages([...current, incoming]);
+}
+
+function waitForTranslationRetry(milliseconds: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.reject(new DOMException("The operation was aborted", "AbortError"));
+  return new Promise((resolve, reject) => {
+    const timeoutID = setTimeout(() => {
+      signal.removeEventListener("abort", abort);
+      resolve();
+    }, milliseconds);
+    const abort = () => {
+      clearTimeout(timeoutID);
+      signal.removeEventListener("abort", abort);
+      reject(new DOMException("The operation was aborted", "AbortError"));
+    };
+    signal.addEventListener("abort", abort, { once: true });
+  });
 }
 
 export default function ChatDetailScreen() {
@@ -393,6 +430,7 @@ export default function ChatDetailScreen() {
   const chatID = Array.isArray(id) ? id[0] : id;
   const { getCurrentSession, refresh, session, status } = useAuth();
   const [language, setLanguage] = useState<AppLanguage | null>(null);
+  const [translationConsent, setTranslationConsent] = useState<TranslationConsent | null>(null);
   const [realtimeMode] = useState(() => {
     installNativeChatWebTransportBridge();
     return chatRealtimeMode();
@@ -426,10 +464,13 @@ export default function ChatDetailScreen() {
   const mountedRef = useRef(true);
   const chatMessageKeyRef = useRef<Uint8Array | null>(null);
   const chatMessageKeyPromiseRef = useRef<Promise<Uint8Array> | null>(null);
+  const legacyChatMessageKeyRef = useRef<Uint8Array | null>(null);
+  const legacyChatMessageKeyPromiseRef = useRef<Promise<Uint8Array> | null>(null);
   const attachmentSourcesRef = useRef<Record<string, string>>({});
   const loadingAttachmentIDsRef = useRef(new Set<string>());
   const attachmentControllersRef = useRef(new Map<string, AbortController>());
   const translationAttemptsRef = useRef(new Set<string>());
+  const translationControllersRef = useRef(new Map<string, AbortController>());
   const editingMessageIDRef = useRef<string | null>(null);
   editingMessageIDRef.current = editingMessageID;
   const copy = COPY[language ?? "ja"];
@@ -438,10 +479,28 @@ export default function ChatDetailScreen() {
   const readOnly = chat?.status === "completed" || locallyClosed !== null;
   const canSend = safetyModal === null && !readOnly && !sending && !deletingMessageID && !sharingLocation && !sendingPhoto && !validation;
 
+  const cancelTranslationsForMessage = useCallback((messageID: string) => {
+    for (const [key, controller] of translationControllersRef.current) {
+      if (!key.startsWith(`${messageID}:`)) continue;
+      controller.abort();
+      translationControllersRef.current.delete(key);
+    }
+    for (const key of translationAttemptsRef.current) {
+      if (key.startsWith(`${messageID}:`)) translationAttemptsRef.current.delete(key);
+    }
+    setTranslationLoading((current) => {
+      if (!current[messageID]) return current;
+      const next = { ...current };
+      delete next[messageID];
+      return next;
+    });
+  }, []);
+
   const ensureChatMessageKey = useCallback(async (activeSession: NonNullable<typeof session>): Promise<Uint8Array> => {
     if (chatMessageKeyRef.current) return chatMessageKeyRef.current;
     if (!chatMessageKeyPromiseRef.current) {
-      chatMessageKeyPromiseRef.current = loadChatMessageKey(activeSession).then((key) => {
+      if (!chatID) throw new Error("chat_key_unavailable");
+      chatMessageKeyPromiseRef.current = loadChatContentKey(chatID, activeSession).then((key) => {
         if (!mountedRef.current) {
           key.fill(0);
           throw new Error("chat_screen_unmounted");
@@ -453,6 +512,23 @@ export default function ChatDetailScreen() {
       });
     }
     return chatMessageKeyPromiseRef.current;
+  }, [chatID]);
+
+  const ensureLegacyChatMessageKey = useCallback(async (activeSession: NonNullable<typeof session>): Promise<Uint8Array> => {
+    if (legacyChatMessageKeyRef.current) return legacyChatMessageKeyRef.current;
+    if (!legacyChatMessageKeyPromiseRef.current) {
+      legacyChatMessageKeyPromiseRef.current = loadChatMessageKey(activeSession).then((key) => {
+        if (!mountedRef.current) {
+          key.fill(0);
+          throw new Error("chat_screen_unmounted");
+        }
+        legacyChatMessageKeyRef.current = key;
+        return key;
+      }).finally(() => {
+        legacyChatMessageKeyPromiseRef.current = null;
+      });
+    }
+    return legacyChatMessageKeyPromiseRef.current;
   }, []);
 
   const runWithSession = useCallback(async <T,>(
@@ -527,14 +603,19 @@ export default function ChatDetailScreen() {
     mountedRef.current = true;
     const attachmentControllers = attachmentControllersRef.current;
     const loadingAttachmentIDs = loadingAttachmentIDsRef.current;
+    const translationControllers = translationControllersRef.current;
     return () => {
       mountedRef.current = false;
       for (const controller of attachmentControllers.values()) controller.abort();
       attachmentControllers.clear();
       loadingAttachmentIDs.clear();
+      for (const controller of translationControllers.values()) controller.abort();
+      translationControllers.clear();
       attachmentSourcesRef.current = {};
       chatMessageKeyRef.current?.fill(0);
       chatMessageKeyRef.current = null;
+      legacyChatMessageKeyRef.current?.fill(0);
+      legacyChatMessageKeyRef.current = null;
     };
   }, []);
 
@@ -557,16 +638,22 @@ export default function ChatDetailScreen() {
             listChats(activeSession, signal),
             listChatMessages(chatID, activeSession, { limit: 100 }, signal),
           ]);
-          const messageKey = await ensureChatMessageKey(activeSession);
+          const messageKey = page.items.some((message) => message.key_version === "chat-dek-v1")
+            ? await ensureChatMessageKey(activeSession)
+            : null;
+          const legacyKey = page.items.some((message) => message.key_version === "chat-keyb-v1"
+            || message.translations?.some((translation) => translation.key_version === "chat-translation-keyb-v1"))
+            ? await ensureLegacyChatMessageKey(activeSession)
+            : null;
           const currentChat = summaries.find((item) => item.id === chatID) ?? null;
           const currentMatch = currentChat
             ? await getMatch(currentChat.match_id, activeSession, signal).catch(() => null)
             : null;
-          return { currentChat, currentMatch, page, userID: activeSession.user_id, messageKey };
+          return { currentChat, currentMatch, page, userID: activeSession.user_id, messageKey, legacyKey };
         }, controller.signal);
         if (!cancelled) {
           const messageViews = deduplicateChatMessages(
-            result.page.items.map((message) => toChatMessageView(chatID, message, result.userID, result.messageKey)),
+            result.page.items.map((message) => toChatMessageView(chatID, message, result.userID, result.messageKey ?? undefined, result.legacyKey ?? undefined)),
           );
           setChat(result.currentChat);
           setMatch(result.currentMatch);
@@ -594,7 +681,7 @@ export default function ChatDetailScreen() {
       cancelled = true;
       controller.abort();
     };
-  }, [chatID, copy.loadError, copy.signInRequired, ensureChatMessageKey, runWithSession]);
+  }, [chatID, copy.loadError, copy.signInRequired, ensureChatMessageKey, ensureLegacyChatMessageKey, runWithSession]);
 
   useEffect(() => {
     let active = true;
@@ -613,8 +700,37 @@ export default function ChatDetailScreen() {
   }, []);
 
   useEffect(() => {
-    if (!chatID || !language) return undefined;
+    // The translated-text map is intentionally keyed only by message ID, so
+    // changing the display language must invalidate both visible results and
+    // in-flight requests before the new-language effect starts.
+    for (const controller of translationControllersRef.current.values()) controller.abort();
+    translationControllersRef.current.clear();
+    translationAttemptsRef.current.clear();
+    setTranslationLoading({});
+    setTranslatedMessages({});
+    setOriginalMessages({});
+  }, [language]);
+
+  useEffect(() => {
+    let active = true;
+    const activeSession = getCurrentSession() ?? session;
+    if (status !== "signed_in" || !activeSession) {
+      setTranslationConsent(null);
+      return () => { active = false; };
+    }
+    void loadTranslationConsent(activeSession.user_id).then((stored) => {
+      if (active) setTranslationConsent(stored);
+    }).catch(() => {
+      if (active) setTranslationConsent(null);
+    });
+    return () => { active = false; };
+  }, [getCurrentSession, session, status]);
+
+  useEffect(() => {
+    if (!chatID || !language || translationConsent !== "granted") return undefined;
     const controller = new AbortController();
+    const translationAttempts = translationAttemptsRef.current;
+    const translationControllers = translationControllersRef.current;
 
     const applyTranslation = (message: ChatMessageView, plaintext: string, result: { source_language: string; translated_text: string; target_language: "ja" | "en" }) => {
       const translated = result.translated_text.trim();
@@ -643,49 +759,86 @@ export default function ChatDetailScreen() {
       }
     };
 
-    for (const message of displayMessages) {
+    const pending: { message: ChatMessageView; plaintext: string; revision: string; attemptKey: string }[] = [];
+    // ScrollView does not expose a reliable native viewability callback. Keep
+    // the automatic window bounded to the newest messages (the initial
+    // viewport) and leave older messages to an explicit tap.
+    for (const message of displayMessages.slice(-8)) {
       const plaintext = message.plaintext?.trim();
       const isTextMessage = (message.content_type ?? "text") === "text";
       if (!plaintext || !isTextMessage) continue;
 
       const revision = chatMessageRevision(message);
       const attemptKey = `${message.id}:${language}:${revision}`;
-      const cached = cachedChatTranslation(chatID, message, language, chatMessageKeyRef.current);
+      const cached = cachedChatTranslation(
+        chatID,
+        message,
+        language,
+        chatMessageKeyRef.current,
+        legacyChatMessageKeyRef.current,
+      );
       if (cached) {
-        translationAttemptsRef.current.add(attemptKey);
+        translationAttempts.add(attemptKey);
         applyTranslation(message, plaintext, cached);
         continue;
       }
-      if (translationAttemptsRef.current.has(attemptKey)) continue;
-      translationAttemptsRef.current.add(attemptKey);
-      setTranslationLoading((current) => current[message.id] ? current : { ...current, [message.id]: true });
-      void runWithSession(
-        async (activeSession, signal) => {
-          const messageKey = await ensureChatMessageKey(activeSession);
-          return translateChatMessage(chatID, message.id, revision, plaintext, language, activeSession, signal, messageKey);
-        },
-        controller.signal,
-      ).then((result) => {
-        if (controller.signal.aborted || !mountedRef.current) return;
-        applyTranslation(message, plaintext, result);
-      }).catch((error) => {
-        if (error instanceof Error && error.name === "AbortError") return;
-        // Keep the original visible when the optional translation service is
-        // unavailable. A later tap/action can retry without losing content.
-      }).finally(() => {
-        if (mountedRef.current && !controller.signal.aborted) {
-          setTranslationLoading((current) => {
-            if (!current[message.id]) return current;
-            const next = { ...current };
-            delete next[message.id];
-            return next;
-          });
-        }
-      });
+      if (translationAttempts.has(attemptKey)) continue;
+      translationAttempts.add(attemptKey);
+      pending.push({ message, plaintext, revision, attemptKey });
     }
 
-    return () => controller.abort();
-  }, [chatID, displayMessages, ensureChatMessageKey, language, runWithSession]);
+    let nextIndex = 0;
+    const worker = async () => {
+      while (!controller.signal.aborted) {
+        const item = pending[nextIndex++];
+        if (!item) return;
+        const { message, plaintext, revision, attemptKey } = item;
+        const requestController = new AbortController();
+        const abortRequest = () => requestController.abort();
+        controller.signal.addEventListener("abort", abortRequest, { once: true });
+        translationControllers.set(attemptKey, requestController);
+        setTranslationLoading((current) => current[message.id] ? current : { ...current, [message.id]: true });
+        try {
+          const result = await runWithSession(
+            async (activeSession, signal) => {
+              const messageKey = await ensureChatMessageKey(activeSession);
+              return translateChatMessage(chatID, message.id, revision, plaintext, language, activeSession, signal, messageKey);
+            },
+            requestController.signal,
+          );
+          if (!requestController.signal.aborted && mountedRef.current) applyTranslation(message, plaintext, result);
+        } catch {
+          // A failed attempt must not poison the revision/language key. The
+          // next explicit tap or future refresh may retry it.
+          translationAttempts.delete(attemptKey);
+        } finally {
+          if (mountedRef.current) {
+            setTranslationLoading((current) => {
+              if (!current[message.id]) return current;
+              const next = { ...current };
+              delete next[message.id];
+              return next;
+            });
+          }
+          translationControllers.delete(attemptKey);
+          controller.signal.removeEventListener("abort", abortRequest);
+        }
+      }
+    };
+    void Promise.all(Array.from({ length: Math.min(2, pending.length) }, () => worker()));
+
+    return () => {
+      controller.abort();
+      for (const item of pending) {
+        translationAttempts.delete(item.attemptKey);
+        const requestController = translationControllers.get(item.attemptKey);
+        requestController?.abort();
+        if (requestController && translationControllers.get(item.attemptKey) === requestController) {
+          translationControllers.delete(item.attemptKey);
+        }
+      }
+    };
+  }, [chatID, displayMessages, ensureChatMessageKey, language, runWithSession, translationConsent]);
 
   useEffect(() => load("initial"), [load]);
 
@@ -708,30 +861,50 @@ export default function ChatDetailScreen() {
               const activeSession = getCurrentSession() ?? session;
               if (!activeSession) return;
               if (frame.type === "message.created" || frame.type === "message.ack") {
-                const view = toChatMessageView(chatID, frame.message, activeSession.user_id, chatMessageKeyRef.current ?? undefined);
-                setMessages((current) => mergeChatMessage(current, view));
-                if (!view.mine) {
-                  void runWithSession(
-                    (currentSession, signal) => markChatRead(chatID, view.sequence, currentSession, signal),
-                    new AbortController().signal,
-                  ).catch(() => undefined);
-                }
+                void (async () => {
+                  if (frame.message.key_version === "chat-dek-v1" && !chatMessageKeyRef.current) {
+                    await ensureChatMessageKey(activeSession).catch(() => undefined);
+                  }
+                  if (frame.message.key_version === "chat-keyb-v1" && !legacyChatMessageKeyRef.current) {
+                    await ensureLegacyChatMessageKey(activeSession).catch(() => undefined);
+                  }
+                  if (closed) return;
+                  const view = toChatMessageView(chatID, frame.message, activeSession.user_id, chatMessageKeyRef.current ?? undefined, legacyChatMessageKeyRef.current ?? undefined);
+                  setMessages((current) => mergeChatMessage(current, view));
+                  if (!view.mine) {
+                    void runWithSession(
+                      (currentSession, signal) => markChatRead(chatID, view.sequence, currentSession, signal),
+                      new AbortController().signal,
+                    ).catch(() => undefined);
+                  }
+                })();
               } else if (frame.type === "message.updated") {
-                const view = toChatMessageView(chatID, frame.message, activeSession.user_id, chatMessageKeyRef.current ?? undefined);
-                setMessages((current) => mergeChatMessage(current, view));
-                setTranslatedMessages((current) => {
-                  if (!current[view.id]) return current;
-                  const next = { ...current };
-                  delete next[view.id];
-                  return next;
-                });
-                setOriginalMessages((current) => {
-                  if (!current[view.id]) return current;
-                  const next = { ...current };
-                  delete next[view.id];
-                  return next;
-                });
+                void (async () => {
+                  if (frame.message.key_version === "chat-dek-v1" && !chatMessageKeyRef.current) {
+                    await ensureChatMessageKey(activeSession).catch(() => undefined);
+                  }
+                  if (frame.message.key_version === "chat-keyb-v1" && !legacyChatMessageKeyRef.current) {
+                    await ensureLegacyChatMessageKey(activeSession).catch(() => undefined);
+                  }
+                  if (closed) return;
+                  const view = toChatMessageView(chatID, frame.message, activeSession.user_id, chatMessageKeyRef.current ?? undefined, legacyChatMessageKeyRef.current ?? undefined);
+                  cancelTranslationsForMessage(view.id);
+                  setMessages((current) => mergeChatMessage(current, view));
+                  setTranslatedMessages((current) => {
+                    if (!current[view.id]) return current;
+                    const next = { ...current };
+                    delete next[view.id];
+                    return next;
+                  });
+                  setOriginalMessages((current) => {
+                    if (!current[view.id]) return current;
+                    const next = { ...current };
+                    delete next[view.id];
+                    return next;
+                  });
+                })();
               } else if (frame.type === "message.deleted") {
+                cancelTranslationsForMessage(frame.message_id);
                 setMessages((current) => current.filter((message) => message.id !== frame.message_id));
                 setTranslatedMessages((current) => {
                   if (!current[frame.message_id]) return current;
@@ -785,7 +958,7 @@ export default function ChatDetailScreen() {
       if (rotateTimer) clearTimeout(rotateTimer);
       void connection?.close();
     };
-  }, [chat?.status, chatID, getCurrentSession, load, locallyClosed, realtimeMode, runWithSession, session]);
+  }, [cancelTranslationsForMessage, chat?.status, chatID, ensureChatMessageKey, ensureLegacyChatMessageKey, getCurrentSession, load, locallyClosed, realtimeMode, runWithSession, session]);
 
   useEffect(() => {
     if (displayMessages.length === 0) return;
@@ -849,6 +1022,7 @@ export default function ChatDetailScreen() {
           return;
         }
 
+        cancelTranslationsForMessage(editingID);
         let updated;
         try {
           updated = await runWithSession(
@@ -861,12 +1035,10 @@ export default function ChatDetailScreen() {
         }
         const activeSession = getCurrentSession() ?? session;
         if (activeSession) {
+          await ensureChatMessageKey(activeSession);
           setMessages((current) => current.map((message) => message.id === editingID
-            ? toChatMessageView(chatID, updated, activeSession.user_id, chatMessageKeyRef.current ?? undefined)
+            ? toChatMessageView(chatID, updated, activeSession.user_id, chatMessageKeyRef.current ?? undefined, legacyChatMessageKeyRef.current ?? undefined)
             : message));
-        }
-        for (const key of translationAttemptsRef.current) {
-          if (key.startsWith(`${editingID}:`)) translationAttemptsRef.current.delete(key);
         }
         setTranslatedMessages((current) => {
           if (!current[editingID]) return current;
@@ -906,7 +1078,8 @@ export default function ChatDetailScreen() {
       if (!sent) throw new Error("chat_message_missing_after_moderation");
       const activeSession = getCurrentSession() ?? session;
       if (activeSession) {
-        setMessages((current) => mergeChatMessage(current, toChatMessageView(chatID, sent, activeSession.user_id, chatMessageKeyRef.current ?? undefined)));
+        await ensureChatMessageKey(activeSession);
+        setMessages((current) => mergeChatMessage(current, toChatMessageView(chatID, sent, activeSession.user_id, chatMessageKeyRef.current ?? undefined, legacyChatMessageKeyRef.current ?? undefined)));
       }
       setDraft("");
     } catch {
@@ -970,6 +1143,7 @@ export default function ChatDetailScreen() {
       );
       const activeSession = getCurrentSession() ?? session;
       if (!activeSession) throw new Error("not_signed_in");
+      await ensureChatMessageKey(activeSession);
       const source = `data:${contentType};base64,${toBase64(bytesForSend)}`;
       const sentMessage = resultWithAttachment.message.attachment
         ? resultWithAttachment.message
@@ -991,7 +1165,7 @@ export default function ChatDetailScreen() {
           delete next[resultWithAttachment.attachment.id];
           return next;
         });
-        setMessages((current) => mergeChatMessage(current, toChatMessageView(chatID, sentMessage, activeSession.user_id, chatMessageKeyRef.current ?? undefined)));
+        setMessages((current) => mergeChatMessage(current, toChatMessageView(chatID, sentMessage, activeSession.user_id, chatMessageKeyRef.current ?? undefined, legacyChatMessageKeyRef.current ?? undefined)));
       }
       setNotice(copy.photoSent);
     } catch (error) {
@@ -1015,23 +1189,74 @@ export default function ChatDetailScreen() {
       return;
     }
     const plaintext = message.plaintext?.trim();
-    if (!chatID || !language || !plaintext || (message.content_type ?? "text") !== "text"
-      || translationLoading[message.id]) return;
+    if (!chatID || !language || !plaintext || (message.content_type ?? "text") !== "text") return;
 
     const revision = chatMessageRevision(message);
+    const attemptKey = `${message.id}:${language}:${revision}`;
+    if (translationLoading[message.id]) {
+      cancelTranslationsForMessage(message.id);
+      return;
+    }
+
+    // A tap is explicit consent for this message. Automatic translation still
+    // remains disabled until the user opts in through the banner.
+    if (translationConsent !== "granted") {
+      setTranslationConsent("granted");
+      const activeSession = getCurrentSession() ?? session;
+      if (activeSession) void saveTranslationConsent(activeSession.user_id, "granted").catch(() => undefined);
+    }
+
+    const cached = cachedChatTranslation(
+      chatID,
+      message,
+      language,
+      chatMessageKeyRef.current,
+      legacyChatMessageKeyRef.current,
+    );
+    if (cached) {
+      const translated = cached.translated_text.trim();
+      const sourceLanguage = cached.source_language.trim().toLowerCase().split("-", 1)[0];
+      if (sourceLanguage !== language && translated && translated !== plaintext) {
+        setTranslatedMessages((current) => ({ ...current, [message.id]: translated }));
+      }
+      setOriginalMessages((current) => {
+        if (!current[message.id]) return current;
+        const next = { ...current };
+        delete next[message.id];
+        return next;
+      });
+      translationAttemptsRef.current.add(`${message.id}:${language}:${revision}`);
+      return;
+    }
     for (const key of translationAttemptsRef.current) {
       if (key.startsWith(`${message.id}:`)) translationAttemptsRef.current.delete(key);
     }
-    translationAttemptsRef.current.add(`${message.id}:${language}:${revision}`);
+    translationAttemptsRef.current.add(attemptKey);
     setTranslationLoading((current) => ({ ...current, [message.id]: true }));
     const controller = new AbortController();
-    void runWithSession(
-      async (activeSession, signal) => {
-        const messageKey = await ensureChatMessageKey(activeSession);
-        return translateChatMessage(chatID, message.id, revision, plaintext, language, activeSession, signal, messageKey);
-      },
-      controller.signal,
-    ).then((result) => {
+    translationControllersRef.current.set(attemptKey, controller);
+    const requestTranslation = async () => {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          return await runWithSession(
+            async (activeSession, signal) => {
+              const messageKey = await ensureChatMessageKey(activeSession);
+              return translateChatMessage(chatID, message.id, revision, plaintext, language, activeSession, signal, messageKey);
+            },
+            controller.signal,
+          );
+        } catch (error) {
+          if (controller.signal.aborted || attempt === 1
+            || !(error instanceof APIError)
+            || ![408, 429, 500, 502, 503, 504].includes(error.status)) {
+            throw error;
+          }
+          await waitForTranslationRetry(750 * (2 ** attempt), controller.signal);
+        }
+      }
+      throw new Error("chat_translation_failed");
+    };
+    void requestTranslation().then((result) => {
       if (!controller.signal.aborted && mountedRef.current) {
         const translated = result.translated_text.trim();
         const sourceLanguage = result.source_language.trim().toLowerCase().split("-", 1)[0];
@@ -1053,11 +1278,15 @@ export default function ChatDetailScreen() {
         });
       }
     }).catch((error) => {
+      translationAttemptsRef.current.delete(attemptKey);
       if (!(error instanceof Error && error.name === "AbortError") && mountedRef.current) {
         setNotice(copy.translationUnavailable);
       }
     }).finally(() => {
-      if (mountedRef.current && !controller.signal.aborted) {
+      if (translationControllersRef.current.get(attemptKey) === controller) {
+        translationControllersRef.current.delete(attemptKey);
+      }
+      if (mountedRef.current) {
         setTranslationLoading((current) => {
           if (!current[message.id]) return current;
           const next = { ...current };
@@ -1098,6 +1327,7 @@ export default function ChatDetailScreen() {
     });
     if (!approved) return;
 
+    cancelTranslationsForMessage(message.id);
     setDeletingMessageID(message.id);
     setSendError(null);
     try {
@@ -1118,9 +1348,6 @@ export default function ChatDetailScreen() {
         delete next[message.id];
         return next;
       });
-      for (const key of translationAttemptsRef.current) {
-        if (key.startsWith(`${message.id}:`)) translationAttemptsRef.current.delete(key);
-      }
       if (editingMessageID === message.id) {
         setEditingMessageID(null);
         setDraft("");
@@ -1160,7 +1387,10 @@ export default function ChatDetailScreen() {
         display_name: current.displayName,
       }, activeSession, undefined, undefined, signal), new AbortController().signal);
       const activeSession = getCurrentSession() ?? session;
-      if (activeSession) setMessages((items) => mergeChatMessage(items, toChatMessageView(chatID, sent, activeSession.user_id, chatMessageKeyRef.current ?? undefined)));
+      if (activeSession) {
+        await ensureChatMessageKey(activeSession);
+        setMessages((items) => mergeChatMessage(items, toChatMessageView(chatID, sent, activeSession.user_id, chatMessageKeyRef.current ?? undefined, legacyChatMessageKeyRef.current ?? undefined)));
+      }
       setNotice(copy.locationShared);
     } catch {
       setSendError(copy.locationUnavailable);
@@ -1288,6 +1518,18 @@ export default function ChatDetailScreen() {
         ? copy.accountReportDescription
         : copy.messageReportDescription;
 
+  const updateTranslationConsent = async (next: TranslationConsent) => {
+    setTranslationConsent(next);
+    const activeSession = getCurrentSession() ?? session;
+    if (!activeSession) return;
+    try {
+      await saveTranslationConsent(activeSession.user_id, next);
+    } catch {
+      setTranslationConsent(null);
+      setNotice(copy.translationUnavailable);
+    }
+  };
+
   if (!language || loading) {
     return (
       <View style={styles.loadingScreen}>
@@ -1394,6 +1636,24 @@ export default function ChatDetailScreen() {
         <View style={styles.noticePanel}>
           <MaterialIcons color={BLUE} name="security" size={20} />
           <Text style={styles.noticeText}>{copy.safetyNotice}</Text>
+        </View>
+
+        <View style={styles.translationConsentPanel}>
+          <View style={styles.translationConsentTextWrap}>
+            <Text style={styles.translationConsentTitle}>
+              {translationConsent === "granted" ? copy.translationEnabled : translationConsent === "denied" ? copy.translationDisabled : copy.translationConsent}
+            </Text>
+            {translationConsent !== "granted" ? <Text style={styles.translationConsentText}>{copy.translationConsent}</Text> : null}
+          </View>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => void updateTranslationConsent(translationConsent === "granted" ? "denied" : "granted")}
+            style={({ pressed }) => [styles.translationConsentButton, pressed && styles.pressed]}
+          >
+            <Text style={styles.translationConsentButtonText}>
+              {translationConsent === "granted" ? copy.disableTranslation : copy.enableTranslation}
+            </Text>
+          </Pressable>
         </View>
 
         {realtimeMode === "rest_sync" ? (
@@ -1833,6 +2093,47 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     letterSpacing: 0,
     lineHeight: 17,
+  },
+  translationConsentPanel: {
+    width: "100%",
+    maxWidth: 348,
+    alignSelf: "center",
+    gap: 8,
+    marginTop: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: "#f0dfb3",
+    borderRadius: 10,
+    backgroundColor: "#fffaf0",
+  },
+  translationConsentTextWrap: {
+    gap: 3,
+  },
+  translationConsentTitle: {
+    color: TEXT_GRAY,
+    fontSize: 12,
+    fontWeight: "900",
+    lineHeight: 17,
+  },
+  translationConsentText: {
+    color: MUTED_GRAY,
+    fontSize: 11,
+    fontWeight: "700",
+    lineHeight: 16,
+  },
+  translationConsentButton: {
+    minHeight: 34,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 14,
+    borderRadius: 17,
+    backgroundColor: YELLOW,
+  },
+  translationConsentButtonText: {
+    color: "#ffffff",
+    fontSize: 12,
+    fontWeight: "900",
   },
   localNotice: {
     width: "100%",

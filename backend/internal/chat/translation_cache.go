@@ -12,9 +12,10 @@ import (
 )
 
 const (
-	chatTranslationAlgorithm  = "AES-256-GCM"
-	chatTranslationKeyVersion = "chat-translation-keyb-v1"
-	maxMessageRevision        = 128
+	chatTranslationAlgorithm        = "AES-256-GCM"
+	chatTranslationKeyVersion       = "chat-translation-dek-v1"
+	legacyChatTranslationKeyVersion = "chat-translation-keyb-v1"
+	maxMessageRevision              = 128
 )
 
 var ErrMessageTranslationStale = errors.New("message changed while translation was in flight")
@@ -64,7 +65,7 @@ func (s *Service) LookupMessageTranslation(
 	if err != nil {
 		return EncryptedMessageTranslation{}, false, revision, err
 	}
-	if cached.MessageRevision != revision || !validEncryptedMessageTranslation(cached) {
+	if cached.MessageRevision != revision || !validStoredEncryptedMessageTranslation(cached) {
 		return EncryptedMessageTranslation{}, false, revision, nil
 	}
 	return cached, true, revision, nil
@@ -197,7 +198,7 @@ func (s *Service) loadMessageTranslations(ctx context.Context, messages []Messag
 		}
 		revision := messageRevision(messages[index])
 		for _, stored := range byMessage[messages[index].ID] {
-			if stored.MessageRevision == revision && validEncryptedMessageTranslation(stored.EncryptedMessageTranslation) {
+			if stored.MessageRevision == revision && validStoredEncryptedMessageTranslation(stored.EncryptedMessageTranslation) {
 				messages[index].Translations = append(messages[index].Translations, stored.EncryptedMessageTranslation)
 			}
 		}
@@ -214,9 +215,20 @@ func normalizeTranslationTarget(value string) (string, error) {
 }
 
 func validEncryptedMessageTranslation(value EncryptedMessageTranslation) bool {
+	return validEncryptedMessageTranslationVersion(value, false)
+}
+
+func validStoredEncryptedMessageTranslation(value EncryptedMessageTranslation) bool {
+	return validEncryptedMessageTranslationVersion(value, true)
+}
+
+func validEncryptedMessageTranslationVersion(value EncryptedMessageTranslation, allowLegacy bool) bool {
 	if _, err := normalizeTranslationTarget(value.TargetLanguage); err != nil ||
-		value.Algorithm != chatTranslationAlgorithm || value.KeyVersion != chatTranslationKeyVersion ||
+		value.Algorithm != chatTranslationAlgorithm ||
 		!validIdentifier(value.MessageRevision, maxMessageRevision) {
+		return false
+	}
+	if value.KeyVersion != chatTranslationKeyVersion && (!allowLegacy || value.KeyVersion != legacyChatTranslationKeyVersion) {
 		return false
 	}
 	ciphertext, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(value.Ciphertext))

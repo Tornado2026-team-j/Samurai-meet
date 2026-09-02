@@ -202,7 +202,7 @@ export default function ChatBubble({
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={translationLoading ? translationLoadingLabel : showOriginal ? translatedLabel : originalLabel}
-            disabled={translationLoading || !canToggleTranslation}
+            disabled={!canToggleTranslation}
             onPress={() => (onToggleTranslation ?? onTranslate)?.()}
             style={({ pressed }) => [styles.translationToggle, (translationLoading || !canToggleTranslation) && styles.translationToggleDisabled, pressed && styles.pressedBubble]}
           >

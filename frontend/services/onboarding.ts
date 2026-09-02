@@ -29,6 +29,7 @@ export type {
 
 const LANGUAGE_KEY = "samurai_meet_language_v1";
 const APP_MODE_KEY = "samurai_meet_app_mode_v1";
+const TRANSLATION_CONSENT_KEY_PREFIX = "samurai_meet_translation_consent_v1_";
 const PROFILE_KEY_PREFIX = "samurai_meet_profile_v1_";
 const IDENTITY_VERIFICATION_CHOICE_KEY_PREFIX =
   "samurai_meet_identity_verification_choice_v1_";
@@ -46,6 +47,10 @@ function profileKey(userID: string): string {
 
 function identityVerificationChoiceKey(userID: string): string {
   return `${IDENTITY_VERIFICATION_CHOICE_KEY_PREFIX}${userID.replace(/[^A-Za-z0-9._-]/g, "_")}`;
+}
+
+function translationConsentKey(userID: string): string {
+  return `${TRANSLATION_CONSENT_KEY_PREFIX}${userID.replace(/[^A-Za-z0-9._-]/g, "_")}`;
 }
 
 async function getItem(key: string): Promise<string | null> {
@@ -105,6 +110,17 @@ export async function saveAppMode(mode: AppMode): Promise<void> {
 
 export async function clearAppMode(): Promise<void> {
   await deleteItem(APP_MODE_KEY);
+}
+
+export type TranslationConsent = "granted" | "denied";
+
+export async function loadTranslationConsent(userID: string): Promise<TranslationConsent | null> {
+  const value = await getItem(translationConsentKey(userID));
+  return value === "granted" || value === "denied" ? value : null;
+}
+
+export async function saveTranslationConsent(userID: string, consent: TranslationConsent): Promise<void> {
+  await setItem(translationConsentKey(userID), consent);
 }
 
 export async function loadLocalProfile(userID: string): Promise<LocalProfile | null> {
