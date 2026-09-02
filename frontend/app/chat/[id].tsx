@@ -22,7 +22,6 @@ import { StatusBar } from "expo-status-bar";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import ChatBubble from "../../components/ChatBubble";
-import DismissKeyboardView from "../../components/DismissKeyboardView";
 import { useAuth } from "../../hooks/useAuth";
 import { APIError } from "../../services/api-client";
 import {
@@ -1564,7 +1563,7 @@ export default function ChatDetailScreen() {
       behavior={Platform.OS === "ios" ? "padding" : undefined}
       style={styles.screen}
     >
-      <DismissKeyboardView pointerEvents={safetyModal ? "none" : "auto"} style={styles.screenContent}>
+      <View pointerEvents={safetyModal ? "none" : "auto"} style={styles.screenContent}>
         <StatusBar style="light" />
         <View style={[styles.header, { paddingTop: Math.max(insets.top, 36) }]}>
         <Pressable
@@ -1606,9 +1605,11 @@ export default function ChatDetailScreen() {
           refreshControl={
             <RefreshControl onRefresh={() => void load("refresh")} refreshing={refreshing} tintColor={BLUE} />
           }
+          keyboardDismissMode="on-drag"
           scrollEnabled={safetyModal === null}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
+          style={styles.messageScroll}
         >
         {match ? (
           <View style={styles.schedulePanel}>
@@ -1636,24 +1637,6 @@ export default function ChatDetailScreen() {
         <View style={styles.noticePanel}>
           <MaterialIcons color={BLUE} name="security" size={20} />
           <Text style={styles.noticeText}>{copy.safetyNotice}</Text>
-        </View>
-
-        <View style={styles.translationConsentPanel}>
-          <View style={styles.translationConsentTextWrap}>
-            <Text style={styles.translationConsentTitle}>
-              {translationConsent === "granted" ? copy.translationEnabled : translationConsent === "denied" ? copy.translationDisabled : copy.translationConsent}
-            </Text>
-            {translationConsent !== "granted" ? <Text style={styles.translationConsentText}>{copy.translationConsent}</Text> : null}
-          </View>
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => void updateTranslationConsent(translationConsent === "granted" ? "denied" : "granted")}
-            style={({ pressed }) => [styles.translationConsentButton, pressed && styles.pressed]}
-          >
-            <Text style={styles.translationConsentButtonText}>
-              {translationConsent === "granted" ? copy.disableTranslation : copy.enableTranslation}
-            </Text>
-          </Pressable>
         </View>
 
         {realtimeMode === "rest_sync" ? (
@@ -1816,7 +1799,7 @@ export default function ChatDetailScreen() {
           </Pressable>
         </View>
         </View>
-      </DismissKeyboardView>
+      </View>
 
       <Modal
         animationType="none"
@@ -1841,6 +1824,27 @@ export default function ChatDetailScreen() {
                 <View style={[styles.bottomSheet, { paddingBottom: Math.max(insets.bottom + 18, 28) }]}>
                   <View style={styles.sheetHandle} />
                   <Text style={styles.sheetTitle}>{copy.menuTitle}</Text>
+                  <Pressable
+                    accessibilityLabel={translationConsent === "granted" ? copy.disableTranslation : copy.enableTranslation}
+                    accessibilityRole="switch"
+                    accessibilityState={{ checked: translationConsent === "granted", disabled: safetySubmitting }}
+                    disabled={safetySubmitting}
+                    onPress={() => void updateTranslationConsent(translationConsent === "granted" ? "denied" : "granted")}
+                    style={({ pressed }) => [styles.sheetAction, styles.translationSheetAction, pressed && styles.pressed]}
+                  >
+                    <MaterialIcons color={YELLOW} name="translate" size={23} />
+                    <View style={styles.sheetActionCopy}>
+                      <Text style={styles.sheetActionText}>
+                        {translationConsent === "granted" ? copy.translationEnabled : copy.translationDisabled}
+                      </Text>
+                      {translationConsent !== "granted" ? <Text style={styles.sheetActionHint}>{copy.translationConsent}</Text> : null}
+                    </View>
+                    <MaterialIcons
+                      color={translationConsent === "granted" ? YELLOW : MUTED_GRAY}
+                      name={translationConsent === "granted" ? "toggle-on" : "toggle-off"}
+                      size={30}
+                    />
+                  </Pressable>
                   <Pressable
                     accessibilityRole="button"
                     onPress={() => startConfirmation("decline")}
@@ -2020,6 +2024,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingBottom: 260,
   },
+  messageScroll: {
+    flex: 1,
+  },
   schedulePanel: {
     width: "100%",
     maxWidth: 348,
@@ -2093,47 +2100,6 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     letterSpacing: 0,
     lineHeight: 17,
-  },
-  translationConsentPanel: {
-    width: "100%",
-    maxWidth: 348,
-    alignSelf: "center",
-    gap: 8,
-    marginTop: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    borderWidth: 1,
-    borderColor: "#f0dfb3",
-    borderRadius: 10,
-    backgroundColor: "#fffaf0",
-  },
-  translationConsentTextWrap: {
-    gap: 3,
-  },
-  translationConsentTitle: {
-    color: TEXT_GRAY,
-    fontSize: 12,
-    fontWeight: "900",
-    lineHeight: 17,
-  },
-  translationConsentText: {
-    color: MUTED_GRAY,
-    fontSize: 11,
-    fontWeight: "700",
-    lineHeight: 16,
-  },
-  translationConsentButton: {
-    minHeight: 34,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 14,
-    borderRadius: 17,
-    backgroundColor: YELLOW,
-  },
-  translationConsentButtonText: {
-    color: "#ffffff",
-    fontSize: 12,
-    fontWeight: "900",
   },
   localNotice: {
     width: "100%",
@@ -2430,6 +2396,19 @@ const styles = StyleSheet.create({
     gap: 14,
     borderBottomWidth: 1,
     borderBottomColor: "#f0f0f0",
+  },
+  translationSheetAction: {
+    minHeight: 64,
+  },
+  sheetActionCopy: {
+    flex: 1,
+    gap: 3,
+  },
+  sheetActionHint: {
+    color: MUTED_GRAY,
+    fontSize: 11,
+    fontWeight: "700",
+    lineHeight: 16,
   },
   sheetActionText: {
     color: TEXT_GRAY,
