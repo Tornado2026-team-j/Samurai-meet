@@ -35,7 +35,7 @@
 - `0045_chat_message_translations_encrypted.sql` は、先行導入版0044の平文翻訳キャッシュを削除し、暗号化envelopeの列へ前方移行する。サーバーはKey-Bを持たないため、旧平文キャッシュは再暗号化せず破棄する。
 - `0046_chat_key_envelopes.sql` は、ランダムなチャットDEKをKey-A由来のaccount envelopeまたは端末X25519 device envelopeとして保存する。サーバーはenvelopeを復号せず、既存行の置換も許可しない。
 - `0047_chat_key_manifests.sql` は、チャットDEKのクライアント検証用commitmentと、device envelopeのowner authority／参加者自身の端末登録制限を支えるmanifestを保存する。DEKやenvelopeの平文は保存しない。
-- `0048_chat_message_plaintext_binding.sql` は、翻訳要求の本文を対象messageへ結び付けるsalt付きcommitmentを追加する。本文自体は保存しない。
+- `0048_chat_message_plaintext_binding.sql` は、翻訳要求の本文を対象messageへ結び付けるcommitmentと16byte saltの保存列を追加する。現行のcommitment値はクライアント保持鍵によるHMAC-SHA-256で、本文自体やHMAC鍵は保存しない。
 - `0049_chat_translation_account_limits.sql` は、複数インスタンスで共有できるアカウント単位の翻訳provider token bucketとin-flight重複抑止の状態を追加する。翻訳本文やprovider応答は保存しない。
 - `0050_chat_translation_inflight_expiry_type.sql` は、in-flight重複抑止の期限比較を文字列ではなくPostgreSQLのtimestamp型で行うようにする。
 - `0051_chat_key_manifest_commitment_format.sql` は、chat DEK commitmentをSHA-256のraw Base64URL（パディングなし）43文字に制限する。
