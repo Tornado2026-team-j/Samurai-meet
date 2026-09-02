@@ -11,8 +11,10 @@ import (
 //go:embed passkey_page.html
 var passkeyPageHTML string
 
-const passkeyPageNonceMarker = "__CSP_NONCE__"           // #nosec G101 -- fixed HTML replacement marker, not a credential
-const passkeyPageLanguageMarker = "__PASSKEY_LANGUAGE__" // #nosec G101 -- fixed HTML replacement marker, not a credential
+const passkeyPageNonceMarker = "__CSP_NONCE__"              // #nosec G101 -- fixed HTML replacement marker, not a credential
+const passkeyPageLanguageMarker = "__PASSKEY_LANGUAGE__"    // #nosec G101 -- fixed HTML replacement marker, not a credential
+const passkeyPageVersionMarker = "__PASSKEY_PAGE_VERSION__" // #nosec G101 -- fixed HTML replacement marker, not a credential
+const passkeyPageVersion = "passkey-web-v2026.09.02.4"      // #nosec G101 -- fixed page version identifier, not a credential
 
 func passkeyPage(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/passkey" && r.URL.Path != "/passkey/" {
@@ -37,6 +39,7 @@ func passkeyPage(w http.ResponseWriter, r *http.Request) {
 		language = "en"
 	}
 	page = strings.ReplaceAll(page, passkeyPageLanguageMarker, language)
+	page = strings.ReplaceAll(page, passkeyPageVersionMarker, passkeyPageVersion)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")

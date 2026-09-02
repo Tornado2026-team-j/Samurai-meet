@@ -97,6 +97,14 @@ export type RecruitmentSearchParams = {
   limit?: number;
 };
 
+export const MAX_RECRUITMENT_SEARCH_RANGE_DAYS = 31;
+
+export type RecruitmentSearchDateRangeError =
+  | "search_date_range_requires_both"
+  | "search_date_range_invalid"
+  | "search_date_range_reversed"
+  | "search_date_range_too_long";
+
 export type RecruitmentInterest = {
   id: string;
   recruitment_id: string;
@@ -184,6 +192,42 @@ function appendQueryPart(parts: string[], key: string, value: string | number | 
   parts.push(`${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`);
 }
 
+function parseSearchDate(value: string): number | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
+  if (!match) return null;
+
+  const date = new Date(0);
+  date.setUTCHours(0, 0, 0, 0);
+  date.setUTCFullYear(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  if (
+    date.getUTCFullYear() !== Number(match[1]) ||
+    date.getUTCMonth() !== Number(match[2]) - 1 ||
+    date.getUTCDate() !== Number(match[3])
+  ) {
+    return null;
+  }
+  return date.getTime();
+}
+
+export function validateRecruitmentSearchDateRange(
+  availableFrom?: string,
+  availableTo?: string,
+): RecruitmentSearchDateRangeError | null {
+  const from = availableFrom?.trim() ?? "";
+  const to = availableTo?.trim() ?? "";
+  if (!from && !to) return null;
+  if (!from || !to) return "search_date_range_requires_both";
+
+  const fromTime = parseSearchDate(from);
+  const toTime = parseSearchDate(to);
+  if (fromTime === null || toTime === null) return "search_date_range_invalid";
+  if (toTime < fromTime) return "search_date_range_reversed";
+  if (toTime - fromTime > MAX_RECRUITMENT_SEARCH_RANGE_DAYS * 24 * 60 * 60 * 1000) {
+    return "search_date_range_too_long";
+  }
+  return null;
+}
+
 function recruitmentQuery(params: RecruitmentSearchParams): string {
   const parts: string[] = [];
   for (const keyword of params.keywords ?? []) {
@@ -220,6 +264,9 @@ export async function searchRecruitments(
   params: RecruitmentSearchParams = {},
   signal?: AbortSignal,
 ): Promise<Recruitment[]> {
+  const dateRangeError = validateRecruitmentSearchDateRange(params.availableFrom, params.availableTo);
+  if (dateRangeError) throw new Error(dateRangeError);
+
   const response = await requestAPI<DataResponse<Recruitment[]>>(
     `/recruitments${recruitmentQuery(params)}`,
     session,

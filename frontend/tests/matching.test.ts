@@ -10,6 +10,7 @@ import {
   searchRecruitments,
   sendRecruitmentInterest,
   updateRecruitment,
+  validateRecruitmentSearchDateRange,
   withdrawRecruitmentInterest,
 } from "../services/matching";
 import { saveRecruitmentDraft } from "../services/recruitment";
@@ -72,6 +73,15 @@ describe("募集APIクライアント", () => {
     expect(requestedURL).toContain("available_date=2026-08-27");
     expect(requestedURL).toContain("radius_km=3");
     expect(requestedURL).toContain("limit=50");
+  });
+
+  it("募集期間はAPI契約どおり両端と31日差以内を検証する", () => {
+    expect(validateRecruitmentSearchDateRange("2026-09-01", "2026-09-30")).toBeNull();
+    expect(validateRecruitmentSearchDateRange("2026-09-01", "2026-10-02")).toBeNull();
+    expect(validateRecruitmentSearchDateRange("2026-09-01", undefined)).toBe("search_date_range_requires_both");
+    expect(validateRecruitmentSearchDateRange("2026-09-30", "2026-09-01")).toBe("search_date_range_reversed");
+    expect(validateRecruitmentSearchDateRange("2026-09-01", "2026-10-03")).toBe("search_date_range_too_long");
+    expect(validateRecruitmentSearchDateRange("2026-02-30", "2026-03-01")).toBe("search_date_range_invalid");
   });
 
 	it("募集作成のPOST bodyにバックエンド契約をそのまま渡す", async () => {

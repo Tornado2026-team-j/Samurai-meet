@@ -7,6 +7,9 @@ import {
   connectChatWebTransport,
   createSafetyReport,
   decryptChatMessage,
+  decryptChatTranslation,
+  deleteChatMessage,
+  encryptChatTranslation,
   encryptChatPlaintext,
   filterChatsByStatus,
   issueChatTransportToken,
@@ -21,6 +24,8 @@ import {
   sendChatMessage,
   sendChatLocation,
   toChatMessageView,
+  translateChatMessage,
+  updateChatMessage,
   validateChatDraft,
   type EncryptedChatMessage,
   type ChatSummary,
@@ -36,6 +41,7 @@ const session = {
 };
 
 const fixedRandom = async (length: number) => new Uint8Array(Array.from({ length }, (_, index) => index + 1));
+const fixedKeyB = new Uint8Array(32).fill(9);
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
@@ -232,7 +238,7 @@ describe("チャットAPIクライアント", () => {
     expect(JSON.parse(requestedBody)).toEqual({ last_message_sequence: 12 });
   });
 
-  it("本文を暗号化してから送信し、平文をAPI bodyへ入れない", async () => {
+  it("本文をchat DEKで暗号化してから送信し、平文をAPI bodyへ入れない", async () => {
     let requestedBody = "";
     globalThis.fetch = (async (_input, init) => {
       requestedBody = String(init?.body);
@@ -256,13 +262,14 @@ describe("チャットAPIクライアント", () => {
       "client-1",
       undefined,
       fixedRandom,
+      fixedKeyB,
     );
     const parsed = JSON.parse(requestedBody) as Record<string, unknown>;
 
     expect(parsed.client_message_id).toBe("client-1");
     expect(parsed.algorithm).toBe("AES-256-GCM");
     expect(requestedBody).not.toContain("改札前");
-    expect(decryptChatMessage("chat-1", message)).toBe("改札前で待ち合わせしましょう。");
+    expect(decryptChatMessage("chat-1", message, fixedKeyB)).toBe("改札前で待ち合わせしましょう。");
   });
 
   it("送信前Moderationは平文を専用endpointだけへ送り、blocked時は暗号文送信を開始しない", async () => {
@@ -319,10 +326,10 @@ describe("チャットAPIクライアント", () => {
       return new Response(JSON.stringify({ data: { ...body, id: "location-1", chat_id: "chat-1", sender_user_id: "user-1", sequence: 2, created_at: "2026-08-30T00:00:00Z" } }), { status: 201 });
     }) as typeof fetch;
     const expiresAt = new Date(Date.now() + 60_000).toISOString();
-    const message = await sendChatLocation("chat-1", { latitude: 35.681236, longitude: 139.767125, display_name: "Tokyo Station", accuracy_m: 20 }, session, expiresAt, "location-client-1", undefined, fixedRandom);
+    const message = await sendChatLocation("chat-1", { latitude: 35.681236, longitude: 139.767125, display_name: "Tokyo Station", accuracy_m: 20 }, session, expiresAt, "location-client-1", undefined, fixedRandom, fixedKeyB);
     expect(JSON.parse(requestedBody)).toMatchObject({ content_type: "location", expires_at: expiresAt });
     expect(requestedBody).not.toContain("35.681236");
-    expect(toChatMessageView("chat-1", message, "user-1").location).toMatchObject({ latitude: 35.681236, longitude: 139.767125, display_name: "Tokyo Station" });
+    expect(toChatMessageView("chat-1", message, "user-1", fixedKeyB).location).toMatchObject({ latitude: 35.681236, longitude: 139.767125, display_name: "Tokyo Station" });
   });
 
   it("期限切れの位置共有は座標を画面用データとして返さない", () => {
@@ -356,7 +363,7 @@ describe("チャットAPIクライアント", () => {
   });
 
   it("暗号化メッセージを画面用に復号し、自分の送信か判定する", async () => {
-    const encrypted = await encryptChatPlaintext("chat-1", "Hello", fixedRandom);
+    const encrypted = await encryptChatPlaintext("chat-1", "Hello", fixedKeyB, fixedRandom);
     const message: EncryptedChatMessage = {
       id: "message-1",
       chat_id: "chat-1",
@@ -367,10 +374,106 @@ describe("チャットAPIクライアント", () => {
       ...encrypted,
     };
 
-    expect(toChatMessageView("chat-1", message, "user-1")).toMatchObject({
+    expect(toChatMessageView("chat-1", message, "user-1", fixedKeyB)).toMatchObject({
       plaintext: "Hello",
       mine: true,
     });
+  });
+
+  it("新しいチャット本文はchat DEKを秘密入力にし、chat_idだけでは復号できない", async () => {
+    const encrypted = await encryptChatPlaintext("chat-1", "chat DEK protected", fixedKeyB, fixedRandom);
+    const message: EncryptedChatMessage = {
+      id: "keyb-message-1",
+      chat_id: "chat-1",
+      sender_user_id: "user-1",
+      client_message_id: "keyb-client-1",
+      sequence: 5,
+      created_at: "2026-08-30T00:00:00Z",
+      ...encrypted,
+    };
+
+    expect(message.key_version).toBe("chat-dek-v1");
+    expect(decryptChatMessage("chat-1", message)).toBeNull();
+    expect(decryptChatMessage("chat-1", message, new Uint8Array(32).fill(8))).toBeNull();
+    expect(decryptChatMessage("other-chat", message, fixedKeyB)).toBeNull();
+    expect(decryptChatMessage("chat-1", message, fixedKeyB)).toBe("chat DEK protected");
+  });
+
+  it("本文の翻訳、編集、削除APIをそれぞれの契約で呼び出す", async () => {
+    const requests: { url: string; method: string; body: string }[] = [];
+    globalThis.fetch = (async (input, init) => {
+      const url = String(input);
+      const method = String(init?.method ?? "GET");
+      const body = String(init?.body ?? "");
+      requests.push({ url, method, body });
+      if (url.endsWith("/translate")) {
+        return new Response(JSON.stringify({ data: { cached: false, source_language: "en", translated_text: "こんにちは", target_language: "ja", message_revision: "2026-08-30T00:00:00Z" } }), { status: 200 });
+      }
+      if (method === "PUT") {
+        return new Response(null, { status: 204 });
+      }
+      if (method === "PATCH") {
+        const encrypted = JSON.parse(body) as Record<string, unknown>;
+        return new Response(JSON.stringify({ data: {
+          ...encrypted,
+          id: "message-1",
+          chat_id: "chat-1",
+          sender_user_id: "user-1",
+          client_message_id: "client-1",
+          sequence: 1,
+          content_type: "text",
+          created_at: "2026-08-30T00:00:00Z",
+          edited_at: "2026-08-30T00:01:00Z",
+        } }), { status: 200 });
+      }
+      return new Response(null, { status: 204 });
+    }) as typeof fetch;
+
+    const translationRevision = "2026-08-30T00:00:00Z";
+    await expect(translateChatMessage("chat-1", "message-1", translationRevision, "Hello", "ja", session, undefined, fixedKeyB, fixedRandom)).resolves.toMatchObject({
+      source_language: "en",
+      translated_text: "こんにちは",
+      target_language: "ja",
+    });
+    const updated = await updateChatMessage("chat-1", "message-1", "Updated", session, undefined, fixedRandom, fixedKeyB);
+    await deleteChatMessage("chat-1", "message-1", session);
+
+    expect(requests.map((request) => request.method)).toEqual(["POST", "PUT", "PATCH", "DELETE"]);
+    expect(JSON.parse(requests[0]?.body ?? "{}")).toEqual({ message_id: "message-1", text: "Hello", target_language: "ja" });
+    const savedTranslation = JSON.parse(requests[1]?.body ?? "{}");
+    expect(savedTranslation).not.toHaveProperty("translated_text");
+    expect(decryptChatTranslation("chat-1", "message-1", translationRevision, savedTranslation, fixedKeyB)).toMatchObject({
+      source_language: "en",
+      translated_text: "こんにちは",
+      target_language: "ja",
+    });
+    expect(requests[2]?.body).not.toContain("Updated");
+    expect(updated.key_version).toBe("chat-dek-v1");
+    expect(requests[2]?.url).toContain("/chats/chat-1/messages/message-1");
+  });
+
+  it("保存済み翻訳はchat DEKで復号し、再度保存しない", async () => {
+    const revision = "2026-08-30T00:00:00Z";
+    const cached = await encryptChatTranslation("chat-1", "message-1", revision, {
+      source_language: "en",
+      translated_text: "こんにちは",
+      target_language: "ja",
+    }, fixedKeyB, fixedRandom);
+    const requests: string[] = [];
+    globalThis.fetch = (async (_input, init) => {
+      requests.push(String(init?.method ?? "GET"));
+      return new Response(JSON.stringify({ data: {
+        cached: true,
+        ...cached,
+      } }), { status: 200 });
+    }) as typeof fetch;
+
+    await expect(translateChatMessage("chat-1", "message-1", revision, "Hello", "ja", session, undefined, fixedKeyB)).resolves.toMatchObject({
+      source_language: "en",
+      translated_text: "こんにちは",
+      target_language: "ja",
+    });
+    expect(requests).toEqual(["POST"]);
   });
 
   it("画像メッセージは暗号化マーカーを本文として表示せず、recipientはuser_id+device_idを必須にする", () => {

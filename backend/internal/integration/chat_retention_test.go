@@ -28,6 +28,18 @@ func TestChatMessageRetentionPurge(t *testing.T) {
 	old1 := send("old-1")
 	old2 := send("old-2")
 	recent := send("recent-1")
+	for index, message := range []chat.Message{old1, old2} {
+		if err := f.chatService.SaveMessageTranslation(ctx, f.requesterID, f.chatID, message.ID, chat.EncryptedMessageTranslation{
+			TargetLanguage:  "ja",
+			Ciphertext:      base64Value(byte(0x41+index), 32),
+			Nonce:           base64Value(byte(0x51+index), 12),
+			Algorithm:       "AES-256-GCM",
+			KeyVersion:      "chat-translation-dek-v1",
+			MessageRevision: message.CreatedAt,
+		}, now); err != nil {
+			t.Fatalf("SaveMessageTranslation %s: %v", message.ID, err)
+		}
+	}
 
 	stale := now.Add(-45 * 24 * time.Hour).Format(time.RFC3339Nano)
 	for _, m := range []chat.Message{old1, old2} {
@@ -53,6 +65,13 @@ func TestChatMessageRetentionPurge(t *testing.T) {
 		if ciphertext != "" || nonce != "" || deletedAt == "" {
 			t.Fatalf("message %s not fully tombstoned: ciphertext=%q nonce=%q deleted_at=%q", m.ID, ciphertext, nonce, deletedAt)
 		}
+	}
+	var translationCount int
+	if err := f.database.QueryRowContext(ctx, `SELECT COUNT(*) FROM chat_message_translations WHERE message_id IN ($1,$2)`, old1.ID, old2.ID).Scan(&translationCount); err != nil {
+		t.Fatalf("read purged translation cache: %v", err)
+	}
+	if translationCount != 0 {
+		t.Fatalf("translation cache survived retention purge: %d rows", translationCount)
 	}
 
 	// The recent message is untouched.
