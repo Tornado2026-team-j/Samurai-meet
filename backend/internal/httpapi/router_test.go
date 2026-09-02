@@ -50,6 +50,15 @@ func TestPasskeyPageIsServedByBackend(t *testing.T) {
 			if !strings.Contains(body, "Passkeyで本人確認") {
 				t.Fatalf("page does not contain Passkey title")
 			}
+			if !strings.Contains(body, "hashchange") || !strings.Contains(body, "decodeURIComponent") || !strings.Contains(body, "retry=1") {
+				t.Fatalf("page does not handle delayed or encoded Passkey fragments")
+			}
+			if !strings.Contains(body, passkeyPageVersion) || strings.Contains(body, passkeyPageVersionMarker) {
+				t.Fatalf("page version marker was not rendered")
+			}
+			if !strings.Contains(body, "Copy diagnostic data") || !strings.Contains(body, "buildDebugDetails") {
+				t.Fatalf("page does not expose safe copyable diagnostics")
+			}
 			if strings.Contains(body, passkeyPageNonceMarker) {
 				t.Fatalf("page contains the CSP nonce marker")
 			}

@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { MaterialIcons } from "@expo/vector-icons";
+import { getLocales } from "expo-localization";
 import {
   FlatList,
   Keyboard,
@@ -13,6 +14,7 @@ import {
   View,
 } from "react-native";
 import { MONSTER_INPUT_LIMITS, type AppLanguage, type LocalProfile } from "../services/onboarding-contract";
+import { resolveDefaultNationalityCode } from "../services/device-locale";
 import DismissKeyboardView from "./DismissKeyboardView";
 import { Button, colors, opacity, radius, typography } from "./ui";
 
@@ -247,6 +249,14 @@ function createInitialItems(items: string[] | undefined, language: AppLanguage, 
   return normalized;
 }
 
+function defaultNationalityCode(language: AppLanguage): string {
+  try {
+    return resolveDefaultNationalityCode(language, COUNTRY_CODES, getLocales());
+  } catch {
+    return resolveDefaultNationalityCode(language, COUNTRY_CODES, []);
+  }
+}
+
 function sanitizeMonsterItem(value: string): string {
   return value.replace(/[\r\n,、]/gu, "").trimStart();
 }
@@ -321,9 +331,10 @@ export default function ProfileForm({
         submitError: "Could not save your profile. Please try again.",
       };
   const [name, setName] = useState(initialProfile?.name ?? "");
-  const [nationalityCode, setNationalityCode] = useState(
-    initialProfile?.nationalityCode ?? "",
-  );
+  const [nationalityCode, setNationalityCode] = useState(() => {
+    const storedCode = initialProfile?.nationalityCode?.trim().toUpperCase();
+    return storedCode || defaultNationalityCode(language);
+  });
   const [interestItems, setInterestItems] = useState(() =>
     createInitialItems(initialProfile?.monsterSeed?.interestTags, language, MAX_INTEREST_ITEMS, 1),
   );

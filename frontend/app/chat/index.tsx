@@ -24,7 +24,7 @@ const SOFT_BLUE = "#eff8ff";
 
 const COPY = {
   ja: {
-    title: "Chat",
+    title: "チャット",
     back: "戻る",
     loading: "チャットを読み込み中…",
     retry: "再試行",

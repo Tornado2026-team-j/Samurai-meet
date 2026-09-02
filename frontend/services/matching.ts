@@ -1,5 +1,6 @@
 import type { Session } from "./auth-contract";
 import { APIError, requestAPI } from "./api-client";
+import type { AppLanguage } from "./onboarding";
 import { isMatchCategory, type MatchCardData, type MatchCategory } from "../types/match";
 
 export type RecruitmentStatus =
@@ -96,6 +97,14 @@ export type RecruitmentSearchParams = {
   limit?: number;
 };
 
+export const MAX_RECRUITMENT_SEARCH_RANGE_DAYS = 31;
+
+export type RecruitmentSearchDateRangeError =
+  | "search_date_range_requires_both"
+  | "search_date_range_invalid"
+  | "search_date_range_reversed"
+  | "search_date_range_too_long";
+
 export type RecruitmentInterest = {
   id: string;
   recruitment_id: string;
@@ -132,6 +141,44 @@ export type Coordinates = {
   captured_at?: string;
 };
 
+const MATCH_CARD_STATUS_LABELS: Record<NonNullable<MatchCardData["applicationStatus"]>, Record<AppLanguage, string>> = {
+  pending: { ja: "応募中", en: "Pending" },
+  accepted: { ja: "承認済み", en: "Accepted" },
+  rejected: { ja: "不採用", en: "Not accepted" },
+  cancelled: { ja: "取消済み", en: "Cancelled" },
+  blocked: { ja: "ブロック済み", en: "Blocked" },
+  expired: { ja: "期限切れ", en: "Expired" },
+  completed: { ja: "完了", en: "Completed" },
+};
+
+export const MATCH_CARD_COPY = {
+  ja: {
+    date: "日付",
+    time: "時間",
+    today: "今日",
+    expiry: (date: string) => `${date}まで`,
+    openDetails: (name: string) => `${name}の募集詳細を開く`,
+  },
+  en: {
+    date: "Date",
+    time: "Time",
+    today: "Today",
+    expiry: (date: string) => `Until ${date}`,
+    openDetails: (name: string) => `Open recruitment details for ${name}`,
+  },
+} as const;
+
+export function getMatchCardCopy(language: AppLanguage) {
+  return MATCH_CARD_COPY[language];
+}
+
+export function getMatchCardStatusLabel(
+  status: MatchCardData["applicationStatus"],
+  language: AppLanguage,
+): string | null {
+  return status ? MATCH_CARD_STATUS_LABELS[status][language] : null;
+}
+
 type DataResponse<T> = { data?: T };
 
 function requireArrayData<T>(response: DataResponse<T[]>, resource: string): T[] {
@@ -143,6 +190,42 @@ function requireArrayData<T>(response: DataResponse<T[]>, resource: string): T[]
 
 function appendQueryPart(parts: string[], key: string, value: string | number | boolean) {
   parts.push(`${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`);
+}
+
+function parseSearchDate(value: string): number | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
+  if (!match) return null;
+
+  const date = new Date(0);
+  date.setUTCHours(0, 0, 0, 0);
+  date.setUTCFullYear(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  if (
+    date.getUTCFullYear() !== Number(match[1]) ||
+    date.getUTCMonth() !== Number(match[2]) - 1 ||
+    date.getUTCDate() !== Number(match[3])
+  ) {
+    return null;
+  }
+  return date.getTime();
+}
+
+export function validateRecruitmentSearchDateRange(
+  availableFrom?: string,
+  availableTo?: string,
+): RecruitmentSearchDateRangeError | null {
+  const from = availableFrom?.trim() ?? "";
+  const to = availableTo?.trim() ?? "";
+  if (!from && !to) return null;
+  if (!from || !to) return "search_date_range_requires_both";
+
+  const fromTime = parseSearchDate(from);
+  const toTime = parseSearchDate(to);
+  if (fromTime === null || toTime === null) return "search_date_range_invalid";
+  if (toTime < fromTime) return "search_date_range_reversed";
+  if (toTime - fromTime > MAX_RECRUITMENT_SEARCH_RANGE_DAYS * 24 * 60 * 60 * 1000) {
+    return "search_date_range_too_long";
+  }
+  return null;
 }
 
 function recruitmentQuery(params: RecruitmentSearchParams): string {
@@ -181,6 +264,9 @@ export async function searchRecruitments(
   params: RecruitmentSearchParams = {},
   signal?: AbortSignal,
 ): Promise<Recruitment[]> {
+  const dateRangeError = validateRecruitmentSearchDateRange(params.availableFrom, params.availableTo);
+  if (dateRangeError) throw new Error(dateRangeError);
+
   const response = await requestAPI<DataResponse<Recruitment[]>>(
     `/recruitments${recruitmentQuery(params)}`,
     session,
@@ -475,10 +561,20 @@ function formatRecruitmentDate(value: string): { card: string; detail: string } 
   };
 }
 
+const JST_TIME_ZONE = "Asia/Tokyo";
+
 function formatExpiry(value: string): string {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return value;
-  return `${parsed.getUTCFullYear()}/${String(parsed.getUTCMonth() + 1).padStart(2, "0")}/${String(parsed.getUTCDate()).padStart(2, "0")}`;
+  const parts = new Intl.DateTimeFormat("en-US", {
+    day: "2-digit",
+    month: "2-digit",
+    timeZone: JST_TIME_ZONE,
+    year: "numeric",
+  }).formatToParts(parsed);
+  const part = (type: Intl.DateTimeFormatPartTypes): string =>
+    parts.find((item) => item.type === type)?.value ?? "";
+  return `${part("year")}/${part("month")}/${part("day")}`;
 }
 
 function uniqueTags(recruitment: Recruitment): string[] {

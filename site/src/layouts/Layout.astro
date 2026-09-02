@@ -1,0 +1,189 @@
+---
+interface Props {
+  title: string;
+  description?: string;
+}
+
+const { title, description = 'Samurai Meet - 短い空き時間で近くの人と交流' } = Astro.props;
+---
+
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content={description} />
+    <title>{title} | Samurai Meet</title>
+    <style is:global>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      :root {
+        --color-primary: #ef4444;
+        --color-secondary: #1f2937;
+        --color-text: #111827;
+        --color-bg: #ffffff;
+        --color-border: #e5e7eb;
+        --font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      }
+
+      body {
+        font-family: var(--font-family);
+        color: var(--color-text);
+        background-color: var(--color-bg);
+        line-height: 1.6;
+      }
+
+      a {
+        color: var(--color-primary);
+        text-decoration: none;
+      }
+
+      a:hover {
+        text-decoration: underline;
+      }
+
+      header {
+        background-color: var(--color-secondary);
+        color: white;
+        padding: 1rem 0;
+        position: sticky;
+        top: 0;
+        z-index: 100;
+      }
+
+      nav {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 0 2rem;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+
+      .logo {
+        font-size: 1.5rem;
+        font-weight: bold;
+      }
+
+      .nav-links {
+        display: flex;
+        gap: 2rem;
+        list-style: none;
+      }
+
+      .nav-links a {
+        color: white;
+      }
+
+      .nav-links a:hover {
+        color: var(--color-primary);
+      }
+
+      main {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 2rem;
+        min-height: calc(100vh - 200px);
+      }
+
+      footer {
+        background-color: var(--color-secondary);
+        color: white;
+        padding: 2rem;
+        text-align: center;
+        margin-top: 4rem;
+      }
+
+      .container {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 0 2rem;
+      }
+
+      h1, h2, h3 {
+        margin-bottom: 1rem;
+        margin-top: 2rem;
+      }
+
+      h1 {
+        font-size: 2.5rem;
+      }
+
+      h2 {
+        font-size: 2rem;
+      }
+
+      .hero {
+        background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-secondary) 100%);
+        color: white;
+        padding: 4rem 2rem;
+        text-align: center;
+        margin-bottom: 2rem;
+      }
+
+      .hero h1 {
+        font-size: 3rem;
+        margin-bottom: 1rem;
+      }
+
+      .btn {
+        display: inline-block;
+        padding: 0.75rem 1.5rem;
+        background-color: var(--color-primary);
+        color: white;
+        border-radius: 0.375rem;
+        font-weight: 600;
+        margin-top: 1rem;
+        transition: background-color 0.2s;
+      }
+
+      .btn:hover {
+        background-color: #dc2626;
+        text-decoration: none;
+      }
+
+      .features {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 2rem;
+        margin: 2rem 0;
+      }
+
+      .feature-card {
+        padding: 2rem;
+        border: 1px solid var(--color-border);
+        border-radius: 0.5rem;
+        text-align: center;
+      }
+
+      .feature-card h3 {
+        color: var(--color-primary);
+        margin-top: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <nav>
+        <div class="logo">侍ミート</div>
+        <ul class="nav-links">
+          <li><a href="/Samurai-meet/">ホーム</a></li>
+          <li><a href="/Samurai-meet/features">機能</a></li>
+          <li><a href="/Samurai-meet/docs">ドキュメント</a></li>
+          <li><a href="https://github.com/Tornado2026-team-j/Samurai-meet" target="_blank">GitHub</a></li>
+        </ul>
+      </nav>
+    </header>
+    <main>
+      <slot />
+    </main>
+    <footer>
+      <p>&copy; 2026 Samurai Meet. All rights reserved.</p>
+      <p><a href="https://github.com/Tornado2026-team-j/Samurai-meet" target="_blank" style="color: white;">GitHub Repository</a></p>
+    </footer>
+  </body>
+</html>

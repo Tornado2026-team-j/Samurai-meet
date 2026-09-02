@@ -22,6 +22,7 @@ func TestGeminiClassifyAcceptsOnlySupportedCategory(t *testing.T) {
 		}
 		var requestBody struct {
 			GenerationConfig struct {
+				MaxOutputTokens  int    `json:"maxOutputTokens"`
 				ResponseMIMEType string `json:"responseMimeType"`
 				ResponseSchema   struct {
 					Properties map[string]struct {
@@ -36,6 +37,9 @@ func TestGeminiClassifyAcceptsOnlySupportedCategory(t *testing.T) {
 		}
 		if requestBody.GenerationConfig.ResponseMIMEType != "application/json" {
 			t.Fatalf("responseMimeType = %q, want application/json", requestBody.GenerationConfig.ResponseMIMEType)
+		}
+		if requestBody.GenerationConfig.MaxOutputTokens != maxClassificationOutputTokens {
+			t.Fatalf("maxOutputTokens = %d, want %d", requestBody.GenerationConfig.MaxOutputTokens, maxClassificationOutputTokens)
 		}
 		if got := requestBody.GenerationConfig.ResponseSchema.Required; len(got) != 2 || got[0] != "category" || got[1] != "keywords" {
 			t.Fatalf("required fields = %#v, want category and keywords", got)
@@ -74,6 +78,32 @@ func TestGeminiPlaceholderKeyIsUnavailable(t *testing.T) {
 	service := NewGemini(PlaceholderAPIKey, DefaultModel)
 	if service.Available() {
 		t.Fatal("placeholder Gemini key must not enable classification")
+	}
+}
+
+func TestGeminiClassifyDistinguishesProviderFailures(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		code int
+		want error
+	}{
+		{name: "rate limited", code: http.StatusTooManyRequests, want: ErrProviderRateLimited},
+		{name: "unauthorized", code: http.StatusUnauthorized, want: ErrProviderUnavailable},
+		{name: "forbidden", code: http.StatusForbidden, want: ErrProviderUnavailable},
+		{name: "other upstream failure", code: http.StatusBadGateway, want: ErrUpstream},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(test.code)
+				_, _ = w.Write([]byte(`{"error":"provider detail must stay server-side"}`))
+			}))
+			defer server.Close()
+
+			service := NewGeminiWithClient("test-key", DefaultModel, server.URL, server.Client())
+			if _, err := service.Classify(context.Background(), "user-1", "ramen"); !errors.Is(err, test.want) {
+				t.Fatalf("Classify() error = %v, want %v", err, test.want)
+			}
+		})
 	}
 }
 

@@ -28,8 +28,11 @@
     "expo-constants": "~18.0.14",
     "expo-crypto": "~15.0.9",
     "expo-device": "~8.0.10",
+    "expo-file-system": "~19.0.24",
     "expo-font": "~14.0.12",
+    "expo-image-picker": "~17.0.8",
     "expo-linking": "~8.0.12",
+    "expo-localization": "~17.0.9",
     "expo-location": "~19.0.8",
     "expo-notifications": "~0.32.17",
     "expo-router": "~6.0.24",
@@ -52,7 +55,14 @@
     "typescript": "~5.9.2"
   },
   "overrides": {
+    "decode-uri-component": "0.5.0",
     "postcss": "8.5.23",
     "uuid": "11.1.1"
-  }
+  },
+  "patchedDependencies": {
+    "query-string@7.1.3": "patches/query-string@7.1.3.patch"
+  },
+  "trustedDependencies": [
+    "react-native-libsodium"
+  ]
 }

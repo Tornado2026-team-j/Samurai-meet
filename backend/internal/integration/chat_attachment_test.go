@@ -3,6 +3,8 @@ package integration
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
@@ -11,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,24 +21,32 @@ import (
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/chat"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/httpapi"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/image"
+	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/keys"
+	"golang.org/x/crypto/curve25519"
 )
 
 const testAttachmentMaxBytes = 4096
 
 type chatAttachmentFixture struct {
-	server        *httptest.Server
-	chatService   *chat.Service
-	database      *sql.DB
-	ctx           context.Context
-	now           time.Time
-	chatID        string
-	ownerID       string
-	requesterID   string
-	ownerToken    string
-	ownerSession  string
-	requesterTok  string
-	requesterSess string
-	outsiderToken string
+	server             *httptest.Server
+	chatService        *chat.Service
+	database           *sql.DB
+	ctx                context.Context
+	now                time.Time
+	chatID             string
+	ownerID            string
+	requesterID        string
+	ownerToken         string
+	ownerSession       string
+	requesterTok       string
+	requesterSess      string
+	outsiderToken      string
+	ownerDeviceID      string
+	ownerDeviceKey     ed25519.PrivateKey
+	ownerAgreement     string
+	requesterDeviceID  string
+	requesterDeviceKey ed25519.PrivateKey
+	requesterAgreement string
 }
 
 func newChatAttachmentFixture(t *testing.T) *chatAttachmentFixture {
@@ -83,6 +94,29 @@ func newChatAttachmentFixture(t *testing.T) *chatAttachmentFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
+	devices := keys.NewDeviceService(database)
+	ownerDeviceID := "owner-" + randomID(t)
+	ownerDeviceKey := newRecoveryPrivateKey(t)
+	ownerAgreementPrivate := randomBytes(t, 32)
+	ownerAgreementPublic, err := curve25519.X25519(ownerAgreementPrivate, curve25519.Basepoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requesterDeviceID := "requester-" + randomID(t)
+	requesterDeviceKey := newRecoveryPrivateKey(t)
+	requesterAgreementPrivate := randomBytes(t, 32)
+	requesterAgreementPublic, err := curve25519.X25519(requesterAgreementPrivate, curve25519.Basepoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := devices.RegisterWithAgreement(ctx, ownerID, ownerDeviceID, keys.DeviceKeyVersion,
+		encode(ownerDeviceKey.Public().(ed25519.PublicKey)), keys.DeviceAgreementKeyVersion, encode(ownerAgreementPublic), now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := devices.RegisterWithAgreement(ctx, requesterID, requesterDeviceID, keys.DeviceKeyVersion,
+		encode(requesterDeviceKey.Public().(ed25519.PublicKey)), keys.DeviceAgreementKeyVersion, encode(requesterAgreementPublic), now); err != nil {
+		t.Fatal(err)
+	}
 	chatService := chat.NewService(database, signer).WithAttachments(store, testAttachmentMaxBytes)
 
 	session := func(userID string) auth.SessionTokens {
@@ -108,23 +142,30 @@ func newChatAttachmentFixture(t *testing.T) *chatAttachmentFixture {
 		Environment: "test",
 		Sessions:    sessions,
 		Chats:       chatService,
+		Devices:     devices,
 	}))
 	t.Cleanup(srv.Close)
 
 	return &chatAttachmentFixture{
-		server:        srv,
-		chatService:   chatService,
-		database:      database,
-		ctx:           ctx,
-		now:           now,
-		chatID:        summaries[0].ID,
-		ownerID:       ownerID,
-		requesterID:   requesterID,
-		ownerToken:    ownerTokens.AccessToken,
-		ownerSession:  ownerTokens.SessionID,
-		requesterTok:  requesterTokens.AccessToken,
-		requesterSess: requesterTokens.SessionID,
-		outsiderToken: outsiderToken,
+		server:             srv,
+		chatService:        chatService,
+		database:           database,
+		ctx:                ctx,
+		now:                now,
+		chatID:             summaries[0].ID,
+		ownerID:            ownerID,
+		requesterID:        requesterID,
+		ownerToken:         ownerTokens.AccessToken,
+		ownerSession:       ownerTokens.SessionID,
+		requesterTok:       requesterTokens.AccessToken,
+		requesterSess:      requesterTokens.SessionID,
+		outsiderToken:      outsiderToken,
+		ownerDeviceID:      ownerDeviceID,
+		ownerDeviceKey:     ownerDeviceKey,
+		ownerAgreement:     encode(ownerAgreementPublic),
+		requesterDeviceID:  requesterDeviceID,
+		requesterDeviceKey: requesterDeviceKey,
+		requesterAgreement: encode(requesterAgreementPublic),
 	}
 }
 
@@ -152,6 +193,15 @@ func TestChatAttachmentUploadReferenceAndDownload(t *testing.T) {
 	if attachmentID == "" {
 		t.Fatal("attachment id missing")
 	}
+	if status, _, _ := f.download(t, f.ownerToken, attachmentID); status != http.StatusNotFound {
+		t.Fatalf("unlinked download status = %d, want 404", status)
+	}
+	if status, _, _ := f.downloadEnvelope(t, f.ownerToken, attachmentID); status != http.StatusNotFound {
+		t.Fatalf("unlinked envelope status = %d, want 404", status)
+	}
+	if status := f.saveEnvelopes(t, f.requesterTok, attachmentID); status != http.StatusNoContent {
+		t.Fatalf("envelope save status = %d, want 204", status)
+	}
 
 	sendStatus, sent := f.sendMessage(t, f.requesterTok, map[string]any{
 		"client_message_id": "att-cmid-1",
@@ -159,10 +209,11 @@ func TestChatAttachmentUploadReferenceAndDownload(t *testing.T) {
 		"nonce":             base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{2}, 12)),
 		"algorithm":         "AES-256-GCM",
 		"key_version":       "chat-mvp-v1",
+		"content_type":      "image",
 		"attachment_id":     attachmentID,
 	})
 	if sendStatus != http.StatusCreated {
-		t.Fatalf("send status = %d, want 201", sendStatus)
+		t.Fatalf("send status = %d, want 201: %v", sendStatus, sent)
 	}
 	sentAttachment, ok := sent["attachment"].(map[string]any)
 	if !ok || sentAttachment["id"] != attachmentID {
@@ -179,6 +230,16 @@ func TestChatAttachmentUploadReferenceAndDownload(t *testing.T) {
 	}
 
 	for _, tok := range []string{f.ownerToken, f.requesterTok} {
+		envelopeStatus, envelope, envelopeHeader := f.downloadEnvelope(t, tok, attachmentID)
+		if envelopeStatus != http.StatusOK {
+			t.Fatalf("envelope status = %d", envelopeStatus)
+		}
+		if envelopeHeader.Get("X-Chat-Attachment-Key-Envelope") != "" {
+			t.Fatal("attachment envelope leaked through a response header")
+		}
+		if envelope["envelope"] == "" {
+			t.Fatal("attachment envelope missing from JSON metadata")
+		}
 		dlStatus, body, header := f.download(t, tok, attachmentID)
 		if dlStatus != http.StatusOK {
 			t.Fatalf("download status = %d", dlStatus)
@@ -209,6 +270,7 @@ func TestChatAttachmentRejectsInvalidReferences(t *testing.T) {
 		"nonce":             base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{2}, 12)),
 		"algorithm":         "AES-256-GCM",
 		"key_version":       "chat-mvp-v1",
+		"content_type":      "image",
 		"attachment_id":     randomID(t),
 	})
 	if status != http.StatusNotFound {
@@ -225,6 +287,7 @@ func TestChatAttachmentRejectsInvalidReferences(t *testing.T) {
 		"nonce":             base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{2}, 12)),
 		"algorithm":         "AES-256-GCM",
 		"key_version":       "chat-mvp-v1",
+		"content_type":      "image",
 		"attachment_id":     attachment["id"],
 	})
 	if status != http.StatusNotFound {
@@ -249,12 +312,16 @@ func TestChatAttachmentBlockedAndOrphanSweep(t *testing.T) {
 	}
 
 	_, keep, _ := f.upload(t, f.requesterTok, bytes.Repeat([]byte{0x44}, 48), nonce)
+	if status := f.saveEnvelopes(t, f.requesterTok, keep["id"].(string)); status != http.StatusNoContent {
+		t.Fatalf("keep envelope save status = %d, want 204", status)
+	}
 	f.sendMessage(t, f.requesterTok, map[string]any{
 		"client_message_id": "keep-1",
 		"ciphertext":        base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{1}, 32)),
 		"nonce":             base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{2}, 12)),
 		"algorithm":         "AES-256-GCM",
 		"key_version":       "chat-mvp-v1",
+		"content_type":      "image",
 		"attachment_id":     keep["id"],
 	})
 	if err := f.chatService.ProcessExpiredAttachments(f.ctx, 0, time.Now().Add(time.Minute)); err != nil {
@@ -285,12 +352,16 @@ func TestChatAttachmentRetentionPurge(t *testing.T) {
 
 	_, attachment, _ := f.upload(t, f.requesterTok, bytes.Repeat([]byte{0x77}, 96), nonce)
 	attachmentID := attachment["id"].(string)
+	if status := f.saveEnvelopes(t, f.requesterTok, attachmentID); status != http.StatusNoContent {
+		t.Fatalf("retention envelope save status = %d, want 204", status)
+	}
 	status, msg := f.sendMessage(t, f.requesterTok, map[string]any{
 		"client_message_id": "ret-att-1",
 		"ciphertext":        base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{1}, 32)),
 		"nonce":             base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{2}, 12)),
 		"algorithm":         "AES-256-GCM",
 		"key_version":       "chat-mvp-v1",
+		"content_type":      "image",
 		"attachment_id":     attachmentID,
 	})
 	if status != http.StatusCreated {
@@ -344,7 +415,8 @@ func (f *chatAttachmentFixture) upload(t *testing.T, token string, ciphertext []
 	req.Header.Set("X-Chat-Attachment-Content-Type", "image/jpeg")
 	req.Header.Set("X-Chat-Attachment-Nonce", nonce)
 	req.Header.Set("X-Chat-Attachment-Algorithm", "AES-256-GCM")
-	req.Header.Set("X-Chat-Attachment-Key-Version", "chat-attachment-mvp-v1")
+	req.Header.Set("X-Chat-Attachment-Key-Version", "chat-attachment-e2ee-v1")
+	f.setDeviceProof(req, token, ciphertext)
 	resp, err := f.server.Client().Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -364,6 +436,7 @@ func (f *chatAttachmentFixture) download(t *testing.T, token, attachmentID strin
 		t.Fatal(err)
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
+	f.setDeviceProof(req, token, nil)
 	resp, err := f.server.Client().Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -371,6 +444,113 @@ func (f *chatAttachmentFixture) download(t *testing.T, token, attachmentID strin
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	return resp.StatusCode, body, resp.Header
+}
+
+func (f *chatAttachmentFixture) downloadEnvelope(t *testing.T, token, attachmentID string) (int, map[string]any, http.Header) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, f.server.URL+"/api/v1/chats/"+f.chatID+"/attachments/"+attachmentID+"/envelope", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	f.setDeviceProof(req, token, nil)
+	resp, err := f.server.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var envelope struct {
+		Data struct {
+			Attachment map[string]any `json:"attachment"`
+			Envelope   string         `json:"envelope"`
+		} `json:"data"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&envelope)
+	return resp.StatusCode, map[string]any{
+		"attachment": envelope.Data.Attachment,
+		"envelope":   envelope.Data.Envelope,
+	}, resp.Header
+}
+
+func (f *chatAttachmentFixture) saveEnvelopes(t *testing.T, token, attachmentID string) int {
+	t.Helper()
+	payload := map[string]any{
+		"envelopes": []map[string]any{
+			{
+				"user_id":     f.ownerID,
+				"device_id":   f.ownerDeviceID,
+				"key_version": "x25519-v1",
+				"public_key":  f.ownerAgreement,
+				"algorithm":   "X25519-HKDF-SHA256-AES-256-GCM",
+				"envelope":    encode(bytes.Repeat([]byte{0x61}, 64)),
+			},
+			{
+				"user_id":     f.requesterID,
+				"device_id":   f.requesterDeviceID,
+				"key_version": "x25519-v1",
+				"public_key":  f.requesterAgreement,
+				"algorithm":   "X25519-HKDF-SHA256-AES-256-GCM",
+				"envelope":    encode(bytes.Repeat([]byte{0x62}, 64)),
+			},
+		},
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := http.NewRequest(http.MethodPut, f.server.URL+"/api/v1/chats/"+f.chatID+"/attachments/"+attachmentID+"/envelopes", bytes.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	f.setDeviceProof(req, token, raw)
+	resp, err := f.server.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode
+}
+
+func (f *chatAttachmentFixture) setDeviceProof(req *http.Request, token string, body []byte) {
+	var userID, deviceID string
+	var privateKey ed25519.PrivateKey
+	switch token {
+	case f.ownerToken:
+		userID, deviceID, privateKey = f.ownerID, f.ownerDeviceID, f.ownerDeviceKey
+	case f.requesterTok:
+		userID, deviceID, privateKey = f.requesterID, f.requesterDeviceID, f.requesterDeviceKey
+	default:
+		return
+	}
+	digest := sha256.Sum256(body)
+	bodyHash := encode(digest[:])
+	timestamp := time.Now().UTC().Format(time.RFC3339Nano)
+	nonce := encode(randomBytesForProof())
+	message := strings.Join([]string{
+		keys.DeviceProofDomain,
+		userID,
+		deviceID,
+		req.Method,
+		req.URL.Path,
+		timestamp,
+		nonce,
+		bodyHash,
+	}, "\n")
+	req.Header.Set("X-Photo-Device-ID", deviceID)
+	req.Header.Set("X-Device-Timestamp", timestamp)
+	req.Header.Set("X-Device-Nonce", nonce)
+	req.Header.Set("X-Device-Body-SHA256", bodyHash)
+	req.Header.Set("X-Device-Signature", encode(ed25519.Sign(privateKey, []byte(message))))
+}
+
+func randomBytesForProof() []byte {
+	nonce := make([]byte, 16)
+	if _, err := rand.Read(nonce); err != nil {
+		panic(err)
+	}
+	return nonce
 }
 
 func (f *chatAttachmentFixture) sendMessage(t *testing.T, token string, payload map[string]any) (int, map[string]any) {
@@ -402,9 +582,13 @@ func (f *chatAttachmentFixture) sendMessageRaw(t *testing.T, token string, paylo
 	}
 	defer resp.Body.Close()
 	var envelope struct {
-		Data map[string]any `json:"data"`
+		Data  map[string]any `json:"data"`
+		Error string         `json:"error"`
 	}
 	_ = json.NewDecoder(resp.Body).Decode(&envelope)
+	if envelope.Data == nil && envelope.Error != "" {
+		envelope.Data = map[string]any{"error": envelope.Error}
+	}
 	return resp.StatusCode, envelope.Data
 }
 

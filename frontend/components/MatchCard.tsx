@@ -1,22 +1,50 @@
 import { MaterialIcons } from "@expo/vector-icons";
+import { useEffect, useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
 import type { MatchCardData } from "../types/match";
+import { loadLanguage, subscribeLanguage, type AppLanguage } from "../services/onboarding";
+import { getMatchCardCopy, getMatchCardStatusLabel } from "../services/matching";
 import { Card, Pill, colors, radius, typography } from "./ui";
 import { formatTimeRange } from "../utils/time";
 
 type MatchCardProps = {
   match: MatchCardData;
   onOpen?: (match: MatchCardData) => void;
+  language?: AppLanguage;
 };
 
-export default function MatchCard({ match, onOpen }: MatchCardProps) {
-  const statusLabel = match.applicationStatus === "pending" ? "応募中"
-    : match.applicationStatus === "accepted" ? "承認済み"
-      : match.applicationStatus === "completed" ? "完了"
-        : match.applicationStatus ? "結果確定" : null;
+function useSelectedAppLanguage(explicitLanguage?: AppLanguage): AppLanguage {
+  const [storedLanguage, setStoredLanguage] = useState<AppLanguage>(explicitLanguage ?? "ja");
+
+  useEffect(() => {
+    if (explicitLanguage) {
+      setStoredLanguage(explicitLanguage);
+      return;
+    }
+
+    let active = true;
+    const unsubscribe = subscribeLanguage((nextLanguage) => {
+      if (active && nextLanguage) setStoredLanguage(nextLanguage);
+    });
+    void loadLanguage().then((nextLanguage) => {
+      if (active && nextLanguage) setStoredLanguage(nextLanguage);
+    }).catch(() => undefined);
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [explicitLanguage]);
+
+  return explicitLanguage ?? storedLanguage;
+}
+
+export default function MatchCard({ match, onOpen, language: explicitLanguage }: MatchCardProps) {
+  const language = useSelectedAppLanguage(explicitLanguage);
+  const copy = getMatchCardCopy(language);
+  const statusLabel = getMatchCardStatusLabel(match.applicationStatus, language);
   return (
     <Card
-      accessibilityLabel={`${match.authorName}の募集詳細を開く`}
+      accessibilityLabel={copy.openDetails(match.authorName)}
       accessibilityRole={onOpen ? "button" : undefined}
       disabled={!onOpen}
       onPress={onOpen ? () => onOpen(match) : undefined}
@@ -36,11 +64,11 @@ export default function MatchCard({ match, onOpen }: MatchCardProps) {
 
       <View style={styles.details}>
         <Text numberOfLines={1} style={styles.detailLine}>
-          <Text style={styles.detailLabel}>Date</Text>
+          <Text style={styles.detailLabel}>{copy.date}</Text>
           {`   ${match.date}`}
         </Text>
         <Text numberOfLines={1} style={styles.detailLine}>
-          <Text style={styles.detailLabel}>Time</Text>
+          <Text style={styles.detailLabel}>{copy.time}</Text>
           {`   ${formatTimeRange(match.startTime, match.durationHours)}`}
         </Text>
       </View>
@@ -56,8 +84,8 @@ export default function MatchCard({ match, onOpen }: MatchCardProps) {
       <View style={styles.footer}>
         {match.locationName ? <View style={styles.locationRow}><MaterialIcons color={colors.text.muted} name="place" size={12} /><Text numberOfLines={1} style={styles.locationText}>{match.locationName}</Text></View> : <View style={styles.footerSpacer} />}
         <View style={styles.footerMeta}>
-          {match.isToday ? <Text style={styles.today}>今日</Text> : null}
-          <Text style={styles.expiry}>{match.expiresAt}まで</Text>
+          {match.isToday ? <Text style={styles.today}>{copy.today}</Text> : null}
+          <Text style={styles.expiry}>{copy.expiry(match.expiresAt)}</Text>
         </View>
       </View>
     </Card>

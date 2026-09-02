@@ -24,7 +24,7 @@ type PlanTab = "today" | "upcoming" | "past";
 
 const COPY = {
   ja: {
-    title: "Plans",
+    title: "予定",
     tabs: { today: "今日", upcoming: "今後", past: "過去" },
     loading: "予定を読み込み中...",
     loadError: "予定を読み込めませんでした。",

@@ -6,12 +6,30 @@ import { argon2idAsync } from '@noble/hashes/argon2.js';
 import { hkdf } from '@noble/hashes/hkdf.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
+import { ensureChatAttachmentEncryptionAvailable, secureRandomBytes } from './runtime-crypto';
+
+export {
+  ChatAttachmentCryptoUnavailableError,
+  canUseChatAttachmentEncryption,
+  ensureChatAttachmentEncryptionAvailable,
+  isChatAttachmentCryptoUnavailable,
+} from './runtime-crypto';
 
 // The API path remains /api/v1 for now, but the client-owned root-key
 // protocol is intentionally v2-only. There is no legacy recovery fallback.
 export const KEY_VERSION = 'v2';
 export const DEVICE_AGREEMENT_KEY_VERSION = 'x25519-v1';
 export const DEVICE_TRANSFER_ALGORITHM = 'X25519-HKDF-SHA256-AES-256-GCM';
+export const CHAT_MESSAGE_ALGORITHM = 'AES-256-GCM';
+export const CHAT_MESSAGE_KEY_VERSION = 'chat-dek-v1';
+export const CHAT_ACCOUNT_KEY_ENVELOPE_VERSION = 'chat-account-v1';
+export const CHAT_DEVICE_KEY_ENVELOPE_VERSION = 'x25519-v1';
+export const CHAT_ACCOUNT_KEY_WRAPPING_ALGORITHM = 'AES-256-GCM';
+export const CHAT_DEVICE_KEY_WRAPPING_ALGORITHM = 'X25519-HKDF-SHA256-AES-256-GCM';
+export const CHAT_ATTACHMENT_ALGORITHM = 'AES-256-GCM';
+export const CHAT_ATTACHMENT_KEY_VERSION = 'chat-attachment-e2ee-v1';
+export const CHAT_ATTACHMENT_WRAPPING_ALGORITHM = 'X25519-HKDF-SHA256-AES-256-GCM';
+export const CHAT_ATTACHMENT_MAX_BYTES = 20 * 1024 * 1024;
 const KEY_BYTES = 32;
 const NONCE_BYTES = 12;
 const SALT_BYTES = 16;
@@ -22,6 +40,9 @@ const IMAGE_KEY_WRAP_INFO = utf8ToBytes('samurai-meet/image-key-wrap/v1');
 const IMAGE_KEY_WRAP_DOMAIN = 'samurai-meet:image-key-wrap/v1';
 const RECOVERY_PHRASE_INFO = utf8ToBytes(RECOVERY_PHRASE_INFO_TEXT);
 const DEVICE_TRANSFER_INFO = utf8ToBytes('samurai-meet/device-transfer/v1');
+const CHAT_ACCOUNT_KEY_WRAP_INFO = utf8ToBytes('samurai-meet/chat-key/account-wrap/v1');
+const CHAT_DEVICE_KEY_WRAP_INFO = utf8ToBytes('samurai-meet/chat-key/device-wrap/v1');
+const CHAT_ATTACHMENT_WRAP_INFO = utf8ToBytes('samurai-meet/chat-attachment-wrap/v1');
 export const ARGON2ID_DEFAULTS = {
   memory_kib: 32 * 1024,
   iterations: 3,
@@ -63,8 +84,23 @@ export type EncryptedPhotoMaterial = {
   wrappingAlgorithm: string;
 };
 
+export type ChatAttachmentContentType = 'image/jpeg' | 'image/png' | 'image/webp';
+
+export type EncryptedChatAttachment = {
+  ciphertext: Uint8Array;
+  imageKey: Uint8Array;
+  nonce: string;
+  algorithm: typeof CHAT_ATTACHMENT_ALGORITHM;
+  keyVersion: typeof CHAT_ATTACHMENT_KEY_VERSION;
+  contentType: ChatAttachmentContentType;
+};
+
 export async function randomBytes(length: number): Promise<Uint8Array> {
-  return expoRandomBytes(length);
+  return secureRandomBytes(length);
+}
+
+async function expoRandomBytes(length: number): Promise<Uint8Array> {
+  return secureRandomBytes(length);
 }
 
 export async function createKeyMaterial(
@@ -210,6 +246,249 @@ export function deriveAccountImageWrappingKey(keyA: Uint8Array, dataSalt: string
   return hkdf(sha256, keyA, salt, IMAGE_KEY_WRAP_INFO, KEY_BYTES);
 }
 
+/** Derives the account-scoped wrapping key for one chat's random DEK. */
+function deriveChatAccountWrappingKey(accountDataKey: Uint8Array, userID: string, chatID: string): Uint8Array {
+  if (accountDataKey.length !== KEY_BYTES || !userID || !chatID) throw new Error('Invalid chat account key');
+  const salt = sha256(utf8ToBytes(`samurai-meet:chat-account-key-binding/v1\n${userID}\n${chatID}`));
+  try {
+    return hkdf(sha256, accountDataKey, salt, CHAT_ACCOUNT_KEY_WRAP_INFO, KEY_BYTES);
+  } finally {
+    salt.fill(0);
+  }
+}
+
+/** Wraps a random chat DEK with the stable account root-derived data key. */
+export async function wrapChatKeyForAccount(
+  chatKey: Uint8Array,
+  accountDataKey: Uint8Array,
+  userID: string,
+  chatID: string,
+  randomBytes: RandomBytes = expoRandomBytes,
+): Promise<string> {
+  if (chatKey.length !== KEY_BYTES || accountDataKey.length !== KEY_BYTES || !userID || !chatID) {
+    throw new Error('Invalid chat account key envelope');
+  }
+  const nonce = await randomBytes(NONCE_BYTES);
+  if (nonce.length !== NONCE_BYTES) {
+    nonce.fill(0);
+    throw new Error('Invalid chat account key randomness');
+  }
+  const wrappingKey = deriveChatAccountWrappingKey(accountDataKey, userID, chatID);
+  const nonceEncoded = toBase64URL(nonce);
+  try {
+    const ciphertext = gcm(
+      wrappingKey,
+      nonce,
+      chatAccountKeyEnvelopeAAD(userID, chatID),
+    ).encrypt(chatKey);
+    return toBase64URL(utf8ToBytes(JSON.stringify({
+      algorithm: CHAT_ACCOUNT_KEY_WRAPPING_ALGORITHM,
+      key_version: CHAT_ACCOUNT_KEY_ENVELOPE_VERSION,
+      content_key_version: CHAT_MESSAGE_KEY_VERSION,
+      version: 1,
+      user_id: userID,
+      chat_id: chatID,
+      nonce: nonceEncoded,
+      ciphertext: toBase64URL(ciphertext),
+    })));
+  } finally {
+    nonce.fill(0);
+    wrappingKey.fill(0);
+  }
+}
+
+/** Unwraps the account envelope for one exact user/chat pair. */
+export function unwrapChatKeyForAccount(
+  envelopeEncoded: string,
+  accountDataKey: Uint8Array,
+  userID: string,
+  chatID: string,
+): Uint8Array {
+  if (accountDataKey.length !== KEY_BYTES || !userID || !chatID) throw new Error('Invalid chat account key envelope');
+  const parsed: unknown = JSON.parse(new TextDecoder().decode(fromBase64URL(envelopeEncoded)));
+  if (!parsed || typeof parsed !== 'object') throw new Error('Invalid chat account key envelope');
+  const envelope = parsed as {
+    algorithm?: unknown;
+    key_version?: unknown;
+    content_key_version?: unknown;
+    version?: unknown;
+    user_id?: unknown;
+    chat_id?: unknown;
+    nonce?: unknown;
+    ciphertext?: unknown;
+  };
+  if (envelope.algorithm !== CHAT_ACCOUNT_KEY_WRAPPING_ALGORITHM
+    || envelope.key_version !== CHAT_ACCOUNT_KEY_ENVELOPE_VERSION
+    || envelope.content_key_version !== CHAT_MESSAGE_KEY_VERSION
+    || envelope.version !== 1
+    || envelope.user_id !== userID
+    || envelope.chat_id !== chatID
+    || typeof envelope.nonce !== 'string'
+    || typeof envelope.ciphertext !== 'string') {
+    throw new Error('Invalid chat account key envelope');
+  }
+  const nonce = fromBase64URL(envelope.nonce);
+  const ciphertext = fromBase64URL(envelope.ciphertext);
+  if (nonce.length !== NONCE_BYTES || ciphertext.length !== KEY_BYTES + 16) {
+    nonce.fill(0);
+    ciphertext.fill(0);
+    throw new Error('Invalid chat account key envelope');
+  }
+  const wrappingKey = deriveChatAccountWrappingKey(accountDataKey, userID, chatID);
+  try {
+    return gcm(wrappingKey, nonce, chatAccountKeyEnvelopeAAD(userID, chatID)).decrypt(ciphertext);
+  } finally {
+    nonce.fill(0);
+    ciphertext.fill(0);
+    wrappingKey.fill(0);
+  }
+}
+
+/** Wraps one chat DEK for a registered device's X25519 agreement key. */
+export async function wrapChatKeyForDevice(
+  chatKey: Uint8Array,
+  recipientPublicKey: string,
+  chatID: string,
+  recipientUserID: string,
+  recipientDeviceID: string,
+  randomBytes: RandomBytes = expoRandomBytes,
+): Promise<string> {
+  if (chatKey.length !== KEY_BYTES || !chatID || !recipientUserID || !recipientDeviceID) {
+    throw new Error('Invalid chat device key envelope');
+  }
+  const recipientBytes = fromBase64URL(recipientPublicKey);
+  if (recipientBytes.length !== KEY_BYTES) {
+    recipientBytes.fill(0);
+    throw new Error('Invalid chat device recipient key');
+  }
+  const ephemeralPrivateKey = await randomBytes(KEY_BYTES);
+  if (ephemeralPrivateKey.length !== KEY_BYTES) {
+    recipientBytes.fill(0);
+    ephemeralPrivateKey.fill(0);
+    throw new Error('Invalid chat device key randomness');
+  }
+  const ephemeralPublicKey = x25519.getPublicKey(ephemeralPrivateKey);
+  const ephemeralPublicEncoded = toBase64URL(ephemeralPublicKey);
+  const recipientEncoded = toBase64URL(recipientBytes);
+  const sharedSecret = x25519.getSharedSecret(ephemeralPrivateKey, recipientBytes);
+  const salt = sha256(chatDeviceKeyEnvelopeBinding(chatID, recipientUserID, recipientDeviceID, recipientEncoded));
+  const wrappingKey = hkdf(sha256, sharedSecret, salt, CHAT_DEVICE_KEY_WRAP_INFO, KEY_BYTES);
+  const nonce = await randomBytes(NONCE_BYTES);
+  if (nonce.length !== NONCE_BYTES) {
+    recipientBytes.fill(0);
+    ephemeralPrivateKey.fill(0);
+    sharedSecret.fill(0);
+    salt.fill(0);
+    wrappingKey.fill(0);
+    nonce.fill(0);
+    throw new Error('Invalid chat device key randomness');
+  }
+  const nonceEncoded = toBase64URL(nonce);
+  try {
+    const ciphertext = gcm(
+      wrappingKey,
+      nonce,
+      chatDeviceKeyEnvelopeAAD(chatID, recipientUserID, recipientDeviceID, ephemeralPublicEncoded, recipientEncoded),
+    ).encrypt(chatKey);
+    return toBase64URL(utf8ToBytes(JSON.stringify({
+      algorithm: CHAT_DEVICE_KEY_WRAPPING_ALGORITHM,
+      key_version: CHAT_DEVICE_KEY_ENVELOPE_VERSION,
+      content_key_version: CHAT_MESSAGE_KEY_VERSION,
+      version: 1,
+      chat_id: chatID,
+      recipient_user_id: recipientUserID,
+      recipient_device_id: recipientDeviceID,
+      ephemeral_public_key: ephemeralPublicEncoded,
+      recipient_public_key: recipientEncoded,
+      nonce: nonceEncoded,
+      ciphertext: toBase64URL(ciphertext),
+    })));
+  } finally {
+    recipientBytes.fill(0);
+    ephemeralPrivateKey.fill(0);
+    sharedSecret.fill(0);
+    salt.fill(0);
+    wrappingKey.fill(0);
+    nonce.fill(0);
+  }
+}
+
+/** Unwraps a device envelope only when every identity binding matches. */
+export function unwrapChatKeyForDevice(
+  envelopeEncoded: string,
+  privateKey: Uint8Array,
+  chatID: string,
+  recipientUserID: string,
+  recipientDeviceID: string,
+): Uint8Array {
+  if (privateKey.length !== KEY_BYTES || !chatID || !recipientUserID || !recipientDeviceID) {
+    throw new Error('Invalid chat device key envelope');
+  }
+  const parsed: unknown = JSON.parse(new TextDecoder().decode(fromBase64URL(envelopeEncoded)));
+  if (!parsed || typeof parsed !== 'object') throw new Error('Invalid chat device key envelope');
+  const envelope = parsed as {
+    algorithm?: unknown;
+    key_version?: unknown;
+    content_key_version?: unknown;
+    version?: unknown;
+    chat_id?: unknown;
+    recipient_user_id?: unknown;
+    recipient_device_id?: unknown;
+    ephemeral_public_key?: unknown;
+    recipient_public_key?: unknown;
+    nonce?: unknown;
+    ciphertext?: unknown;
+  };
+  if (envelope.algorithm !== CHAT_DEVICE_KEY_WRAPPING_ALGORITHM
+    || envelope.key_version !== CHAT_DEVICE_KEY_ENVELOPE_VERSION
+    || envelope.content_key_version !== CHAT_MESSAGE_KEY_VERSION
+    || envelope.version !== 1
+    || envelope.chat_id !== chatID
+    || envelope.recipient_user_id !== recipientUserID
+    || envelope.recipient_device_id !== recipientDeviceID
+    || typeof envelope.ephemeral_public_key !== 'string'
+    || typeof envelope.recipient_public_key !== 'string'
+    || typeof envelope.nonce !== 'string'
+    || typeof envelope.ciphertext !== 'string') {
+    throw new Error('Invalid chat device key envelope');
+  }
+  const ephemeralPublicKey = fromBase64URL(envelope.ephemeral_public_key);
+  const recipientPublicKey = fromBase64URL(envelope.recipient_public_key);
+  const nonce = fromBase64URL(envelope.nonce);
+  const ciphertext = fromBase64URL(envelope.ciphertext);
+  const expectedRecipientPublicKey = x25519.getPublicKey(privateKey);
+  if (ephemeralPublicKey.length !== KEY_BYTES
+    || recipientPublicKey.length !== KEY_BYTES
+    || nonce.length !== NONCE_BYTES
+    || ciphertext.length !== KEY_BYTES + 16
+    || !constantTimeEqual(recipientPublicKey, expectedRecipientPublicKey)) {
+    ephemeralPublicKey.fill(0);
+    recipientPublicKey.fill(0);
+    nonce.fill(0);
+    ciphertext.fill(0);
+    throw new Error('Invalid chat device key envelope');
+  }
+  const recipientEncoded = toBase64URL(recipientPublicKey);
+  const sharedSecret = x25519.getSharedSecret(privateKey, ephemeralPublicKey);
+  const salt = sha256(chatDeviceKeyEnvelopeBinding(chatID, recipientUserID, recipientDeviceID, recipientEncoded));
+  const wrappingKey = hkdf(sha256, sharedSecret, salt, CHAT_DEVICE_KEY_WRAP_INFO, KEY_BYTES);
+  try {
+    return gcm(
+      wrappingKey,
+      nonce,
+      chatDeviceKeyEnvelopeAAD(chatID, recipientUserID, recipientDeviceID, envelope.ephemeral_public_key, recipientEncoded),
+    ).decrypt(ciphertext);
+  } finally {
+    ephemeralPublicKey.fill(0);
+    recipientPublicKey.fill(0);
+    nonce.fill(0);
+    ciphertext.fill(0);
+    sharedSecret.fill(0);
+    salt.fill(0);
+    wrappingKey.fill(0);
+  }
+}
+
 export function devicePublicKey(keyB: Uint8Array): string {
   if (keyB.length !== KEY_BYTES) throw new Error('Invalid Key-B');
   return toBase64URL(ed25519.getPublicKey(keyB));
@@ -217,6 +496,233 @@ export function devicePublicKey(keyB: Uint8Array): string {
 
 export function hashBytes(value: Uint8Array): string {
   return toBase64URL(sha256(value));
+}
+
+export function hashBytesHex(value: Uint8Array): string {
+  return Array.from(sha256(value), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * Encrypts a chat image locally with a fresh random content key. The content
+ * key is returned only to the caller so it can create recipient envelopes;
+ * this function never sends it anywhere.
+ */
+export async function encryptChatAttachmentBytes(
+  plaintext: Uint8Array,
+  contentType: ChatAttachmentContentType,
+  chatID: string,
+  randomBytes: RandomBytes = expoRandomBytes,
+): Promise<EncryptedChatAttachment> {
+  if (!isChatAttachmentContentType(contentType) || !chatID || plaintext.length > CHAT_ATTACHMENT_MAX_BYTES - 16) {
+    throw new Error('Invalid chat attachment');
+  }
+  const imageKey = await randomBytes(KEY_BYTES);
+  const nonce = await randomBytes(NONCE_BYTES);
+  if (imageKey.length !== KEY_BYTES || nonce.length !== NONCE_BYTES) {
+    imageKey.fill(0);
+    nonce.fill(0);
+    throw new Error('Invalid chat attachment randomness');
+  }
+  const nonceEncoded = toBase64URL(nonce);
+  try {
+    return {
+      ciphertext: gcm(imageKey, nonce, chatAttachmentAAD(chatID, contentType, nonceEncoded)).encrypt(plaintext),
+      imageKey,
+      nonce: nonceEncoded,
+      algorithm: CHAT_ATTACHMENT_ALGORITHM,
+      keyVersion: CHAT_ATTACHMENT_KEY_VERSION,
+      contentType,
+    };
+  } finally {
+    nonce.fill(0);
+  }
+}
+
+/**
+ * Wraps one image content key for one registered device. The recipient's
+ * X25519 public key is the only remote key material used; the recipient's
+ * private key and the sender's Key-B private key never leave their devices.
+ */
+export async function wrapChatAttachmentKey(
+  imageKey: Uint8Array,
+  recipientPublicKey: string,
+  chatID: string,
+  attachmentID: string,
+  recipientDeviceID: string,
+  cipherSHA256: string,
+  attachmentNonce: string,
+  randomBytes: RandomBytes = expoRandomBytes,
+): Promise<string> {
+  if (imageKey.length !== KEY_BYTES || !chatID || !attachmentID || !recipientDeviceID
+    || !/^[0-9a-f]{64}$/u.test(cipherSHA256)) {
+    throw new Error('Invalid chat attachment envelope');
+  }
+  const attachmentNonceBytes = fromBase64URL(attachmentNonce);
+  if (attachmentNonceBytes.length !== NONCE_BYTES || toBase64URL(attachmentNonceBytes) !== attachmentNonce) {
+    attachmentNonceBytes.fill(0);
+    throw new Error('Invalid chat attachment envelope');
+  }
+  const recipientBytes = fromBase64URL(recipientPublicKey);
+  if (recipientBytes.length !== KEY_BYTES) {
+    attachmentNonceBytes.fill(0);
+    throw new Error('Invalid chat attachment recipient key');
+  }
+
+  const ephemeralPrivateKey = await randomBytes(KEY_BYTES);
+  if (ephemeralPrivateKey.length !== KEY_BYTES) {
+    attachmentNonceBytes.fill(0);
+    ephemeralPrivateKey.fill(0);
+    throw new Error('Invalid chat attachment randomness');
+  }
+  const ephemeralPublicKey = x25519.getPublicKey(ephemeralPrivateKey);
+  const ephemeralPublicEncoded = toBase64URL(ephemeralPublicKey);
+  const recipientEncoded = toBase64URL(recipientBytes);
+  const sharedSecret = x25519.getSharedSecret(ephemeralPrivateKey, recipientBytes);
+  const salt = sha256(chatAttachmentEnvelopeBinding(chatID, attachmentID, recipientDeviceID, recipientEncoded, cipherSHA256, attachmentNonce));
+  const wrappingKey = hkdf(sha256, sharedSecret, salt, CHAT_ATTACHMENT_WRAP_INFO, KEY_BYTES);
+  const nonce = await randomBytes(NONCE_BYTES);
+  if (nonce.length !== NONCE_BYTES) {
+    attachmentNonceBytes.fill(0);
+    ephemeralPrivateKey.fill(0);
+    sharedSecret.fill(0);
+    salt.fill(0);
+    wrappingKey.fill(0);
+    throw new Error('Invalid chat attachment randomness');
+  }
+  const nonceEncoded = toBase64URL(nonce);
+  try {
+    const ciphertext = gcm(
+      wrappingKey,
+      nonce,
+      chatAttachmentEnvelopeAAD(chatID, attachmentID, recipientDeviceID, ephemeralPublicEncoded, recipientEncoded, cipherSHA256, attachmentNonce),
+    ).encrypt(imageKey);
+    return toBase64URL(utf8ToBytes(JSON.stringify({
+      algorithm: CHAT_ATTACHMENT_WRAPPING_ALGORITHM,
+      key_version: CHAT_ATTACHMENT_KEY_VERSION,
+      version: 1,
+      chat_id: chatID,
+      attachment_id: attachmentID,
+      recipient_device_id: recipientDeviceID,
+      ephemeral_public_key: ephemeralPublicEncoded,
+      recipient_public_key: recipientEncoded,
+      cipher_sha256: cipherSHA256,
+      attachment_nonce: attachmentNonce,
+      nonce: nonceEncoded,
+      ciphertext: toBase64URL(ciphertext),
+    })));
+  } finally {
+    attachmentNonceBytes.fill(0);
+    ephemeralPrivateKey.fill(0);
+    sharedSecret.fill(0);
+    salt.fill(0);
+    wrappingKey.fill(0);
+    nonce.fill(0);
+  }
+}
+
+/** Unwraps an attachment key only for the matching local agreement key. */
+export function unwrapChatAttachmentKey(
+  envelopeEncoded: string,
+  privateKey: Uint8Array,
+  chatID: string,
+  attachmentID: string,
+  recipientDeviceID: string,
+  cipherSHA256: string,
+  attachmentNonce: string,
+): Uint8Array {
+  if (privateKey.length !== KEY_BYTES || !chatID || !attachmentID || !recipientDeviceID
+    || !/^[0-9a-f]{64}$/u.test(cipherSHA256)) {
+    throw new Error('Invalid chat attachment envelope');
+  }
+  const expectedAttachmentNonce = fromBase64URL(attachmentNonce);
+  if (expectedAttachmentNonce.length !== NONCE_BYTES || toBase64URL(expectedAttachmentNonce) !== attachmentNonce) {
+    expectedAttachmentNonce.fill(0);
+    throw new Error('Invalid chat attachment envelope');
+  }
+  const parsed: unknown = JSON.parse(new TextDecoder().decode(fromBase64URL(envelopeEncoded)));
+  if (!parsed || typeof parsed !== 'object') throw new Error('Invalid chat attachment envelope');
+  const candidate = parsed as {
+    algorithm?: unknown;
+    key_version?: unknown;
+    version?: unknown;
+    chat_id?: unknown;
+    attachment_id?: unknown;
+    recipient_device_id?: unknown;
+    ephemeral_public_key?: unknown;
+    recipient_public_key?: unknown;
+    cipher_sha256?: unknown;
+    attachment_nonce?: unknown;
+    nonce?: unknown;
+    ciphertext?: unknown;
+  };
+  if (candidate.algorithm !== CHAT_ATTACHMENT_WRAPPING_ALGORITHM
+    || candidate.key_version !== CHAT_ATTACHMENT_KEY_VERSION
+    || candidate.version !== 1
+    || candidate.chat_id !== chatID
+    || candidate.attachment_id !== attachmentID
+    || candidate.recipient_device_id !== recipientDeviceID
+    || typeof candidate.ephemeral_public_key !== 'string'
+    || typeof candidate.recipient_public_key !== 'string'
+    || candidate.cipher_sha256 !== cipherSHA256
+    || candidate.attachment_nonce !== attachmentNonce
+    || typeof candidate.nonce !== 'string'
+    || typeof candidate.ciphertext !== 'string') {
+    expectedAttachmentNonce.fill(0);
+    throw new Error('Invalid chat attachment envelope');
+  }
+
+  const ephemeralPublicKey = fromBase64URL(candidate.ephemeral_public_key);
+  const recipientPublicKey = fromBase64URL(candidate.recipient_public_key);
+  const nonce = fromBase64URL(candidate.nonce);
+  const ciphertext = fromBase64URL(candidate.ciphertext);
+  const expectedRecipientPublicKey = x25519.getPublicKey(privateKey);
+  if (ephemeralPublicKey.length !== KEY_BYTES
+    || recipientPublicKey.length !== KEY_BYTES
+    || nonce.length !== NONCE_BYTES
+    || ciphertext.length !== KEY_BYTES + 16
+    || !constantTimeEqual(recipientPublicKey, expectedRecipientPublicKey)) {
+    expectedAttachmentNonce.fill(0);
+    throw new Error('Invalid chat attachment envelope');
+  }
+
+  const ephemeralPublicEncoded = toBase64URL(ephemeralPublicKey);
+  const recipientEncoded = toBase64URL(recipientPublicKey);
+  const sharedSecret = x25519.getSharedSecret(privateKey, ephemeralPublicKey);
+  const salt = sha256(chatAttachmentEnvelopeBinding(chatID, attachmentID, recipientDeviceID, recipientEncoded, cipherSHA256, attachmentNonce));
+  const wrappingKey = hkdf(sha256, sharedSecret, salt, CHAT_ATTACHMENT_WRAP_INFO, KEY_BYTES);
+  try {
+    return gcm(
+      wrappingKey,
+      nonce,
+      chatAttachmentEnvelopeAAD(chatID, attachmentID, recipientDeviceID, ephemeralPublicEncoded, recipientEncoded, cipherSHA256, attachmentNonce),
+    ).decrypt(ciphertext);
+  } finally {
+    expectedAttachmentNonce.fill(0);
+    sharedSecret.fill(0);
+    salt.fill(0);
+    wrappingKey.fill(0);
+  }
+}
+
+export function decryptChatAttachmentBytes(
+  ciphertext: Uint8Array,
+  nonceEncoded: string,
+  imageKey: Uint8Array,
+  contentType: ChatAttachmentContentType,
+  chatID: string,
+): Uint8Array {
+  if (imageKey.length !== KEY_BYTES || !isChatAttachmentContentType(contentType) || !chatID) {
+    throw new Error('Invalid chat attachment');
+  }
+  const nonce = fromBase64URL(nonceEncoded);
+  if (nonce.length !== NONCE_BYTES || ciphertext.length < 16 || ciphertext.length > CHAT_ATTACHMENT_MAX_BYTES) {
+    throw new Error('Invalid chat attachment');
+  }
+  return gcm(imageKey, nonce, chatAttachmentAAD(chatID, contentType, nonceEncoded)).decrypt(ciphertext);
+}
+
+export function isChatAttachmentContentType(value: string): value is ChatAttachmentContentType {
+  return value === 'image/jpeg' || value === 'image/png' || value === 'image/webp';
 }
 
 export async function encryptPhotoBytes(
@@ -394,7 +900,7 @@ export function unwrapMasterKeyForDevice(
   const nonce = fromBase64URL(envelope.nonce);
   const ciphertext = fromBase64URL(envelope.ciphertext);
   const expectedPublicKey = x25519.getPublicKey(privateKey);
-  if (ephemeralPublicKey.length !== KEY_BYTES || recipientPublicKey.length !== KEY_BYTES || nonce.length !== NONCE_BYTES || ciphertext.length < KEY_BYTES + 16 || !constantTimeEqual(recipientPublicKey, expectedPublicKey)) throw new Error('Invalid wrapped Master Key');
+  if (ephemeralPublicKey.length !== KEY_BYTES || recipientPublicKey.length !== KEY_BYTES || nonce.length !== NONCE_BYTES || ciphertext.length !== KEY_BYTES + 16 || !constantTimeEqual(recipientPublicKey, expectedPublicKey)) throw new Error('Invalid wrapped Master Key');
   const sharedSecret = x25519.getSharedSecret(privateKey, ephemeralPublicKey);
   const recipientEncoded = toBase64URL(recipientPublicKey);
   const salt = sha256(deviceTransferBinding(transferID, targetDeviceID, recipientEncoded));
@@ -406,6 +912,12 @@ export function toBase64URL(bytes: Uint8Array): string {
   let binary = '';
   bytes.forEach((value) => { binary += String.fromCharCode(value); });
   return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');
+}
+
+export function toBase64(bytes: Uint8Array): string {
+  let binary = '';
+  bytes.forEach((value) => { binary += String.fromCharCode(value); });
+  return btoa(binary);
 }
 
 export function fromBase64URL(value: string): Uint8Array {
@@ -420,11 +932,6 @@ function constantTimeEqual(left: Uint8Array, right: Uint8Array): boolean {
   let difference = 0;
   for (let index = 0; index < left.length; index += 1) difference |= (left[index] ?? 0) ^ (right[index] ?? 0);
   return difference === 0;
-}
-
-async function expoRandomBytes(length: number): Promise<Uint8Array> {
-  const Crypto = await import('expo-crypto');
-  return Crypto.getRandomBytesAsync(length);
 }
 
 type NativeSodiumModule = typeof import('react-native-libsodium');
@@ -528,6 +1035,51 @@ function deviceTransferBinding(transferID: string, targetDeviceID: string, recip
 
 function deviceTransferAAD(transferID: string, targetDeviceID: string, ephemeralPublicKey: string, recipientPublicKey: string): Uint8Array {
   return utf8ToBytes(`samurai-meet:device-transfer/v1\n${transferID}\n${targetDeviceID}\n${ephemeralPublicKey}\n${recipientPublicKey}`);
+}
+
+function chatAccountKeyEnvelopeAAD(userID: string, chatID: string): Uint8Array {
+  return utf8ToBytes(`samurai-meet:chat-account-key-envelope/v1\n${userID}\n${chatID}\n${CHAT_ACCOUNT_KEY_ENVELOPE_VERSION}\n${CHAT_MESSAGE_KEY_VERSION}`);
+}
+
+function chatDeviceKeyEnvelopeBinding(chatID: string, recipientUserID: string, recipientDeviceID: string, recipientPublicKey: string): Uint8Array {
+  return utf8ToBytes(`samurai-meet:chat-device-key-envelope-binding/v1\n${chatID}\n${recipientUserID}\n${recipientDeviceID}\n${recipientPublicKey}\n${CHAT_MESSAGE_KEY_VERSION}`);
+}
+
+function chatDeviceKeyEnvelopeAAD(
+  chatID: string,
+  recipientUserID: string,
+  recipientDeviceID: string,
+  ephemeralPublicKey: string,
+  recipientPublicKey: string,
+): Uint8Array {
+  return utf8ToBytes(`samurai-meet:chat-device-key-envelope/v1\n${chatID}\n${recipientUserID}\n${recipientDeviceID}\n${ephemeralPublicKey}\n${recipientPublicKey}\n${CHAT_MESSAGE_KEY_VERSION}`);
+}
+
+function chatAttachmentAAD(chatID: string, contentType: ChatAttachmentContentType, nonce: string): Uint8Array {
+  return utf8ToBytes(`samurai-meet:chat-attachment/v1\n${chatID}\n${contentType}\n${CHAT_ATTACHMENT_KEY_VERSION}\n${nonce}`);
+}
+
+function chatAttachmentEnvelopeBinding(
+  chatID: string,
+  attachmentID: string,
+  recipientDeviceID: string,
+  recipientPublicKey: string,
+  cipherSHA256: string,
+  attachmentNonce: string,
+): Uint8Array {
+  return utf8ToBytes(`samurai-meet:chat-attachment-envelope-binding/v2\n${chatID}\n${attachmentID}\n${recipientDeviceID}\n${recipientPublicKey}\n${cipherSHA256}\n${attachmentNonce}`);
+}
+
+function chatAttachmentEnvelopeAAD(
+  chatID: string,
+  attachmentID: string,
+  recipientDeviceID: string,
+  ephemeralPublicKey: string,
+  recipientPublicKey: string,
+  cipherSHA256: string,
+  attachmentNonce: string,
+): Uint8Array {
+  return utf8ToBytes(`samurai-meet:chat-attachment-envelope/v2\n${chatID}\n${attachmentID}\n${recipientDeviceID}\n${ephemeralPublicKey}\n${recipientPublicKey}\n${cipherSHA256}\n${attachmentNonce}`);
 }
 
 async function wrapImageKey(

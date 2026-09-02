@@ -21,7 +21,7 @@ const SOFT_BLUE = "#eff8ff";
 
 const COPY = {
   ja: {
-    title: "Monsters",
+    title: "コレクション",
     loading: "読み込み中…",
     emptyTitle: "プロフィール情報がまだありません",
     emptyBody: "プロフィール設定で得意なこと・好きなことを登録すると、ここに表示されます。",
@@ -31,7 +31,7 @@ const COPY = {
     notSet: "未設定",
   },
   en: {
-    title: "Monsters",
+    title: "Collection",
     loading: "Loading…",
     emptyTitle: "No profile details yet",
     emptyBody: "Add your skills and interests from Profile to see them here.",

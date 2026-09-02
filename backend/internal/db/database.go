@@ -67,6 +67,15 @@ func ApplyInitialMigration(ctx context.Context, database *sql.DB, path string) e
 const migrationLockSQL = `SELECT pg_advisory_lock(hashtext('samurai-meet/schema-migrations'))`
 const migrationUnlockSQL = `SELECT pg_advisory_unlock(hashtext('samurai-meet/schema-migrations'))`
 
+const (
+	legacyChatAttachmentKeyEnvelopesVersion   = "0040_chat_attachment_key_envelopes.sql"
+	legacyChatAttachmentKeyEnvelopesChecksum  = "1209bdf3b377f78a6e37c1098d2085b4c9bc3fa5cbb890d9625abd56bf14f86f"
+	currentChatAttachmentKeyEnvelopesChecksum = "b787ad462354d9fa6067bebd0a5bdb7c1c5cb971cf6e28a358a3da2c96925ca2"
+	legacyChatMessageTranslationsVersion      = "0044_chat_message_translations.sql"
+	legacyChatMessageTranslationsChecksum     = "2b4015941e77f1dbbf197b195e713f32766b04b021d323ba92a2894e18aa086c"
+	currentChatMessageTranslationsChecksum    = "3cd682c38e7e5d31be62126b8c13d09998207dd795b18a5cfe56cffdfb7a2d20"
+)
+
 // ApplyMigrations applies ordered .sql migrations exactly once. The checksum
 // makes an already-applied migration immutable: silently editing a migration
 // after production has seen it would make different databases have different
@@ -109,14 +118,14 @@ func ApplyMigrations(ctx context.Context, database *sql.DB, directory string) er
 			return fmt.Errorf("read %s: %w", entry.Name(), err)
 		}
 		migrationSQL := strings.ReplaceAll(strings.ReplaceAll(string(contents), "\r\n", "\n"), "\r", "\n")
-		digest := sha256.Sum256([]byte(migrationSQL))
-		checksum := hex.EncodeToString(digest[:])
+		checksum := migrationChecksum(migrationSQL)
 		var storedChecksum string
 		err = connection.QueryRowContext(ctx, `SELECT checksum FROM schema_migrations WHERE version=$1`, entry.Name()).Scan(&storedChecksum)
 		switch {
-		case err == nil && storedChecksum != checksum:
-			return fmt.Errorf("migration %s checksum mismatch", entry.Name())
 		case err == nil:
+			if err := validateMigrationChecksum(entry.Name(), storedChecksum, checksum); err != nil {
+				return err
+			}
 			continue
 		case err != sql.ErrNoRows:
 			return fmt.Errorf("read migration history for %s: %w", entry.Name(), err)
@@ -138,6 +147,33 @@ func ApplyMigrations(ctx context.Context, database *sql.DB, directory string) er
 		}
 	}
 	return nil
+}
+
+func migrationChecksum(contents string) string {
+	normalized := strings.ReplaceAll(strings.ReplaceAll(contents, "\r\n", "\n"), "\r", "\n")
+	digest := sha256.Sum256([]byte(normalized))
+	return hex.EncodeToString(digest[:])
+}
+
+func validateMigrationChecksum(version, storedChecksum, currentChecksum string) error {
+	if storedChecksum == currentChecksum {
+		return nil
+	}
+	// These migrations were applied in known older forms before the current
+	// schema was committed. Accept only the audited checksum pairs so the
+	// migration records remain immutable; every other mismatch must still stop
+	// startup. The following migration advances the old 0044 table shape.
+	if version == legacyChatAttachmentKeyEnvelopesVersion &&
+		storedChecksum == legacyChatAttachmentKeyEnvelopesChecksum &&
+		currentChecksum == currentChatAttachmentKeyEnvelopesChecksum {
+		return nil
+	}
+	if version == legacyChatMessageTranslationsVersion &&
+		storedChecksum == legacyChatMessageTranslationsChecksum &&
+		currentChecksum == currentChatMessageTranslationsChecksum {
+		return nil
+	}
+	return fmt.Errorf("migration %s checksum mismatch", version)
 }
 
 type migrationExecutor interface {

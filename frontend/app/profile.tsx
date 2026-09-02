@@ -50,7 +50,7 @@ const BORDER_GRAY = "#d4d4d4";
 
 const COPY = {
   ja: {
-    title: "Profile",
+    title: "プロフィール",
     back: "戻る",
     loading: "プロフィールを読み込んでいます…",
     name: "名前",
@@ -616,7 +616,26 @@ export default function ProfileScreen() {
       <StatusBar style="light" />
 
       <Header
+        backAccessibilityLabel={copy.back}
         iconName="person"
+        onBack={() => {
+          if (router.canGoBack()) {
+            router.back();
+          } else {
+            router.replace(appMode === "local" ? "/japanese" : "/foreigner");
+          }
+        }}
+        right={(
+          <Pressable
+            accessibilityLabel={copy.editProfile}
+            accessibilityRole="button"
+            onPress={() => router.push("/profile-edit")}
+            style={({ pressed }) => [styles.headerEditButton, pressed && styles.pressed]}
+          >
+            <MaterialIcons color="#ffffff" name="edit" size={17} />
+            <Text style={styles.headerEditText}>{copy.editProfile}</Text>
+          </Pressable>
+        )}
         style={[styles.header, { paddingTop: Math.max(insets.top, 20) }]}
         title={copy.title}
         titleStyle={styles.headerTitle}
@@ -1238,6 +1257,25 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     letterSpacing: 0,
     lineHeight: 34,
+    textAlign: "center",
+  },
+  headerEditButton: {
+    minHeight: 34,
+    maxWidth: 148,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 4,
+    paddingHorizontal: 9,
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.75)",
+    borderRadius: 17,
+  },
+  headerEditText: {
+    flexShrink: 1,
+    color: "#ffffff",
+    fontSize: 12,
+    fontWeight: "700",
     textAlign: "center",
   },
   content: {

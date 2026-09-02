@@ -12,6 +12,8 @@ import (
 
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/auth"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/chat"
+	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/keys"
+	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/translation"
 )
 
 const chatPath = APIV1Prefix + "/chats"
@@ -41,7 +43,7 @@ func chatCollection(service *chat.Service, sessions *auth.SessionService) http.H
 	}
 }
 
-func chatItem(service *chat.Service, moderation chat.ModerationProvider, sessions *auth.SessionService) http.HandlerFunc {
+func chatItem(service *chat.Service, moderation chat.ModerationProvider, translator *translation.Service, sessions *auth.SessionService, devices *keys.DeviceService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		claims, ok := accessClaims(r, sessions)
 		if !ok {
@@ -60,16 +62,34 @@ func chatItem(service *chat.Service, moderation chat.ModerationProvider, session
 		switch {
 		case rest[0] == "moderation" && len(rest) == 1:
 			chatModeration(service, moderation, sessions)(w, r)
+		case rest[0] == "translate" && len(rest) == 1:
+			chatTranslation(service, translator, service, sessions)(w, r)
 		case rest[0] == "messages" && len(rest) == 1:
 			chatMessages(w, r, service, claims.Subject, chatID)
+		case rest[0] == "messages" && len(rest) == 4 && rest[2] == "translations":
+			chatMessageTranslation(service, sessions, claims.Subject, chatID, rest[1], rest[3])(w, r)
+		case rest[0] == "messages" && len(rest) == 2:
+			chatMessageItem(w, r, service, claims.Subject, chatID, rest[1])
 		case rest[0] == "read" && len(rest) == 1:
 			chatRead(w, r, service, claims.Subject, chatID)
 		case rest[0] == "transport-token" && len(rest) == 1:
 			chatTransportToken(w, r, service, claims.Subject, claims.SessionID, chatID)
+		case rest[0] == "attachment-key-recipients" && len(rest) == 1:
+			chatAttachmentKeyRecipients(w, r, service, devices, claims, chatID)
+		case rest[0] == "key-recipients" && len(rest) == 1:
+			chatKeyRecipients(w, r, service, devices, claims, chatID)
+		case rest[0] == "key-envelope" && len(rest) == 1:
+			chatKeyEnvelope(w, r, service, devices, claims, chatID)
+		case rest[0] == "key-envelopes" && len(rest) == 1:
+			chatKeyEnvelope(w, r, service, devices, claims, chatID)
 		case rest[0] == "attachments" && len(rest) == 1:
-			chatAttachmentUpload(w, r, service, claims.Subject, chatID)
+			chatAttachmentUpload(w, r, service, devices, claims, chatID)
 		case rest[0] == "attachments" && len(rest) == 2:
-			chatAttachmentDownload(w, r, service, claims.Subject, chatID, rest[1])
+			chatAttachmentDownload(w, r, service, devices, claims, chatID, rest[1])
+		case rest[0] == "attachments" && len(rest) == 3 && rest[2] == "envelope":
+			chatAttachmentEnvelope(w, r, service, devices, claims, chatID, rest[1])
+		case rest[0] == "attachments" && len(rest) == 3 && rest[2] == "envelopes":
+			chatAttachmentKeyEnvelopes(w, r, service, devices, claims, chatID, rest[1])
 		default:
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "chat_not_found"})
 		}
@@ -104,6 +124,32 @@ func chatMessages(w http.ResponseWriter, r *http.Request, service *chat.Service,
 		writeJSON(w, http.StatusCreated, map[string]any{"data": message})
 	default:
 		w.Header().Set("Allow", "GET, POST")
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+func chatMessageItem(w http.ResponseWriter, r *http.Request, service *chat.Service, userID, chatID, messageID string) {
+	switch r.Method {
+	case http.MethodPatch:
+		var input chat.UpdateMessageInput
+		if err := decodeJSONRequest(w, r, &input, 192*1024); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_chat_request"})
+			return
+		}
+		message, err := service.UpdateMessage(r.Context(), userID, chatID, messageID, input, time.Now())
+		if err != nil {
+			writeChatError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"data": message})
+	case http.MethodDelete:
+		if err := service.DeleteMessage(r.Context(), userID, chatID, messageID, time.Now()); err != nil {
+			writeChatError(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		w.Header().Set("Allow", "PATCH, DELETE")
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
 }
@@ -181,7 +227,7 @@ func chatPathParts(path string) (string, []string, bool) {
 		return "", nil, false
 	}
 	parts := strings.Split(trimmed, "/")
-	if len(parts) < 2 || len(parts) > 3 {
+	if len(parts) < 2 || len(parts) > 5 {
 		return "", nil, false
 	}
 	for _, part := range parts {
@@ -194,12 +240,12 @@ func chatPathParts(path string) (string, []string, bool) {
 		return "", nil, false
 	}
 	rest := parts[1:]
-	if len(rest) == 2 {
-		tail, err := url.PathUnescape(rest[1])
+	for index, part := range rest {
+		tail, err := url.PathUnescape(part)
 		if err != nil || tail == "" || strings.Contains(tail, "/") {
 			return "", nil, false
 		}
-		rest[1] = tail
+		rest[index] = tail
 	}
 	return chatID, rest, true
 }
@@ -244,6 +290,12 @@ func writeChatError(w http.ResponseWriter, err error) {
 		status, code = http.StatusConflict, "chat_not_available"
 	case errors.Is(err, chat.ErrTooManyPendingAttachments):
 		status, code = http.StatusConflict, "too_many_pending_attachments"
+	case errors.Is(err, chat.ErrChatAttachmentKeysMissing):
+		status, code = http.StatusConflict, "chat_attachment_keys_unavailable"
+	case errors.Is(err, chat.ErrChatKeyEnvelopeMissing):
+		status, code = http.StatusConflict, "chat_key_recipients_unavailable"
+	case errors.Is(err, chat.ErrChatKeyEnvelopeConflict):
+		status, code = http.StatusConflict, "chat_key_envelope_conflict"
 	case errors.Is(err, chat.ErrChatSignerMissing):
 		status, code = http.StatusServiceUnavailable, "chat_transport_unavailable"
 	case errors.Is(err, chat.ErrChatAttachmentUnavailable):

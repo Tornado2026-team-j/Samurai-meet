@@ -17,6 +17,7 @@ import (
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/notification"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/push"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/safety"
+	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/translation"
 	profileuser "github.com/Tornado2026-team-j/Samurai-meet/backend/internal/user"
 )
 
@@ -44,6 +45,7 @@ type RouterOptions struct {
 	RecruitmentClassifier *classification.Service
 	Chats                 *chat.Service
 	ChatModeration        chat.ModerationProvider
+	ChatTranslation       *translation.Service
 	Meetings              *meeting.Service
 	Notifications         *notification.Service
 	Safety                *safety.Service
@@ -143,7 +145,7 @@ func NewRouterWithOptions(o RouterOptions) http.Handler {
 	}
 	if o.Sessions != nil && o.Chats != nil {
 		m.HandleFunc(chatPath, chatCollection(o.Chats, o.Sessions))
-		m.HandleFunc(chatPath+"/", chatItem(o.Chats, o.ChatModeration, o.Sessions))
+		m.HandleFunc(chatPath+"/", chatItem(o.Chats, o.ChatModeration, o.ChatTranslation, o.Sessions, o.Devices))
 		m.HandleFunc(chatWebSocketPrefix, chatWebSocket())
 	}
 	if o.Sessions != nil && o.Notifications != nil {

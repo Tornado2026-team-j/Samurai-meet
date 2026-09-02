@@ -1,25 +1,11 @@
 import type { Session } from "./auth-contract";
 import { requestAPI } from "./api-client";
 
-export type MeetingProximityCapability = {
-  enabled: boolean;
-  reason: "expo_go" | "feature_disabled" | "native_adapter_unavailable";
-};
-
-// This is deliberately a capability boundary, not an Expo Go fallback. A
-// Development/production build must register an audited native adapter before
-// this feature can ever collect a local measurement. It must submit only a
-// coarse band through the meeting API; coordinates, BLE IDs and RSSI never
-// cross this boundary.
-export function meetingProximityCapability(): MeetingProximityCapability {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const Constants = require("expo-constants").default as { appOwnership?: string };
-  if (Constants.appOwnership === "expo") return { enabled: false, reason: "expo_go" };
-  if (process.env.EXPO_PUBLIC_MEETING_PROXIMITY_ENABLED !== "true") {
-    return { enabled: false, reason: "feature_disabled" };
-  }
-  return { enabled: false, reason: "native_adapter_unavailable" };
-}
+export {
+  meetingProximityCapability,
+  type MeetingProximityCapability,
+  type MeetingProximityUnavailableReason,
+} from "./meeting-proximity";
 
 export type MeetingStatus = "planned" | "active" | "completed" | "cancelled";
 

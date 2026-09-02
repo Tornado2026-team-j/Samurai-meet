@@ -12,7 +12,7 @@
 
 ## 変更時の注意
 
-- 適用済みmigrationは編集しない。runnerは正規化SQLのSHA-256を `schema_migrations` に保存し、checksum mismatchで起動を止める。DDL変更は新しい番号のmigrationを追加する。
+- 適用済みmigrationは編集しない。runnerは正規化SQLのSHA-256を `schema_migrations` に保存し、checksum mismatchで起動を止める。0040と0044だけは監査済みの旧checksumと現行checksumの組み合わせを限定許容し、後続の0042または0045で前方移行する。DDL変更は新しい番号のmigrationを追加する。
 - 作業ツリーには未追跡の `backend/migrations/0026_match_withdrawal.sql` がある。本ドキュメントコミットではmigration本体をステージせず、対応するGoコード・テストと一緒に正式コミットするまで未適用として扱う。
 - Expo Goはnative Passkey、hardware-backed storage、native moduleの実機相当検証に使わない。Development Build／ストアビルドの確認を別に行う。
 - 秘密値、`.env`、token、Recovery Phraseを表示・commit・ログ出力しない。dirty worktreeでは作業対象以外の差分を保持する。

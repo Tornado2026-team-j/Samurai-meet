@@ -64,20 +64,34 @@ type ChatSummary struct {
 	UpdatedAt     string `json:"updated_at"`
 }
 
+// EncryptedMessageTranslation is a cached translation bound to one message
+// revision and target language. Its payload is encrypted on the client with
+// the per-chat DEK before it reaches the API.
+type EncryptedMessageTranslation struct {
+	TargetLanguage  string `json:"target_language"`
+	Ciphertext      string `json:"ciphertext"`
+	Nonce           string `json:"nonce"`
+	Algorithm       string `json:"algorithm"`
+	KeyVersion      string `json:"key_version"`
+	MessageRevision string `json:"message_revision"`
+}
+
 type Message struct {
-	ID              string      `json:"id"`
-	ChatID          string      `json:"chat_id"`
-	SenderUserID    string      `json:"sender_user_id"`
-	ClientMessageID string      `json:"client_message_id"`
-	Sequence        int64       `json:"sequence"`
-	Ciphertext      string      `json:"ciphertext"`
-	Nonce           string      `json:"nonce"`
-	Algorithm       string      `json:"algorithm"`
-	KeyVersion      string      `json:"key_version"`
-	ContentType     string      `json:"content_type"`
-	ExpiresAt       string      `json:"expires_at,omitempty"`
-	CreatedAt       string      `json:"created_at"`
-	Attachment      *Attachment `json:"attachment,omitempty"`
+	ID              string                        `json:"id"`
+	ChatID          string                        `json:"chat_id"`
+	SenderUserID    string                        `json:"sender_user_id"`
+	ClientMessageID string                        `json:"client_message_id"`
+	Sequence        int64                         `json:"sequence"`
+	Ciphertext      string                        `json:"ciphertext"`
+	Nonce           string                        `json:"nonce"`
+	Algorithm       string                        `json:"algorithm"`
+	KeyVersion      string                        `json:"key_version"`
+	ContentType     string                        `json:"content_type"`
+	ExpiresAt       string                        `json:"expires_at,omitempty"`
+	EditedAt        string                        `json:"edited_at,omitempty"`
+	CreatedAt       string                        `json:"created_at"`
+	Attachment      *Attachment                   `json:"attachment,omitempty"`
+	Translations    []EncryptedMessageTranslation `json:"translations,omitempty"`
 }
 
 type MessagePage struct {
@@ -99,6 +113,16 @@ type SendMessageInput struct {
 	// AttachmentID optionally references a chat photo the caller already
 	// uploaded to this chat. REST only; WebSocket message.send ignores it.
 	AttachmentID string `json:"attachment_id"`
+}
+
+// UpdateMessageInput replaces only the encrypted text payload. The sender's
+// client_message_id, sequence, and creation time remain stable so an edit is
+// an update to one logical message rather than a new message.
+type UpdateMessageInput struct {
+	Ciphertext string `json:"ciphertext"`
+	Nonce      string `json:"nonce"`
+	Algorithm  string `json:"algorithm"`
+	KeyVersion string `json:"key_version"`
 }
 
 type TransportToken struct {
@@ -233,7 +257,7 @@ func (s *Service) ListMessages(ctx context.Context, userID, chatID string, after
 		return MessagePage{}, err
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT m.id,m.chat_id,m.sender_user_id,m.client_message_id,m.sequence,m.ciphertext,m.nonce,m.algorithm,m.key_version,m.content_type,COALESCE(m.expires_at,''),m.created_at,
+		SELECT m.id,m.chat_id,m.sender_user_id,m.client_message_id,m.sequence,m.ciphertext,m.nonce,m.algorithm,m.key_version,m.content_type,COALESCE(m.expires_at,''),COALESCE(m.edited_at,''),m.created_at,
 		       a.id,a.content_type,a.size_bytes,a.cipher_sha256,a.nonce,a.algorithm,a.key_version,a.created_at
 		FROM messages m
 		LEFT JOIN chat_attachments a ON a.message_id=m.id AND a.deleted_at IS NULL
@@ -249,7 +273,7 @@ func (s *Service) ListMessages(ctx context.Context, userID, chatID string, after
 		var item Message
 		var attID, attType, attHash, attNonce, attAlg, attKeyVersion, attCreated sql.NullString
 		var attSize sql.NullInt64
-		if err := rows.Scan(&item.ID, &item.ChatID, &item.SenderUserID, &item.ClientMessageID, &item.Sequence, &item.Ciphertext, &item.Nonce, &item.Algorithm, &item.KeyVersion, &item.ContentType, &item.ExpiresAt, &item.CreatedAt,
+		if err := rows.Scan(&item.ID, &item.ChatID, &item.SenderUserID, &item.ClientMessageID, &item.Sequence, &item.Ciphertext, &item.Nonce, &item.Algorithm, &item.KeyVersion, &item.ContentType, &item.ExpiresAt, &item.EditedAt, &item.CreatedAt,
 			&attID, &attType, &attSize, &attHash, &attNonce, &attAlg, &attKeyVersion, &attCreated); err != nil {
 			return MessagePage{}, err
 		}
@@ -279,6 +303,9 @@ func (s *Service) ListMessages(ctx context.Context, userID, chatID string, after
 	if len(page.Items) > 0 {
 		page.NextAfter = page.Items[len(page.Items)-1].Sequence
 	}
+	if err := s.loadMessageTranslations(ctx, page.Items); err != nil {
+		return MessagePage{}, err
+	}
 	_ = now // reserved for a future chat-retention boundary
 	return page, nil
 }
@@ -297,6 +324,14 @@ func (s *Service) SendMessage(ctx context.Context, userID, chatID string, input 
 // text to an external provider.
 func (s *Service) AuthorizeMessageSend(ctx context.Context, userID, chatID string) error {
 	_, err := s.loadChat(ctx, userID, chatID, false)
+	return err
+}
+
+// AuthorizeMessageTranslation allows a participant to translate an already
+// visible message in an accepted or completed chat. It performs the chat and
+// block checks before any plaintext is sent to the translation provider.
+func (s *Service) AuthorizeMessageTranslation(ctx context.Context, userID, chatID string) error {
+	_, err := s.loadChat(ctx, userID, chatID, true)
 	return err
 }
 
@@ -339,18 +374,18 @@ func (s *Service) sendMessage(ctx context.Context, userID, chatID string, input 
 		INSERT INTO messages (id,chat_id,sender_user_id,client_message_id,ciphertext,nonce,algorithm,key_version,content_type,expires_at,created_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NULLIF($10,''),$11)
 		ON CONFLICT (chat_id,sender_user_id,client_message_id) DO NOTHING
-		RETURNING id,chat_id,sender_user_id,client_message_id,sequence,ciphertext,nonce,algorithm,key_version,content_type,COALESCE(expires_at,''),created_at`,
+		RETURNING id,chat_id,sender_user_id,client_message_id,sequence,ciphertext,nonce,algorithm,key_version,content_type,COALESCE(expires_at,''),COALESCE(edited_at,''),created_at`,
 		id, access.ChatID, userID, input.ClientMessageID, input.Ciphertext, input.Nonce, input.Algorithm, input.KeyVersion, input.ContentType, input.ExpiresAt, timestamp).Scan(
 		&message.ID, &message.ChatID, &message.SenderUserID, &message.ClientMessageID, &message.Sequence,
-		&message.Ciphertext, &message.Nonce, &message.Algorithm, &message.KeyVersion, &message.ContentType, &message.ExpiresAt, &message.CreatedAt)
+		&message.Ciphertext, &message.Nonce, &message.Algorithm, &message.KeyVersion, &message.ContentType, &message.ExpiresAt, &message.EditedAt, &message.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		isNew = false
 		if err = tx.QueryRowContext(ctx, `
-			SELECT id,chat_id,sender_user_id,client_message_id,sequence,ciphertext,nonce,algorithm,key_version,content_type,COALESCE(expires_at,''),created_at
+			SELECT id,chat_id,sender_user_id,client_message_id,sequence,ciphertext,nonce,algorithm,key_version,content_type,COALESCE(expires_at,''),COALESCE(edited_at,''),created_at
 			FROM messages WHERE chat_id=$1 AND sender_user_id=$2 AND client_message_id=$3`,
 			access.ChatID, userID, input.ClientMessageID).Scan(
 			&message.ID, &message.ChatID, &message.SenderUserID, &message.ClientMessageID, &message.Sequence,
-			&message.Ciphertext, &message.Nonce, &message.Algorithm, &message.KeyVersion, &message.ContentType, &message.ExpiresAt, &message.CreatedAt); err != nil {
+			&message.Ciphertext, &message.Nonce, &message.Algorithm, &message.KeyVersion, &message.ContentType, &message.ExpiresAt, &message.EditedAt, &message.CreatedAt); err != nil {
 			return Message{}, false, err
 		}
 	} else if err != nil {
@@ -364,7 +399,7 @@ func (s *Service) sendMessage(ctx context.Context, userID, chatID string, input 
 			return Message{}, false, err
 		}
 		if !linked {
-			if err = linkAttachmentTx(ctx, tx, access.ChatID, userID, attachmentID, message.ID, timestamp); err != nil {
+			if err = linkAttachmentTx(ctx, tx, access, userID, attachmentID, message.ID, timestamp); err != nil {
 				return Message{}, false, err
 			}
 		}
@@ -395,6 +430,13 @@ func (s *Service) sendMessage(ctx context.Context, userID, chatID string, input 
 		}
 		message.Attachment = attachment
 	}
+	if !isNew {
+		cachedMessages := []Message{message}
+		if err := s.loadMessageTranslations(ctx, cachedMessages); err != nil {
+			return Message{}, false, err
+		}
+		message = cachedMessages[0]
+	}
 	if isNew && s.wtHub != nil {
 		s.wtHub.broadcast(access.ChatID, encodeFrame(messageFrame{Type: serverFrameMessageCreated, Message: message}))
 	}
@@ -402,6 +444,157 @@ func (s *Service) sendMessage(ctx context.Context, userID, chatID string, input 
 		s.publishClusterEvent(clusterEvent{Kind: serverFrameMessageCreated, ChatID: access.ChatID, Sequence: message.Sequence})
 	}
 	return message, isNew, nil
+}
+
+// UpdateMessage replaces the encrypted payload of one text message owned by
+// the caller. The message keeps its id, sequence, client id, and creation time
+// so clients can reconcile an edit without treating it as a new delivery.
+func (s *Service) UpdateMessage(ctx context.Context, userID, chatID, messageID string, input UpdateMessageInput, now time.Time) (Message, error) {
+	if err := validateUpdateMessageInput(input); err != nil {
+		return Message{}, err
+	}
+	access, err := s.loadChat(ctx, userID, chatID, false)
+	if err != nil {
+		return Message{}, err
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Message{}, err
+	}
+	defer tx.Rollback()
+
+	var message Message
+	var deletedAt sql.NullString
+	err = tx.QueryRowContext(ctx, `
+		SELECT id,chat_id,sender_user_id,client_message_id,sequence,ciphertext,nonce,algorithm,key_version,content_type,COALESCE(expires_at,''),COALESCE(edited_at,''),created_at,deleted_at
+		FROM messages WHERE id=$1 AND chat_id=$2 FOR UPDATE`, messageID, access.ChatID).Scan(
+		&message.ID, &message.ChatID, &message.SenderUserID, &message.ClientMessageID, &message.Sequence,
+		&message.Ciphertext, &message.Nonce, &message.Algorithm, &message.KeyVersion, &message.ContentType,
+		&message.ExpiresAt, &message.EditedAt, &message.CreatedAt, &deletedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Message{}, ErrMessageNotFound
+	}
+	if err != nil {
+		return Message{}, err
+	}
+	if deletedAt.Valid {
+		return Message{}, ErrMessageNotFound
+	}
+	if message.SenderUserID != userID {
+		return Message{}, ErrChatForbidden
+	}
+	if message.ContentType != "text" {
+		return Message{}, ErrChatInvalidInput
+	}
+
+	stamp := now.UTC().Format(time.RFC3339Nano)
+	if _, err = tx.ExecContext(ctx, `DELETE FROM chat_message_translations WHERE message_id=$1`, message.ID); err != nil {
+		return Message{}, err
+	}
+	if _, err = tx.ExecContext(ctx, `
+		UPDATE messages SET ciphertext=$1,nonce=$2,algorithm=$3,key_version=$4,edited_at=$5
+		WHERE id=$6 AND chat_id=$7 AND deleted_at IS NULL`,
+		input.Ciphertext, input.Nonce, input.Algorithm, input.KeyVersion, stamp, message.ID, access.ChatID); err != nil {
+		return Message{}, err
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE chat_threads SET updated_at=$1 WHERE id=$2`, stamp, access.ChatID); err != nil {
+		return Message{}, err
+	}
+	if err = tx.Commit(); err != nil {
+		return Message{}, err
+	}
+
+	message.Ciphertext = input.Ciphertext
+	message.Nonce = input.Nonce
+	message.Algorithm = input.Algorithm
+	message.KeyVersion = input.KeyVersion
+	message.EditedAt = stamp
+	if s.wtHub != nil {
+		s.wtHub.broadcast(access.ChatID, encodeFrame(messageFrame{Type: serverFrameMessageUpdated, Message: message}))
+	}
+	s.publishClusterEvent(clusterEvent{Kind: serverFrameMessageUpdated, ChatID: access.ChatID, Sequence: message.Sequence})
+	return message, nil
+}
+
+// DeleteMessage tombstones one message owned by the caller. The ciphertext is
+// cleared immediately, an append-only audit row records the user request, and
+// a deletion event lets connected clients remove the message without a reload.
+func (s *Service) DeleteMessage(ctx context.Context, userID, chatID, messageID string, now time.Time) error {
+	access, err := s.loadChat(ctx, userID, chatID, false)
+	if err != nil {
+		return err
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var message Message
+	var deletedAt sql.NullString
+	err = tx.QueryRowContext(ctx, `
+		SELECT id,chat_id,sender_user_id,client_message_id,sequence,ciphertext,nonce,algorithm,key_version,content_type,COALESCE(expires_at,''),COALESCE(edited_at,''),created_at,deleted_at
+		FROM messages WHERE id=$1 AND chat_id=$2 FOR UPDATE`, messageID, access.ChatID).Scan(
+		&message.ID, &message.ChatID, &message.SenderUserID, &message.ClientMessageID, &message.Sequence,
+		&message.Ciphertext, &message.Nonce, &message.Algorithm, &message.KeyVersion, &message.ContentType,
+		&message.ExpiresAt, &message.EditedAt, &message.CreatedAt, &deletedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrMessageNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if deletedAt.Valid {
+		return ErrMessageNotFound
+	}
+	if message.SenderUserID != userID {
+		return ErrChatForbidden
+	}
+
+	var attachmentID, attachmentUploader sql.NullString
+	if err = tx.QueryRowContext(ctx, `
+		SELECT id,uploader_user_id FROM chat_attachments
+		WHERE message_id=$1 AND deleted_at IS NULL FOR UPDATE`, message.ID).Scan(&attachmentID, &attachmentUploader); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	stamp := now.UTC().Format(time.RFC3339Nano)
+	if _, err = tx.ExecContext(ctx, `DELETE FROM chat_message_translations WHERE message_id=$1`, message.ID); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `
+		UPDATE messages SET deleted_at=$1,ciphertext='',nonce=''
+		WHERE id=$2 AND chat_id=$3 AND deleted_at IS NULL`, stamp, message.ID, access.ChatID); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `
+		INSERT INTO chat_message_deletions
+			(chat_id,message_id,sequence,sender_user_id,message_created_at,reason,retention_days,deleted_at)
+		VALUES ($1,$2,$3,$4,$5,'user_request',0,$6)`,
+		access.ChatID, message.ID, message.Sequence, message.SenderUserID, message.CreatedAt, stamp); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE chat_attachments SET deleted_at=$1 WHERE message_id=$2 AND deleted_at IS NULL`, stamp, message.ID); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE chat_threads SET updated_at=$1 WHERE id=$2`, stamp, access.ChatID); err != nil {
+		return err
+	}
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+
+	// Blob cleanup is intentionally best-effort after the durable tombstone.
+	// ProcessExpiredAttachments will retry a failed deletion on its next sweep.
+	if attachmentID.Valid && s.blobs != nil {
+		_ = s.blobs.DeleteCiphertext(attachmentUploader.String, attachmentID.String)
+	}
+	if s.wtHub != nil {
+		s.wtHub.broadcast(access.ChatID, encodeFrame(deletedMessageFrame{Type: serverFrameMessageDeleted, MessageID: message.ID, Sequence: message.Sequence}))
+	}
+	s.publishClusterEvent(clusterEvent{Kind: serverFrameMessageDeleted, ChatID: access.ChatID, MessageID: message.ID, Sequence: message.Sequence})
+	return nil
 }
 
 func (s *Service) notificationActorNameTx(ctx context.Context, tx *sql.Tx, userID string) (string, error) {
@@ -671,20 +864,23 @@ func blockedTx(ctx context.Context, tx *sql.Tx, first, second string) (bool, err
 }
 
 func validateMessageInput(input SendMessageInput) error {
-	input.Ciphertext = strings.TrimSpace(input.Ciphertext)
-	input.Nonce = strings.TrimSpace(input.Nonce)
-	input.Algorithm = strings.TrimSpace(input.Algorithm)
-	if !validIdentifier(input.ClientMessageID, maxClientMessageID) ||
-		!validIdentifier(input.KeyVersion, maxKeyVersion) || input.Algorithm != "AES-256-GCM" {
+	if !validIdentifier(input.ClientMessageID, maxClientMessageID) {
 		return ErrChatInvalidInput
 	}
+	if err := validateEncryptedMessageInput(input.Ciphertext, input.Nonce, input.Algorithm, input.KeyVersion); err != nil {
+		return err
+	}
+	input.AttachmentID = strings.TrimSpace(input.AttachmentID)
 	if input.AttachmentID != "" && !validIdentifier(input.AttachmentID, maxClientMessageID) {
 		return ErrChatInvalidInput
 	}
 	if input.ContentType == "" {
 		input.ContentType = "text"
 	}
-	if input.ContentType != "text" && input.ContentType != "location" {
+	if input.ContentType != "text" && input.ContentType != "location" && input.ContentType != "image" {
+		return ErrChatInvalidInput
+	}
+	if (input.ContentType == "image") != (input.AttachmentID != "") {
 		return ErrChatInvalidInput
 	}
 	if input.ContentType == "location" {
@@ -695,14 +891,28 @@ func validateMessageInput(input SendMessageInput) error {
 	} else if strings.TrimSpace(input.ExpiresAt) != "" {
 		return ErrChatInvalidInput
 	}
-	ciphertext, err := base64.RawURLEncoding.DecodeString(input.Ciphertext)
+	return nil
+}
+
+func validateUpdateMessageInput(input UpdateMessageInput) error {
+	return validateEncryptedMessageInput(input.Ciphertext, input.Nonce, input.Algorithm, input.KeyVersion)
+}
+
+func validateEncryptedMessageInput(ciphertextValue, nonceValue, algorithmValue, keyVersionValue string) error {
+	ciphertextValue = strings.TrimSpace(ciphertextValue)
+	nonceValue = strings.TrimSpace(nonceValue)
+	algorithmValue = strings.TrimSpace(algorithmValue)
+	if !validIdentifier(keyVersionValue, maxKeyVersion) || algorithmValue != "AES-256-GCM" {
+		return ErrChatInvalidInput
+	}
+	ciphertext, err := base64.RawURLEncoding.DecodeString(ciphertextValue)
 	if err != nil || len(ciphertext) < 16 {
 		return ErrChatInvalidInput
 	}
 	if len(ciphertext) > maxCiphertextBytes {
 		return ErrMessageTooLarge
 	}
-	nonce, err := base64.RawURLEncoding.DecodeString(input.Nonce)
+	nonce, err := base64.RawURLEncoding.DecodeString(nonceValue)
 	if err != nil || len(nonce) != 12 {
 		return ErrChatInvalidInput
 	}

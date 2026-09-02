@@ -52,6 +52,7 @@ bun test
 ```
 
 `backend/migrations/*.sql` は適用済みファイルを編集しません。migration runnerは`schema_migrations`へ正規化SQLのSHA-256を記録し、checksum mismatch時は起動を停止します。変更は新しいmigrationとして追加してください。
+※コンフリクト注意
 
 ## ドキュメントの入口
 

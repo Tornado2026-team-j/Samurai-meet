@@ -32,6 +32,7 @@ const (
 const (
 	maxClassificationKeywords     = 5
 	maxClassificationKeywordRunes = 40
+	maxClassificationOutputTokens = 256
 )
 
 type ClassificationResult struct {
@@ -40,10 +41,12 @@ type ClassificationResult struct {
 }
 
 var (
-	ErrUnavailable  = errors.New("recruitment classification is unavailable")
-	ErrInvalidInput = errors.New("invalid recruitment description")
-	ErrRateLimited  = errors.New("recruitment classification rate limited")
-	ErrUpstream     = errors.New("recruitment classification failed")
+	ErrUnavailable         = errors.New("recruitment classification is unavailable")
+	ErrInvalidInput        = errors.New("invalid recruitment description")
+	ErrRateLimited         = errors.New("recruitment classification rate limited")
+	ErrProviderRateLimited = errors.New("recruitment classification provider rate limited")
+	ErrProviderUnavailable = errors.New("recruitment classification provider unavailable")
+	ErrUpstream            = errors.New("recruitment classification failed")
 )
 
 type Service struct {
@@ -99,7 +102,7 @@ func (s *Service) ClassifyWithKeywords(ctx context.Context, userID, description 
 		"contents":          []map[string]any{{"role": "user", "parts": []map[string]string{{"text": description}}}},
 		"generationConfig": map[string]any{
 			"temperature":      0,
-			"maxOutputTokens":  64,
+			"maxOutputTokens":  maxClassificationOutputTokens,
 			"responseMimeType": "application/json",
 			"responseSchema": map[string]any{
 				"type": "OBJECT",
@@ -133,6 +136,12 @@ func (s *Service) ClassifyWithKeywords(ctx context.Context, userID, description 
 		return ClassificationResult{}, ErrUpstream
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return ClassificationResult{}, ErrProviderRateLimited
+	}
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return ClassificationResult{}, ErrProviderUnavailable
+	}
 	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 	if err != nil || resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		return ClassificationResult{}, ErrUpstream

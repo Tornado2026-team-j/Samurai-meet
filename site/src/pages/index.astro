@@ -1,0 +1,76 @@
+---
+import Layout from '../layouts/Layout.astro';
+---
+
+<Layout title="ホーム">
+  <div class="hero">
+    <h1>侍ミート</h1>
+    <p>短い空き時間に、近くの日本人・外国人と交流しよう</p>
+    <p>マッチング・チャット・安全な認証で新しい出会いを実現</p>
+    <a href="https://github.com/Tornado2026-team-j/Samurai-meet/releases" class="btn">アプリをダウンロード</a>
+  </div>
+
+  <div class="container">
+    <section class="hero-features">
+      <div class="feature-card large">
+        <h3>🌍 国際交流</h3>
+        <p>日本人と外国人が共に楽しめるプラットフォーム。言語交換、文化交流、新しい友達作りに最適です。</p>
+      </div>
+      <div class="feature-card large">
+        <h3>⏰ 短い時間で気軽に</h3>
+        <p>コーヒータイムやランチ、ちょっとした空き時間を活用。忙しい生活の中での新しい出会い。</p>
+      </div>
+      <div class="feature-card large">
+        <h3>🎯 位置情報マッチング</h3>
+        <p>近い場所にいる人と自動マッチング。突然の出会いから予定済みの交流まで柔軟に対応。</p>
+      </div>
+    </section>
+
+    <hr style="margin: 4rem 0; border: none; border-top: 2px solid var(--color-border);">
+
+    <h2>アプリの特徴</h2>
+    <div class="features">
+      <div class="feature-card">
+        <h3>✨ シンプルなUI</h3>
+        <p>直感的で使いやすいインターフェース。スマートフォンで快適に利用できるよう設計。</p>
+      </div>
+      <div class="feature-card">
+        <h3>📍 条件検索</h3>
+        <p>外国人/日本人、言語、関心などで絞り込み。あなたにぴったりの交流相手を探せます。</p>
+      </div>
+      <div class="feature-card">
+        <h3>💬 暗号化チャット</h3>
+        <p>E2E暗号化されたチャット機能。プライベートメッセージを安心してやり取り。</p>
+      </div>
+      <div class="feature-card">
+        <h3>🔔 リアルタイム通知</h3>
+        <p>応募・承認・辞退をすぐに通知。大事な連絡を見逃さない。</p>
+      </div>
+      <div class="feature-card">
+        <h3>📋 募集管理</h3>
+        <p>募集履歴・応募履歴・応募取り下げも簡単。完全にあなたがコントロール。</p>
+      </div>
+      <div class="feature-card">
+        <h3>👤 プロフィール同期</h3>
+        <p>オンボーディング時に自動同期。いつでも簡単に情報更新可能。</p>
+      </div>
+    </div>
+
+    <hr style="margin: 4rem 0; border: none; border-top: 2px solid var(--color-border);">
+  </div>
+</Layout>
+
+<style>
+  .hero-features {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 2rem;
+    margin: 3rem 0;
+  }
+
+  .feature-card.large {
+    padding: 2.5rem;
+    background: linear-gradient(135deg, #f3f4f6 0%, #f9fafb 100%);
+    border: 1px solid var(--color-border);
+  }
+</style>

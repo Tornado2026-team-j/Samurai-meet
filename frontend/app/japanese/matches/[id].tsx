@@ -14,7 +14,6 @@ import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors } from "../../../components/ui";
 import { useAuth } from "../../../hooks/useAuth";
-import { findMockMatchById } from "../../../mocks/matches";
 import { APIError } from "../../../services/api-client";
 import { loadLanguage, subscribeLanguage } from "../../../services/onboarding";
 import {
@@ -48,6 +47,7 @@ type MatchDetailCopy = {
   loading: string;
   loginRequired: string;
   loadError: string;
+  retry: string;
   requestLogin: string;
   requestError: string;
   date: string;
@@ -68,6 +68,7 @@ const COPY: Record<AppLanguage, MatchDetailCopy> = {
     loading: "募集を読み込み中...",
     loginRequired: "ログイン後に募集を表示できます。",
     loadError: "募集を読み込めませんでした。募集が終了した可能性があります。",
+    retry: "再試行",
     requestLogin: "ログイン後にもう一度お試しください。",
     requestError: "応募を送信できませんでした。時間をおいてもう一度お試しください。",
     date: "日付",
@@ -86,6 +87,7 @@ const COPY: Record<AppLanguage, MatchDetailCopy> = {
     loading: "Loading recruitment...",
     loginRequired: "Please sign in to view this recruitment.",
     loadError: "We couldn't load this recruitment. It may have ended.",
+    retry: "Try again",
     requestLogin: "Please sign in and try again.",
     requestError: "We couldn't send your application. Please try again later.",
     date: "Date",
@@ -110,6 +112,7 @@ export default function JapaneseMatchDetailScreen() {
   const [match, setMatch] = useState<MatchCardData | null>(null);
   const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading");
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [requestState, setRequestState] = useState<"idle" | "sending">("idle");
   const [requestError, setRequestError] = useState<string | null>(null);
   const [language, setLanguage] = useState<AppLanguage | null>(null);
@@ -156,6 +159,7 @@ export default function JapaneseMatchDetailScreen() {
       const activeSession = auth.getCurrentSession() ?? auth.session;
       if (!matchId || auth.status !== "signed_in" || !activeSession) {
         if (!cancelled) {
+          setMatch(null);
           setLoadState("error");
           setLoadError(copyRef.current.loginRequired);
         }
@@ -187,14 +191,9 @@ export default function JapaneseMatchDetailScreen() {
       } catch (error) {
         if (error instanceof Error && error.name === "AbortError" && (cancelled || controller.signal.aborted)) return;
         if (!cancelled) {
-          const mockMatch = findMockMatchById(matchId);
-          if (mockMatch) {
-            setMatch(mockMatch);
-            setLoadState("ready");
-          } else {
-            setLoadState("error");
-            setLoadError(copyRef.current.loadError);
-          }
+          setMatch(null);
+          setLoadState("error");
+          setLoadError(copyRef.current.loadError);
         }
       }
     };
@@ -204,7 +203,7 @@ export default function JapaneseMatchDetailScreen() {
       cancelled = true;
       controller.abort();
     };
-  }, [matchId, status]);
+  }, [loadAttempt, matchId, status]);
 
   if (!languageLoaded) {
     return (
@@ -223,6 +222,21 @@ export default function JapaneseMatchDetailScreen() {
         <Text accessibilityRole={loadState === "error" ? "alert" : undefined} style={styles.loadingText}>
           {loadState === "loading" ? copy.loading : loadError}
         </Text>
+        {loadState === "error" ? (
+          <Pressable
+            accessibilityLabel={copy.retry}
+            accessibilityRole="button"
+            onPress={() => {
+              setMatch(null);
+              setLoadState("loading");
+              setLoadError(null);
+              setLoadAttempt((attempt) => attempt + 1);
+            }}
+            style={({ pressed }) => [styles.retryButton, pressed && styles.pressed]}
+          >
+            <Text style={styles.retryButtonText}>{copy.retry}</Text>
+          </Pressable>
+        ) : null}
         <Pressable
           accessibilityLabel={copy.back}
           accessibilityRole="button"
@@ -467,6 +481,21 @@ const styles = StyleSheet.create({
   },
   loadingBackButtonText: {
     color: "#ffffff",
+    fontSize: 13,
+    fontWeight: "800",
+  },
+  retryButton: {
+    minWidth: 84,
+    minHeight: 36,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 16,
+    borderRadius: 18,
+    borderWidth: 1.5,
+    borderColor: BLUE,
+  },
+  retryButtonText: {
+    color: BLUE,
     fontSize: 13,
     fontWeight: "800",
   },
