@@ -238,7 +238,7 @@ describe("チャットAPIクライアント", () => {
     expect(JSON.parse(requestedBody)).toEqual({ last_message_sequence: 12 });
   });
 
-  it("本文を暗号化してから送信し、平文をAPI bodyへ入れない", async () => {
+  it("本文をchat DEKで暗号化してから送信し、平文をAPI bodyへ入れない", async () => {
     let requestedBody = "";
     globalThis.fetch = (async (_input, init) => {
       requestedBody = String(init?.body);
@@ -380,8 +380,8 @@ describe("チャットAPIクライアント", () => {
     });
   });
 
-  it("新しいチャット本文はKey-Bを秘密入力にし、chat_idだけでは復号できない", async () => {
-    const encrypted = await encryptChatPlaintext("chat-1", "Key-B protected", fixedKeyB, fixedRandom);
+  it("新しいチャット本文はchat DEKを秘密入力にし、chat_idだけでは復号できない", async () => {
+    const encrypted = await encryptChatPlaintext("chat-1", "chat DEK protected", fixedKeyB, fixedRandom);
     const message: EncryptedChatMessage = {
       id: "keyb-message-1",
       chat_id: "chat-1",
@@ -392,11 +392,11 @@ describe("チャットAPIクライアント", () => {
       ...encrypted,
     };
 
-    expect(message.key_version).toBe("chat-keyb-v1");
+    expect(message.key_version).toBe("chat-dek-v1");
     expect(decryptChatMessage("chat-1", message)).toBeNull();
     expect(decryptChatMessage("chat-1", message, new Uint8Array(32).fill(8))).toBeNull();
     expect(decryptChatMessage("other-chat", message, fixedKeyB)).toBeNull();
-    expect(decryptChatMessage("chat-1", message, fixedKeyB)).toBe("Key-B protected");
+    expect(decryptChatMessage("chat-1", message, fixedKeyB)).toBe("chat DEK protected");
   });
 
   it("本文の翻訳、編集、削除APIをそれぞれの契約で呼び出す", async () => {
@@ -448,11 +448,11 @@ describe("チャットAPIクライアント", () => {
       target_language: "ja",
     });
     expect(requests[2]?.body).not.toContain("Updated");
-    expect(updated.key_version).toBe("chat-keyb-v1");
+    expect(updated.key_version).toBe("chat-dek-v1");
     expect(requests[2]?.url).toContain("/chats/chat-1/messages/message-1");
   });
 
-  it("保存済み翻訳はKey-Bで復号し、再度保存しない", async () => {
+  it("保存済み翻訳はchat DEKで復号し、再度保存しない", async () => {
     const revision = "2026-08-30T00:00:00Z";
     const cached = await encryptChatTranslation("chat-1", "message-1", revision, {
       source_language: "en",

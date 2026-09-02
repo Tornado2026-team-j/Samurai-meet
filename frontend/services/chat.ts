@@ -11,6 +11,13 @@ import {
   CHAT_ATTACHMENT_KEY_VERSION,
   CHAT_ATTACHMENT_MAX_BYTES,
   CHAT_ATTACHMENT_WRAPPING_ALGORITHM,
+  CHAT_ACCOUNT_KEY_ENVELOPE_VERSION,
+  CHAT_ACCOUNT_KEY_WRAPPING_ALGORITHM,
+  CHAT_DEVICE_KEY_ENVELOPE_VERSION,
+  CHAT_DEVICE_KEY_WRAPPING_ALGORITHM,
+  CHAT_MESSAGE_ALGORITHM,
+  CHAT_MESSAGE_KEY_VERSION,
+  deriveAccountDataKey,
   decryptChatAttachmentBytes,
   encryptChatAttachmentBytes,
   fromBase64URL,
@@ -19,6 +26,10 @@ import {
   randomBytes,
   toBase64URL,
   unwrapChatAttachmentKey,
+  unwrapChatKeyForAccount,
+  unwrapChatKeyForDevice,
+  wrapChatKeyForAccount,
+  wrapChatKeyForDevice,
   wrapChatAttachmentKey,
   ensureChatAttachmentEncryptionAvailable,
   type ChatAttachmentContentType,
@@ -26,15 +37,21 @@ import {
 } from "./crypto";
 import type { DeviceKeyBundle } from "./key-management";
 
-const CHAT_ALGORITHM = "AES-256-GCM";
-const CHAT_KEY_VERSION = "chat-keyb-v1";
+const CHAT_ALGORITHM = CHAT_MESSAGE_ALGORITHM;
+const CHAT_KEY_VERSION = CHAT_MESSAGE_KEY_VERSION;
 const LEGACY_CHAT_KEY_VERSION = "chat-mvp-v1";
-const CHAT_AAD_PREFIX = "samurai-meet:chat-message:keyb-v1";
+const LEGACY_DEVICE_CHAT_KEY_VERSION = "chat-keyb-v1";
+const CHAT_AAD_PREFIX = "samurai-meet:chat-message:dek-v1";
 const LEGACY_CHAT_AAD_PREFIX = "samurai-meet:chat-message:mvp-v1";
-const CHAT_KEY_INFO = utf8ToBytes("samurai-meet/chat-message/keyb-v1");
-const CHAT_TRANSLATION_KEY_VERSION = "chat-translation-keyb-v1";
-const CHAT_TRANSLATION_AAD_PREFIX = "samurai-meet:chat-translation:keyb-v1";
-const CHAT_TRANSLATION_KEY_INFO = utf8ToBytes("samurai-meet/chat-translation/keyb-v1");
+const LEGACY_DEVICE_CHAT_AAD_PREFIX = "samurai-meet:chat-message:keyb-v1";
+const LEGACY_DEVICE_CHAT_KEY_INFO = utf8ToBytes("samurai-meet/chat-message/keyb-v1");
+const CHAT_KEY_INFO = utf8ToBytes("samurai-meet/chat-message/dek-v1");
+const CHAT_TRANSLATION_KEY_VERSION = "chat-translation-dek-v1";
+const LEGACY_CHAT_TRANSLATION_KEY_VERSION = "chat-translation-keyb-v1";
+const CHAT_TRANSLATION_AAD_PREFIX = "samurai-meet:chat-translation:dek-v1";
+const LEGACY_CHAT_TRANSLATION_AAD_PREFIX = "samurai-meet:chat-translation:keyb-v1";
+const CHAT_TRANSLATION_KEY_INFO = utf8ToBytes("samurai-meet/chat-translation/dek-v1");
+const LEGACY_CHAT_TRANSLATION_KEY_INFO = utf8ToBytes("samurai-meet/chat-translation/keyb-v1");
 const MAX_PLAINTEXT_LENGTH = 2000;
 
 async function loadDeviceKeyManagement() {
@@ -132,6 +149,10 @@ export type ChatAttachmentKeyRecipient = {
   public_key: string;
 };
 
+export type ChatKeyRecipient = ChatAttachmentKeyRecipient & {
+  envelope_present: boolean;
+};
+
 export type ChatAttachmentKeyEnvelopeInput = {
   user_id: string;
   device_id: string;
@@ -139,6 +160,23 @@ export type ChatAttachmentKeyEnvelopeInput = {
   public_key: string;
   algorithm: typeof CHAT_ATTACHMENT_WRAPPING_ALGORITHM;
   envelope: string;
+};
+
+export type ChatKeyEnvelopeScope = "account" | "device";
+
+export type ChatKeyEnvelope = {
+  scope: ChatKeyEnvelopeScope;
+  user_id: string;
+  device_id: string;
+  key_version: string;
+  public_key: string;
+  algorithm: string;
+  envelope: string;
+};
+
+export type ChatKeyEnvelopeBundle = {
+  account_envelope?: ChatKeyEnvelope;
+  device_envelope?: ChatKeyEnvelope;
 };
 
 export type ChatImageSendResult = {
@@ -388,11 +426,11 @@ function requireArrayData<T>(response: DataResponse<T[]>, resource: string): T[]
   return response.data;
 }
 
-function chatKey(chatID: string, keyB: Uint8Array): Uint8Array {
-  if (keyB.length !== 32) throw new Error("chat_key_unavailable");
+function chatKey(chatID: string, contentKey: Uint8Array): Uint8Array {
+  if (contentKey.length !== 32) throw new Error("chat_key_unavailable");
   return hkdf(
     sha256,
-    keyB,
+    contentKey,
     utf8ToBytes(`${CHAT_AAD_PREFIX}\n${chatID}`),
     CHAT_KEY_INFO,
     32,
@@ -403,19 +441,45 @@ function chatAAD(chatID: string): Uint8Array {
   return utf8ToBytes(`${CHAT_AAD_PREFIX}\n${chatID}\n${CHAT_KEY_VERSION}`);
 }
 
-function chatTranslationKey(chatID: string, keyB: Uint8Array): Uint8Array {
+function legacyDeviceChatKey(chatID: string, keyB: Uint8Array): Uint8Array {
   if (keyB.length !== 32) throw new Error("chat_key_unavailable");
   return hkdf(
     sha256,
     keyB,
+    utf8ToBytes(`${LEGACY_DEVICE_CHAT_AAD_PREFIX}\n${chatID}`),
+    LEGACY_DEVICE_CHAT_KEY_INFO,
+    32,
+  );
+}
+
+function chatTranslationKey(chatID: string, contentKey: Uint8Array): Uint8Array {
+  if (contentKey.length !== 32) throw new Error("chat_key_unavailable");
+  return hkdf(
+    sha256,
+    contentKey,
     utf8ToBytes(`${CHAT_TRANSLATION_AAD_PREFIX}\n${chatID}`),
     CHAT_TRANSLATION_KEY_INFO,
     32,
   );
 }
 
+function legacyChatTranslationKey(chatID: string, keyB: Uint8Array): Uint8Array {
+  if (keyB.length !== 32) throw new Error("chat_key_unavailable");
+  return hkdf(
+    sha256,
+    keyB,
+    utf8ToBytes(`${LEGACY_CHAT_TRANSLATION_AAD_PREFIX}\n${chatID}`),
+    LEGACY_CHAT_TRANSLATION_KEY_INFO,
+    32,
+  );
+}
+
 function chatTranslationAAD(chatID: string, messageID: string, messageRevision: string, targetLanguage: ChatLanguage): Uint8Array {
   return utf8ToBytes(`${CHAT_TRANSLATION_AAD_PREFIX}\n${chatID}\n${messageID}\n${messageRevision}\n${targetLanguage}`);
+}
+
+function legacyChatTranslationAAD(chatID: string, messageID: string, messageRevision: string, targetLanguage: ChatLanguage): Uint8Array {
+  return utf8ToBytes(`${LEGACY_CHAT_TRANSLATION_AAD_PREFIX}\n${chatID}\n${messageID}\n${messageRevision}\n${targetLanguage}`);
 }
 
 function isChatLanguage(value: string): value is ChatLanguage {
@@ -437,10 +501,10 @@ export async function encryptChatTranslation(
   messageID: string,
   messageRevision: string,
   result: ChatTranslationResult,
-  keyB: Uint8Array,
+  contentKey: Uint8Array,
   random: (length: number) => Promise<Uint8Array> = randomBytes,
 ): Promise<EncryptedChatTranslation> {
-  if (keyB.length !== 32 || !messageID || !messageRevision || !isUsableTranslationResult(result, result.target_language)) {
+  if (contentKey.length !== 32 || !messageID || !messageRevision || !isUsableTranslationResult(result, result.target_language)) {
     throw new Error("chat_translation_invalid");
   }
   const nonce = await random(12);
@@ -450,7 +514,7 @@ export async function encryptChatTranslation(
     translated_text: result.translated_text.trim(),
     target_language: result.target_language,
   }));
-  const messageKey = chatTranslationKey(chatID, keyB);
+  const messageKey = chatTranslationKey(chatID, contentKey);
   try {
     const ciphertext = gcm(
       messageKey,
@@ -476,18 +540,21 @@ export function decryptChatTranslation(
   messageID: string,
   messageRevision: string,
   encrypted: EncryptedChatTranslation,
-  keyB?: Uint8Array,
+  contentKey?: Uint8Array,
 ): ChatTranslationResult | null {
-  if (!keyB || keyB.length !== 32 || encrypted.algorithm !== CHAT_ALGORITHM
-    || encrypted.key_version !== CHAT_TRANSLATION_KEY_VERSION
+  if (!contentKey || contentKey.length !== 32 || encrypted.algorithm !== CHAT_ALGORITHM
+    || (encrypted.key_version !== CHAT_TRANSLATION_KEY_VERSION && encrypted.key_version !== LEGACY_CHAT_TRANSLATION_KEY_VERSION)
     || encrypted.message_revision !== messageRevision || !isChatLanguage(encrypted.target_language)) return null;
   try {
-    const messageKey = chatTranslationKey(chatID, keyB);
+    const legacy = encrypted.key_version === LEGACY_CHAT_TRANSLATION_KEY_VERSION;
+    const messageKey = legacy ? legacyChatTranslationKey(chatID, contentKey) : chatTranslationKey(chatID, contentKey);
     try {
       const plaintext = gcm(
         messageKey,
         fromBase64URL(encrypted.nonce),
-        chatTranslationAAD(chatID, messageID, messageRevision, encrypted.target_language),
+        legacy
+          ? legacyChatTranslationAAD(chatID, messageID, messageRevision, encrypted.target_language)
+          : chatTranslationAAD(chatID, messageID, messageRevision, encrypted.target_language),
       ).decrypt(fromBase64URL(encrypted.ciphertext));
       try {
         const parsed = JSON.parse(new TextDecoder().decode(plaintext)) as Partial<ChatTranslationResult>;
@@ -518,10 +585,11 @@ function legacyChatAAD(chatID: string): Uint8Array {
   return utf8ToBytes(`${LEGACY_CHAT_AAD_PREFIX}\n${chatID}\n${LEGACY_CHAT_KEY_VERSION}`);
 }
 
-/**
- * Returns a copy of the device Key-B for chat encryption. The copy is owned by
- * the caller and can be wiped after a screen/session finishes using it.
- */
+function legacyDeviceChatAAD(chatID: string): Uint8Array {
+  return utf8ToBytes(`${LEGACY_DEVICE_CHAT_AAD_PREFIX}\n${chatID}\n${LEGACY_DEVICE_CHAT_KEY_VERSION}`);
+}
+
+/** Returns a copy of the device Key-B for legacy chat reads/device proof use. */
 export async function loadChatMessageKey(session: Session): Promise<Uint8Array> {
   const { ensureDeviceKeyB, loadStoredDeviceKeyB } = await loadDeviceKeyManagement();
   let device = await loadStoredDeviceKeyB(session.user_id);
@@ -531,6 +599,192 @@ export async function loadChatMessageKey(session: Session): Promise<Uint8Array> 
     return device.keyB.slice();
   } finally {
     device.keyB.fill(0);
+  }
+}
+
+/**
+ * Loads the stable per-chat DEK. The account envelope makes Recovery and the
+ * existing root-key device transfer sufficient for the user's own devices;
+ * the device envelope covers the first open on another participant device.
+ */
+export async function loadChatContentKey(
+  chatID: string,
+  session: Session,
+  signal?: AbortSignal,
+  random: (length: number) => Promise<Uint8Array> = randomBytes,
+): Promise<Uint8Array> {
+  if (!chatID) throw new Error("chat_key_unavailable");
+  const {
+    loadStoredKeyA,
+    loadStoredKeyEnvelope,
+    listKeyEnvelopes,
+  } = await loadDeviceKeyManagement();
+  const bundle = await ensureChatDeviceAgreementKey(session);
+  let keyA: Uint8Array | null = null;
+  let accountDataKey: Uint8Array | null = null;
+  let contentKey: Uint8Array | null = null;
+  let returned = false;
+  try {
+    let rootEnvelope = await loadStoredKeyEnvelope(session.user_id);
+    if (!rootEnvelope) {
+      // A transferred/recovered device may already have a usable device
+      // envelope while the root envelope is still behind the recent-passkey
+      // gate. Do not make device-envelope chat recovery depend on fetching it.
+      const remoteEnvelopes = await listKeyEnvelopes(session).catch(() => []);
+      rootEnvelope = remoteEnvelopes[0] ?? null;
+    }
+    if (rootEnvelope) {
+      keyA = await loadStoredKeyA(session.user_id);
+      if (keyA) accountDataKey = deriveAccountDataKey(keyA, rootEnvelope.kdf_params.data_salt);
+    }
+
+    const stored = await getChatKeyEnvelope(chatID, session, bundle, signal);
+    if (stored.account_envelope && accountDataKey) {
+      try {
+        contentKey = unwrapChatKeyForAccount(
+          stored.account_envelope.envelope,
+          accountDataKey,
+          session.user_id,
+          chatID,
+        );
+      } catch {
+        contentKey = null;
+      }
+    }
+    if (!contentKey && stored.device_envelope) {
+      try {
+        contentKey = unwrapChatKeyForDevice(
+          stored.device_envelope.envelope,
+          bundle.agreement.privateKey,
+          chatID,
+          session.user_id,
+          bundle.device.deviceID,
+        );
+      } catch {
+        contentKey = null;
+      }
+    }
+    if (contentKey) {
+      if (!stored.account_envelope && accountDataKey) {
+        const accountEnvelope = await wrapChatKeyForAccount(
+          contentKey,
+          accountDataKey,
+          session.user_id,
+          chatID,
+          random,
+        );
+        await saveChatKeyEnvelopes(chatID, [{
+          scope: "account",
+          user_id: session.user_id,
+          device_id: "",
+          key_version: CHAT_ACCOUNT_KEY_ENVELOPE_VERSION,
+          public_key: "",
+          algorithm: CHAT_ACCOUNT_KEY_WRAPPING_ALGORITHM,
+          envelope: accountEnvelope,
+        }], session, bundle, signal);
+      }
+      try {
+        await provisionMissingChatDeviceEnvelopes(chatID, contentKey, session, bundle, signal, random);
+      } catch (error) {
+        // The current device can still read and write with its chat DEK when a
+        // newly registered peer device is temporarily unavailable. Abort is
+        // different: do not return a key after the caller cancelled.
+        if (signal?.aborted) throw error;
+      }
+      returned = true;
+      return contentKey;
+    }
+
+    if (stored.account_envelope || stored.device_envelope) {
+      throw new Error("chat_key_unwrap_failed");
+    }
+    if (!accountDataKey) throw new Error("chat_key_recovery_unavailable");
+
+    const generatedKey = await random(32);
+    if (generatedKey.length !== 32) {
+      generatedKey.fill(0);
+      throw new Error("chat_key_randomness_invalid");
+    }
+    try {
+      const accountEnvelope = await wrapChatKeyForAccount(
+        generatedKey,
+        accountDataKey,
+        session.user_id,
+        chatID,
+        random,
+      );
+      const recipients = await getChatKeyRecipients(chatID, session, bundle, signal);
+      const deviceEnvelopes = await Promise.all(recipients.map(async (recipient) => ({
+        scope: "device" as const,
+        user_id: recipient.user_id,
+        device_id: recipient.device_id,
+        key_version: CHAT_DEVICE_KEY_ENVELOPE_VERSION,
+        public_key: recipient.public_key,
+        algorithm: CHAT_DEVICE_KEY_WRAPPING_ALGORITHM,
+        envelope: await wrapChatKeyForDevice(
+          generatedKey,
+          recipient.public_key,
+          chatID,
+          recipient.user_id,
+          recipient.device_id,
+          random,
+        ),
+      })));
+      await saveChatKeyEnvelopes(chatID, [{
+        scope: "account",
+        user_id: session.user_id,
+        device_id: "",
+        key_version: CHAT_ACCOUNT_KEY_ENVELOPE_VERSION,
+        public_key: "",
+        algorithm: CHAT_ACCOUNT_KEY_WRAPPING_ALGORITHM,
+        envelope: accountEnvelope,
+      }, ...deviceEnvelopes], session, bundle, signal);
+      contentKey = generatedKey.slice();
+      returned = true;
+      return contentKey;
+    } catch (error) {
+      // Two devices can initialize the same chat concurrently. Re-read the
+      // immutable row once and use the winner instead of creating a split key.
+      const winner = await getChatKeyEnvelope(chatID, session, bundle, signal).catch(() => null);
+      if (winner?.account_envelope && accountDataKey) {
+        try {
+          contentKey = unwrapChatKeyForAccount(winner.account_envelope.envelope, accountDataKey, session.user_id, chatID);
+          returned = true;
+          return contentKey;
+        } catch {
+          // Preserve the original failure below; an invalid winner must not be
+          // silently replaced with another chat key.
+        }
+      }
+      if (winner?.device_envelope) {
+        try {
+          // The winning initializer may belong to the other participant, so
+          // there may be no account envelope for this caller. The immutable
+          // device envelope is still sufficient to recover the same DEK.
+          contentKey = unwrapChatKeyForDevice(
+            winner.device_envelope.envelope,
+            bundle.agreement.privateKey,
+            chatID,
+            session.user_id,
+            bundle.device.deviceID,
+          );
+          returned = true;
+          return contentKey;
+        } catch {
+          // Preserve the original failure below; an invalid winner must not be
+          // silently replaced with another chat key.
+        }
+      }
+      throw error;
+    } finally {
+      generatedKey.fill(0);
+    }
+  } finally {
+    keyA?.fill(0);
+    accountDataKey?.fill(0);
+    if (!returned) contentKey?.fill(0);
+    wipeDeviceBundle(bundle);
+    // The returned key is intentionally owned by the caller and is not wiped.
   }
 }
 
@@ -596,6 +850,147 @@ async function deviceAttachmentRequest(
 async function ensureChatDeviceAgreementKey(session: Session): Promise<DeviceKeyBundle> {
   const { ensureDeviceAgreementKey } = await loadDeviceKeyManagement();
   return ensureDeviceAgreementKey(session);
+}
+
+function parseChatKeyEnvelope(value: unknown): ChatKeyEnvelope {
+  if (!value || typeof value !== "object") throw new Error("Invalid chat key envelope response");
+  const candidate = value as Partial<ChatKeyEnvelope>;
+  if ((candidate.scope !== "account" && candidate.scope !== "device")
+    || typeof candidate.user_id !== "string" || !candidate.user_id
+    || typeof candidate.device_id !== "string"
+    || typeof candidate.key_version !== "string"
+    || typeof candidate.public_key !== "string"
+    || typeof candidate.algorithm !== "string"
+    || typeof candidate.envelope !== "string"
+    || candidate.envelope.length === 0 || candidate.envelope.length > 16 * 1024) {
+    throw new Error("Invalid chat key envelope response");
+  }
+  if (candidate.scope === "account") {
+    if (candidate.device_id !== ""
+      || candidate.key_version !== CHAT_ACCOUNT_KEY_ENVELOPE_VERSION
+      || candidate.public_key !== ""
+      || candidate.algorithm !== CHAT_ACCOUNT_KEY_WRAPPING_ALGORITHM) {
+      throw new Error("Invalid chat account key envelope response");
+    }
+  } else if (candidate.device_id === ""
+    || candidate.key_version !== CHAT_DEVICE_KEY_ENVELOPE_VERSION
+    || candidate.algorithm !== CHAT_DEVICE_KEY_WRAPPING_ALGORITHM) {
+    throw new Error("Invalid chat device key envelope response");
+  } else {
+    try {
+      if (fromBase64URL(candidate.public_key).length !== 32) throw new Error("Invalid key");
+    } catch {
+      throw new Error("Invalid chat device key envelope response");
+    }
+  }
+  try {
+    if (fromBase64URL(candidate.envelope).length < 32) throw new Error("Invalid envelope");
+  } catch {
+    throw new Error("Invalid chat key envelope response");
+  }
+  return candidate as ChatKeyEnvelope;
+}
+
+function parseChatKeyEnvelopeBundle(value: unknown): ChatKeyEnvelopeBundle {
+  if (!value || typeof value !== "object") throw new Error("Invalid chat key envelope response");
+  const candidate = value as { account_envelope?: unknown; device_envelope?: unknown };
+  const result: ChatKeyEnvelopeBundle = {};
+  if (candidate.account_envelope !== undefined && candidate.account_envelope !== null) {
+    const envelope = parseChatKeyEnvelope(candidate.account_envelope);
+    if (envelope.scope !== "account") throw new Error("Invalid chat account key envelope response");
+    result.account_envelope = envelope;
+  }
+  if (candidate.device_envelope !== undefined && candidate.device_envelope !== null) {
+    const envelope = parseChatKeyEnvelope(candidate.device_envelope);
+    if (envelope.scope !== "device") throw new Error("Invalid chat device key envelope response");
+    result.device_envelope = envelope;
+  }
+  return result;
+}
+
+export async function getChatKeyEnvelope(
+  chatID: string,
+  session: Session,
+  deviceBundle?: DeviceKeyBundle,
+  signal?: AbortSignal,
+): Promise<ChatKeyEnvelopeBundle> {
+  const bundle = deviceBundle ?? await ensureChatDeviceAgreementKey(session);
+  try {
+    const path = `/chats/${encodeURIComponent(chatID)}/key-envelope`;
+    const response = await deviceAttachmentRequest(path, session, bundle, "GET", undefined, undefined, signal);
+    const payload = await readAttachmentJSON<DataResponse<unknown>>(response);
+    return parseChatKeyEnvelopeBundle(payload.data);
+  } finally {
+    if (!deviceBundle) wipeDeviceBundle(bundle);
+  }
+}
+
+export async function saveChatKeyEnvelopes(
+  chatID: string,
+  envelopes: ChatKeyEnvelope[],
+  session: Session,
+  deviceBundle?: DeviceKeyBundle,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (envelopes.length === 0 || envelopes.length > 64) throw new Error("Invalid chat key envelopes");
+  const bundle = deviceBundle ?? await ensureChatDeviceAgreementKey(session);
+  try {
+    const body = new TextEncoder().encode(JSON.stringify({ envelopes }));
+    const path = `/chats/${encodeURIComponent(chatID)}/key-envelopes`;
+    const response = await deviceAttachmentRequest(path, session, bundle, "PUT", body, {
+      "Content-Type": "application/json",
+    }, signal);
+    if (!response.ok) await readAttachmentJSON(response);
+  } finally {
+    if (!deviceBundle) wipeDeviceBundle(bundle);
+  }
+}
+
+export async function getChatKeyRecipients(
+  chatID: string,
+  session: Session,
+  deviceBundle?: DeviceKeyBundle,
+  signal?: AbortSignal,
+): Promise<ChatKeyRecipient[]> {
+  const bundle = deviceBundle ?? await ensureChatDeviceAgreementKey(session);
+  try {
+    const path = `/chats/${encodeURIComponent(chatID)}/key-recipients`;
+    const response = await deviceAttachmentRequest(path, session, bundle, "GET", undefined, undefined, signal);
+    const payload = await readAttachmentJSON<DataResponse<unknown>>(response);
+    return parseChatKeyRecipients(payload.data);
+  } finally {
+    if (!deviceBundle) wipeDeviceBundle(bundle);
+  }
+}
+
+async function provisionMissingChatDeviceEnvelopes(
+  chatID: string,
+  contentKey: Uint8Array,
+  session: Session,
+  deviceBundle: DeviceKeyBundle,
+  signal: AbortSignal | undefined,
+  random: (length: number) => Promise<Uint8Array>,
+): Promise<void> {
+  const recipients = await getChatKeyRecipients(chatID, session, deviceBundle, signal);
+  const missing = recipients.filter((recipient) => !recipient.envelope_present);
+  if (missing.length === 0) return;
+  const envelopes = await Promise.all(missing.map(async (recipient) => ({
+    scope: "device" as const,
+    user_id: recipient.user_id,
+    device_id: recipient.device_id,
+    key_version: CHAT_DEVICE_KEY_ENVELOPE_VERSION,
+    public_key: recipient.public_key,
+    algorithm: CHAT_DEVICE_KEY_WRAPPING_ALGORITHM,
+    envelope: await wrapChatKeyForDevice(
+      contentKey,
+      recipient.public_key,
+      chatID,
+      recipient.user_id,
+      recipient.device_id,
+      random,
+    ),
+  })));
+  await saveChatKeyEnvelopes(chatID, envelopes, session, deviceBundle, signal);
 }
 
 function attachmentResponseErrorCode(body: unknown): string {
@@ -673,6 +1068,28 @@ export function parseChatAttachmentRecipients(value: unknown): ChatAttachmentKey
       throw new Error("Invalid chat attachment recipient response");
     }
     return candidate as ChatAttachmentKeyRecipient;
+  });
+}
+
+function parseChatKeyRecipients(value: unknown): ChatKeyRecipient[] {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 64) {
+    throw new Error("Invalid chat key recipient response");
+  }
+  return value.map((item) => {
+    if (!item || typeof item !== "object") throw new Error("Invalid chat key recipient response");
+    const candidate = item as Partial<ChatKeyRecipient>;
+    if (typeof candidate.user_id !== "string" || !candidate.user_id
+      || typeof candidate.device_id !== "string" || !candidate.device_id
+      || candidate.key_version !== "x25519-v1" || typeof candidate.public_key !== "string"
+      || typeof candidate.envelope_present !== "boolean") {
+      throw new Error("Invalid chat key recipient response");
+    }
+    try {
+      if (fromBase64URL(candidate.public_key).length !== 32) throw new Error("Invalid key");
+    } catch {
+      throw new Error("Invalid chat key recipient response");
+    }
+    return candidate as ChatKeyRecipient;
   });
 }
 
@@ -765,13 +1182,13 @@ export async function sendChatAttachmentMessage(
   clientMessageID = createClientMessageID(),
   signal?: AbortSignal,
   random: (length: number) => Promise<Uint8Array> = randomBytes,
-  keyB?: Uint8Array,
+  contentKey?: Uint8Array,
 ): Promise<EncryptedChatMessage> {
   // The marker is encrypted like all chat message bodies. The image itself is
   // never placed in this JSON or sent to the message endpoint.
-  const resolvedKeyB = keyB ?? await loadChatMessageKey(session);
+  const resolvedContentKey = contentKey ?? await loadChatContentKey(chatID, session, signal, random);
   try {
-    const encrypted = await encryptChatPlaintext(chatID, JSON.stringify({ type: "image" }), resolvedKeyB, random);
+    const encrypted = await encryptChatPlaintext(chatID, JSON.stringify({ type: "image" }), resolvedContentKey, random);
     const response = await requestAPI<DataResponse<EncryptedChatMessage>>(
       `/chats/${encodeURIComponent(chatID)}/messages`,
       session,
@@ -789,7 +1206,7 @@ export async function sendChatAttachmentMessage(
     if (!response.data) throw new Error("chat attachment message response is empty");
     return response.data;
   } finally {
-    if (!keyB) resolvedKeyB.fill(0);
+    if (!contentKey) resolvedContentKey.fill(0);
   }
 }
 
@@ -806,7 +1223,9 @@ export async function sendChatImage(
   await ensureChatAttachmentEncryptionAvailable();
   const bundle = await ensureChatDeviceAgreementKey(session);
   let encrypted: EncryptedChatAttachment | null = null;
+  let contentKey: Uint8Array | null = null;
   try {
+    contentKey = await loadChatContentKey(chatID, session, signal, random);
     encrypted = await encryptChatAttachmentBytes(plaintext, contentType, chatID, random);
     const recipients = await getChatAttachmentKeyRecipients(chatID, session, bundle, signal);
     const attachment = await uploadChatAttachment(chatID, encrypted, session, bundle, signal);
@@ -828,9 +1247,10 @@ export async function sendChatImage(
       ),
     })));
     await saveChatAttachmentKeyEnvelopes(chatID, attachment.id, envelopes, session, bundle, signal);
-    const message = await sendChatAttachmentMessage(chatID, attachment.id, session, clientMessageID, signal, random, bundle.device.keyB);
+    const message = await sendChatAttachmentMessage(chatID, attachment.id, session, clientMessageID, signal, random, contentKey);
     return { message, attachment };
   } finally {
+    contentKey?.fill(0);
     encrypted?.imageKey.fill(0);
     encrypted?.ciphertext.fill(0);
     wipeDeviceBundle(bundle);
@@ -982,7 +1402,7 @@ export async function blockUser(
 export async function encryptChatPlaintext(
   chatID: string,
   plaintext: string,
-  keyB: Uint8Array,
+  contentKey: Uint8Array,
   random: (length: number) => Promise<Uint8Array> = randomBytes,
 ): Promise<{
   ciphertext: string;
@@ -990,9 +1410,9 @@ export async function encryptChatPlaintext(
   algorithm: typeof CHAT_ALGORITHM;
   key_version: typeof CHAT_KEY_VERSION;
 }> {
-  if (keyB.length !== 32) throw new Error("chat_key_unavailable");
+  if (contentKey.length !== 32) throw new Error("chat_key_unavailable");
   const nonce = await random(12);
-  const messageKey = chatKey(chatID, keyB);
+  const messageKey = chatKey(chatID, contentKey);
   try {
     const ciphertext = gcm(messageKey, nonce, chatAAD(chatID)).encrypt(utf8ToBytes(plaintext));
     return {
@@ -1009,19 +1429,27 @@ export async function encryptChatPlaintext(
 export function decryptChatMessage(
   chatID: string,
   message: EncryptedChatMessage,
-  keyB?: Uint8Array,
+  contentKey?: Uint8Array,
+  legacyKeyB?: Uint8Array,
 ): string | null {
   if (message.algorithm !== CHAT_ALGORITHM) return null;
   const isLegacy = message.key_version === LEGACY_CHAT_KEY_VERSION;
-  if (!isLegacy && message.key_version !== CHAT_KEY_VERSION) return null;
-  if (!isLegacy && (!keyB || keyB.length !== 32)) return null;
+  const isLegacyDevice = message.key_version === LEGACY_DEVICE_CHAT_KEY_VERSION;
+  const deviceKey = legacyKeyB ?? contentKey;
+  if (!isLegacy && !isLegacyDevice && message.key_version !== CHAT_KEY_VERSION) return null;
+  if (message.key_version === CHAT_KEY_VERSION && (!contentKey || contentKey.length !== 32)) return null;
+  if (isLegacyDevice && (!deviceKey || deviceKey.length !== 32)) return null;
   try {
-    const messageKey = isLegacy ? legacyChatKey(chatID) : chatKey(chatID, keyB as Uint8Array);
+    const messageKey = isLegacy
+      ? legacyChatKey(chatID)
+      : isLegacyDevice
+        ? legacyDeviceChatKey(chatID, deviceKey as Uint8Array)
+        : chatKey(chatID, contentKey as Uint8Array);
     try {
       const plaintext = gcm(
         messageKey,
         fromBase64URL(message.nonce),
-        isLegacy ? legacyChatAAD(chatID) : chatAAD(chatID),
+        isLegacy ? legacyChatAAD(chatID) : isLegacyDevice ? legacyDeviceChatAAD(chatID) : chatAAD(chatID),
       ).decrypt(fromBase64URL(message.ciphertext));
       return new TextDecoder().decode(plaintext);
     } finally {
@@ -1070,7 +1498,7 @@ export async function translateChatMessage(
   targetLanguage: ChatLanguage,
   session: Session,
   signal?: AbortSignal,
-  keyB?: Uint8Array,
+  contentKey?: Uint8Array,
   random: (length: number) => Promise<Uint8Array> = randomBytes,
 ): Promise<ChatTranslationResult> {
   const response = await requestAPI<DataResponse<ChatTranslationAPIResponse>>(
@@ -1087,7 +1515,7 @@ export async function translateChatMessage(
     throw new Error("chat translation response is invalid");
   }
   if (result.cached === true) {
-    if (!keyB || typeof result.message_revision !== "string"
+    if (!contentKey || typeof result.message_revision !== "string"
       || typeof result.ciphertext !== "string" || typeof result.nonce !== "string"
       || result.algorithm !== CHAT_ALGORITHM || typeof result.key_version !== "string") {
       throw new Error("chat translation cache response is invalid");
@@ -1099,7 +1527,7 @@ export async function translateChatMessage(
       algorithm: CHAT_ALGORITHM,
       key_version: result.key_version,
       message_revision: result.message_revision,
-    }, keyB);
+    }, contentKey);
     if (!decrypted) throw new Error("chat translation cache unavailable");
     return decrypted;
   }
@@ -1114,9 +1542,9 @@ export async function translateChatMessage(
   if (!isUsableTranslationResult(translated, targetLanguage)) {
     throw new Error("chat translation response is invalid");
   }
-  if (keyB) {
+  if (contentKey) {
     if (result.message_revision !== messageRevision) throw new Error("chat translation revision mismatch");
-    const encrypted = await encryptChatTranslation(chatID, messageID, messageRevision, translated, keyB, random);
+    const encrypted = await encryptChatTranslation(chatID, messageID, messageRevision, translated, contentKey, random);
     await saveChatMessageTranslation(chatID, messageID, encrypted, session, signal);
   }
   return translated;
@@ -1129,11 +1557,11 @@ export async function updateChatMessage(
   session: Session,
   signal?: AbortSignal,
   random: (length: number) => Promise<Uint8Array> = randomBytes,
-  keyB?: Uint8Array,
+  contentKey?: Uint8Array,
 ): Promise<EncryptedChatMessage> {
-  const resolvedKeyB = keyB ?? await loadChatMessageKey(session);
+  const resolvedContentKey = contentKey ?? await loadChatContentKey(chatID, session, signal, random);
   try {
-    const encrypted = await encryptChatPlaintext(chatID, plaintext, resolvedKeyB, random);
+    const encrypted = await encryptChatPlaintext(chatID, plaintext, resolvedContentKey, random);
     const response = await requestAPI<DataResponse<EncryptedChatMessage>>(
       `/chats/${encodeURIComponent(chatID)}/messages/${encodeURIComponent(messageID)}`,
       session,
@@ -1146,7 +1574,7 @@ export async function updateChatMessage(
     if (!response.data) throw new Error("chat message update response is empty");
     return response.data;
   } finally {
-    if (!keyB) resolvedKeyB.fill(0);
+    if (!contentKey) resolvedContentKey.fill(0);
   }
 }
 
@@ -1186,11 +1614,11 @@ export async function sendChatMessage(
   clientMessageID = createClientMessageID(),
   signal?: AbortSignal,
   random: (length: number) => Promise<Uint8Array> = randomBytes,
-  keyB?: Uint8Array,
+  contentKey?: Uint8Array,
 ): Promise<EncryptedChatMessage> {
-  const resolvedKeyB = keyB ?? await loadChatMessageKey(session);
+  const resolvedContentKey = contentKey ?? await loadChatContentKey(chatID, session, signal, random);
   try {
-    const encrypted = await encryptChatPlaintext(chatID, plaintext, resolvedKeyB, random);
+    const encrypted = await encryptChatPlaintext(chatID, plaintext, resolvedContentKey, random);
     const response = await requestAPI<DataResponse<EncryptedChatMessage>>(
       `/chats/${encodeURIComponent(chatID)}/messages`,
       session,
@@ -1206,7 +1634,7 @@ export async function sendChatMessage(
     if (!response.data) throw new Error("chat message response is empty");
     return response.data;
   } finally {
-    if (!keyB) resolvedKeyB.fill(0);
+    if (!contentKey) resolvedContentKey.fill(0);
   }
 }
 
@@ -1218,13 +1646,13 @@ export async function sendChatLocation(
   clientMessageID = createClientMessageID(),
   signal?: AbortSignal,
   random: (length: number) => Promise<Uint8Array> = randomBytes,
-  keyB?: Uint8Array,
+  contentKey?: Uint8Array,
 ): Promise<EncryptedChatMessage> {
   const payload: ChatLocationPayload = { type: "location", ...location, expires_at: expiresAt };
   if (!parseChatLocationPayload(JSON.stringify(payload), expiresAt)) throw new Error("invalid_chat_location");
-  const resolvedKeyB = keyB ?? await loadChatMessageKey(session);
+  const resolvedContentKey = contentKey ?? await loadChatContentKey(chatID, session, signal, random);
   try {
-    const encrypted = await encryptChatPlaintext(chatID, JSON.stringify(payload), resolvedKeyB, random);
+    const encrypted = await encryptChatPlaintext(chatID, JSON.stringify(payload), resolvedContentKey, random);
     const response = await requestAPI<DataResponse<EncryptedChatMessage>>(
       `/chats/${encodeURIComponent(chatID)}/messages`, session,
       { method: "POST", body: JSON.stringify({ client_message_id: clientMessageID, ...encrypted, content_type: "location", expires_at: expiresAt }), signal },
@@ -1232,7 +1660,7 @@ export async function sendChatLocation(
     if (!response.data) throw new Error("chat location response is empty");
     return response.data;
   } finally {
-    if (!keyB) resolvedKeyB.fill(0);
+    if (!contentKey) resolvedContentKey.fill(0);
   }
 }
 
@@ -1279,12 +1707,13 @@ export function toChatMessageView(
   chatID: string,
   message: EncryptedChatMessage,
   currentUserID: string,
-  keyB?: Uint8Array,
+  contentKey?: Uint8Array,
+  legacyKeyB?: Uint8Array,
 ): ChatMessageView {
   // Image messages carry an encrypted marker only. Never render that marker
   // as chat text; the attachment is downloaded and decrypted separately after
   // its recipient envelope is opened on this device.
-  const plaintext = message.content_type === "image" ? null : decryptChatMessage(chatID, message, keyB);
+  const plaintext = message.content_type === "image" ? null : decryptChatMessage(chatID, message, contentKey, legacyKeyB);
   const location = message.content_type === "location" ? parseChatLocationPayload(plaintext, message.expires_at) : null;
   return {
     ...message,

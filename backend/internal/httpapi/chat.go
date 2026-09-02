@@ -76,6 +76,12 @@ func chatItem(service *chat.Service, moderation chat.ModerationProvider, transla
 			chatTransportToken(w, r, service, claims.Subject, claims.SessionID, chatID)
 		case rest[0] == "attachment-key-recipients" && len(rest) == 1:
 			chatAttachmentKeyRecipients(w, r, service, devices, claims, chatID)
+		case rest[0] == "key-recipients" && len(rest) == 1:
+			chatKeyRecipients(w, r, service, devices, claims, chatID)
+		case rest[0] == "key-envelope" && len(rest) == 1:
+			chatKeyEnvelope(w, r, service, devices, claims, chatID)
+		case rest[0] == "key-envelopes" && len(rest) == 1:
+			chatKeyEnvelope(w, r, service, devices, claims, chatID)
 		case rest[0] == "attachments" && len(rest) == 1:
 			chatAttachmentUpload(w, r, service, devices, claims, chatID)
 		case rest[0] == "attachments" && len(rest) == 2:
@@ -286,6 +292,10 @@ func writeChatError(w http.ResponseWriter, err error) {
 		status, code = http.StatusConflict, "too_many_pending_attachments"
 	case errors.Is(err, chat.ErrChatAttachmentKeysMissing):
 		status, code = http.StatusConflict, "chat_attachment_keys_unavailable"
+	case errors.Is(err, chat.ErrChatKeyEnvelopeMissing):
+		status, code = http.StatusConflict, "chat_key_recipients_unavailable"
+	case errors.Is(err, chat.ErrChatKeyEnvelopeConflict):
+		status, code = http.StatusConflict, "chat_key_envelope_conflict"
 	case errors.Is(err, chat.ErrChatSignerMissing):
 		status, code = http.StatusServiceUnavailable, "chat_transport_unavailable"
 	case errors.Is(err, chat.ErrChatAttachmentUnavailable):

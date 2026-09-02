@@ -66,7 +66,7 @@ type ChatSummary struct {
 
 // EncryptedMessageTranslation is a cached translation bound to one message
 // revision and target language. Its payload is encrypted on the client with
-// the chat Key-B before it reaches the API.
+// the per-chat DEK before it reaches the API.
 type EncryptedMessageTranslation struct {
 	TargetLanguage  string `json:"target_language"`
 	Ciphertext      string `json:"ciphertext"`

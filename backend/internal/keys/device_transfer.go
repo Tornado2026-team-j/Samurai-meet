@@ -216,7 +216,11 @@ func (s *DeviceTransferService) GetForTarget(ctx context.Context, userID, transf
 		}
 		item.Status = "expired"
 	}
-	if item.Status == "approved" {
+	// A completed transfer remains readable by the already authenticated target
+	// device. This makes target retries idempotent when the completion response
+	// was lost after the server committed it; the HTTP boundary has already
+	// verified the target device proof before calling this method.
+	if item.Status == "approved" || item.Status == "completed" {
 		item.WrappedMasterKey = wrappedMasterKey
 		item.WrappingAlgorithm = wrappingAlgorithm
 		if err = validateWrappedMasterKey(item.WrappedMasterKey, item.ID, item.TargetDeviceID, item.TargetPublicKey); err != nil || item.WrappingAlgorithm != DeviceTransferAlgorithm {
