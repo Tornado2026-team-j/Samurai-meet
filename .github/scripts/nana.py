@@ -239,7 +239,7 @@ if command.name in {"review", "security", "spec", "suggest"}:
         review,
         f"_🌸 Nana · `{MODEL}` / {EFFORT} reasoning · 最終判断は人間が行ってください。_",
     )
-    count = post_review_with_suggestions(number, pr["head"]["sha"], suggestions, files)
+    count = post_review_with_suggestions(number, pr["head"]["sha"], review, suggestions, files)
     print(f"Nana review posted; {count} inline suggestion(s).")
     raise SystemExit(0)
 
