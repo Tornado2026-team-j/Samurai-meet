@@ -117,14 +117,7 @@ func (e *QUICEndpoint) HandleFrame(ctx context.Context, connection QUICConnectio
 	}
 	switch frame.Type {
 	case clientFrameMessageSend:
-		return e.service.SendMessage(ctx, connection.UserID, connection.ChatID, SendMessageInput{
-			ClientMessageID: frame.ClientMessageID,
-			Ciphertext:      frame.Ciphertext,
-			Nonce:           frame.Nonce,
-			Algorithm:       frame.Algorithm,
-			KeyVersion:      frame.KeyVersion,
-			ContentType:     frame.ContentType,
-		}, now)
+		return e.service.SendMessage(ctx, connection.UserID, connection.ChatID, sendMessageInputFromFrame(frame), now)
 	case clientFrameMessageRead:
 		if err := e.service.MarkRead(ctx, connection.UserID, connection.ChatID, frame.LastMessageSequence, now); err != nil {
 			return Message{}, false, err
@@ -138,6 +131,19 @@ func (e *QUICEndpoint) HandleFrame(ctx context.Context, connection QUICConnectio
 		return Message{}, false, nil
 	default:
 		return Message{}, false, ErrQUICUnsupportedOp
+	}
+}
+
+func sendMessageInputFromFrame(frame inboundFrame) SendMessageInput {
+	return SendMessageInput{
+		ClientMessageID:         frame.ClientMessageID,
+		Ciphertext:              frame.Ciphertext,
+		Nonce:                   frame.Nonce,
+		Algorithm:               frame.Algorithm,
+		KeyVersion:              frame.KeyVersion,
+		ContentType:             frame.ContentType,
+		PlaintextCommitment:     frame.PlaintextCommitment,
+		PlaintextCommitmentSalt: frame.PlaintextCommitmentSalt,
 	}
 }
 

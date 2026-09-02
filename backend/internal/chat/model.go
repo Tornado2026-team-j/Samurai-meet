@@ -35,15 +35,17 @@ const (
 // inboundFrame is the shared shape decoded from every client frame. Fields not
 // relevant to a given type stay at their zero value.
 type inboundFrame struct {
-	Type                string `json:"type"`
-	ChatToken           string `json:"chat_token"`
-	ClientMessageID     string `json:"client_message_id"`
-	Ciphertext          string `json:"ciphertext"`
-	Nonce               string `json:"nonce"`
-	Algorithm           string `json:"algorithm"`
-	KeyVersion          string `json:"key_version"`
-	ContentType         string `json:"content_type"`
-	LastMessageSequence int64  `json:"last_message_sequence"`
+	Type                    string `json:"type"`
+	ChatToken               string `json:"chat_token"`
+	ClientMessageID         string `json:"client_message_id"`
+	Ciphertext              string `json:"ciphertext"`
+	Nonce                   string `json:"nonce"`
+	Algorithm               string `json:"algorithm"`
+	KeyVersion              string `json:"key_version"`
+	ContentType             string `json:"content_type"`
+	PlaintextCommitment     string `json:"plaintext_commitment"`
+	PlaintextCommitmentSalt string `json:"plaintext_commitment_salt"`
+	LastMessageSequence     int64  `json:"last_message_sequence"`
 }
 
 type authOKFrame struct {

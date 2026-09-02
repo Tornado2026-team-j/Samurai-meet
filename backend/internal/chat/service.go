@@ -906,8 +906,12 @@ func validateMessageInput(input SendMessageInput) error {
 	if input.ContentType != "text" && input.ContentType != "location" && input.ContentType != "image" {
 		return ErrChatInvalidInput
 	}
-	if input.KeyVersion == chatMessageKeyVersion {
-		if !validPlaintextBinding(input.PlaintextCommitment, input.PlaintextCommitmentSalt) {
+	if input.ContentType == "text" {
+		if input.KeyVersion == chatMessageKeyVersion {
+			if !validPlaintextBinding(input.PlaintextCommitment, input.PlaintextCommitmentSalt) {
+				return ErrChatInvalidInput
+			}
+		} else if input.PlaintextCommitment != "" || input.PlaintextCommitmentSalt != "" {
 			return ErrChatInvalidInput
 		}
 	} else if input.PlaintextCommitment != "" || input.PlaintextCommitmentSalt != "" {

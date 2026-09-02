@@ -88,7 +88,7 @@ HTTP/3 WebTransportのリアルタイム配送に、RESTと同じChat Token認�
 
 ## 6. 暗号化
 
-- 新規の本文・位置情報・画像マーカーは `frontend/services/chat.ts` の `chat-dek-v1` で、クライアント生成のランダムなチャットDEKを使って暗号化する。チャットIDは公開コンテキストとしてAADに含めるが、Key-B・Key-A・チャットDEK・平文はAPIへ送信しない。Key-Bは端末proofと端末登録に使うだけで、本文鍵の秘密入力ではない。
+- 新規の本文・位置情報・画像マーカーは `frontend/services/chat.ts` の `chat-dek-v1` で、クライアント生成のランダムなチャットDEKを使って暗号化する。textの新規送信・編集だけはsalt付き本文commitmentを付け、location/imageはcommitmentフィールドを送らない。チャットIDは公開コンテキストとしてAADに含めるが、Key-B・Key-A・チャットDEK・平文はAPIへ送信しない。Key-Bは端末proofと端末登録に使うだけで、本文鍵の秘密入力ではない。
 - チャットDEKは、利用者ごとにKey-A／`data_salt`から導出したアカウントデータ鍵で包む`chat-account-v1` envelopeと、参加端末のX25519公開鍵で包む`x25519-v1` device envelopeを使う。各envelopeには同じDEKのクライアント検証用`key_commitment`を付け、サーバーはenvelopeの公開メタデータと暗号文だけを保存し、復号や鍵導出はしない。device envelopeの追加登録はmatch ownerが両参加者向けに行え、owner以外は自分のアカウントに属する端末だけを認証済み端末proof付きで登録できる。参加者が相手端末のimmutable rowを先取りできない制約は維持する。0046だけが適用済みの旧チャットは、owner端末が既存envelopeをcommitment付きで再送してmanifestを作成する。新端末はRecoveryまたは端末移行でKey-Aを復旧した後、自分のアカウントenvelopeを復号でき、別参加者の端末は自端末向けdevice envelopeを復号する。
 - 既存の `chat-mvp-v1` と旧 `chat-keyb-v1` はデータを失わないため読み取り互換だけを残す。新規送信・編集は `chat-dek-v1` のみを使い、旧本文をサーバーで再暗号化したり、Key-Bを共有したりしない。旧方式の本文は旧鍵が利用できる端末でのみ表示される。
 - 端末移行・Recoveryはアカウントroot／Key-Aを新端末へ復旧する経路であり、チャットDEK自体を平文で移行しない。新端末でチャットを開いた際に、保存済みアカウントenvelopeをKey-A由来鍵で復号する。新しい参加端末向けには、登録済みX25519公開鍵へ個別envelopeを追加する。厳密E2EEとして扱うには、実機2端末の送受信・Recovery・端末失効時のQA確認が必要である。

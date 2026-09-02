@@ -23,6 +23,7 @@ import {
   parseChatAttachmentRecipients,
   chatPlaintextCommitment,
   sendChatMessage,
+  sendChatAttachmentMessage,
   sendChatLocation,
   toChatMessageView,
   translateChatMessage,
@@ -332,8 +333,24 @@ describe("チャットAPIクライアント", () => {
     const expiresAt = new Date(Date.now() + 60_000).toISOString();
     const message = await sendChatLocation("chat-1", { latitude: 35.681236, longitude: 139.767125, display_name: "Tokyo Station", accuracy_m: 20 }, session, expiresAt, "location-client-1", undefined, fixedRandom, fixedKeyB);
     expect(JSON.parse(requestedBody)).toMatchObject({ content_type: "location", expires_at: expiresAt });
+    expect(JSON.parse(requestedBody).plaintext_commitment).toBeUndefined();
+    expect(JSON.parse(requestedBody).plaintext_commitment_salt).toBeUndefined();
     expect(requestedBody).not.toContain("35.681236");
     expect(toChatMessageView("chat-1", message, "user-1", fixedKeyB).location).toMatchObject({ latitude: 35.681236, longitude: 139.767125, display_name: "Tokyo Station" });
+  });
+
+  it("画像メッセージはchat-dek-v1でも本文commitmentを送らない", async () => {
+    let requestedBody = "";
+    globalThis.fetch = (async (_input, init) => {
+      requestedBody = String(init?.body);
+      const body = JSON.parse(requestedBody) as Partial<EncryptedChatMessage>;
+      return new Response(JSON.stringify({ data: { ...body, id: "image-1", chat_id: "chat-1", sender_user_id: "user-1", sequence: 3, created_at: "2026-08-30T00:00:00Z" } }), { status: 201 });
+    }) as typeof fetch;
+    await sendChatAttachmentMessage("chat-1", "attachment-1", session, "image-client-1", undefined, fixedRandom, fixedKeyB);
+    const parsed = JSON.parse(requestedBody) as Record<string, unknown>;
+    expect(parsed).toMatchObject({ content_type: "image", attachment_id: "attachment-1", key_version: "chat-dek-v1" });
+    expect(parsed.plaintext_commitment).toBeUndefined();
+    expect(parsed.plaintext_commitment_salt).toBeUndefined();
   });
 
   it("期限切れの位置共有は座標を画面用データとして返さない", () => {

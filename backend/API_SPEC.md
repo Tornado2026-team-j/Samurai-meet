@@ -510,12 +510,12 @@ Request body:
   "algorithm": "AES-256-GCM",
   "key_version": "chat-dek-v1",
   "attachment_id": "任意。事前にアップロードしたチャット写真のID",
-  "plaintext_commitment": "chat-dek-v1本文のsalt付きSHA-256 commitment",
-  "plaintext_commitment_salt": "16byte random saltのBase64URL"
+  "plaintext_commitment": "textかつchat-dek-v1の場合のみ必須。salt付きSHA-256 commitment",
+  "plaintext_commitment_salt": "textかつchat-dek-v1の場合のみ必須。16byte random saltのBase64URL"
 }
 ```
 
-新規クライアントの`chat-dek-v1`は、クライアントが生成した32 byteのランダムなチャットDEKを本文・位置情報・画像マーカーの暗号化に使います。textを新規送信・編集するときは、本文をtrimした値に対するsalt付きSHA-256 `plaintext_commitment`と16byte saltも送ります。サーバーは本文を保存せず、翻訳要求の`text`が保存済みcommitmentと一致する場合だけGeminiへ渡します。DEKは利用者ごとのKey-A／`data_salt`から導出したアカウントデータ鍵で`chat-account-v1` envelopeへ包み、参加端末ごとにはX25519公開鍵で`x25519-v1` device envelopeへ包みます。`chat_id`、利用者、端末はenvelopeのAADへ束縛します。Key-Bそのもの・Key-A・DEK・導出鍵・平文はAPIへ送信せず、Key-Bは端末proofと端末公開鍵登録にだけ使います。既存の`chat-mvp-v1`と旧`chat-keyb-v1`はデータ保持のためクライアント側の読み取り互換だけを残し、新規送信・編集では使用しません。
+新規クライアントの`chat-dek-v1`は、クライアントが生成した32 byteのランダムなチャットDEKを本文・位置情報・画像マーカーの暗号化に使います。textを新規送信・編集するときだけ、本文をtrimした値に対するsalt付きSHA-256 `plaintext_commitment`と16byte saltを送ります。location/imageメッセージでは両フィールドを省略します。サーバーは本文を保存せず、翻訳要求の`text`が保存済みcommitmentと一致する場合だけGeminiへ渡します。DEKは利用者ごとのKey-A／`data_salt`から導出したアカウントデータ鍵で`chat-account-v1` envelopeへ包み、参加端末ごとにはX25519公開鍵で`x25519-v1` device envelopeへ包みます。`chat_id`、利用者、端末はenvelopeのAADへ束縛します。Key-Bそのもの・Key-A・DEK・導出鍵・平文はAPIへ送信せず、Key-Bは端末proofと端末公開鍵登録にだけ使います。既存の`chat-mvp-v1`と旧`chat-keyb-v1`はデータ保持のためクライアント側の読み取り互換だけを残し、新規送信・編集では使用しません。
 
 `GET /key-recipients`は認可済みチャットの登録済み端末X25519公開鍵だけを返します。`GET /key-envelope`は端末proofを検証した現端末について、本人のaccount envelopeとdevice envelopeだけを返します。`PUT /key-envelopes`はクライアント生成のenvelopeと、同一チャットDEKを示す`key_commitment`を追加保存し、既存の`(chat_id,user_id,scope,device_id)`行を別内容へ置換しません。match ownerは両参加者のdevice envelopeを登録でき、owner以外は自分のアカウントに属するdevice envelopeだけを、認証済み端末proof付きで登録できます。これにより、参加者が相手端末のimmutable rowを先取りできません。サーバーはenvelopeを復号せず、チャットDEKを知りません。0046だけが適用済みの旧チャットは、owner端末が既存envelopeをcommitment付きで再送してmanifestを作成します。
 

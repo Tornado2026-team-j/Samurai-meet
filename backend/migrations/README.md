@@ -38,6 +38,7 @@
 - `0048_chat_message_plaintext_binding.sql` は、翻訳要求の本文を対象messageへ結び付けるsalt付きcommitmentを追加する。本文自体は保存しない。
 - `0049_chat_translation_account_limits.sql` は、複数インスタンスで共有できるアカウント単位の翻訳provider token bucketとin-flight重複抑止の状態を追加する。翻訳本文やprovider応答は保存しない。
 - `0050_chat_translation_inflight_expiry_type.sql` は、in-flight重複抑止の期限比較を文字列ではなくPostgreSQLのtimestamp型で行うようにする。
+- `0051_chat_key_manifest_commitment_format.sql` は、chat DEK commitmentをSHA-256のraw Base64URL（パディングなし）43文字に制限する。
 - runnerは`schema_migrations`へファイル名と正規化SQLのSHA-256を記録し、適用済みSQLを再実行しない。起動が同時になった場合もPostgreSQL advisory lockで直列化する。適用済みファイルの内容が変わった場合はchecksum mismatchで停止する。
 - 0040と0044には、既知の旧checksumと現行checksumの組み合わせだけをrunnerが監査済み互換として許容する。履歴行は変更せず、後続の0042または0045で前方移行する。
 - 既存DBへ導入する初回起動では、ファイル名順に現行schemaを確認しながら未登録migrationを一度だけ適用する。適用済み状態を手作業で捏造・削除せず、バックアップと監査ログを残してから運用する。

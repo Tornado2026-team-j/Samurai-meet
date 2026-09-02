@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -70,6 +71,30 @@ func TestQUICRejectsEarlyDataBeforeAnyMutation(t *testing.T) {
 	_, _, err := endpoint.HandleFrame(t.Context(), QUICConnection{}, true, inboundFrame{Type: clientFrameMessageSend}, time.Now())
 	if !errors.Is(err, ErrQUICEarlyData) {
 		t.Fatalf("HandleFrame error = %v, want 0-RTT rejection", err)
+	}
+}
+
+func TestQUICMessageFramePreservesPlaintextBinding(t *testing.T) {
+	var frame inboundFrame
+	if err := json.Unmarshal([]byte(`{
+		"type":"message.send",
+		"client_message_id":"client-1",
+		"ciphertext":"ciphertext",
+		"nonce":"nonce",
+		"algorithm":"AES-256-GCM",
+		"key_version":"chat-dek-v1",
+		"content_type":"text",
+		"plaintext_commitment":"commitment",
+		"plaintext_commitment_salt":"salt"
+	}`), &frame); err != nil {
+		t.Fatalf("decode message frame: %v", err)
+	}
+	input := sendMessageInputFromFrame(frame)
+	if input.PlaintextCommitment != "commitment" || input.PlaintextCommitmentSalt != "salt" {
+		t.Fatalf("message frame plaintext binding = commitment %q salt %q", input.PlaintextCommitment, input.PlaintextCommitmentSalt)
+	}
+	if input.ContentType != "text" || input.KeyVersion != "chat-dek-v1" {
+		t.Fatalf("message frame contract = content type %q key version %q", input.ContentType, input.KeyVersion)
 	}
 }
 

@@ -70,6 +70,28 @@ func TestValidateMessageInputRequiresCiphertextContract(t *testing.T) {
 	if err := validateMessageInput(location); err != nil {
 		t.Fatalf("valid location metadata rejected: %v", err)
 	}
+	chatDEKLocation := chatDEKMessage
+	chatDEKLocation.ContentType = "location"
+	chatDEKLocation.PlaintextCommitment = ""
+	chatDEKLocation.PlaintextCommitmentSalt = ""
+	chatDEKLocation.ExpiresAt = time.Now().Add(time.Hour).UTC().Format(time.RFC3339Nano)
+	if err := validateMessageInput(chatDEKLocation); err != nil {
+		t.Fatalf("chat-dek location without plaintext binding rejected: %v", err)
+	}
+	chatDEKImage := chatDEKMessage
+	chatDEKImage.ContentType = "image"
+	chatDEKImage.AttachmentID = "attachment-1"
+	chatDEKImage.PlaintextCommitment = ""
+	chatDEKImage.PlaintextCommitmentSalt = ""
+	if err := validateMessageInput(chatDEKImage); err != nil {
+		t.Fatalf("chat-dek image without plaintext binding rejected: %v", err)
+	}
+	nonTextBinding := chatDEKLocation
+	nonTextBinding.PlaintextCommitment = chatDEKMessage.PlaintextCommitment
+	nonTextBinding.PlaintextCommitmentSalt = chatDEKMessage.PlaintextCommitmentSalt
+	if err := validateMessageInput(nonTextBinding); !errors.Is(err, ErrChatInvalidInput) {
+		t.Fatalf("non-text message with plaintext binding error = %v, want %v", err, ErrChatInvalidInput)
+	}
 	location.ExpiresAt = time.Now().Add(25 * time.Hour).UTC().Format(time.RFC3339Nano)
 	if err := validateMessageInput(location); !errors.Is(err, ErrChatInvalidInput) {
 		t.Fatalf("overlong location expiry error = %v, want invalid input", err)

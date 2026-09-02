@@ -1280,7 +1280,7 @@ export async function sendChatAttachmentMessage(
   // never placed in this JSON or sent to the message endpoint.
   const resolvedContentKey = contentKey ?? await loadChatContentKey(chatID, session, signal, random);
   try {
-    const encrypted = await encryptChatPlaintext(chatID, JSON.stringify({ type: "image" }), resolvedContentKey, random);
+    const encrypted = await encryptChatPlaintext(chatID, JSON.stringify({ type: "image" }), resolvedContentKey, random, false);
     const response = await requestAPI<DataResponse<EncryptedChatMessage>>(
       `/chats/${encodeURIComponent(chatID)}/messages`,
       session,
@@ -1496,38 +1496,48 @@ export async function encryptChatPlaintext(
   plaintext: string,
   contentKey: Uint8Array,
   random: (length: number) => Promise<Uint8Array> = randomBytes,
+  includePlaintextCommitment = true,
 ): Promise<{
   ciphertext: string;
   nonce: string;
   algorithm: typeof CHAT_ALGORITHM;
   key_version: typeof CHAT_KEY_VERSION;
-  plaintext_commitment: string;
-  plaintext_commitment_salt: string;
+  plaintext_commitment?: string;
+  plaintext_commitment_salt?: string;
 }> {
   if (contentKey.length !== 32) throw new Error("chat_key_unavailable");
   const nonce = await random(12);
-  const salt = await random(16);
-  if (nonce.length !== 12 || salt.length !== 16) {
+  const salt = includePlaintextCommitment ? await random(16) : null;
+  if (nonce.length !== 12 || (salt !== null && salt.length !== 16)) {
     nonce.fill(0);
-    salt.fill(0);
+    salt?.fill(0);
     throw new Error("chat_message_randomness_invalid");
   }
-  const plaintextCommitmentSalt = toBase64URL(salt);
   const messageKey = chatKey(chatID, contentKey);
   try {
     const ciphertext = gcm(messageKey, nonce, chatAAD(chatID)).encrypt(utf8ToBytes(plaintext));
-    return {
+    const encrypted: {
+      ciphertext: string;
+      nonce: string;
+      algorithm: typeof CHAT_ALGORITHM;
+      key_version: typeof CHAT_KEY_VERSION;
+    } = {
       ciphertext: toBase64URL(ciphertext),
       nonce: toBase64URL(nonce),
       algorithm: CHAT_ALGORITHM,
       key_version: CHAT_KEY_VERSION,
+    };
+    if (salt === null) return encrypted;
+    const plaintextCommitmentSalt = toBase64URL(salt);
+    return {
+      ...encrypted,
       plaintext_commitment: chatPlaintextCommitment(plaintext, plaintextCommitmentSalt),
       plaintext_commitment_salt: plaintextCommitmentSalt,
     };
   } finally {
     messageKey.fill(0);
     nonce.fill(0);
-    salt.fill(0);
+    salt?.fill(0);
   }
 }
 
@@ -1762,7 +1772,7 @@ export async function sendChatLocation(
   if (!parseChatLocationPayload(JSON.stringify(payload), expiresAt)) throw new Error("invalid_chat_location");
   const resolvedContentKey = contentKey ?? await loadChatContentKey(chatID, session, signal, random);
   try {
-    const encrypted = await encryptChatPlaintext(chatID, JSON.stringify(payload), resolvedContentKey, random);
+    const encrypted = await encryptChatPlaintext(chatID, JSON.stringify(payload), resolvedContentKey, random, false);
     const response = await requestAPI<DataResponse<EncryptedChatMessage>>(
       `/chats/${encodeURIComponent(chatID)}/messages`, session,
       { method: "POST", body: JSON.stringify({ client_message_id: clientMessageID, ...encrypted, content_type: "location", expires_at: expiresAt }), signal },
