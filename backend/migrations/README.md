@@ -32,7 +32,9 @@
 - `0035_restore_places_category.sql` は、短期間導入された`Heritage`カテゴリを正式カテゴリの`Places`へ戻す。0031が既に適用済みの環境にも、既存募集を失わず適用できる。
 - `0043_chat_message_edit_timestamp.sql` は、送信者が暗号化本文を置き換えた時刻を保持する`messages.edited_at`を追加する。本文自体や編集履歴は保存しない。
 - `0044_chat_message_translations.sql` は、メッセージrevision・対象言語ごとのKey-B暗号化翻訳envelopeを`chat_message_translations`へ保存する。翻訳本文・原言語は保存せず、メッセージ編集・削除・保持期限で関連行を消去する。
+- `0045_chat_message_translations_encrypted.sql` は、先行導入版0044の平文翻訳キャッシュを削除し、暗号化envelopeの列へ前方移行する。サーバーはKey-Bを持たないため、旧平文キャッシュは再暗号化せず破棄する。
 - runnerは`schema_migrations`へファイル名と正規化SQLのSHA-256を記録し、適用済みSQLを再実行しない。起動が同時になった場合もPostgreSQL advisory lockで直列化する。適用済みファイルの内容が変わった場合はchecksum mismatchで停止する。
+- 0040と0044には、既知の旧checksumと現行checksumの組み合わせだけをrunnerが監査済み互換として許容する。履歴行は変更せず、後続の0042または0045で前方移行する。
 - 既存DBへ導入する初回起動では、ファイル名順に現行schemaを確認しながら未登録migrationを一度だけ適用する。適用済み状態を手作業で捏造・削除せず、バックアップと監査ログを残してから運用する。
 
 適用済みSQLの編集・リネーム・置換は行わない。checksum mismatchは既存DBとファイルの不整合を知らせる意図した停止であり、該当行を削除したりchecksumを書き換えたりして回避してはいけない。変更は新しい番号のmigrationとして追加し、既存環境では適用履歴とバックアップを確認してから起動する。

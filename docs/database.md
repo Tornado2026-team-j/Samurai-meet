@@ -53,8 +53,11 @@
 | `0036_device_transfer_cancellation.sql` | 端末引き継ぎを`cancelled`へ遷移できる状態と`cancelled_at`、キャンセル済み行の検索用indexを追加する |
 | `0043_chat_message_edit_timestamp.sql` | 送信者による暗号化本文編集の`messages.edited_at`を追加する |
 | `0044_chat_message_translations.sql` | メッセージrevisionごとのKey-B暗号化翻訳envelopeを保存する |
+| `0045_chat_message_translations_encrypted.sql` | 先行導入版0044の平文翻訳キャッシュを破棄し、暗号化envelopeの列へ前方移行する |
 
 注意: 現行のmigration runnerはSQLファイルを順番に正規化して実行し、`schema_migrations`へファイル名と正規化SQLのSHA-256 checksum、適用時刻を記録する。同じchecksumの適用済みmigrationはスキップし、PostgreSQL advisory lockで同時起動を直列化する。適用済みファイルの内容が変わった場合はchecksum mismatchで起動を停止する。適用済みmigrationを編集・置換してはいけない。DDL変更は新しい番号のSQLを追加する。
+
+例外として、0040と0044は監査済みの旧checksumと現行checksumの組み合わせだけを許容する。0044の先行導入版が保持していた平文翻訳キャッシュは、サーバーがKey-Bを持たず再暗号化できないため、0045で削除して再生成可能な暗号化キャッシュへ切り替える。`schema_migrations`の行やchecksumを手動変更して起動を通してはいけない。
 
 ## 3. 認証テーブル
 

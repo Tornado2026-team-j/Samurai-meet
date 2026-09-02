@@ -108,6 +108,8 @@ if ($SourceDelta.Count -ne 0) { throw 'backend/frontend contains a source delta'
 
 #### 2.3.1 ローカルE2E用schema
 
+0044先行導入版のchecksumも、監査済みの旧checksumと現行checksumの組み合わせだけを許容し、`0045_chat_message_translations_encrypted.sql`で前方移行します。先行版が保持した平文翻訳キャッシュはKey-Bを持つクライアントで再暗号化できないため、0045で削除して暗号化キャッシュへ切り替えます。
+
 公開`public` schemaの`schema_migrations`に旧`0040_chat_attachment_key_envelopes.sql`を適用したときのchecksumが残っていても、`917854d2`以降のmigration runnerは、0040について監査済みの旧checksumと現行checksumの組み合わせだけを許容し、履歴を変更せず`0042_chat_attachment_key_envelope_primary_key.sql`を前方適用します。したがって、既知の旧状態でchecksum mismatchにより起動が停止し続ける仕様ではありません。一方、その他の不一致は引き続き停止します。適用済みmigration、`schema_migrations`の行、checksumを編集・削除して起動を通してはいけません。
 
 ローカルE2Eでは、公開schemaを修復・上書きせず、テストデータの分離と再現性のため専用の`samurai_meet_e2e` schemaを作成して`DB_SCHEMA`へ指定します。これは公開schemaの既知の旧0040エラーを回避するためではありません。公開schemaを使う場合も、`917854d2`以降の限定checksum互換と0042前方移行に任せ、履歴を直接変更しません。DB接続値はサーバープロセスへexport済みの値、Secret Manager、またはそれらを安全に注入するlauncherから渡します。`.env`に値を置くだけで設定済みとみなさず、パスワードをコマンド・ログへ出しません。

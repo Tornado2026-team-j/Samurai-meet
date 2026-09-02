@@ -34,6 +34,8 @@
 
 起動時runnerは `backend/migrations/*.sql` を順に正規化してSHA-256 checksumを `schema_migrations` に記録し、PostgreSQL advisory lockで直列化する。適用済みSQLを編集してchecksum mismatchを回避してはいけない。変更は新しい番号のmigrationとして追加する。
 
+0040と0044は監査済みの旧checksumと現行checksumの組み合わせだけを限定許容し、0042または0045で前方移行する。0044先行版の平文翻訳キャッシュは0045で削除し、Key-B暗号化キャッシュへ切り替える。
+
 ## 認証・URL境界
 
 - Web PasskeyのURL fragmentへ渡すのは短命の `bootstrap_token` だけで、Access Token、Refresh Token、pre-auth tokenは渡さない。
