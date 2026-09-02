@@ -211,7 +211,10 @@ function parseSearchDate(value: string): Date | null {
 
 export function addRecruitmentSearchRangeMonths(date: Date): Date {
   const next = new Date(date.getTime());
+  const day = date.getUTCDate();
+  next.setUTCDate(1);
   next.setUTCMonth(next.getUTCMonth() + MAX_RECRUITMENT_SEARCH_RANGE_MONTHS);
+  next.setUTCDate(day);
   return next;
 }
 

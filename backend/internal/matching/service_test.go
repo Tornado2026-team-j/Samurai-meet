@@ -206,9 +206,13 @@ func TestNormalizeSearchParamsDateRange(t *testing.T) {
 	if valid.AvailableFrom != "2026-09-01" || valid.AvailableTo != "2026-11-01" {
 		t.Fatalf("date range changed: %#v", valid)
 	}
+	if _, err := normalizeSearchParams(SearchParams{AvailableFrom: "2026-12-31", AvailableTo: "2027-03-03"}); err != nil {
+		t.Fatalf("valid end-of-month date range rejected: %v", err)
+	}
 	for _, invalid := range []SearchParams{
 		{AvailableFrom: "2026-09-30", AvailableTo: "2026-09-01"},
 		{AvailableFrom: "2026-09-01", AvailableTo: "2026-11-02"},
+		{AvailableFrom: "2026-12-31", AvailableTo: "2027-03-04"},
 		{AvailableFrom: "2026-09-01"},
 	} {
 		if _, err := normalizeSearchParams(invalid); !errors.Is(err, ErrInvalidInput) {

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { buildRecruitmentPreviewModel } from "../services/recruitment-preview";
 import {
+  addRecruitmentSearchRangeMonths,
 	closeRecruitment,
 	classifyRecruitmentDescription,
   createRecruitment,
@@ -79,10 +80,15 @@ describe("募集APIクライアント", () => {
     expect(validateRecruitmentSearchDateRange("2026-09-01", "2026-09-30")).toBeNull();
     expect(validateRecruitmentSearchDateRange("2026-09-01", "2026-11-01")).toBeNull();
     expect(validateRecruitmentSearchDateRange("2026-01-31", "2026-03-31")).toBeNull();
+    expect(validateRecruitmentSearchDateRange("2026-12-31", "2027-03-03")).toBeNull();
+    expect(addRecruitmentSearchRangeMonths(new Date(Date.UTC(2026, 11, 31))).toISOString()).toBe(
+      "2027-03-03T00:00:00.000Z",
+    );
     expect(validateRecruitmentSearchDateRange("2026-09-01", undefined)).toBe("search_date_range_requires_both");
     expect(validateRecruitmentSearchDateRange("2026-09-30", "2026-09-01")).toBe("search_date_range_reversed");
     expect(validateRecruitmentSearchDateRange("2026-09-01", "2026-11-02")).toBe("search_date_range_too_long");
     expect(validateRecruitmentSearchDateRange("2026-02-28", "2026-04-29")).toBe("search_date_range_too_long");
+    expect(validateRecruitmentSearchDateRange("2026-12-31", "2027-03-04")).toBe("search_date_range_too_long");
     expect(validateRecruitmentSearchDateRange("2026-02-30", "2026-03-01")).toBe("search_date_range_invalid");
   });
 
