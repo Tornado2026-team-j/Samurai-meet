@@ -124,6 +124,13 @@ export async function saveTranslationConsent(userID: string, consent: Translatio
 }
 
 export async function loadLocalProfile(userID: string): Promise<LocalProfile | null> {
+  // Web is not a supported distribution target. Do not read legacy profile
+  // PII from Web Storage; remove it when this module is exercised in web dev.
+  if (Platform.OS === "web") {
+    await deleteItem(profileKey(userID));
+    return null;
+  }
+
   return parseLocalProfile(await getItem(profileKey(userID)));
 }
 
@@ -146,7 +153,14 @@ export async function saveLocalProfile(
   userID: string,
   profile: LocalProfile,
 ): Promise<void> {
-  await setItem(profileKey(userID), JSON.stringify(profile));
+  // Web is not a supported distribution target, and Web Storage is readable
+  // by page scripts. Keep profile persistence in native Secure Storage only.
+  if (Platform.OS === "web") {
+    await deleteItem(profileKey(userID));
+    return;
+  }
+
+  await SecureStore.setItemAsync(profileKey(userID), JSON.stringify(profile));
 }
 
 export async function clearLocalProfile(userID: string): Promise<void> {
