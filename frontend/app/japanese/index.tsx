@@ -523,6 +523,8 @@ export default function JapaneseHomeScreen() {
                   sort: sortMode,
                   ...(selectedCategory ? { category: selectedCategory } : {}),
                   ...(selectedTime ? { time: selectedTime } : {}),
+                  ...(params.availableFrom ? { availableFrom: params.availableFrom } : {}),
+                  ...(params.availableTo ? { availableTo: params.availableTo } : {}),
                   radius: String(selectedRadius),
                 },
               })}
