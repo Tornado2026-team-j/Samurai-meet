@@ -74,6 +74,42 @@ func TestSearchRecruitmentsAppliesFiltersBeforePageLimit(t *testing.T) {
 	}
 }
 
+func TestSearchRecruitmentsComparesSecondPrecisionExpiryAsTimestamp(t *testing.T) {
+	database := openIsolatedDatabase(t)
+	ctx := context.Background()
+	now := time.Date(2026, time.August, 26, 9, 0, 0, 500*1e6, time.UTC)
+	createdAt := now.Add(-time.Hour).UTC().Format(time.RFC3339Nano)
+	searcherID := randomID(t)
+	ownerID := randomID(t)
+	cardID := randomID(t)
+	insertMatchingTestUser(t, database, now, searcherID, "Search user", "US")
+	insertMatchingTestUser(t, database, now, ownerID, "Recruitment owner", "JP")
+
+	if _, err := database.ExecContext(ctx, `
+		INSERT INTO recruitment_cards (
+			id, owner_user_id, category, available_date, start_time, end_time,
+			timezone, keywords_json, description, visibility_radius_km, status,
+			expires_at, created_at, updated_at
+		)
+		VALUES ($1,$2,'Food','2026-08-27','18:00','20:00','Asia/Tokyo','["target"]',
+			'This card expired half a second ago.',1,'open','2026-08-26T09:00:00Z',$3,$3)`,
+		cardID, ownerID, createdAt); err != nil {
+		t.Fatalf("insert second precision expired recruitment error = %v", err)
+	}
+
+	found, err := matching.NewService(database).SearchRecruitments(ctx, searcherID, matching.SearchParams{
+		AvailableDate: "2026-08-27",
+		Keywords:      []string{"target"},
+		Limit:         1,
+	}, now)
+	if err != nil {
+		t.Fatalf("SearchRecruitments() error = %v", err)
+	}
+	if len(found) != 0 {
+		t.Fatalf("expired second-precision recruitment returned: %+v", found)
+	}
+}
+
 func TestAcceptMatchHonorsParticipantLimitConcurrently(t *testing.T) {
 	database := openIsolatedDatabase(t)
 	ctx := context.Background()

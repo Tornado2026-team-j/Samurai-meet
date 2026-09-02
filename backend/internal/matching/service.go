@@ -296,7 +296,7 @@ func (s *Service) SearchRecruitments(ctx context.Context, userID string, params 
 		LEFT JOIN profiles p ON p.user_id = r.owner_user_id
 		WHERE r.owner_user_id <> $1
 		  AND r.status IN ('open','matched')
-		  AND r.expires_at > $2
+		  AND r.expires_at::timestamptz > $2::timestamptz
 		  AND ($3 = '' OR r.available_date = $3)
 		  AND ($4 = '' OR r.available_date >= $4)
 		  AND ($5 = '' OR r.available_date <= $5)
@@ -386,7 +386,7 @@ func (s *Service) ListOwnedRecruitments(ctx context.Context, userID string, now 
 	nowText := now.UTC().Format(time.RFC3339Nano)
 	if _, err := s.db.ExecContext(ctx, `
 		UPDATE recruitment_cards SET status='expired',updated_at=$1
-		WHERE owner_user_id=$2 AND status IN ('open','matched') AND expires_at <= $1`, nowText, userID); err != nil {
+		WHERE owner_user_id=$2 AND status IN ('open','matched') AND expires_at::timestamptz <= $1::timestamptz`, nowText, userID); err != nil {
 		return nil, err
 	}
 	rows, err := s.db.QueryContext(ctx, `
@@ -820,7 +820,7 @@ func (s *Service) expirePendingMatches(ctx context.Context, now time.Time) error
 	_, err := s.db.ExecContext(ctx, `
 		UPDATE matches m SET status='expired',updated_at=$1
 		FROM recruitment_cards r
-		WHERE r.id=m.card_id AND m.status='pending' AND r.expires_at <= $1`,
+		WHERE r.id=m.card_id AND m.status='pending' AND r.expires_at::timestamptz <= $1::timestamptz`,
 		now.UTC().Format(time.RFC3339Nano))
 	return err
 }
