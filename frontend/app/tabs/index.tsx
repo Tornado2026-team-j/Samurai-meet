@@ -48,8 +48,6 @@ import {
   formatRecruitmentDateInput,
   formatRecruitmentISODate,
   getRecruitmentScheduleIssue,
-  getRecruitmentJSTTimeParts,
-  makeRecruitmentTimePickerValue,
   parseRecruitmentKeywordInput,
   parseRecruitmentDateInput,
   publishRecruitment,
@@ -87,6 +85,11 @@ const MAX_DURATION_HOURS = 8;
 const DURATION_STEP_HOURS = 0.5;
 const LOCATION_SEARCH_DEBOUNCE_MS = 300;
 const RECRUITMENT_LEAD_TIME_MS = 24 * 60 * 60 * 1000;
+const TIME_PICKER_HOURS = Array.from({ length: 24 }, (_, hourValue) => hourValue);
+const TIME_PICKER_MINUTES = Array.from(
+  { length: 12 },
+  (_, index) => index * 5,
+);
 
 const RECRUITMENT_COPY = {
   en: {
@@ -465,31 +468,6 @@ function formatPreviewExpiry(
   }
 }
 
-function getPickerTimeParts(value: Date): { hour: number; minute: number } {
-  return getRecruitmentJSTTimeParts(value);
-}
-
-function makeTimePickerValue(
-  date: string,
-  hour: number,
-  minute: number,
-): Date {
-  return makeRecruitmentTimePickerValue(date, hour, minute);
-}
-
-function roundPickerTime(value: Date): { hour: number; minute: number } {
-  const pickerTime = getPickerTimeParts(value);
-  let hour = pickerTime.hour;
-  let minute = Math.round(pickerTime.minute / 5) * 5;
-
-  if (minute === 60) {
-    hour = (hour + 1) % 24;
-    minute = 0;
-  }
-
-  return { hour, minute };
-}
-
 function countryCodeToFlag(countryCode: string): string {
   const normalizedCode = countryCode.trim().toUpperCase();
 
@@ -532,14 +510,8 @@ export default function SearchPreferencesScreen() {
   const [pickerDate, setPickerDate] = useState(() =>
     safeParseRecruitmentDate(suggestedDate, safeCurrentJSTPickerDate()),
   );
-  const [pickerTime, setPickerTime] = useState(() => {
-    return makeTimePickerValue(
-      suggestedDate,
-      Number(suggestedSchedule.startTime.slice(0, 2)),
-      Number(suggestedSchedule.startTime.slice(3, 5)),
-    );
-  });
-  const pickerTimeRef = useRef(pickerTime);
+  const [draftHour, setDraftHour] = useState(hour);
+  const [draftMinute, setDraftMinute] = useState(minute);
   const [scheduleWarning, setScheduleWarning] = useState<ScheduleWarning | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [isCompactHeaderVisible, setIsCompactHeaderVisible] = useState(true);
@@ -788,11 +760,6 @@ export default function SearchPreferencesScreen() {
     setPublishError(null);
   };
 
-  const setPickerTimeValue = (value: Date) => {
-    pickerTimeRef.current = value;
-    setPickerTime(value);
-  };
-
   const commitDate = (value: Date) => {
     try {
       const nextDate = formatRecruitmentISODate(value);
@@ -810,11 +777,9 @@ export default function SearchPreferencesScreen() {
     clearScheduleMessages();
   };
 
-  const commitTime = (value: Date) => {
-    const nextTime = roundPickerTime(value);
-    setPickerTimeValue(makeTimePickerValue(date, nextTime.hour, nextTime.minute));
-    setHour(nextTime.hour);
-    setMinute(nextTime.minute);
+  const commitTime = () => {
+    setHour(draftHour);
+    setMinute(draftMinute);
     setTimePickerVisible(false);
     clearScheduleMessages();
   };
@@ -827,7 +792,8 @@ export default function SearchPreferencesScreen() {
 
   const openTimePicker = () => {
     Keyboard.dismiss();
-    setPickerTimeValue(makeTimePickerValue(date, hour, minute));
+    setDraftHour(hour);
+    setDraftMinute(minute);
     setTimePickerVisible(true);
   };
 
@@ -850,20 +816,6 @@ export default function SearchPreferencesScreen() {
       } catch {
         // Ignore an invalid native event and keep the last valid picker value.
       }
-    }
-  };
-
-  const handleTimePickerChange = (event: DateTimePickerEvent, value?: Date) => {
-    if (Platform.OS === "android") {
-      setTimePickerVisible(false);
-      if (event.type === "set" && value) {
-        commitTime(value);
-      }
-      return;
-    }
-
-    if (event.type === "set" && value) {
-      setPickerTimeValue(value);
     }
   };
 
@@ -1055,7 +1007,8 @@ export default function SearchPreferencesScreen() {
     setPickerDate(safeParseRecruitmentDate(nextDraft.date, minimumDate));
     setHour(nextHour);
     setMinute(nextMinute);
-    setPickerTimeValue(makeTimePickerValue(nextDraft.date, nextHour, nextMinute));
+    setDraftHour(nextHour);
+    setDraftMinute(nextMinute);
     setFormError(null);
     setPublishError(null);
     setScheduleWarning(null);
@@ -2111,18 +2064,6 @@ export default function SearchPreferencesScreen() {
         />
       ) : null}
 
-      {Platform.OS !== "ios" && timePickerVisible ? (
-        <DateTimePicker
-          display="default"
-          is24Hour
-          minuteInterval={5}
-          mode="time"
-          onChange={handleTimePickerChange}
-          timeZoneName={JST_TIME_ZONE}
-          value={pickerTime}
-        />
-      ) : null}
-
       {Platform.OS === "ios" ? (
         <Modal
           animationType="slide"
@@ -2177,59 +2118,102 @@ export default function SearchPreferencesScreen() {
         </Modal>
       ) : null}
 
-      {Platform.OS === "ios" ? (
-        <Modal
-          animationType="slide"
-          onRequestClose={() => setTimePickerVisible(false)}
-          transparent
-          visible={timePickerVisible}
-        >
-          <View style={styles.modalBackdrop}>
-            <Pressable
-              accessibilityLabel={copy.closeTimePicker}
-              onPress={() => setTimePickerVisible(false)}
-              style={StyleSheet.absoluteFillObject}
-            />
-            <View
-              style={[
-                styles.pickerSheet,
-                { paddingBottom: Math.max(insets.bottom, 16) },
-              ]}
-            >
-              <View style={styles.pickerHeader}>
-                <Pressable
-                  accessibilityRole="button"
-                  onPress={() => setTimePickerVisible(false)}
-                  style={styles.pickerHeaderButton}
-                >
-                  <Text style={styles.pickerCancelText}>{copy.pickerCancel}</Text>
-                </Pressable>
-                <Text style={styles.pickerTitle}>{copy.pickerTimeTitle}</Text>
-                <Pressable
-                  accessibilityRole="button"
-                  onPress={() => commitTime(pickerTimeRef.current)}
-                  style={styles.pickerHeaderButton}
-                >
-                  <Text style={styles.pickerDoneText}>{copy.pickerDone}</Text>
-                </Pressable>
-              </View>
-              <DateTimePicker
-                accentColor={BLUE}
-                display="spinner"
-                is24Hour
-                 locale={pickerLocale}
-                minuteInterval={5}
-                mode="time"
-                onChange={handleTimePickerChange}
-                style={styles.nativePicker}
-                themeVariant="light"
-                timeZoneName={JST_TIME_ZONE}
-                value={pickerTime}
-              />
+      <Modal
+        animationType="slide"
+        onRequestClose={() => setTimePickerVisible(false)}
+        transparent
+        visible={timePickerVisible}
+      >
+        <View style={styles.modalBackdrop}>
+          <Pressable
+            accessibilityLabel={copy.closeTimePicker}
+            onPress={() => setTimePickerVisible(false)}
+            style={StyleSheet.absoluteFillObject}
+          />
+          <View
+            style={[
+              styles.pickerSheet,
+              styles.timePickerSheet,
+              { paddingBottom: Math.max(insets.bottom, 16) },
+            ]}
+          >
+            <View style={styles.pickerHeader}>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => setTimePickerVisible(false)}
+                style={styles.pickerHeaderButton}
+              >
+                <Text style={styles.pickerCancelText}>{copy.pickerCancel}</Text>
+              </Pressable>
+              <Text style={styles.pickerTitle}>{copy.pickerTimeTitle}</Text>
+              <Pressable
+                accessibilityRole="button"
+                onPress={commitTime}
+                style={styles.pickerHeaderButton}
+              >
+                <Text style={styles.pickerDoneText}>{copy.pickerDone}</Text>
+              </Pressable>
+            </View>
+            <View style={styles.wallClockPicker}>
+              <ScrollView
+                contentContainerStyle={styles.wallClockColumnContent}
+                showsVerticalScrollIndicator={false}
+                style={styles.wallClockColumn}
+              >
+                {TIME_PICKER_HOURS.map((hourValue) => {
+                  const selected = draftHour === hourValue;
+                  return (
+                    <Pressable
+                      key={hourValue}
+                      accessibilityLabel={`${String(hourValue).padStart(2, "0")}:00`}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected }}
+                      onPress={() => setDraftHour(hourValue)}
+                      style={({ pressed }) => [
+                        styles.wallClockOption,
+                        selected && styles.wallClockOptionSelected,
+                        pressed && styles.pressed,
+                      ]}
+                    >
+                      <Text style={[styles.wallClockOptionText, selected && styles.wallClockOptionTextSelected]}>
+                        {String(hourValue).padStart(2, "0")}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+              <Text style={styles.wallClockSeparator}>:</Text>
+              <ScrollView
+                contentContainerStyle={styles.wallClockColumnContent}
+                showsVerticalScrollIndicator={false}
+                style={styles.wallClockColumn}
+              >
+                {TIME_PICKER_MINUTES.map((minuteValue) => {
+                  const selected = draftMinute === minuteValue;
+                  return (
+                    <Pressable
+                      key={minuteValue}
+                      accessibilityLabel={`${minuteValue} minutes`}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected }}
+                      onPress={() => setDraftMinute(minuteValue)}
+                      style={({ pressed }) => [
+                        styles.wallClockOption,
+                        selected && styles.wallClockOptionSelected,
+                        pressed && styles.pressed,
+                      ]}
+                    >
+                      <Text style={[styles.wallClockOptionText, selected && styles.wallClockOptionTextSelected]}>
+                        {String(minuteValue).padStart(2, "0")}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
             </View>
           </View>
-        </Modal>
-      ) : null}
+        </View>
+      </Modal>
 
       <Modal
         animationType="fade"
@@ -3220,6 +3204,54 @@ const styles = StyleSheet.create({
     alignSelf: "center",
     width: "100%",
     height: 216,
+  },
+  timePickerSheet: {
+    minHeight: 342,
+  },
+  wallClockPicker: {
+    height: 252,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 32,
+    gap: 12,
+  },
+  wallClockColumn: {
+    width: 96,
+    height: 224,
+    borderWidth: 1,
+    borderColor: colors.border.subtle,
+    borderRadius: radius.lg,
+    backgroundColor: colors.surface.blueSoft,
+  },
+  wallClockColumnContent: {
+    paddingVertical: 8,
+    gap: 6,
+  },
+  wallClockOption: {
+    height: 38,
+    alignItems: "center",
+    justifyContent: "center",
+    marginHorizontal: 8,
+    borderRadius: radius.md,
+  },
+  wallClockOptionSelected: {
+    backgroundColor: BLUE,
+  },
+  wallClockOptionText: {
+    color: TEXT_GRAY,
+    fontSize: 18,
+    fontWeight: "800",
+  },
+  wallClockOptionTextSelected: {
+    color: colors.text.inverse,
+  },
+  wallClockSeparator: {
+    width: 16,
+    color: TEXT_GRAY,
+    fontSize: 28,
+    fontWeight: "900",
+    textAlign: "center",
   },
   selectionSheet: {
     width: "100%",

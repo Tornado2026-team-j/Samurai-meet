@@ -22,4 +22,18 @@ describe("募集プレビュー fallback のレイアウト契約", () => {
     expect(footer).toBeGreaterThan(confirmationStart);
     expect(footer).toBeLessThan(confirmationScrollEnd);
   });
+
+  it("時刻選択は端末TZ依存のnative time pickerではなくJST壁時計値を直接編集する", async () => {
+    const source = await Bun.file(join(root, "app/tabs/index.tsx")).text();
+
+    expect(source).not.toContain('mode="time"');
+    expect(source).toContain("const TIME_PICKER_HOURS = Array.from");
+    expect(source).toContain("const TIME_PICKER_MINUTES = Array.from");
+    expect(source).toContain("const [draftHour, setDraftHour] = useState(hour);");
+    expect(source).toContain("const [draftMinute, setDraftMinute] = useState(minute);");
+    expect(source).toContain("setHour(draftHour);");
+    expect(source).toContain("setMinute(draftMinute);");
+    expect(source).not.toContain("handleTimePickerChange");
+    expect(source).not.toContain("pickerTimeRef");
+  });
 });
