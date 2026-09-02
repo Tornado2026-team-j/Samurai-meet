@@ -190,18 +190,21 @@ Refresh request:
 
 応募、承認・辞退、暗号化チャットメッセージ送信時にサーバーで通知を作成します。通知画面の表示文はクライアント側で日本語／英語に変換し、応募・応募結果は表示言語に依存せず構造化IDから対応画面へ遷移します。チャット本文は保存・表示しません。現状はアプリ内REST通知であり、OSプッシュ通知は未実装です。通知遷移のiOS実機E2Eは未確認です。
 
-### チャット・会合（RESTのフロント接続済み。実機E2E・端末間Key-B共有は未完了）
+### チャット・会合（RESTのフロント接続済み。実機E2E・端末失効／鍵ローテーションは未完了）
 
 | Method | Path | 用途 |
 | --- | --- | --- |
 | GET | `/api/v1/chats` | チャット一覧 |
 | GET | `/api/v1/chats/{id}/messages` | 暗号化メッセージ履歴 |
-| POST | `/api/v1/chats/{id}/messages` | Key-B由来の暗号文を送信 |
+| POST | `/api/v1/chats/{id}/messages` | チャットDEKで暗号化した暗号文を送信 |
 | PATCH | `/api/v1/chats/{id}/messages/{message_id}` | 送信者自身のtext本文を暗号文ごと編集 |
 | DELETE | `/api/v1/chats/{id}/messages/{message_id}` | 送信者自身のメッセージを暗号文消去・監査付きで削除 |
 | POST | `/api/v1/chats/{id}/moderation` | 暗号化前本文の送信前安全判定 |
 | POST | `/api/v1/chats/{id}/translate` | AIによる原言語判定と利用者言語への翻訳 |
-| PUT | `/api/v1/chats/{id}/messages/{message_id}/translations/{target_language}` | Key-B暗号化済み翻訳結果をメッセージに保存 |
+| PUT | `/api/v1/chats/{id}/messages/{message_id}/translations/{target_language}` | チャットDEK暗号化済み翻訳結果をメッセージに保存 |
+| GET | `/api/v1/chats/{id}/key-recipients` | 参加端末のX25519公開鍵一覧を取得（端末proof付き） |
+| GET | `/api/v1/chats/{id}/key-envelope` | 自分のaccount／現端末向けchat DEK envelopeを取得（端末proof付き） |
+| PUT | `/api/v1/chats/{id}/key-envelopes` | クライアント生成のopaque chat DEK envelopeを追加（端末proof付き） |
 | POST | `/api/v1/chats/{id}/read` | 既読更新 |
 | POST | `/api/v1/chats/{id}/transport-token` | 対象chat専用短命token |
 | GET | `/api/v1/meetings/{id}` | 会合セッション取得 |
@@ -211,7 +214,7 @@ Refresh request:
 | GET | `/api/v1/meetings/{id}/proximity` | 直近の距離補助値 |
 | POST | `/api/v1/meetings/{id}/proximity` | Bluetooth／位置推測の補助値送信 |
 
-チャット送信・編集・削除は`accepted`マッチの送信者／参加者境界で行い、平文ではなくBase64URLのAES-256-GCM暗号文だけを保存します。同じ`client_message_id`の再送は冪等です。新規本文は端末Secure StorageのKey-Bを秘密入力にした`chat-keyb-v1`で暗号化し、既存`chat-mvp-v1`は読み取り互換だけを残します。Key-Bは端末固有値なので、参加者・別端末間の鍵共有が完成するまで新versionは相手端末で復号できません。翻訳はAIが原言語判定を含めて行い、初回結果をクライアントがKey-Bで暗号化してメッセージrevisionと一緒に保存します。同じrevision・対象言語なら暗号文を再利用し、編集・削除・保持期限で関連行も消去します。リアルタイム配送はTLS 1.3/UDPのHTTP/3 WebTransportをnative経路の候補とし、Expo GoではREST同期を使います。距離補助値はクライアント推定であり、本人確認や安全判定には使いません。
+チャット送信・編集・削除は`accepted`マッチの送信者／参加者境界で行い、平文ではなくBase64URLのAES-256-GCM暗号文だけを保存します。同じ`client_message_id`の再送は冪等です。新規本文はランダムなチャットDEKを使う`chat-dek-v1`で暗号化し、既存`chat-mvp-v1`と旧`chat-keyb-v1`は読み取り互換だけを残します。チャットDEKはKey-A／`data_salt`から導出したaccount envelopeと、参加端末のX25519公開鍵で包んだdevice envelopeに保存し、Key-Bは端末proofにだけ使います。Recovery／端末移行後はKey-Aを復旧してaccount envelopeから同じDEKを取り出せます。翻訳はAIが原言語判定を含めて行い、初回結果をクライアントがチャットDEKで暗号化してメッセージrevisionと一緒に保存します。同じrevision・対象言語なら保存済み暗号文を再利用し、編集・削除・保持期限で関連行も消去します。自動翻訳は同意済みの場合だけ初期表示範囲を遅延実行し、同時実行数を2件に制限します。リアルタイム配送はTLS 1.3/UDPのHTTP/3 WebTransportをnative経路の候補とし、Expo GoではREST同期を使います。距離補助値はクライアント推定であり、本人確認や安全判定には使いません。
 
 ### 画像・鍵（実装済み）
 

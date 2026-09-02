@@ -31,8 +31,9 @@
 - `0034_chat_attachments.sql` はチャット写真の暗号文メタデータ`chat_attachments`を追加する。画像本体はDBに保存せず暗号文BLOBストレージへ置き、平文・EXIF・暗号鍵は保存しない。`message_id`が`NULL`の未参照アップロードは起動時スイープで削除する。`--`コメント内に`;`を書かない（runnerは`;`で文を分割する）。
 - `0035_restore_places_category.sql` は、短期間導入された`Heritage`カテゴリを正式カテゴリの`Places`へ戻す。0031が既に適用済みの環境にも、既存募集を失わず適用できる。
 - `0043_chat_message_edit_timestamp.sql` は、送信者が暗号化本文を置き換えた時刻を保持する`messages.edited_at`を追加する。本文自体や編集履歴は保存しない。
-- `0044_chat_message_translations.sql` は、メッセージrevision・対象言語ごとのKey-B暗号化翻訳envelopeを`chat_message_translations`へ保存する。翻訳本文・原言語は保存せず、メッセージ編集・削除・保持期限で関連行を消去する。
+- `0044_chat_message_translations.sql` は、メッセージrevision・対象言語ごとのチャットDEK暗号化翻訳envelopeを`chat_message_translations`へ保存する。翻訳本文・原言語は保存せず、メッセージ編集・削除・保持期限で関連行を消去する。
 - `0045_chat_message_translations_encrypted.sql` は、先行導入版0044の平文翻訳キャッシュを削除し、暗号化envelopeの列へ前方移行する。サーバーはKey-Bを持たないため、旧平文キャッシュは再暗号化せず破棄する。
+- `0046_chat_key_envelopes.sql` は、ランダムなチャットDEKをKey-A由来のaccount envelopeまたは端末X25519 device envelopeとして保存する。サーバーはenvelopeを復号せず、既存行の置換も許可しない。
 - runnerは`schema_migrations`へファイル名と正規化SQLのSHA-256を記録し、適用済みSQLを再実行しない。起動が同時になった場合もPostgreSQL advisory lockで直列化する。適用済みファイルの内容が変わった場合はchecksum mismatchで停止する。
 - 0040と0044には、既知の旧checksumと現行checksumの組み合わせだけをrunnerが監査済み互換として許容する。履歴行は変更せず、後続の0042または0045で前方移行する。
 - 既存DBへ導入する初回起動では、ファイル名順に現行schemaを確認しながら未登録migrationを一度だけ適用する。適用済み状態を手作業で捏造・削除せず、バックアップと監査ログを残してから運用する。
