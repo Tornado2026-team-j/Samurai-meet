@@ -1,5 +1,6 @@
 import { gcm } from "@noble/ciphers/aes.js";
 import { hkdf } from "@noble/hashes/hkdf.js";
+import { hmac } from "@noble/hashes/hmac.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { utf8ToBytes } from "@noble/hashes/utils.js";
 import { API_BASE_URL } from "./api-config";
@@ -53,7 +54,8 @@ const CHAT_TRANSLATION_AAD_PREFIX = "samurai-meet:chat-translation:dek-v1";
 const LEGACY_CHAT_TRANSLATION_AAD_PREFIX = "samurai-meet:chat-translation:keyb-v1";
 const CHAT_TRANSLATION_KEY_INFO = utf8ToBytes("samurai-meet/chat-translation/dek-v1");
 const LEGACY_CHAT_TRANSLATION_KEY_INFO = utf8ToBytes("samurai-meet/chat-translation/keyb-v1");
-const CHAT_PLAINTEXT_COMMITMENT_DOMAIN = "samurai-meet:chat-message-plaintext-commitment/v1";
+const CHAT_PLAINTEXT_COMMITMENT_DOMAIN = "samurai-meet:chat-message-plaintext-commitment/v2";
+const CHAT_PLAINTEXT_COMMITMENT_KEY_INFO = utf8ToBytes("samurai-meet/chat-message/plaintext-commitment-key/v2");
 const MAX_PLAINTEXT_LENGTH = 2000;
 
 async function loadDeviceKeyManagement() {
@@ -451,6 +453,17 @@ function legacyDeviceChatKey(chatID: string, keyB: Uint8Array): Uint8Array {
     keyB,
     utf8ToBytes(`${LEGACY_DEVICE_CHAT_AAD_PREFIX}\n${chatID}`),
     LEGACY_DEVICE_CHAT_KEY_INFO,
+    32,
+  );
+}
+
+export function chatPlaintextCommitmentKey(chatID: string, contentKey: Uint8Array): Uint8Array {
+  if (contentKey.length !== 32) throw new Error("chat_key_unavailable");
+  return hkdf(
+    sha256,
+    contentKey,
+    utf8ToBytes(`${CHAT_AAD_PREFIX}\n${chatID}`),
+    CHAT_PLAINTEXT_COMMITMENT_KEY_INFO,
     32,
   );
 }
@@ -1514,6 +1527,7 @@ export async function encryptChatPlaintext(
     throw new Error("chat_message_randomness_invalid");
   }
   const messageKey = chatKey(chatID, contentKey);
+  const commitmentKey = salt === null ? null : chatPlaintextCommitmentKey(chatID, contentKey);
   try {
     const ciphertext = gcm(messageKey, nonce, chatAAD(chatID)).encrypt(utf8ToBytes(plaintext));
     const encrypted: {
@@ -1531,19 +1545,25 @@ export async function encryptChatPlaintext(
     const plaintextCommitmentSalt = toBase64URL(salt);
     return {
       ...encrypted,
-      plaintext_commitment: chatPlaintextCommitment(plaintext, plaintextCommitmentSalt),
+      plaintext_commitment: chatPlaintextCommitment(plaintext, plaintextCommitmentSalt, commitmentKey as Uint8Array),
       plaintext_commitment_salt: plaintextCommitmentSalt,
     };
   } finally {
     messageKey.fill(0);
+    commitmentKey?.fill(0);
     nonce.fill(0);
     salt?.fill(0);
   }
 }
 
-/** Commits to the client-visible message text without storing that text. */
-export function chatPlaintextCommitment(plaintext: string, salt: string): string {
-  return toBase64URL(sha256(utf8ToBytes(`${CHAT_PLAINTEXT_COMMITMENT_DOMAIN}\n${salt}\n${plaintext.trim()}`)));
+/** Commits to the client-visible message text with a client-held HMAC key. */
+export function chatPlaintextCommitment(plaintext: string, salt: string, commitmentKey: Uint8Array): string {
+  if (commitmentKey.length !== 32) throw new Error("chat_key_unavailable");
+  return toBase64URL(hmac(
+    sha256,
+    commitmentKey,
+    utf8ToBytes(`${CHAT_PLAINTEXT_COMMITMENT_DOMAIN}\n${salt}\n${plaintext.trim()}`),
+  ));
 }
 
 export function decryptChatMessage(
@@ -1621,12 +1641,28 @@ export async function translateChatMessage(
   contentKey?: Uint8Array,
   random: (length: number) => Promise<Uint8Array> = randomBytes,
 ): Promise<ChatTranslationResult> {
+  const requestBody: {
+    message_id: string;
+    text: string;
+    target_language: ChatLanguage;
+    plaintext_commitment_key?: string;
+  } = { message_id: messageID, text: plaintext, target_language: targetLanguage };
+  if (contentKey) {
+    const commitmentKey = chatPlaintextCommitmentKey(chatID, contentKey);
+    try {
+      // This derived key is sent only for the request-scoped binding check. It
+      // is never persisted with the message or returned by the API.
+      requestBody.plaintext_commitment_key = toBase64URL(commitmentKey);
+    } finally {
+      commitmentKey.fill(0);
+    }
+  }
   const response = await requestAPI<DataResponse<ChatTranslationAPIResponse>>(
     `/chats/${encodeURIComponent(chatID)}/translate`,
     session,
     {
       method: "POST",
-      body: JSON.stringify({ message_id: messageID, text: plaintext, target_language: targetLanguage }),
+      body: JSON.stringify(requestBody),
       signal,
     },
   );

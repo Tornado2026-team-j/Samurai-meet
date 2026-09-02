@@ -16,11 +16,11 @@ import (
 const maxChatTranslationRequestBytes = 16 * 1024
 
 type chatTranslationAuthorizer interface {
-	AuthorizeMessageTranslation(context.Context, string, string, string, string) (string, error)
+	AuthorizeMessageTranslation(context.Context, string, string, string, string, string) (string, error)
 }
 
 type chatTranslationLimiter interface {
-	BeginMessageTranslation(context.Context, string, string, string, string, string, time.Time) (func(), error)
+	BeginMessageTranslation(context.Context, string, string, string, string, string, string, string, time.Time) (func(), error)
 }
 
 type chatTranslationService interface {
@@ -61,9 +61,10 @@ func chatTranslation(service chatTranslationService, provider chatTranslator, ca
 		// Parse the request before authorization, then bind the supplied text to
 		// the stored message commitment before any provider call is possible.
 		var input struct {
-			MessageID      string `json:"message_id"`
-			Text           string `json:"text"`
-			TargetLanguage string `json:"target_language"`
+			MessageID              string `json:"message_id"`
+			Text                   string `json:"text"`
+			PlaintextCommitmentKey string `json:"plaintext_commitment_key"`
+			TargetLanguage         string `json:"target_language"`
 		}
 		if err := decodeJSONRequest(w, r, &input, maxChatTranslationRequestBytes); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_chat_translation_request"})
@@ -71,11 +72,14 @@ func chatTranslation(service chatTranslationService, provider chatTranslator, ca
 		}
 		messageID := strings.TrimSpace(input.MessageID)
 		text := strings.TrimSpace(input.Text)
+		commitmentKey := strings.TrimSpace(input.PlaintextCommitmentKey)
 		targetLanguage := strings.ToLower(strings.TrimSpace(input.TargetLanguage))
 		defer func() {
 			input.MessageID = ""
 			input.Text = ""
+			input.PlaintextCommitmentKey = ""
 			text = ""
+			commitmentKey = ""
 		}()
 		if messageID == "" || !utf8.ValidString(messageID) || utf8.RuneCountInString(messageID) > 128 ||
 			text == "" || !utf8.ValidString(text) || utf8.RuneCountInString(text) > 2_000 ||
@@ -83,7 +87,7 @@ func chatTranslation(service chatTranslationService, provider chatTranslator, ca
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_chat_translation_request"})
 			return
 		}
-		revision, err := service.AuthorizeMessageTranslation(r.Context(), claims.Subject, chatID, messageID, text)
+		revision, err := service.AuthorizeMessageTranslation(r.Context(), claims.Subject, chatID, messageID, text, commitmentKey)
 		if err != nil {
 			if errors.Is(err, chat.ErrTranslationBindingMissing) && cache != nil {
 				cached, found, _, cacheErr := cache.LookupMessageTranslation(r.Context(), claims.Subject, chatID, messageID, targetLanguage)
@@ -120,7 +124,7 @@ func chatTranslation(service chatTranslationService, provider chatTranslator, ca
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "chat_translation_unavailable"})
 			return
 		}
-		release, err := service.BeginMessageTranslation(r.Context(), claims.Subject, chatID, messageID, revision, targetLanguage, time.Now())
+		release, err := service.BeginMessageTranslation(r.Context(), claims.Subject, chatID, messageID, revision, text, commitmentKey, targetLanguage, time.Now())
 		if err != nil {
 			writeChatError(w, err)
 			return

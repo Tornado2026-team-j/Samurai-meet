@@ -346,13 +346,27 @@ func (s *Service) AuthorizeMessageSend(ctx context.Context, userID, chatID strin
 
 // AuthorizeMessageTranslation allows a participant to translate an already
 // visible message in an accepted or completed chat. It performs the chat and
-// block checks before any plaintext is sent to the translation provider.
-func (s *Service) AuthorizeMessageTranslation(ctx context.Context, userID, chatID, messageID, text string) (string, error) {
+// block checks before any plaintext is sent to the translation provider. The
+// commitment key is client-held and is used only for this request; it is never
+// persisted by the server.
+func (s *Service) AuthorizeMessageTranslation(ctx context.Context, userID, chatID, messageID, text, commitmentKey string) (string, error) {
 	access, err := s.loadChat(ctx, userID, chatID, true)
 	if err != nil {
 		return "", err
 	}
-	return s.messageTranslationRevisionForText(ctx, s.db, access.ChatID, messageID, text, false)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+	revision, err := s.messageTranslationRevisionForText(ctx, tx, access.ChatID, messageID, text, commitmentKey, true, true)
+	if err != nil {
+		return "", err
+	}
+	if err := tx.Commit(); err != nil {
+		return "", err
+	}
+	return revision, nil
 }
 
 // sendMessage is the shared implementation used by REST and WebTransport.

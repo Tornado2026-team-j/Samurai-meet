@@ -14,24 +14,28 @@ import (
 )
 
 type chatTranslationAuthorizerStub struct {
-	calls         int
-	err           error
-	revision      string
-	limiterCalls  int
-	limiterErr    error
-	releaseCalls  int
-	limiterUserID string
+	calls          int
+	err            error
+	revision       string
+	limiterCalls   int
+	limiterErr     error
+	releaseCalls   int
+	limiterUserID  string
+	authorizedText string
+	authorizedKey  string
 }
 
-func (s *chatTranslationAuthorizerStub) AuthorizeMessageTranslation(context.Context, string, string, string, string) (string, error) {
+func (s *chatTranslationAuthorizerStub) AuthorizeMessageTranslation(_ context.Context, _, _, _, text, commitmentKey string) (string, error) {
 	s.calls++
+	s.authorizedText = text
+	s.authorizedKey = commitmentKey
 	if s.revision == "" {
 		s.revision = "2026-08-30T00:00:00Z"
 	}
 	return s.revision, s.err
 }
 
-func (s *chatTranslationAuthorizerStub) BeginMessageTranslation(_ context.Context, userID, _ string, _ string, _ string, _ string, _ time.Time) (func(), error) {
+func (s *chatTranslationAuthorizerStub) BeginMessageTranslation(_ context.Context, userID, _ string, _ string, _ string, _ string, _ string, _ string, _ time.Time) (func(), error) {
 	s.limiterCalls++
 	s.limiterUserID = userID
 	if s.limiterErr != nil {
@@ -103,7 +107,7 @@ func TestChatTranslationAuthorizesBeforeForwardingPlaintext(t *testing.T) {
 }
 
 func TestChatTranslationReturnsOnlyTranslatedContract(t *testing.T) {
-	req, sessions := authenticatedChatTranslationRequest(t, `{"message_id":"message-1","text":"Hello from Kyoto","target_language":"ja"}`)
+	req, sessions := authenticatedChatTranslationRequest(t, `{"message_id":"message-1","text":"Hello from Kyoto","plaintext_commitment_key":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","target_language":"ja"}`)
 	authorizer := &chatTranslationAuthorizerStub{}
 	provider := &chatTranslationProviderStub{
 		available: true,
@@ -117,6 +121,9 @@ func TestChatTranslationReturnsOnlyTranslatedContract(t *testing.T) {
 	}
 	if provider.userID != "user-1" || provider.text != "Hello from Kyoto" || provider.target != "ja" {
 		t.Fatalf("provider input = user=%q text=%q target=%q", provider.userID, provider.text, provider.target)
+	}
+	if authorizer.authorizedText != "Hello from Kyoto" || authorizer.authorizedKey != "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" {
+		t.Fatalf("authorization binding = text=%q key=%q", authorizer.authorizedText, authorizer.authorizedKey)
 	}
 	body := res.Body.String()
 	if !strings.Contains(body, `"source_language":"en"`) || !strings.Contains(body, `"translated_text":"京都からこんにちは"`) || strings.Contains(body, "Hello from Kyoto") {

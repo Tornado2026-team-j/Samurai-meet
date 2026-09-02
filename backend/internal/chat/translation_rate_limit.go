@@ -71,17 +71,21 @@ func (l *translationRateLimiter) snapshot() (float64, float64, int) {
 	return l.accountBurst, l.refillPerSecond, l.maxInFlight
 }
 
-// BeginMessageTranslation rechecks the message revision and reserves one
-// provider attempt for an authenticated account. The state is PostgreSQL-backed
-// so all API instances share one quota. The returned release function removes
-// only this request's short-lived in-flight marker; the token is intentionally
-// not refunded after a provider call, including an upstream failure or 429.
+// BeginMessageTranslation rechecks the message binding and revision, reserves
+// one provider attempt for an authenticated account, and holds the message row
+// lock until the provider call finishes. The state is PostgreSQL-backed so all
+// API instances share one quota. The returned release function removes only
+// this request's short-lived in-flight marker and releases the message lock;
+// the token is intentionally not refunded after a provider call, including an
+// upstream failure or 429.
 func (s *Service) BeginMessageTranslation(
 	ctx context.Context,
 	userID string,
 	chatID string,
 	messageID string,
 	revision string,
+	text string,
+	commitmentKey string,
 	targetLanguage string,
 	now time.Time,
 ) (func(), error) {
@@ -131,13 +135,6 @@ func (s *Service) BeginMessageTranslation(
 		FOR UPDATE`, scopeKey).Scan(&tokens, &lastRefillUnix); err != nil {
 		return nil, wrapTranslationLimiterError(err)
 	}
-	currentRevision, err := s.messageTranslationRevision(ctx, tx, chatID, messageID, true)
-	if err != nil {
-		return nil, err
-	}
-	if currentRevision != revision {
-		return nil, ErrMessageTranslationStale
-	}
 	if tokens < 0 || math.IsNaN(tokens) || math.IsInf(tokens, 0) || math.IsNaN(lastRefillUnix) || math.IsInf(lastRefillUnix, 0) {
 		return nil, wrapTranslationLimiterError(errors.New("invalid translation limiter state"))
 	}
@@ -171,6 +168,23 @@ func (s *Service) BeginMessageTranslation(
 		}
 		return nil, newTranslationRateLimitError(time.Second)
 	}
+	var duplicate bool
+	if err = tx.QueryRowContext(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM chat_translation_inflight
+			WHERE request_key=$1 AND user_id=$2
+		)`, requestKey, userID).Scan(&duplicate); err != nil {
+		return nil, wrapTranslationLimiterError(err)
+	}
+	if duplicate {
+		if err = updateTranslationBucket(ctx, tx, scopeKey, tokens, lastRefillUnix, stamp); err != nil {
+			return nil, wrapTranslationLimiterError(err)
+		}
+		if err = tx.Commit(); err != nil {
+			return nil, wrapTranslationLimiterError(err)
+		}
+		return nil, newTranslationRateLimitError(time.Second)
+	}
 	if tokens < 1 {
 		if err = updateTranslationBucket(ctx, tx, scopeKey, tokens, lastRefillUnix, stamp); err != nil {
 			return nil, wrapTranslationLimiterError(err)
@@ -179,6 +193,13 @@ func (s *Service) BeginMessageTranslation(
 			return nil, wrapTranslationLimiterError(err)
 		}
 		return nil, newTranslationRateLimitError(translationTokenRetryAfter(tokens, refillPerSecond))
+	}
+	currentRevision, err := s.messageTranslationRevision(ctx, tx, chatID, messageID, true)
+	if err != nil {
+		return nil, err
+	}
+	if currentRevision != revision {
+		return nil, ErrMessageTranslationStale
 	}
 
 	expiresAt := now.Add(translationInflightTTL)
@@ -215,15 +236,49 @@ func (s *Service) BeginMessageTranslation(
 		defer leaseWait.Done()
 		renewTranslationInflight(leaseCtx, s.db, requestKey, userID)
 	}()
-	var releaseOnce sync.Once
-	release := func() {
-		releaseOnce.Do(func() {
+	var releaseLeaseOnce sync.Once
+	releaseLease := func() {
+		releaseLeaseOnce.Do(func() {
 			leaseCancel()
 			leaseWait.Wait()
 			releaseCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancel()
 			_, _ = s.db.ExecContext(releaseCtx, `
 				DELETE FROM chat_translation_inflight WHERE request_key=$1 AND user_id=$2`, requestKey, userID)
+		})
+	}
+
+	// The reservation and the row lock use separate transactions. This keeps
+	// the account bucket lock short while ensuring an edit that starts after
+	// this point waits until the external provider call has completed. The
+	// second binding check closes the small gap between those transactions.
+	messageTx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		releaseLease()
+		return nil, wrapTranslationLimiterError(err)
+	}
+	lockedRevision, err := s.messageTranslationRevision(ctx, messageTx, chatID, messageID, true)
+	if err != nil {
+		_ = messageTx.Rollback()
+		releaseLease()
+		return nil, err
+	}
+	if lockedRevision != revision {
+		_ = messageTx.Rollback()
+		releaseLease()
+		return nil, ErrMessageTranslationStale
+	}
+	if _, err = s.messageTranslationRevisionForText(ctx, messageTx, chatID, messageID, text, commitmentKey, true, false); err != nil {
+		_ = messageTx.Rollback()
+		releaseLease()
+		return nil, err
+	}
+
+	var releaseOnce sync.Once
+	release := func() {
+		releaseOnce.Do(func() {
+			releaseLease()
+			_ = messageTx.Rollback()
 		})
 	}
 	return release, nil

@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"errors"
@@ -100,15 +101,25 @@ func TestValidateMessageInputRequiresCiphertextContract(t *testing.T) {
 
 func TestPlaintextCommitmentBindsCanonicalTextAndSalt(t *testing.T) {
 	salt := base64.RawURLEncoding.EncodeToString(make([]byte, 16))
-	commitment := plaintextCommitment("  Hello  ", salt)
+	commitmentKey := base64.RawURLEncoding.EncodeToString(make([]byte, 32))
+	commitment, valid := plaintextCommitment("  Hello  ", salt, commitmentKey)
+	if !valid {
+		t.Fatal("generated plaintext commitment key is invalid")
+	}
 	if !validPlaintextBinding(commitment, salt) {
 		t.Fatal("generated plaintext commitment is invalid")
 	}
-	if plaintextCommitment("Other", salt) == commitment {
+	other, _ := plaintextCommitment("Other", salt, commitmentKey)
+	if other == commitment {
 		t.Fatal("different plaintext reused the same commitment")
 	}
-	if plaintextCommitment("Hello", base64.RawURLEncoding.EncodeToString(make([]byte, 15))) == commitment {
+	differentSalt, _ := plaintextCommitment("Hello", base64.RawURLEncoding.EncodeToString(make([]byte, 15)), commitmentKey)
+	if differentSalt == commitment {
 		t.Fatal("different salt reused the same commitment")
+	}
+	differentKey, _ := plaintextCommitment("Hello", salt, base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{1}, 32)))
+	if differentKey == commitment {
+		t.Fatal("different commitment key reused the same commitment")
 	}
 }
 

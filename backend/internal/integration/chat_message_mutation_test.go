@@ -3,6 +3,7 @@ package integration
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
 	"strings"
@@ -38,7 +39,7 @@ func TestChatMessageEditAndDelete(t *testing.T) {
 	if err := f.chatService.SaveMessageTranslation(ctx, f.requesterID, f.chatID, message.ID, initialTranslation, now); err != nil {
 		t.Fatalf("SaveMessageTranslation: %v", err)
 	}
-	if _, err := f.chatService.AuthorizeMessageTranslation(ctx, f.requesterID, f.chatID, message.ID, "legacy plaintext"); err != chat.ErrTranslationBindingMissing {
+	if _, err := f.chatService.AuthorizeMessageTranslation(ctx, f.requesterID, f.chatID, message.ID, "legacy plaintext", ""); err != chat.ErrTranslationBindingMissing {
 		t.Fatalf("legacy message translation authorization error = %v, want %v", err, chat.ErrTranslationBindingMissing)
 	}
 	cached, found, revision, err := f.chatService.LookupMessageTranslation(ctx, f.requesterID, f.chatID, message.ID, "ja")
@@ -60,7 +61,7 @@ func TestChatMessageEditAndDelete(t *testing.T) {
 		Nonce:                   base64Value(0x22, 12),
 		Algorithm:               "AES-256-GCM",
 		KeyVersion:              "chat-dek-v1",
-		PlaintextCommitment:     testPlaintextCommitment("Updated", base64Value(0x23, 16)),
+		PlaintextCommitment:     testPlaintextCommitment("Updated", base64Value(0x23, 16), testTranslationCommitmentKey()),
 		PlaintextCommitmentSalt: base64Value(0x23, 16),
 	}, now.Add(time.Second))
 	if err != nil {
@@ -75,10 +76,10 @@ func TestChatMessageEditAndDelete(t *testing.T) {
 	if _, found, revision, err := f.chatService.LookupMessageTranslation(ctx, f.requesterID, f.chatID, message.ID, "ja"); err != nil || found || revision != updated.EditedAt {
 		t.Fatalf("translation after edit = found=%v revision=%q err=%v, want cache invalidated at new revision", found, revision, err)
 	}
-	if revision, err := f.chatService.AuthorizeMessageTranslation(ctx, f.requesterID, f.chatID, message.ID, "Updated"); err != nil || revision != updated.EditedAt {
+	if revision, err := f.chatService.AuthorizeMessageTranslation(ctx, f.requesterID, f.chatID, message.ID, "Updated", testTranslationCommitmentKey()); err != nil || revision != updated.EditedAt {
 		t.Fatalf("translation binding for updated text = revision=%q err=%v", revision, err)
 	}
-	if _, err := f.chatService.AuthorizeMessageTranslation(ctx, f.requesterID, f.chatID, message.ID, "arbitrary text"); err != chat.ErrTranslationBindingMismatch {
+	if _, err := f.chatService.AuthorizeMessageTranslation(ctx, f.requesterID, f.chatID, message.ID, "arbitrary text", testTranslationCommitmentKey()); err != chat.ErrTranslationBindingMismatch {
 		t.Fatalf("arbitrary translation text error = %v, want %v", err, chat.ErrTranslationBindingMismatch)
 	}
 	updatedTranslation := initialTranslation
@@ -139,11 +140,56 @@ func TestChatMessageEditAndDelete(t *testing.T) {
 	}
 }
 
+func TestChatTranslationRebindsLegacyPublicCommitment(t *testing.T) {
+	ctx := context.Background()
+	now := time.Now().UTC()
+	f := seedAcceptedChat(t, ctx, now)
+	text := "legacy text"
+	salt := base64Value(0x51, 16)
+	legacyCommitment := legacyTestPlaintextCommitment(text, salt)
+	message, _, err := f.chatService.SendMessage(ctx, f.ownerID, f.chatID, chat.SendMessageInput{
+		ClientMessageID:         "legacy-binding-1",
+		Ciphertext:              chatCiphertext,
+		Nonce:                   chatNonce,
+		Algorithm:               "AES-256-GCM",
+		KeyVersion:              "chat-dek-v1",
+		PlaintextCommitment:     legacyCommitment,
+		PlaintextCommitmentSalt: salt,
+	}, now)
+	if err != nil {
+		t.Fatalf("SendMessage: %v", err)
+	}
+	if _, err := f.chatService.AuthorizeMessageTranslation(ctx, f.ownerID, f.chatID, message.ID, text, testTranslationCommitmentKey()); err != nil {
+		t.Fatalf("AuthorizeMessageTranslation legacy binding: %v", err)
+	}
+	var stored string
+	if err := f.database.QueryRowContext(ctx, `SELECT plaintext_commitment FROM messages WHERE id=$1`, message.ID).Scan(&stored); err != nil {
+		t.Fatalf("read rebound commitment: %v", err)
+	}
+	if stored == legacyCommitment || stored != testPlaintextCommitment(text, salt, testTranslationCommitmentKey()) {
+		t.Fatalf("stored commitment = %q, want keyed commitment distinct from legacy value", stored)
+	}
+}
+
 func base64Value(value byte, length int) string {
 	return base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{value}, length))
 }
 
-func testPlaintextCommitment(text, salt string) string {
+func testTranslationCommitmentKey() string {
+	return base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x44}, sha256.Size))
+}
+
+func testPlaintextCommitment(text, salt, commitmentKey string) string {
+	key, err := base64.RawURLEncoding.DecodeString(commitmentKey)
+	if err != nil {
+		panic(err)
+	}
+	mac := hmac.New(sha256.New, key)
+	_, _ = mac.Write([]byte("samurai-meet:chat-message-plaintext-commitment/v2\n" + strings.TrimSpace(salt) + "\n" + strings.TrimSpace(text)))
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+func legacyTestPlaintextCommitment(text, salt string) string {
 	digest := sha256.Sum256([]byte("samurai-meet:chat-message-plaintext-commitment/v1\n" + strings.TrimSpace(salt) + "\n" + strings.TrimSpace(text)))
 	return base64.RawURLEncoding.EncodeToString(digest[:])
 }

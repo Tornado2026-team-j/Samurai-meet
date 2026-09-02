@@ -22,6 +22,7 @@ import {
   moderateChatText,
   parseChatAttachmentRecipients,
   chatPlaintextCommitment,
+  chatPlaintextCommitmentKey,
   sendChatMessage,
   sendChatAttachmentMessage,
   sendChatLocation,
@@ -270,7 +271,9 @@ describe("チャットAPIクライアント", () => {
 
     expect(parsed.client_message_id).toBe("client-1");
     expect(parsed.algorithm).toBe("AES-256-GCM");
-    expect(parsed.plaintext_commitment).toBe(chatPlaintextCommitment("改札前で待ち合わせしましょう。", String(parsed.plaintext_commitment_salt)));
+    const commitmentKey = chatPlaintextCommitmentKey("chat-1", fixedKeyB);
+    expect(parsed.plaintext_commitment).toBe(chatPlaintextCommitment("改札前で待ち合わせしましょう。", String(parsed.plaintext_commitment_salt), commitmentKey));
+    commitmentKey.fill(0);
     expect(String(parsed.plaintext_commitment)).toHaveLength(43);
     expect(String(parsed.plaintext_commitment_salt)).toHaveLength(22);
     expect(requestedBody).not.toContain("改札前");
@@ -461,7 +464,8 @@ describe("チャットAPIクライアント", () => {
     await deleteChatMessage("chat-1", "message-1", session);
 
     expect(requests.map((request) => request.method)).toEqual(["POST", "PUT", "PATCH", "DELETE"]);
-    expect(JSON.parse(requests[0]?.body ?? "{}")).toEqual({ message_id: "message-1", text: "Hello", target_language: "ja" });
+    expect(JSON.parse(requests[0]?.body ?? "{}")).toMatchObject({ message_id: "message-1", text: "Hello", target_language: "ja" });
+    expect(String((JSON.parse(requests[0]?.body ?? "{}") as Record<string, unknown>).plaintext_commitment_key)).toHaveLength(43);
     const savedTranslation = JSON.parse(requests[1]?.body ?? "{}");
     expect(savedTranslation).not.toHaveProperty("translated_text");
     expect(decryptChatTranslation("chat-1", "message-1", translationRevision, savedTranslation, fixedKeyB)).toMatchObject({
