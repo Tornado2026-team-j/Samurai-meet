@@ -191,7 +191,7 @@ func (s *Service) loadMessageTranslations(ctx context.Context, messages []Messag
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	for index := range messages {
+	for index := 0; index < len(messages); index++ {
 		if messages[index].ContentType != "text" {
 			continue
 		}
