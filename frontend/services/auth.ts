@@ -36,6 +36,7 @@ const SESSION_HANDOFF_REQUEST_KEY = 'samurai_meet_session_handoff_request_v1';
 const REFRESH_REQUEST_KEY = 'samurai_meet_refresh_request_v1';
 const RECOVERY_VERIFIED_USER_KEY = 'samurai_meet_recovery_verified_user_v1';
 const AUTH_REQUEST_TIMEOUT_MS = 15_000;
+const ANDROID_REDIRECT_GRACE_MS = 1_500;
 
 const sessionRefreshes = new Map<string, Promise<Session>>();
 const sessionListeners = new Set<(session: Session | null) => void>();
@@ -303,6 +304,55 @@ export function parseAuthRedirect(value: string): AuthRedirect {
   return parseAuthRedirectContract(value, webOrigin);
 }
 
+type AndroidRedirectWaiter = {
+  promise: Promise<string | null>;
+  wait: () => Promise<string | null>;
+  cancel: () => void;
+};
+
+function isMatchingNativeRedirect(value: string, redirectURI: string): boolean {
+  if (!value.startsWith(redirectURI)) return false;
+  const redirect = parseAuthRedirectContract(value);
+  return Boolean(redirect.handoffCode || redirect.sessionHandoffCode);
+}
+
+function createAndroidRedirectWaiter(redirectURI: string): AndroidRedirectWaiter {
+  let resolveRedirect: (value: string | null) => void = () => undefined;
+  let settled = false;
+  let waiting = false;
+  let timeoutID: ReturnType<typeof setTimeout> | undefined;
+  let subscription: { remove: () => void } | undefined;
+  const promise = new Promise<string | null>((resolve) => {
+    resolveRedirect = resolve;
+  });
+
+  const finish = (value: string | null) => {
+    if (settled) return;
+    settled = true;
+    if (timeoutID) clearTimeout(timeoutID);
+    subscription?.remove();
+    resolveRedirect(value);
+  };
+
+  subscription = Linking.addEventListener('url', ({ url }) => {
+    if (isMatchingNativeRedirect(url, redirectURI)) finish(url);
+  });
+
+  return {
+    promise,
+    wait: () => {
+      if (waiting || settled) return promise;
+      waiting = true;
+      timeoutID = setTimeout(() => finish(null), ANDROID_REDIRECT_GRACE_MS);
+      void Linking.getInitialURL().then((url) => {
+        if (url && isMatchingNativeRedirect(url, redirectURI)) finish(url);
+      }).catch(() => undefined);
+      return promise;
+    },
+    cancel: () => finish(null),
+  };
+}
+
 export async function beginGoogleLogin(): Promise<AuthSnapshot | null> {
   const verifier = await createVerifier();
   const digest = sha256Base64(verifier);
@@ -425,16 +475,30 @@ export async function beginPasskey(
   }
   await setStoredItem(SESSION_HANDOFF_VERIFIER_KEY, verifier);
   await deleteStoredItem(SESSION_HANDOFF_REQUEST_KEY);
-  const result = await WebBrowser.openAuthSessionAsync(
-    buildPasskeyURL(redirectURI, challenge, bootstrapResponse.data.bootstrap_token, WEB_PASSKEY_URL, language),
-    redirectURI,
-  );
-  if (result.type !== 'success') {
+  // Android auth sessions use a Custom Tab. Keeping it in Recents avoids the
+  // bridge document being discarded while Chrome or the credential UI is open.
+  const redirectWaiter = Platform.OS === 'android' ? createAndroidRedirectWaiter(redirectURI) : null;
+  try {
+    const result = await WebBrowser.openAuthSessionAsync(
+      buildPasskeyURL(redirectURI, challenge, bootstrapResponse.data.bootstrap_token, WEB_PASSKEY_URL, language),
+      redirectURI,
+      Platform.OS === 'android' ? { createTask: true, showInRecents: true } : undefined,
+    );
+    if (result.type === 'success') {
+      redirectWaiter?.cancel();
+      return completeAuthRedirect(result.url);
+    }
+    if (redirectWaiter) {
+      const redirectURL = await redirectWaiter.wait();
+      if (redirectURL) return completeAuthRedirect(redirectURL);
+    }
     throw new Error(language === 'ja'
       ? 'Passkey認証の結果をアプリで受け取れませんでした。もう一度お試しください。'
       : 'The app did not receive the Passkey result. Please try again.');
+  } catch (reason) {
+    redirectWaiter?.cancel();
+    throw reason;
   }
-  return completeAuthRedirect(result.url);
 }
 
 export async function logout(session: Session): Promise<void> {

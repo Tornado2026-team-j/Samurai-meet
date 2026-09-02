@@ -84,6 +84,22 @@ export function isPasskeyBootstrap(value: unknown): value is PasskeyBootstrap {
     && candidate.expires_at.length > 0;
 }
 
+function parseExpoReturnURI(raw: string): URL | null {
+  if (raw !== raw.trim() || /[\r\n]/u.test(raw) || !/^exp:\/\//iu.test(raw)) return null;
+  const authorityAndPath = raw.slice(raw.indexOf('://') + 3);
+  let parsed: URL;
+  try {
+    // WHATWG URL implementations may treat the non-special exp scheme as a
+    // path instead of an authority. Parse the authority with a temporary
+    // standard scheme while retaining the original exp URI for the redirect.
+    parsed = new URL(`https://${authorityAndPath}`);
+  } catch {
+    return null;
+  }
+  if (!parsed.hostname || parsed.username || parsed.password || parsed.hash) return null;
+  return parsed;
+}
+
 function isAllowedRedirect(value: URL, allowedWebOrigin?: string): boolean {
   const scheme = value.protocol.slice(0, -1).toLowerCase();
   if (scheme === 'samuraimeet' || scheme === 'samuraimeettest') {
@@ -94,11 +110,8 @@ function isAllowedRedirect(value: URL, allowedWebOrigin?: string): boolean {
       && value.hash === '';
   }
   if (scheme === 'exp') {
-    return value.hostname.length > 0
-      && value.pathname.endsWith('/--/auth')
-      && value.username === ''
-      && value.password === ''
-      && value.hash === '';
+    const normalized = parseExpoReturnURI(value.toString());
+    return normalized !== null && normalized.pathname.endsWith('/--/auth');
   }
   if ((scheme === 'http' || scheme === 'https') && allowedWebOrigin) {
     let origin: URL;
@@ -123,24 +136,23 @@ export function parseAuthRedirect(value: string, allowedWebOrigin?: string): Aut
   } catch {
     return {};
   }
-  if (!isAllowedRedirect(parsed, allowedWebOrigin)) return {};
+  const scheme = value.slice(0, value.indexOf(':')).toLowerCase();
+  if (scheme === 'exp') {
+    const normalized = parseExpoReturnURI(value);
+    if (!normalized || !normalized.pathname.endsWith('/--/auth')) return {};
+    parsed = normalized;
+  } else if (!isAllowedRedirect(parsed, allowedWebOrigin)) {
+    return {};
+  }
   const handoffCode = parsed.searchParams.get('handoff_code') ?? undefined;
   const sessionHandoffCode = parsed.searchParams.get('session_handoff_code') ?? undefined;
   return { handoffCode, sessionHandoffCode };
 }
 
 export function isAllowedAppReturnURI(value: string): boolean {
-  let parsed: URL;
-  try {
-    parsed = new URL(value);
-  } catch {
-    return false;
-  }
-  if (parsed.username || parsed.password || parsed.hash) return false;
   if (value === 'samuraimeet://auth' || value === 'samuraimeettest://auth') return true;
-  return parsed.protocol === 'exp:'
-    && parsed.hostname.length > 0
-    && parsed.pathname.endsWith('/--/auth');
+  const normalized = parseExpoReturnURI(value);
+  return normalized !== null && normalized.pathname.endsWith('/--/auth');
 }
 
 export function storedSession(value: Session): StoredSession {
