@@ -6,7 +6,9 @@ import {
   defaultRecruitmentDate,
   formatRecruitmentDateInput,
   formatRecruitmentISODate,
+  getRecruitmentJSTTimeParts,
   getRecruitmentScheduleIssue,
+  makeRecruitmentTimePickerValue,
   normalizeRecruitmentDate,
   parseRecruitmentDateInput,
   recruitmentDateTimeToInstant,
@@ -135,6 +137,24 @@ describe("募集プレビュー", () => {
     expect(
       recruitmentDateTimeToInstant("2026-08-27", "14:30").toISOString(),
     ).toBe("2026-08-27T05:30:00.000Z");
+  });
+
+  it("日時ピッカー値は非JST端末でもJSTの壁時計として往復する", () => {
+    const originalTZ = process.env.TZ;
+    process.env.TZ = "America/Los_Angeles";
+    try {
+      const pickerValue = makeRecruitmentTimePickerValue("2026-08-27", 14, 30);
+
+      expect(pickerValue.toISOString()).toBe("2026-08-27T05:30:00.000Z");
+      expect(pickerValue.getHours()).not.toBe(14);
+      expect(getRecruitmentJSTTimeParts(pickerValue)).toEqual({ hour: 14, minute: 30 });
+    } finally {
+      if (originalTZ === undefined) {
+        delete process.env.TZ;
+      } else {
+        process.env.TZ = originalTZ;
+      }
+    }
   });
 
   it("プレビューを公開APIの入力へ変換し、現在地を含める", () => {

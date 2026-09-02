@@ -207,6 +207,34 @@ export function formatRecruitmentISODate(date: Date): string {
   return validateCalendarDate(parts);
 }
 
+export function getRecruitmentJSTTimeParts(date: Date): { hour: number; minute: number } {
+  try {
+    const parts = getJSTDateTimeParts(date);
+    return { hour: parts.hour, minute: parts.minute };
+  } catch {
+    return { hour: 0, minute: 0 };
+  }
+}
+
+export function makeRecruitmentTimePickerValue(
+  date: string,
+  hour: number,
+  minute: number,
+): Date {
+  const safeHour = Number.isInteger(hour) && hour >= 0 && hour <= 23 ? hour : 0;
+  const safeMinute =
+    Number.isInteger(minute) && minute >= 0 && minute <= 59 ? minute : 0;
+
+  try {
+    return recruitmentDateTimeToInstant(
+      date,
+      `${String(safeHour).padStart(2, "0")}:${String(safeMinute).padStart(2, "0")}`,
+    );
+  } catch {
+    return new Date(0);
+  }
+}
+
 export function formatRecruitmentDateInput(date: Date): string {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: JST_TIME_ZONE,

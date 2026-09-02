@@ -48,6 +48,8 @@ import {
   formatRecruitmentDateInput,
   formatRecruitmentISODate,
   getRecruitmentScheduleIssue,
+  getRecruitmentJSTTimeParts,
+  makeRecruitmentTimePickerValue,
   parseRecruitmentDateInput,
   publishRecruitment,
   recruitmentDateTimeToInstant,
@@ -409,11 +411,7 @@ function formatPreviewExpiry(
 }
 
 function getPickerTimeParts(value: Date): { hour: number; minute: number } {
-  if (Number.isNaN(value.getTime())) {
-    return { hour: 0, minute: 0 };
-  }
-
-  return { hour: value.getHours(), minute: value.getMinutes() };
+  return getRecruitmentJSTTimeParts(value);
 }
 
 function makeTimePickerValue(
@@ -421,13 +419,7 @@ function makeTimePickerValue(
   hour: number,
   minute: number,
 ): Date {
-  const safeHour = Number.isInteger(hour) && hour >= 0 && hour <= 23 ? hour : 0;
-  const safeMinute =
-    Number.isInteger(minute) && minute >= 0 && minute <= 59 ? minute : 0;
-
-  const value = safeParseRecruitmentDate(date, new Date());
-  value.setHours(safeHour, safeMinute, 0, 0);
-  return value;
+  return makeRecruitmentTimePickerValue(date, hour, minute);
 }
 
 function roundPickerTime(value: Date): { hour: number; minute: number } {
@@ -1842,6 +1834,7 @@ export default function SearchPreferencesScreen() {
           minuteInterval={5}
           mode="time"
           onChange={handleTimePickerChange}
+          timeZoneName={JST_TIME_ZONE}
           value={pickerTime}
         />
       ) : null}
@@ -1946,6 +1939,7 @@ export default function SearchPreferencesScreen() {
                 onChange={handleTimePickerChange}
                 style={styles.nativePicker}
                 themeVariant="light"
+                timeZoneName={JST_TIME_ZONE}
                 value={pickerTime}
               />
             </View>
