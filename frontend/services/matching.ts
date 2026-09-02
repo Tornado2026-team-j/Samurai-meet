@@ -1,5 +1,6 @@
 import type { Session } from "./auth-contract";
 import { APIError, requestAPI } from "./api-client";
+import type { AppLanguage } from "./onboarding";
 import { isMatchCategory, type MatchCardData, type MatchCategory } from "../types/match";
 
 export type RecruitmentStatus =
@@ -131,6 +132,44 @@ export type Coordinates = {
   accuracy_m: number;
   captured_at?: string;
 };
+
+const MATCH_CARD_STATUS_LABELS: Record<NonNullable<MatchCardData["applicationStatus"]>, Record<AppLanguage, string>> = {
+  pending: { ja: "応募中", en: "Pending" },
+  accepted: { ja: "承認済み", en: "Accepted" },
+  rejected: { ja: "不採用", en: "Not accepted" },
+  cancelled: { ja: "取消済み", en: "Cancelled" },
+  blocked: { ja: "ブロック済み", en: "Blocked" },
+  expired: { ja: "期限切れ", en: "Expired" },
+  completed: { ja: "完了", en: "Completed" },
+};
+
+export const MATCH_CARD_COPY = {
+  ja: {
+    date: "日付",
+    time: "時間",
+    today: "今日",
+    expiry: (date: string) => `${date}まで`,
+    openDetails: (name: string) => `${name}の募集詳細を開く`,
+  },
+  en: {
+    date: "Date",
+    time: "Time",
+    today: "Today",
+    expiry: (date: string) => `Until ${date}`,
+    openDetails: (name: string) => `Open recruitment details for ${name}`,
+  },
+} as const;
+
+export function getMatchCardCopy(language: AppLanguage) {
+  return MATCH_CARD_COPY[language];
+}
+
+export function getMatchCardStatusLabel(
+  status: MatchCardData["applicationStatus"],
+  language: AppLanguage,
+): string | null {
+  return status ? MATCH_CARD_STATUS_LABELS[status][language] : null;
+}
 
 type DataResponse<T> = { data?: T };
 
@@ -475,6 +514,8 @@ function formatRecruitmentDate(value: string): { card: string; detail: string } 
   };
 }
 
+const JST_TIME_ZONE = "Asia/Tokyo";
+
 function formatExpiry(value: string): string {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return value;
@@ -484,7 +525,7 @@ function formatExpiry(value: string): string {
     hourCycle: "h23",
     minute: "2-digit",
     month: "2-digit",
-    timeZone: "Asia/Tokyo",
+    timeZone: JST_TIME_ZONE,
     year: "numeric",
   })
     .formatToParts(parsed)

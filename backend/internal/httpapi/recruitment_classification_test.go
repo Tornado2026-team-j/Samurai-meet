@@ -85,6 +85,40 @@ func TestClassifyRecruitmentHandler(t *testing.T) {
 			t.Fatalf("keywords = %#v, want [ramen 大阪]", payload.Data.Keywords)
 		}
 	})
+
+	for _, test := range []struct {
+		name       string
+		status     int
+		wantStatus int
+		wantError  string
+		wantRetry  string
+	}{
+		{name: "provider rate limit", status: http.StatusTooManyRequests, wantStatus: http.StatusTooManyRequests, wantError: "recruitment_classification_rate_limited", wantRetry: "5"},
+		{name: "provider credential rejection", status: http.StatusUnauthorized, wantStatus: http.StatusServiceUnavailable, wantError: "recruitment_classification_unavailable"},
+		{name: "other provider failure", status: http.StatusBadGateway, wantStatus: http.StatusBadGateway, wantError: "recruitment_classification_failed"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			gemini := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(test.status)
+				_, _ = w.Write([]byte(`{"error":"provider detail must stay server-side"}`))
+			}))
+			defer gemini.Close()
+
+			service := classification.NewGeminiWithClient("test-key", classification.DefaultModel, gemini.URL, gemini.Client())
+			req, sessions := newAuthenticatedClassificationRequest(t)
+			res := httptest.NewRecorder()
+
+			classifyRecruitment(service, sessions).ServeHTTP(res, req)
+
+			assertClassificationError(t, res, test.wantStatus, test.wantError)
+			if got := res.Header().Get("Retry-After"); got != test.wantRetry {
+				t.Fatalf("Retry-After = %q, want %q", got, test.wantRetry)
+			}
+			if strings.Contains(res.Body.String(), "test-key") || strings.Contains(res.Body.String(), "provider detail") {
+				t.Fatalf("provider details leaked in response: %s", res.Body.String())
+			}
+		})
+	}
 }
 
 func assertClassificationError(t *testing.T, res *httptest.ResponseRecorder, wantStatus int, wantError string) {

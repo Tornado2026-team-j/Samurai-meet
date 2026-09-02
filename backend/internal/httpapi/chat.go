@@ -12,6 +12,7 @@ import (
 
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/auth"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/chat"
+	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/keys"
 )
 
 const chatPath = APIV1Prefix + "/chats"
@@ -41,7 +42,7 @@ func chatCollection(service *chat.Service, sessions *auth.SessionService) http.H
 	}
 }
 
-func chatItem(service *chat.Service, moderation chat.ModerationProvider, sessions *auth.SessionService) http.HandlerFunc {
+func chatItem(service *chat.Service, moderation chat.ModerationProvider, sessions *auth.SessionService, devices *keys.DeviceService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		claims, ok := accessClaims(r, sessions)
 		if !ok {
@@ -66,10 +67,16 @@ func chatItem(service *chat.Service, moderation chat.ModerationProvider, session
 			chatRead(w, r, service, claims.Subject, chatID)
 		case rest[0] == "transport-token" && len(rest) == 1:
 			chatTransportToken(w, r, service, claims.Subject, claims.SessionID, chatID)
+		case rest[0] == "attachment-key-recipients" && len(rest) == 1:
+			chatAttachmentKeyRecipients(w, r, service, devices, claims, chatID)
 		case rest[0] == "attachments" && len(rest) == 1:
-			chatAttachmentUpload(w, r, service, claims.Subject, chatID)
+			chatAttachmentUpload(w, r, service, devices, claims, chatID)
 		case rest[0] == "attachments" && len(rest) == 2:
-			chatAttachmentDownload(w, r, service, claims.Subject, chatID, rest[1])
+			chatAttachmentDownload(w, r, service, devices, claims, chatID, rest[1])
+		case rest[0] == "attachments" && len(rest) == 3 && rest[2] == "envelope":
+			chatAttachmentEnvelope(w, r, service, devices, claims, chatID, rest[1])
+		case rest[0] == "attachments" && len(rest) == 3 && rest[2] == "envelopes":
+			chatAttachmentKeyEnvelopes(w, r, service, devices, claims, chatID, rest[1])
 		default:
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "chat_not_found"})
 		}
@@ -181,7 +188,7 @@ func chatPathParts(path string) (string, []string, bool) {
 		return "", nil, false
 	}
 	parts := strings.Split(trimmed, "/")
-	if len(parts) < 2 || len(parts) > 3 {
+	if len(parts) < 2 || len(parts) > 4 {
 		return "", nil, false
 	}
 	for _, part := range parts {
@@ -194,12 +201,12 @@ func chatPathParts(path string) (string, []string, bool) {
 		return "", nil, false
 	}
 	rest := parts[1:]
-	if len(rest) == 2 {
-		tail, err := url.PathUnescape(rest[1])
+	for index, part := range rest {
+		tail, err := url.PathUnescape(part)
 		if err != nil || tail == "" || strings.Contains(tail, "/") {
 			return "", nil, false
 		}
-		rest[1] = tail
+		rest[index] = tail
 	}
 	return chatID, rest, true
 }
@@ -244,6 +251,8 @@ func writeChatError(w http.ResponseWriter, err error) {
 		status, code = http.StatusConflict, "chat_not_available"
 	case errors.Is(err, chat.ErrTooManyPendingAttachments):
 		status, code = http.StatusConflict, "too_many_pending_attachments"
+	case errors.Is(err, chat.ErrChatAttachmentKeysMissing):
+		status, code = http.StatusConflict, "chat_attachment_keys_unavailable"
 	case errors.Is(err, chat.ErrChatSignerMissing):
 		status, code = http.StatusServiceUnavailable, "chat_transport_unavailable"
 	case errors.Is(err, chat.ErrChatAttachmentUnavailable):

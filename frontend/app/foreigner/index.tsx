@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MaterialIcons } from "@expo/vector-icons";
-import { useFocusEffect, useRouter } from "expo-router";
+import { useRouter } from "expo-router";
 import {
   ActivityIndicator,
   Pressable,
@@ -26,6 +26,26 @@ const TEXT_GRAY = colors.text.secondary;
 const MUTED_GRAY = colors.text.muted;
 const BORDER_GRAY = colors.border.subtle;
 const SOFT_BLUE = colors.surface.blueSoft;
+
+export function formatApplicationBio(value: unknown, fallback: string): string {
+  if (typeof value !== "string") return fallback;
+  const trimmed = value.trim();
+  if (!trimmed) return fallback;
+
+  try {
+    const parsed: unknown = JSON.parse(trimmed);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return fallback;
+
+    const seed = (parsed as { monsterSeed?: unknown }).monsterSeed;
+    if (!seed || typeof seed !== "object" || Array.isArray(seed)) return fallback;
+
+    const freeText = (seed as { freeText?: unknown }).freeText;
+    return typeof freeText === "string" && freeText.trim() ? freeText.trim() : fallback;
+  } catch {
+    // Older profiles may contain ordinary prose instead of structured metadata.
+    return trimmed;
+  }
+}
 
 const COPY = {
   ja: {
@@ -98,6 +118,8 @@ export default function ForeignerHomeScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const initialLoadStarted = useRef(false);
+  const loadInFlight = useRef(false);
   const copy = COPY[language ?? "en"];
   const copyRef = useRef(copy);
   copyRef.current = copy;
@@ -116,6 +138,8 @@ export default function ForeignerHomeScreen() {
   const todayPlans = useMemo(() => matchedApplications.filter((item) => item.status === "accepted" && item.recruitment.available_date === today), [matchedApplications, today]);
 
   const loadApplications = useCallback((mode: "initial" | "refresh" = "refresh") => {
+    if (loadInFlight.current) return;
+    loadInFlight.current = true;
     const controller = new AbortController();
     let cancelled = false;
 
@@ -124,10 +148,13 @@ export default function ForeignerHomeScreen() {
       if (status !== "signed_in" || !activeSession) {
         if (!cancelled) {
           setApplications([]);
+          setOwnedRecruitments([]);
+          setUnreadChatCount(0);
           setLoading(false);
           setRefreshing(false);
           setLoadError(copyRef.current.signInRequired);
         }
+        loadInFlight.current = false;
         return;
       }
 
@@ -173,6 +200,7 @@ export default function ForeignerHomeScreen() {
           setLoading(false);
           setRefreshing(false);
         }
+        loadInFlight.current = false;
       }
     };
 
@@ -180,6 +208,7 @@ export default function ForeignerHomeScreen() {
     return () => {
       cancelled = true;
       controller.abort();
+      loadInFlight.current = false;
     };
   }, [getCurrentSession, refresh, session, status]);
 
@@ -199,9 +228,19 @@ export default function ForeignerHomeScreen() {
     };
   }, []);
 
-  useFocusEffect(
-    useCallback(() => loadApplications("initial"), [loadApplications]),
-  );
+  const loadApplicationsRef = useRef(loadApplications);
+  loadApplicationsRef.current = loadApplications;
+
+  useEffect(() => {
+    if (status === "loading") return;
+    if (status !== "signed_in") {
+      initialLoadStarted.current = false;
+      return loadApplicationsRef.current("initial");
+    }
+    if (initialLoadStarted.current) return;
+    initialLoadStarted.current = true;
+    return loadApplicationsRef.current("initial");
+  }, [status]);
 
   const openSearchPreferences = () => {
     router.push("/tabs");
@@ -387,7 +426,7 @@ export default function ForeignerHomeScreen() {
                           {application.other_user.name}
                         </Text>
                         <Text numberOfLines={2} style={styles.applicationBio}>
-                          {application.other_user.bio || copy.noIntroduction}
+                          {formatApplicationBio(application.other_user.bio, copy.noIntroduction)}
                         </Text>
                       </View>
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { useRouter } from "expo-router";
 import {
@@ -32,6 +32,9 @@ const TEXT_GRAY = "#535353";
 const MUTED_GRAY = "#949494";
 const BORDER_GRAY = "#e4e4e4";
 
+type ApplicationFilter = "all" | "pending" | "expired" | "resolved";
+const APPLICATION_FILTERS: ApplicationFilter[] = ["all", "pending", "expired", "resolved"];
+
 const COPY = {
   ja: {
     title: "応募履歴",
@@ -56,6 +59,8 @@ const COPY = {
     detailLabelSuffix: "さんへの応募詳細を開く",
     withdrawLabel: "応募を取り下げる",
     withdrawingLabel: "応募を取り下げ中",
+    filters: { all: "すべて", pending: "進行中", expired: "期限切れ", resolved: "終了済み" },
+    noFilteredApplications: "この状態の応募はありません。",
     status: {
       pending: "審査中",
       accepted: "承認済み",
@@ -89,6 +94,8 @@ const COPY = {
     detailLabelSuffix: "'s application details",
     withdrawLabel: "Withdraw application",
     withdrawingLabel: "Withdrawing application",
+    filters: { all: "All", pending: "In progress", expired: "Expired", resolved: "Finished" },
+    noFilteredApplications: "No applications match this status.",
     status: {
       pending: "Pending",
       accepted: "Accepted",
@@ -107,21 +114,57 @@ function statusColor(status: MatchStatus): string {
   return MUTED_GRAY;
 }
 
+export function isApplicationExpired(application: MatchView, now: Date = new Date()): boolean {
+  if (application.status === "expired" || application.recruitment.status === "expired") return true;
+  if (application.recruitment.status !== "open" && application.recruitment.status !== "matched") return false;
+  const expiresAt = Date.parse(application.recruitment.expires_at);
+  return Number.isFinite(expiresAt) && expiresAt <= now.getTime();
+}
+
+export function matchesApplicationFilter(
+  application: MatchView,
+  filter: ApplicationFilter,
+  now: Date = new Date(),
+): boolean {
+  const expired = isApplicationExpired(application, now);
+  switch (filter) {
+    case "all":
+      return true;
+    case "pending":
+      return application.status === "pending" && !expired;
+    case "expired":
+      return expired;
+    case "resolved":
+      return application.status !== "pending" && !expired;
+  }
+}
+
 export default function JapaneseApplicationsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { getCurrentSession, refresh, session, status } = useAuth();
   const [language, setLanguage] = useState<AppLanguage>("ja");
   const [applications, setApplications] = useState<MatchView[]>([]);
+  const [applicationFilter, setApplicationFilter] = useState<ApplicationFilter>("all");
   const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading");
   const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [withdrawingID, setWithdrawingID] = useState<string | null>(null);
   const initialLoadStarted = useRef(false);
   const hasLoaded = useRef(false);
+  const loadInFlightRef = useRef(false);
+  const withdrawingIDRef = useRef<string | null>(null);
   const copy = COPY[language];
 	const copyRef = useRef(copy);
-	copyRef.current = copy;
+  copyRef.current = copy;
+
+  const goBack = () => {
+    if (router.canGoBack()) {
+      router.back();
+      return;
+    }
+    router.replace("/japanese");
+  };
 
   useEffect(() => {
     let active = true;
@@ -140,6 +183,8 @@ export default function JapaneseApplicationsScreen() {
   }, []);
 
   const loadApplications = useCallback(() => {
+    if (loadInFlightRef.current) return;
+    loadInFlightRef.current = true;
     const controller = new AbortController();
     let cancelled = false;
 
@@ -152,6 +197,7 @@ export default function JapaneseApplicationsScreen() {
           setLoadState("error");
 			setLoadError(copyRef.current.loginRequired);
         }
+		loadInFlightRef.current = false;
         return;
       }
 
@@ -190,6 +236,7 @@ export default function JapaneseApplicationsScreen() {
 			setLoadError(copyRef.current.loadError);
         }
       } finally {
+		loadInFlightRef.current = false;
         if (!cancelled) setRefreshing(false);
       }
     };
@@ -221,7 +268,7 @@ export default function JapaneseApplicationsScreen() {
   };
 
   const withdraw = (application: MatchView) => {
-    if (application.status !== "pending" || withdrawingID) return;
+    if (application.status !== "pending" || withdrawingID || withdrawingIDRef.current) return;
     const recipientName = application.other_user.name || copy.userFallback;
     Alert.alert(
       copy.withdrawTitle,
@@ -240,6 +287,8 @@ export default function JapaneseApplicationsScreen() {
   const performWithdraw = async (application: MatchView) => {
     const activeSession = getCurrentSession() ?? session;
     if (!activeSession || status !== "signed_in") return;
+    if (withdrawingIDRef.current) return;
+    withdrawingIDRef.current = application.id;
     setWithdrawingID(application.id);
     try {
       let result;
@@ -260,14 +309,32 @@ export default function JapaneseApplicationsScreen() {
     } catch {
       Alert.alert(copy.withdrawFailedTitle, copy.withdrawFailedMessage);
     } finally {
+      withdrawingIDRef.current = null;
       setWithdrawingID(null);
     }
   };
 
+  const filteredApplications = useMemo(() => {
+    const now = new Date();
+    return applications.filter((application) => matchesApplicationFilter(application, applicationFilter, now));
+  }, [applicationFilter, applications]);
+
   return (
     <View style={styles.screen}>
       <StatusBar style="light" />
-      <View style={[styles.header, { paddingTop: Math.max(insets.top, 18) }]}>
+      <View style={[styles.header, {
+        minHeight: Math.max(108, insets.top + 72),
+        paddingTop: Math.max(insets.top, 18),
+      }]}>
+        <Pressable
+          accessibilityLabel={copy.back}
+          accessibilityRole="button"
+          hitSlop={10}
+          onPress={goBack}
+          style={({ pressed }) => [styles.backButton, pressed && styles.pressed]}
+        >
+          <MaterialIcons color="#ffffff" name="chevron-left" size={30} />
+        </Pressable>
         <Text style={styles.headerTitle}>{copy.title}</Text>
       </View>
 
@@ -283,6 +350,34 @@ export default function JapaneseApplicationsScreen() {
         showsVerticalScrollIndicator={false}
       >
         <Text style={styles.intro}>{copy.intro}</Text>
+        <ScrollView
+          contentContainerStyle={styles.filterContent}
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.filterScroll}
+        >
+          {APPLICATION_FILTERS.map((filter) => {
+            const selected = applicationFilter === filter;
+            return (
+              <Pressable
+                key={filter}
+                accessibilityLabel={copy.filters[filter]}
+                accessibilityRole="tab"
+                accessibilityState={{ selected }}
+                onPress={() => setApplicationFilter(filter)}
+                style={({ pressed }) => [
+                  styles.filterButton,
+                  selected && styles.filterButtonSelected,
+                  pressed && styles.pressed,
+                ]}
+              >
+                <Text style={[styles.filterButtonText, selected && styles.filterButtonTextSelected]}>
+                  {copy.filters[filter]}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
 
         {loadState === "loading" ? (
           <View style={styles.statePanel}>
@@ -321,9 +416,16 @@ export default function JapaneseApplicationsScreen() {
                 <MaterialIcons color={MUTED_GRAY} name="history" size={36} />
                 <Text style={styles.stateText}>{copy.empty}</Text>
               </View>
-            ) : applications.map((application) => {
+            ) : filteredApplications.length === 0 ? (
+              <View style={styles.statePanel}>
+                <MaterialIcons color={MUTED_GRAY} name="filter-list" size={36} />
+                <Text style={styles.stateText}>{copy.noFilteredApplications}</Text>
+              </View>
+            ) : filteredApplications.map((application) => {
               const recruitmentCard = recruitmentToMatchCard(application.recruitment);
-              const pending = application.status === "pending";
+              const expired = isApplicationExpired(application);
+              const displayedStatus: MatchStatus = expired ? "expired" : application.status;
+              const pending = application.status === "pending" && !expired;
               const withdrawing = withdrawingID === application.id;
               return (
                 <View key={application.id} style={styles.applicationCard}>
@@ -345,9 +447,9 @@ export default function JapaneseApplicationsScreen() {
                           {copy.ownerLabel} · {application.other_user.nationality_code || "—"}
                         </Text>
                       </View>
-                      <View style={[styles.statusPill, { borderColor: statusColor(application.status) }]}>
-                        <Text style={[styles.statusText, { color: statusColor(application.status) }]}>
-                          {copy.status[application.status]}
+                      <View style={[styles.statusPill, { borderColor: statusColor(displayedStatus) }]}>
+                        <Text style={[styles.statusText, { color: statusColor(displayedStatus) }]}>
+                          {copy.status[displayedStatus]}
                         </Text>
                       </View>
                     </View>
@@ -419,6 +521,21 @@ const styles = StyleSheet.create({
     lineHeight: 19,
     textAlign: "center",
   },
+  filterScroll: { alignSelf: "stretch" },
+  filterContent: { gap: 8, paddingHorizontal: 2 },
+  filterButton: {
+    minHeight: 36,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 14,
+    borderWidth: 1,
+    borderColor: BORDER_GRAY,
+    borderRadius: 18,
+    backgroundColor: "#ffffff",
+  },
+  filterButtonSelected: { borderColor: BLUE, backgroundColor: "#eff8ff" },
+  filterButtonText: { color: TEXT_GRAY, fontSize: 13, fontWeight: "800" },
+  filterButtonTextSelected: { color: BLUE },
   statePanel: {
     minHeight: 180,
     width: "100%",

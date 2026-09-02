@@ -7,6 +7,7 @@ import {
   createDeviceTransferVerificationCode,
   createKeyMaterial,
   createRecoveryPhraseMaterial,
+  decryptChatAttachmentBytes,
   decryptPhotoBytes,
   deriveAccountDataKey,
   deviceAgreementPublicKey,
@@ -14,16 +15,22 @@ import {
   encryptPhotoBytes,
   fromBase64URL,
   hashBytes,
+  hashBytesHex,
+  encryptChatAttachmentBytes,
   normalizeRecoveryPhrase,
   recoveryProofMessage,
   recoveryPhraseMatches,
   recoverKeyAAsync,
   signRecoveryProof,
   signDeviceProof,
+  toBase64URL,
   unwrapMasterKeyForDevice,
+  unwrapChatAttachmentKey,
   unwrapPhotoKey,
   unwrapPhotoKeyWithAccount,
   wrapMasterKeyForDevice,
+  wrapChatAttachmentKey,
+  CHAT_ATTACHMENT_MAX_BYTES,
   type Argon2idParams,
   type RandomBytes,
 } from '../services/crypto';
@@ -48,6 +55,16 @@ function testRandomBytes(start = 1): RandomBytes {
 
 async function testKeyMaterial(start = 1) {
   return createKeyMaterial(testRandomBytes(start), TEST_ARGON2ID);
+}
+
+function tamperChatAttachmentEnvelope(
+  encoded: string,
+  field: 'chat_id' | 'attachment_id' | 'recipient_device_id' | 'key_version',
+  value: string,
+): string {
+  const parsed = JSON.parse(new TextDecoder().decode(fromBase64URL(encoded))) as Record<string, unknown>;
+  parsed[field] = value;
+  return toBase64URL(new TextEncoder().encode(JSON.stringify(parsed)));
 }
 
 describe('フロント端末所有Master Key envelope', () => {
@@ -143,6 +160,217 @@ describe('フロント端末所有Master Key envelope', () => {
     expect(() => unwrapPhotoKey(encrypted.deviceWrappedImageKey, otherKeyB, 'samurai-meet:image-key-wrap/v1\ndevice\ndevice-a')).toThrow();
     const recoveredImageKey = unwrapPhotoKeyWithAccount(encrypted.accountWrappedImageKey, material.keyA, material.envelope.kdf_params.data_salt);
     expect(Array.from(recoveredImageKey)).toEqual(Array.from(imageKey));
+  });
+
+  it('チャット画像は端末間Key B公開鍵のenvelopeでラップして往復できる', async () => {
+    const recipient = await createDeviceAgreementKeyMaterial(testRandomBytes(300));
+    const plaintext = new TextEncoder().encode('encrypted chat photo');
+    const encrypted = await encryptChatAttachmentBytes(
+      plaintext,
+      'image/jpeg',
+      'chat-1',
+      testRandomBytes(320),
+    );
+    const cipherSHA256 = hashBytesHex(encrypted.ciphertext);
+    const envelope = await wrapChatAttachmentKey(
+      encrypted.imageKey,
+      recipient.publicKey,
+      'chat-1',
+      'attachment-1',
+      'device-1',
+      cipherSHA256,
+      encrypted.nonce,
+      testRandomBytes(340),
+    );
+    const recoveredKey = unwrapChatAttachmentKey(
+      envelope,
+      recipient.privateKey,
+      'chat-1',
+      'attachment-1',
+      'device-1',
+      cipherSHA256,
+      encrypted.nonce,
+    );
+    expect(Array.from(decryptChatAttachmentBytes(
+      encrypted.ciphertext,
+      encrypted.nonce,
+      recoveredKey,
+      encrypted.contentType,
+      'chat-1',
+    ))).toEqual(Array.from(plaintext));
+
+    encrypted.imageKey.fill(0);
+    recoveredKey.fill(0);
+    expect(encrypted.imageKey.every((value) => value === 0)).toBe(true);
+    expect(recoveredKey.every((value) => value === 0)).toBe(true);
+  });
+
+  it('チャット画像envelopeは別端末とchat/attachment/device/hash/nonce改ざんを拒否する', async () => {
+    const recipient = await createDeviceAgreementKeyMaterial(testRandomBytes(360));
+    const otherDevice = await createDeviceAgreementKeyMaterial(testRandomBytes(380));
+    const encrypted = await encryptChatAttachmentBytes(
+      new Uint8Array([9, 8, 7, 6]),
+      'image/png',
+      'chat-2',
+      testRandomBytes(400),
+    );
+    const cipherSHA256 = hashBytesHex(encrypted.ciphertext);
+    const envelope = await wrapChatAttachmentKey(
+      encrypted.imageKey,
+      recipient.publicKey,
+      'chat-2',
+      'attachment-2',
+      'device-2',
+      cipherSHA256,
+      encrypted.nonce,
+      testRandomBytes(420),
+    );
+
+    expect(() => unwrapChatAttachmentKey(
+      envelope,
+      otherDevice.privateKey,
+      'chat-2',
+      'attachment-2',
+      'device-2',
+      cipherSHA256,
+      encrypted.nonce,
+    )).toThrow();
+    expect(() => unwrapChatAttachmentKey(
+      envelope,
+      recipient.privateKey,
+      'wrong-chat',
+      'attachment-2',
+      'device-2',
+      cipherSHA256,
+      encrypted.nonce,
+    )).toThrow();
+    expect(() => unwrapChatAttachmentKey(
+      envelope,
+      recipient.privateKey,
+      'chat-2',
+      'wrong-attachment',
+      'device-2',
+      cipherSHA256,
+      encrypted.nonce,
+    )).toThrow();
+    expect(() => unwrapChatAttachmentKey(
+      envelope,
+      recipient.privateKey,
+      'chat-2',
+      'attachment-2',
+      'wrong-device',
+      cipherSHA256,
+      encrypted.nonce,
+    )).toThrow();
+    expect(() => unwrapChatAttachmentKey(
+      envelope,
+      recipient.privateKey,
+      'chat-2',
+      'attachment-2',
+      'device-2',
+      '0'.repeat(64),
+      encrypted.nonce,
+    )).toThrow();
+    expect(() => unwrapChatAttachmentKey(
+      envelope,
+      recipient.privateKey,
+      'chat-2',
+      'attachment-2',
+      'device-2',
+      cipherSHA256,
+      toBase64URL(new Uint8Array(12).fill(3)),
+    )).toThrow();
+
+    const parsed = JSON.parse(new TextDecoder().decode(fromBase64URL(envelope))) as Record<string, unknown>;
+    parsed.cipher_sha256 = '0'.repeat(64);
+    const tampered = toBase64URL(new TextEncoder().encode(JSON.stringify(parsed)));
+    expect(() => unwrapChatAttachmentKey(
+      tampered,
+      recipient.privateKey,
+      'chat-2',
+      'attachment-2',
+      'device-2',
+      cipherSHA256,
+      encrypted.nonce,
+    )).toThrow();
+
+    expect(() => unwrapChatAttachmentKey(
+      tamperChatAttachmentEnvelope(envelope, 'chat_id', 'tampered-chat'),
+      recipient.privateKey,
+      'tampered-chat',
+      'attachment-2',
+      'device-2',
+      cipherSHA256,
+      encrypted.nonce,
+    )).toThrow();
+    expect(() => unwrapChatAttachmentKey(
+      tamperChatAttachmentEnvelope(envelope, 'attachment_id', 'tampered-attachment'),
+      recipient.privateKey,
+      'chat-2',
+      'tampered-attachment',
+      'device-2',
+      cipherSHA256,
+      encrypted.nonce,
+    )).toThrow();
+    expect(() => unwrapChatAttachmentKey(
+      tamperChatAttachmentEnvelope(envelope, 'recipient_device_id', 'tampered-device'),
+      recipient.privateKey,
+      'chat-2',
+      'attachment-2',
+      'tampered-device',
+      cipherSHA256,
+      encrypted.nonce,
+    )).toThrow();
+  });
+
+  it('legacy envelope・unsupported MIME・超過サイズを拒否する', async () => {
+    const recipient = await createDeviceAgreementKeyMaterial(testRandomBytes(440));
+    const encrypted = await encryptChatAttachmentBytes(
+      new Uint8Array([5, 4, 3, 2, 1]),
+      'image/webp',
+      'chat-legacy',
+      testRandomBytes(450),
+    );
+    const cipherSHA256 = hashBytesHex(encrypted.ciphertext);
+    const envelope = await wrapChatAttachmentKey(
+      encrypted.imageKey,
+      recipient.publicKey,
+      'chat-legacy',
+      'attachment-legacy',
+      'device-legacy',
+      cipherSHA256,
+      encrypted.nonce,
+      testRandomBytes(460),
+    );
+
+    expect(() => unwrapChatAttachmentKey(
+      tamperChatAttachmentEnvelope(envelope, 'key_version', 'chat-attachment-mvp-v1'),
+      recipient.privateKey,
+      'chat-legacy',
+      'attachment-legacy',
+      'device-legacy',
+      cipherSHA256,
+      encrypted.nonce,
+    )).toThrow();
+    await expect(encryptChatAttachmentBytes(
+      new Uint8Array([1, 2, 3]),
+      'image/gif' as never,
+      'chat-unsupported-mime',
+      testRandomBytes(470),
+    )).rejects.toThrow();
+    expect(() => decryptChatAttachmentBytes(
+      encrypted.ciphertext,
+      encrypted.nonce,
+      encrypted.imageKey,
+      'image/gif' as never,
+      'chat-legacy',
+    )).toThrow();
+    await expect(encryptChatAttachmentBytes(
+      new Uint8Array(CHAT_ATTACHMENT_MAX_BYTES - 15),
+      'image/png',
+      'chat-too-large',
+      testRandomBytes(480),
+    )).rejects.toThrow();
   });
 
   it('端末Key-Bから導出した公開鍵でリクエスト署名を検証できる', () => {

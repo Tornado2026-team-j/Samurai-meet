@@ -1,5 +1,8 @@
 import { describe, expect, it } from "bun:test";
-import { buildRecruitmentPreview } from "../mocks/recruitment";
+import {
+  buildManualRecruitmentPreviewModel,
+  buildRecruitmentPreviewModel,
+} from "../services/recruitment-preview";
 import {
   buildRecruitmentCreateRequest,
   defaultRecruitmentSchedule,
@@ -10,6 +13,7 @@ import {
   getRecruitmentScheduleIssue,
   makeRecruitmentTimePickerValue,
   normalizeRecruitmentDate,
+  parseRecruitmentKeywordInput,
   parseRecruitmentDateInput,
   recruitmentDateTimeToInstant,
   shiftRecruitmentDate,
@@ -28,8 +32,39 @@ const draft: RecruitmentDraft = {
 };
 
 describe("募集プレビュー", () => {
+	it("Gemini失敗時の手動プレビューは選択したカテゴリとキーワードだけを使う", () => {
+		const keywords = parseRecruitmentKeywordInput(" ramen, 大阪, ramen ");
+		const preview = buildManualRecruitmentPreviewModel(draft, "Food", keywords);
+
+		expect(preview.previewId).toBe("manual-recruitment-preview");
+		expect(preview.category).toBe("Food");
+		expect(preview.tags).toEqual(["ramen", "大阪"]);
+	});
+
+	it("手動キーワード入力は空・過剰・長すぎる値を黙って丸めない", () => {
+		expect(() => parseRecruitmentKeywordInput("  ")).toThrow(
+			"recruitment_keywords_required",
+		);
+		expect(() =>
+			parseRecruitmentKeywordInput("a,b,c,d,e,f"),
+		).toThrow("recruitment_keyword_too_many");
+		expect(() => parseRecruitmentKeywordInput("a".repeat(81))).toThrow(
+			"recruitment_keyword_too_long",
+		);
+	});
+
+	it("手動プレビューは4カテゴリ以外を受け入れない", () => {
+		expect(() =>
+			buildManualRecruitmentPreviewModel(
+				draft,
+				"Culture" as never,
+				["temple"],
+			),
+		).toThrow("invalid_recruitment_category");
+	});
+
 	it("Geminiで確定したカテゴリと入力条件を確認カード用データへ変換する", () => {
-		const preview = buildRecruitmentPreview(draft, "Food");
+		const preview = buildRecruitmentPreviewModel(draft, "Food");
 
     expect(preview.conditions).toEqual(draft);
     expect(preview.category).toBe("Food");
@@ -38,7 +73,7 @@ describe("募集プレビュー", () => {
   });
 
   it("制作者情報をサービス応答として返す", () => {
-		const preview = buildRecruitmentPreview(draft, "Food");
+		const preview = buildRecruitmentPreviewModel(draft, "Food");
 
     expect(preview.author).toEqual({
       id: "mock-current-user",
@@ -49,7 +84,7 @@ describe("募集プレビュー", () => {
   });
 
   it("キーワードがない場合も2つのタグを返す", () => {
-		const preview = buildRecruitmentPreview({
+		const preview = buildRecruitmentPreviewModel({
 			...draft,
 			activity: "I want to explore Osaka",
 		}, "Other");
@@ -60,7 +95,7 @@ describe("募集プレビュー", () => {
 
 	it("カテゴリはGemini APIの4カテゴリ契約だけを受け入れる", () => {
     const categories = ["Food", "Places", "Activity", "Other"] as const;
-		expect(categories.map((category) => buildRecruitmentPreview(draft, category).category)).toEqual([...categories]);
+		expect(categories.map((category) => buildRecruitmentPreviewModel(draft, category).category)).toEqual([...categories]);
 	});
 
   it("公開用の日付をバックエンド形式へ変換する", () => {
@@ -158,7 +193,7 @@ describe("募集プレビュー", () => {
   });
 
   it("プレビューを公開APIの入力へ変換し、現在地を含める", () => {
-	const preview = buildRecruitmentPreview({ ...draft, date: "2026-08-27" }, "Food");
+	const preview = buildRecruitmentPreviewModel({ ...draft, date: "2026-08-27" }, "Food");
     const request = buildRecruitmentCreateRequest(
       { ...draft, date: "2026-08-27", durationHours: 2 },
       preview,
@@ -182,7 +217,7 @@ describe("募集プレビュー", () => {
   });
 
   it("確認画面で選択したカテゴリとキーワードを公開API入力に反映する", () => {
-    const preview = buildRecruitmentPreview(
+	const preview = buildRecruitmentPreviewModel(
       { ...draft, date: "2026-08-27" },
       "Food",
     );
@@ -203,8 +238,45 @@ describe("募集プレビュー", () => {
     expect(request.keywords).toEqual(["temple", "sightseeing"]);
   });
 
+  it("手動プレビューのキーワード全解除は下書き・公開前に拒否する", () => {
+    const preview = buildManualRecruitmentPreviewModel(
+      { ...draft, date: "2026-08-27" },
+      "Activity",
+      ["walking"],
+    );
+
+    expect(() =>
+      buildRecruitmentCreateRequest(
+        { ...draft, date: "2026-08-27" },
+        preview,
+        new Date("2026-08-26T00:00:00.000Z"),
+        undefined,
+        undefined,
+        { category: "Activity", keywords: [] },
+      ),
+    ).toThrow("recruitment_keywords_required");
+  });
+
+  it("非手動プレビューの既存キーワードfallbackは維持する", () => {
+    const preview = {
+      ...buildRecruitmentPreviewModel(
+        { ...draft, date: "2026-08-27" },
+        "Other",
+      ),
+      tags: [],
+    };
+
+    const request = buildRecruitmentCreateRequest(
+      { ...draft, date: "2026-08-27" },
+      preview,
+      new Date("2026-08-26T00:00:00.000Z"),
+    );
+
+    expect(request.keywords).toEqual(["Experience"]);
+  });
+
   it("下書き保存は過去日時を保持し、公開時だけ過去日時を拒否する", () => {
-    const preview = buildRecruitmentPreview(draft, "Food");
+    const preview = buildRecruitmentPreviewModel(draft, "Food");
     const pastDraft = { ...draft, date: "2026-08-25" };
     const now = new Date("2026-08-26T00:00:00.000Z");
 
@@ -225,7 +297,7 @@ describe("募集プレビュー", () => {
   });
 
   it("締切済みの募集は公開API入力へ変換しない", () => {
-    const preview = buildRecruitmentPreview({ ...draft, date: "2026-08-27" }, "Food");
+    const preview = buildRecruitmentPreviewModel({ ...draft, date: "2026-08-27" }, "Food");
 
     expect(() =>
       buildRecruitmentCreateRequest(
@@ -237,7 +309,7 @@ describe("募集プレビュー", () => {
   });
 
   it("日付をまたぐ公開時刻を送信前に拒否する", () => {
-	const preview = buildRecruitmentPreview({ ...draft, date: "2026-08-27" }, "Food");
+	const preview = buildRecruitmentPreviewModel({ ...draft, date: "2026-08-27" }, "Food");
 
     expect(() =>
       buildRecruitmentCreateRequest(
@@ -249,7 +321,7 @@ describe("募集プレビュー", () => {
   });
 
   it("募集内容が空のまま公開API入力へ変換しない", () => {
-	const preview = buildRecruitmentPreview({ ...draft, date: "2026-08-27" }, "Food");
+	const preview = buildRecruitmentPreviewModel({ ...draft, date: "2026-08-27" }, "Food");
 
     expect(() =>
       buildRecruitmentCreateRequest(

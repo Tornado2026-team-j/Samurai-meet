@@ -190,12 +190,19 @@ export default function JapaneseNotificationsScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const initialLoadStartedRef = useRef(false);
+  const activeLoadRef = useRef<{ cancel: () => void } | null>(null);
   const copy = COPY[language ?? "ja"];
 	const copyRef = useRef(copy);
 	copyRef.current = copy;
   const loadNotifications = useCallback((mode: "initial" | "refresh" = "refresh") => {
+    activeLoadRef.current?.cancel();
     const controller = new AbortController();
     let cancelled = false;
+    const cancel = () => {
+      cancelled = true;
+      controller.abort();
+    };
+    activeLoadRef.current = { cancel };
 
     const load = async () => {
       const activeSession = getCurrentSession() ?? session;
@@ -206,6 +213,7 @@ export default function JapaneseNotificationsScreen() {
           setRefreshing(false);
 			setLoadError(copyRef.current.signInRequired);
         }
+        if (activeLoadRef.current?.cancel === cancel) activeLoadRef.current = null;
         return;
       }
 
@@ -239,18 +247,21 @@ export default function JapaneseNotificationsScreen() {
           setLoading(false);
           setRefreshing(false);
         }
+        if (activeLoadRef.current?.cancel === cancel) activeLoadRef.current = null;
       }
     };
 
     void load();
-    return () => {
-      cancelled = true;
-      controller.abort();
-    };
+
+	return cancel;
 	}, [getCurrentSession, refresh, session, status]);
 
   const loadNotificationsRef = useRef(loadNotifications);
   loadNotificationsRef.current = loadNotifications;
+
+	useEffect(() => () => {
+		activeLoadRef.current?.cancel();
+	}, []);
 
   useEffect(() => {
     let active = true;
@@ -269,7 +280,15 @@ export default function JapaneseNotificationsScreen() {
   }, []);
 
   useEffect(() => {
-		if (status === "loading" || initialLoadStartedRef.current) return;
+		if (status === "loading") {
+			initialLoadStartedRef.current = false;
+			return;
+		}
+		if (status !== "signed_in") {
+			initialLoadStartedRef.current = false;
+			return loadNotificationsRef.current("initial");
+		}
+		if (initialLoadStartedRef.current) return;
 
     initialLoadStartedRef.current = true;
     return loadNotificationsRef.current("initial");

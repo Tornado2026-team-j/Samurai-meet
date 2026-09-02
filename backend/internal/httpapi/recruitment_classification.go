@@ -44,6 +44,11 @@ func classifyRecruitment(service *classification.Service, sessions *auth.Session
 		case errors.Is(err, classification.ErrRateLimited):
 			w.Header().Set("Retry-After", "2")
 			writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "recruitment_classification_rate_limited"})
+		case errors.Is(err, classification.ErrProviderRateLimited):
+			w.Header().Set("Retry-After", "5")
+			writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "recruitment_classification_rate_limited"})
+		case errors.Is(err, classification.ErrProviderUnavailable):
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "recruitment_classification_unavailable"})
 		default:
 			writeJSON(w, http.StatusBadGateway, map[string]string{"error": "recruitment_classification_failed"})
 		}

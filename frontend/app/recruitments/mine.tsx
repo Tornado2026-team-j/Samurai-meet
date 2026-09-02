@@ -31,6 +31,7 @@ import {
   type MatchStatus,
   type MatchView,
   type Recruitment,
+  type RecruitmentStatus,
   type RecruitmentUpdateRequest,
 } from "../../services/matching";
 import { formatTimeRange } from "../../utils/time";
@@ -106,16 +107,35 @@ type RecruitmentFilter = "all" | "open" | "draft" | "expired" | "closed";
 
 const RECRUITMENT_FILTERS: RecruitmentFilter[] = ["all", "open", "draft", "expired", "closed"];
 
-function matchesRecruitmentFilter(recruitment: Recruitment, filter: RecruitmentFilter): boolean {
+export function isRecruitmentExpired(
+  recruitment: Pick<Recruitment, "status" | "expires_at">,
+  now: Date = new Date(),
+): boolean {
+  if (recruitment.status === "expired") return true;
+  if (recruitment.status !== "open" && recruitment.status !== "matched") return false;
+  const expiresAt = Date.parse(recruitment.expires_at);
+  return Number.isFinite(expiresAt) && expiresAt <= now.getTime();
+}
+
+function displayedRecruitmentStatus(recruitment: Recruitment, now: Date = new Date()): RecruitmentStatus {
+  return isRecruitmentExpired(recruitment, now) ? "expired" : recruitment.status;
+}
+
+export function matchesRecruitmentFilter(
+  recruitment: Recruitment,
+  filter: RecruitmentFilter,
+  now: Date = new Date(),
+): boolean {
+  const expired = isRecruitmentExpired(recruitment, now);
   switch (filter) {
     case "all":
       return true;
     case "open":
-      return recruitment.status === "open" || recruitment.status === "matched";
+      return !expired && (recruitment.status === "open" || recruitment.status === "matched");
     case "draft":
       return recruitment.status === "draft";
     case "expired":
-      return recruitment.status === "expired";
+      return expired;
     case "closed":
       return recruitment.status === "closed" || recruitment.status === "completed";
   }
@@ -161,9 +181,20 @@ export default function MyRecruitmentsScreen() {
   const [closingID, setClosingID] = useState<string | null>(null);
   const initialLoadStarted = useRef(false);
   const hasLoaded = useRef(false);
+  const loadInFlightRef = useRef(false);
+  const savingRef = useRef(false);
+  const closingIDRef = useRef<string | null>(null);
   const copy = COPY[language ?? "ja"];
 	const copyRef = useRef(copy);
 	copyRef.current = copy;
+
+  const goBack = () => {
+    if (router.canGoBack()) {
+      router.back();
+      return;
+    }
+    router.replace("/profile");
+  };
 
   useEffect(() => {
     let active = true;
@@ -182,6 +213,8 @@ export default function MyRecruitmentsScreen() {
   }, []);
 
   const loadManagement = useCallback(() => {
+    if (loadInFlightRef.current) return;
+    loadInFlightRef.current = true;
     const controller = new AbortController();
     let cancelled = false;
 
@@ -195,6 +228,7 @@ export default function MyRecruitmentsScreen() {
           setLoadState("error");
 			setLoadError(copyRef.current.loginRequired);
         }
+		loadInFlightRef.current = false;
         return;
       }
 
@@ -236,6 +270,7 @@ export default function MyRecruitmentsScreen() {
 			setLoadError(copyRef.current.loadError);
         }
       } finally {
+		loadInFlightRef.current = false;
         if (!cancelled) setRefreshing(false);
       }
     };
@@ -266,10 +301,10 @@ export default function MyRecruitmentsScreen() {
     return grouped;
   }, [applications]);
 
-  const filteredRecruitments = useMemo(
-    () => recruitments.filter((recruitment) => matchesRecruitmentFilter(recruitment, recruitmentFilter)),
-    [recruitmentFilter, recruitments],
-  );
+  const filteredRecruitments = useMemo(() => {
+    const now = new Date();
+    return recruitments.filter((recruitment) => matchesRecruitmentFilter(recruitment, recruitmentFilter, now));
+  }, [recruitmentFilter, recruitments]);
 
   const startEditing = (recruitment: Recruitment) => {
     if (!canEdit(recruitment)) return;
@@ -300,7 +335,7 @@ export default function MyRecruitmentsScreen() {
   };
 
   const saveEditing = async () => {
-    if (!editing || !editDraft || saving) return;
+    if (!editing || !editDraft || saving || savingRef.current) return;
     const activeSession = getCurrentSession() ?? session;
     if (!activeSession || status !== "signed_in") {
       setOperationError(copy.updateLoginRequired);
@@ -320,6 +355,7 @@ export default function MyRecruitmentsScreen() {
       visibility_radius_km: editDraft.visibility_radius_km,
     };
 
+    savingRef.current = true;
     setSaving(true);
     setOperationError(null);
     try {
@@ -338,12 +374,13 @@ export default function MyRecruitmentsScreen() {
     } catch {
       setOperationError(copy.updateError);
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   };
 
   const closeOwnedRecruitment = (recruitment: Recruitment) => {
-    if (!canClose(recruitment) || closingID) return;
+    if (!canClose(recruitment) || closingID || closingIDRef.current) return;
     Alert.alert(
       copy.closeTitle,
       copy.closeMessage,
@@ -361,6 +398,8 @@ export default function MyRecruitmentsScreen() {
   const performClose = async (recruitment: Recruitment) => {
     const activeSession = getCurrentSession() ?? session;
     if (!activeSession || status !== "signed_in") return;
+    if (closingIDRef.current) return;
+    closingIDRef.current = recruitment.id;
     setClosingID(recruitment.id);
     setOperationError(null);
     try {
@@ -380,6 +419,7 @@ export default function MyRecruitmentsScreen() {
     } catch {
       setOperationError(copy.closeError);
     } finally {
+      closingIDRef.current = null;
       setClosingID(null);
     }
   };
@@ -398,7 +438,19 @@ export default function MyRecruitmentsScreen() {
   return (
     <View style={styles.screen}>
       <StatusBar style="light" />
-      <View style={[styles.header, { paddingTop: Math.max(insets.top, 18) }]}>
+      <View style={[styles.header, {
+        minHeight: Math.max(108, insets.top + 72),
+        paddingTop: Math.max(insets.top, 18),
+      }]}>
+        <Pressable
+          accessibilityLabel={copy.back}
+          accessibilityRole="button"
+          hitSlop={10}
+          onPress={goBack}
+          style={({ pressed }) => [styles.backButton, pressed && styles.pressed]}
+        >
+          <MaterialIcons color="#ffffff" name="chevron-left" size={30} />
+        </Pressable>
         <Text style={styles.headerTitle}>{copy.title}</Text>
       </View>
 
@@ -488,8 +540,10 @@ export default function MyRecruitmentsScreen() {
               </View>
             ) : filteredRecruitments.map((recruitment) => {
           const ownedApplications = applicationsByRecruitment.get(recruitment.id) ?? [];
-          const editable = canEdit(recruitment);
-          const closable = canClose(recruitment);
+          const expired = isRecruitmentExpired(recruitment);
+          const status = displayedRecruitmentStatus(recruitment);
+          const editable = !expired && canEdit(recruitment);
+          const closable = !expired && canClose(recruitment);
           const closing = closingID === recruitment.id;
           return (
             <View key={recruitment.id} style={styles.recruitmentCard}>
@@ -503,9 +557,9 @@ export default function MyRecruitmentsScreen() {
                     {recruitment.location_name || "-"} · {recruitment.participant_limit}人
                   </Text>
                 </View>
-                <View style={[styles.statusPill, { borderColor: recruitmentStatusColor(recruitment.status) }]}>
-                  <Text style={[styles.statusText, { color: recruitmentStatusColor(recruitment.status) }]}>
-                    {copy.recruitmentStatus[recruitment.status]}
+                <View style={[styles.statusPill, { borderColor: recruitmentStatusColor(status) }]}>
+                  <Text style={[styles.statusText, { color: recruitmentStatusColor(status) }]}>
+                    {copy.recruitmentStatus[status]}
                   </Text>
                 </View>
               </View>

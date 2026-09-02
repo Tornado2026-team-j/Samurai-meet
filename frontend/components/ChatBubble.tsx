@@ -1,6 +1,6 @@
 import { useState } from "react";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Image, Pressable, StyleSheet, Text, View } from "react-native";
 import { Button, colors, radius, typography } from "./ui";
 
 type ChatBubbleProps = {
@@ -11,6 +11,11 @@ type ChatBubbleProps = {
   encryptedFallback?: boolean;
   translateLabel: string;
   reportLabel?: string;
+  imageUri?: string | null;
+  imageLoading?: boolean;
+  imageLabel?: string;
+  imageRetryLabel?: string;
+  onRetryImage?: () => void;
   onTranslate: () => void;
   onReport?: () => void;
 };
@@ -33,6 +38,11 @@ export default function ChatBubble({
   translatedText,
   translateLabel,
   reportLabel,
+  imageUri = null,
+  imageLoading = false,
+  imageLabel,
+  imageRetryLabel,
+  onRetryImage,
   onTranslate,
   onReport,
 }: ChatBubbleProps) {
@@ -47,13 +57,23 @@ export default function ChatBubble({
           accessibilityRole="button"
           onLongPress={() => setActionsVisible(true)}
           onPress={() => setActionsVisible((visible) => !visible)}
+          accessibilityLabel={imageUri ? imageLabel : undefined}
           style={({ pressed }) => [
             styles.bubble,
             mine ? styles.bubbleMine : styles.bubbleOther,
             pressed && styles.pressedBubble,
           ]}
         >
-          {encryptedFallback ? (
+          {imageUri ? (
+            <Image accessibilityLabel={imageLabel} resizeMode="contain" source={{ uri: imageUri }} style={styles.attachmentImage} />
+          ) : imageLoading ? (
+            <View style={styles.imageLoading}>
+              <ActivityIndicator color={mine ? colors.text.inverse : colors.brand.sky} size="small" />
+              <Text style={[styles.messageText, mine ? styles.messageTextMine : styles.messageTextOther]}>
+                {imageLabel ?? text}
+              </Text>
+            </View>
+          ) : encryptedFallback ? (
             <View style={styles.encryptedLine}>
               <MaterialIcons color={mine ? colors.text.inverse : colors.text.muted} name="lock" size={16} />
               <Text style={[styles.messageText, mine ? styles.messageTextMine : styles.messageTextOther]}>
@@ -66,6 +86,15 @@ export default function ChatBubble({
             </Text>
           )}
         </Pressable>
+        {!imageUri && !imageLoading && onRetryImage ? (
+          <Pressable
+            accessibilityRole="button"
+            onPress={onRetryImage}
+            style={({ pressed }) => [styles.retryAttachment, pressed && styles.pressedBubble]}
+          >
+            <Text style={styles.retryAttachmentText}>{imageRetryLabel ?? text}</Text>
+          </Pressable>
+        ) : null}
         {actionsVisible ? (
           <View style={[styles.actionRow, mine ? styles.actionRowMine : styles.actionRowOther]}>
             <Button
@@ -167,6 +196,29 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
+  },
+  imageLoading: {
+    minWidth: 120,
+    minHeight: 54,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+  },
+  attachmentImage: {
+    width: 240,
+    height: 220,
+    borderRadius: 12,
+    backgroundColor: "rgba(255,255,255,0.2)",
+  },
+  retryAttachment: {
+    alignSelf: "flex-start",
+    marginTop: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  retryAttachmentText: {
+    color: colors.brand.sky,
+    ...typography.captionStrong,
   },
   actionRow: {
     flexDirection: "row",

@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import {
   ActivityIndicator,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -18,7 +19,6 @@ import type { AppLanguage } from "../../../services/onboarding-contract";
 import {
   acceptMatch,
   getMatch,
-  listMatches,
   rejectMatch,
   type MatchView,
 } from "../../../services/matching";
@@ -137,12 +137,10 @@ export default function ForeignerApplicationDetailScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { getCurrentSession, refresh, session, status } = useAuth();
-  const { id, recruitmentId } = useLocalSearchParams<{
+  const { id } = useLocalSearchParams<{
     id?: string | string[];
-    recruitmentId?: string | string[];
   }>();
-  const applicationId = Array.isArray(id) ? id[0] : id;
-  const recruitmentID = Array.isArray(recruitmentId) ? recruitmentId[0] : recruitmentId;
+  const applicationId = (Array.isArray(id) ? id[0] : id)?.trim();
   const [application, setApplication] = useState<MatchView | null>(null);
   const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading");
   const [loadError, setLoadError] = useState<LoadErrorKey | null>(null);
@@ -150,9 +148,21 @@ export default function ForeignerApplicationDetailScreen() {
   const [actionError, setActionError] = useState<ActionErrorKey | null>(null);
   const [bottomActionsHeight, setBottomActionsHeight] = useState(0);
   const [language, setLanguage] = useState<AppLanguage>("en");
+  const [refreshing, setRefreshing] = useState(false);
   const copy = COPY[language];
   const authRef = useRef({ getCurrentSession, refresh, session, status });
   authRef.current = { getCurrentSession, refresh, session, status };
+  const loadInFlightRef = useRef(false);
+  const hasLoadedRef = useRef(false);
+  const actionInFlightRef = useRef(false);
+
+  const goBack = () => {
+    if (router.canGoBack()) {
+      router.back();
+      return;
+    }
+    router.replace("/foreigner");
+  };
 
   useEffect(() => {
     let active = true;
@@ -172,43 +182,31 @@ export default function ForeignerApplicationDetailScreen() {
     };
   }, []);
 
-  useEffect(() => {
+  const loadApplication = useCallback(() => {
+    if (loadInFlightRef.current) return;
+    loadInFlightRef.current = true;
     const controller = new AbortController();
     let cancelled = false;
+    const initialLoad = !hasLoadedRef.current;
 
     const load = async () => {
-      const auth = authRef.current;
-      const activeSession = auth.getCurrentSession() ?? auth.session;
-      if (!applicationId || auth.status !== "signed_in" || !activeSession) {
-        if (!cancelled) {
-          setLoadState("error");
-          setLoadError("loginRequired");
-        }
-        return;
-      }
-
-      setLoadState("loading");
-      setLoadError(null);
       try {
-        const loadWithSession = async (currentSession: typeof activeSession) => {
-          try {
-            return await getMatch(applicationId, currentSession, controller.signal);
-          } catch (error) {
-            if (!(error instanceof APIError) || error.status !== 404) throw error;
-            const ownerMatches = await listMatches(
-              currentSession,
-              { role: "owner", limit: 50 },
-              controller.signal,
-            );
-            const fallback = ownerMatches.find((item) =>
-              item.id === applicationId
-              || item.recruitment.id === recruitmentID
-              || item.recruitment.id === applicationId,
-            );
-            if (!fallback) throw error;
-            return fallback;
+        const auth = authRef.current;
+        const activeSession = auth.getCurrentSession() ?? auth.session;
+        if (!applicationId || auth.status !== "signed_in" || !activeSession) {
+          if (!cancelled) {
+            setLoadState("error");
+            setLoadError("loginRequired");
           }
-        };
+          return;
+        }
+
+        if (initialLoad) setLoadState("loading");
+        else setRefreshing(true);
+        setLoadError(null);
+
+        const loadWithSession = (currentSession: typeof activeSession) =>
+          getMatch(applicationId, currentSession, controller.signal);
         const loadWithRefresh = async () => {
           try {
             return await loadWithSession(activeSession);
@@ -223,14 +221,18 @@ export default function ForeignerApplicationDetailScreen() {
         const result = await loadWithRefresh();
         if (!cancelled) {
           setApplication(result);
+          hasLoadedRef.current = true;
           setLoadState("ready");
         }
       } catch (error) {
         if (error instanceof Error && error.name === "AbortError" && (cancelled || controller.signal.aborted)) return;
         if (!cancelled) {
-          setLoadState("error");
+          setLoadState(initialLoad ? "error" : "ready");
           setLoadError("failed");
         }
+      } finally {
+        loadInFlightRef.current = false;
+        if (!cancelled) setRefreshing(false);
       }
     };
 
@@ -239,14 +241,20 @@ export default function ForeignerApplicationDetailScreen() {
       cancelled = true;
       controller.abort();
     };
-  }, [applicationId, recruitmentID, status]);
+  }, [applicationId]);
+
+  useEffect(() => {
+    if (status === "loading") return;
+    hasLoadedRef.current = false;
+    return loadApplication();
+  }, [applicationId, loadApplication, status]);
 
   if (!application) {
     return (
       <View
         style={[
           styles.loadingScreen,
-          { paddingTop: insets.top, paddingBottom: insets.bottom },
+          { paddingTop: Math.max(insets.top, 24), paddingBottom: Math.max(insets.bottom, 24) },
         ]}
       >
         <StatusBar style="light" />
@@ -257,7 +265,7 @@ export default function ForeignerApplicationDetailScreen() {
         <Pressable
           accessibilityLabel={copy.back}
           accessibilityRole="button"
-          onPress={() => router.back()}
+          onPress={goBack}
           style={({ pressed }) => [styles.loadingBackButton, pressed && styles.pressed]}
         >
           <Text style={styles.loadingBackButtonText}>{copy.back}</Text>
@@ -269,21 +277,27 @@ export default function ForeignerApplicationDetailScreen() {
   const choseGuide = application.status === "accepted" || application.status === "completed";
   const declined = application.status === "rejected";
   const withdrawn = application.status === "cancelled";
-  const unavailable = application.status === "expired" || application.status === "blocked";
+  const eventExpired = application.recruitment.status === "expired"
+    || ((application.recruitment.status === "open" || application.recruitment.status === "matched")
+      && Number.isFinite(Date.parse(application.recruitment.expires_at))
+      && Date.parse(application.recruitment.expires_at) <= Date.now());
+  const unavailable = application.status === "expired" || application.status === "blocked" || eventExpired;
   const recruitmentClosed = application.status === "pending"
+    && !eventExpired
     && application.recruitment.status !== "open"
     && application.recruitment.status !== "matched";
   const decided = choseGuide || declined || withdrawn || unavailable || recruitmentClosed;
   const introduction = humanReadableIntroduction(application.other_user.bio, copy.noIntroduction);
 
   const decide = async (action: "accept" | "reject") => {
-    if (decided || actionState !== "idle") return;
+    if (decided || actionState !== "idle" || actionInFlightRef.current) return;
     const activeSession = getCurrentSession() ?? session;
     if (status !== "signed_in" || !activeSession) {
       setActionError("loginRequired");
       return;
     }
 
+    actionInFlightRef.current = true;
     setActionState(action === "accept" ? "accepting" : "rejecting");
     setActionError(null);
     try {
@@ -304,6 +318,7 @@ export default function ForeignerApplicationDetailScreen() {
     } catch {
       setActionError("failed");
     } finally {
+      actionInFlightRef.current = false;
       setActionState("idle");
     }
   };
@@ -322,7 +337,7 @@ export default function ForeignerApplicationDetailScreen() {
           accessibilityLabel={copy.back}
           accessibilityRole="button"
           hitSlop={10}
-          onPress={() => router.back()}
+          onPress={goBack}
           style={({ pressed }) => [
             styles.backButton,
             { top: Math.max(insets.top + 8, 49) },
@@ -342,6 +357,13 @@ export default function ForeignerApplicationDetailScreen() {
             paddingBottom: insets.bottom + Math.max(bottomActionsHeight + 24, 220),
           },
         ]}
+        refreshControl={
+          <RefreshControl
+            onRefresh={loadApplication}
+            refreshing={refreshing}
+            tintColor={BLUE}
+          />
+        }
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.profileCard}>
@@ -416,12 +438,12 @@ export default function ForeignerApplicationDetailScreen() {
         <Pressable
           accessibilityLabel={actionState === "accepting" ? copy.accepting : copy.accept}
           accessibilityRole="button"
-          accessibilityState={{ disabled: decided }}
-          disabled={decided}
+          accessibilityState={{ busy: actionState === "accepting", disabled: decided || actionState !== "idle" }}
+          disabled={decided || actionState !== "idle"}
           onPress={() => void decide("accept")}
           style={({ pressed }) => [
             styles.primaryButton,
-            decided && styles.disabledButton,
+            (decided || actionState !== "idle") && styles.disabledButton,
             pressed && styles.pressed,
           ]}
         >
@@ -431,26 +453,28 @@ export default function ForeignerApplicationDetailScreen() {
         <Pressable
           accessibilityLabel={actionState === "rejecting" ? copy.rejecting : copy.reject}
           accessibilityRole="button"
-          accessibilityState={{ disabled: decided }}
-          disabled={decided}
+          accessibilityState={{ busy: actionState === "rejecting", disabled: decided || actionState !== "idle" }}
+          disabled={decided || actionState !== "idle"}
           onPress={() => void decide("reject")}
           style={({ pressed }) => [
             styles.secondaryButton,
-            decided && styles.disabledSecondaryButton,
+            (decided || actionState !== "idle") && styles.disabledSecondaryButton,
             pressed && styles.pressed,
           ]}
         >
           <Text
             style={[
               styles.secondaryButtonText,
-              decided && styles.disabledSecondaryButtonText,
+              (decided || actionState !== "idle") && styles.disabledSecondaryButtonText,
             ]}
           >
             {actionState === "rejecting" ? copy.rejecting : copy.reject}
           </Text>
         </Pressable>
-        {actionState === "accepting" ? (
-          <Text style={styles.actionStatus}>{copy.processingAccept}</Text>
+        {actionState !== "idle" ? (
+          <Text style={styles.actionStatus}>
+            {actionState === "accepting" ? copy.processingAccept : copy.processingReject}
+          </Text>
         ) : null}
         {actionError ? (
           <Text accessibilityRole="alert" style={styles.actionError}>

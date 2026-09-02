@@ -1,4 +1,3 @@
-import { buildRecruitmentPreview } from "../mocks/recruitment";
 import type { Session } from "./auth-contract";
 import {
   createRecruitment,
@@ -12,6 +11,10 @@ import type {
   RecruitmentDraft,
   RecruitmentPreview,
 } from "../types/recruitment";
+import {
+  buildRecruitmentPreviewModel,
+  isManualRecruitmentPreview,
+} from "./recruitment-preview";
 
 type RecruitmentClassificationResponse = {
   data?: {
@@ -41,6 +44,56 @@ export function normalizeRecruitmentKeywords(value: unknown): string[] {
   return normalized;
 }
 
+export type RecruitmentKeywordInputError =
+  | "recruitment_keywords_required"
+  | "recruitment_keyword_too_many"
+  | "recruitment_keyword_too_long"
+  | "recruitment_keyword_invalid";
+
+/**
+ * Parses keywords entered by a user in the manual classification fallback.
+ * Unlike the API response normalizer, this function is strict so the manual
+ * path never silently truncates or invents a keyword.
+ */
+export function parseRecruitmentKeywordInput(value: string): string[] {
+  const normalized: string[] = [];
+  const seen = new Set<string>();
+
+  for (const item of value.split(",")) {
+    const keyword = item.trim().replace(/\s+/gu, " ");
+    if (!keyword) continue;
+
+    const codePoints = [...keyword];
+    const containsControlCharacter = codePoints.some((character) => {
+      const codePoint = character.codePointAt(0) ?? 0;
+      return (
+        (codePoint >= 0 && codePoint <= 31) ||
+        codePoint === 127 ||
+        (codePoint >= 128 && codePoint <= 159)
+      );
+    });
+    if (containsControlCharacter) {
+      throw new Error("recruitment_keyword_invalid");
+    }
+    if (codePoints.length > 80) {
+      throw new Error("recruitment_keyword_too_long");
+    }
+
+    const key = keyword.toLocaleLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    normalized.push(keyword);
+    if (normalized.length > 5) {
+      throw new Error("recruitment_keyword_too_many");
+    }
+  }
+
+  if (normalized.length === 0) {
+    throw new Error("recruitment_keywords_required");
+  }
+  return normalized;
+}
+
 export type RecruitmentPreviewProvider = {
 	createPreview: (
 		draft: RecruitmentDraft,
@@ -60,7 +113,7 @@ const geminiPreviewProvider: RecruitmentPreviewProvider = {
 			throw new Error("recruitment classification response is invalid");
 		}
 
-		const preview = buildRecruitmentPreview(draft, category);
+		const preview = buildRecruitmentPreviewModel(draft, category);
 		const keywords = normalizeRecruitmentKeywords(response.data?.keywords);
 		return {
 			...preview,
@@ -460,13 +513,28 @@ export function buildRecruitmentCreateRequest(
   const selectedKeywords = normalizeRecruitmentKeywords(
     selection ? selection.keywords : preview.tags,
   );
+  if (isManualRecruitmentPreview(preview) && selectedKeywords.length === 0) {
+    throw new Error("recruitment_keywords_required");
+  }
+  const selectedCategory = selection?.category ?? preview.category;
+  if (!isMatchCategory(selectedCategory)) {
+    throw new Error("invalid_recruitment_category");
+  }
   const input: RecruitmentCreateRequest = {
-    category: selection?.category ?? preview.category,
+    category: selectedCategory,
     available_date: availableDate,
     start_time: draft.startTime,
     end_time: `${String(endHour).padStart(2, "0")}:${String(endMinute).padStart(2, "0")}`,
     timezone: JST_TIME_ZONE,
-    keywords: selectedKeywords.length > 0 ? selectedKeywords : ["Experience"],
+    // An explicit manual selection may intentionally contain no selected
+    // suggestion after the user removes all pills. Do not invent a keyword;
+    // retain the legacy generated-preview fallback only when no selection was
+    // supplied at all.
+    keywords: selection
+      ? selectedKeywords
+      : selectedKeywords.length > 0
+        ? selectedKeywords
+        : ["Experience"],
     description,
     location_name: draft.location.trim(),
     participant_limit: draft.participantLimit,

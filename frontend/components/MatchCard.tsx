@@ -1,11 +1,13 @@
 import { MaterialIcons } from "@expo/vector-icons";
+import { useEffect, useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
 import type { MatchCardData } from "../types/match";
+import { loadLanguage, subscribeLanguage, type AppLanguage } from "../services/onboarding";
+import { getMatchCardCopy, getMatchCardStatusLabel } from "../services/matching";
 import { Card, Pill, colors, radius, typography } from "./ui";
 import { formatTimeRange } from "../utils/time";
 import { translateLocationLabel } from "../utils/location-labels";
 import { translateRecruitmentTag } from "../utils/recruitment-tags";
-import type { AppLanguage } from "../services/onboarding";
 
 type MatchCardProps = {
   language?: AppLanguage;
@@ -48,17 +50,41 @@ function formatCardDate(value: string): string {
   return value;
 }
 
-export default function MatchCard({ language = "en", match, onOpen }: MatchCardProps) {
+function useSelectedAppLanguage(explicitLanguage?: AppLanguage): AppLanguage {
+  const [storedLanguage, setStoredLanguage] = useState<AppLanguage>(explicitLanguage ?? "ja");
+
+  useEffect(() => {
+    if (explicitLanguage) {
+      setStoredLanguage(explicitLanguage);
+      return;
+    }
+
+    let active = true;
+    const unsubscribe = subscribeLanguage((nextLanguage) => {
+      if (active && nextLanguage) setStoredLanguage(nextLanguage);
+    });
+    void loadLanguage().then((nextLanguage) => {
+      if (active && nextLanguage) setStoredLanguage(nextLanguage);
+    }).catch(() => undefined);
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [explicitLanguage]);
+
+  return explicitLanguage ?? storedLanguage;
+}
+
+export default function MatchCard({ match, onOpen, language: explicitLanguage }: MatchCardProps) {
+  const language = useSelectedAppLanguage(explicitLanguage);
+  const copy = getMatchCardCopy(language);
   const locationName = match.locationName
     ? translateLocationLabel(match.locationName, language)
     : "";
-  const statusLabel = match.applicationStatus === "pending" ? "応募中"
-    : match.applicationStatus === "accepted" ? "承認済み"
-      : match.applicationStatus === "completed" ? "完了"
-        : match.applicationStatus ? "結果確定" : null;
+  const statusLabel = getMatchCardStatusLabel(match.applicationStatus, language);
   return (
     <Card
-      accessibilityLabel={`${match.authorName}の募集詳細を開く`}
+      accessibilityLabel={copy.openDetails(match.authorName)}
       accessibilityRole={onOpen ? "button" : undefined}
       disabled={!onOpen}
       onPress={onOpen ? () => onOpen(match) : undefined}
@@ -78,11 +104,11 @@ export default function MatchCard({ language = "en", match, onOpen }: MatchCardP
 
       <View style={styles.details}>
         <Text numberOfLines={1} style={styles.detailLine}>
-          <Text style={styles.detailLabel}>Date</Text>
+          <Text style={styles.detailLabel}>{copy.date}</Text>
           {`   ${formatCardDate(match.date)}`}
         </Text>
         <Text numberOfLines={1} style={styles.detailLine}>
-          <Text style={styles.detailLabel}>Time</Text>
+          <Text style={styles.detailLabel}>{copy.time}</Text>
           {`   ${formatTimeRange(match.startTime, match.durationHours)}`}
         </Text>
       </View>
@@ -98,8 +124,8 @@ export default function MatchCard({ language = "en", match, onOpen }: MatchCardP
       <View style={styles.footer}>
         {locationName ? <View style={styles.locationRow}><MaterialIcons color={colors.text.muted} name="place" size={12} style={styles.locationIcon} /><Text ellipsizeMode="tail" numberOfLines={1} style={styles.locationText}>{locationName}</Text></View> : <View style={styles.footerSpacer} />}
         <View style={styles.footerMeta}>
-          {match.isToday ? <Text style={styles.today}>今日</Text> : null}
-          <Text adjustsFontSizeToFit minimumFontScale={0.85} numberOfLines={1} style={styles.expiry}>{match.expiresAt}まで</Text>
+          {match.isToday ? <Text style={styles.today}>{copy.today}</Text> : null}
+          <Text adjustsFontSizeToFit minimumFontScale={0.85} numberOfLines={1} style={styles.expiry}>{copy.expiry(match.expiresAt)}</Text>
         </View>
       </View>
     </Card>
