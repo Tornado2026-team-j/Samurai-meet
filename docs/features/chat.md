@@ -89,12 +89,12 @@ HTTP/3 WebTransportのリアルタイム配送に、RESTと同じChat Token認�
 ## 6. 暗号化
 
 - 新規の本文・位置情報・画像マーカーは `frontend/services/chat.ts` の `chat-dek-v1` で、クライアント生成のランダムなチャットDEKを使って暗号化する。チャットIDは公開コンテキストとしてAADに含めるが、Key-B・Key-A・チャットDEK・平文はAPIへ送信しない。Key-Bは端末proofと端末登録に使うだけで、本文鍵の秘密入力ではない。
-- チャットDEKは、利用者ごとにKey-A／`data_salt`から導出したアカウントデータ鍵で包む`chat-account-v1` envelopeと、参加端末のX25519公開鍵で包む`x25519-v1` device envelopeを使う。サーバーはenvelopeの公開メタデータと暗号文だけを保存し、復号や鍵導出はしない。新端末はRecoveryまたは端末移行でKey-Aを復旧した後、自分のアカウントenvelopeを復号でき、別参加者の端末は自端末向けdevice envelopeを復号する。
+- チャットDEKは、利用者ごとにKey-A／`data_salt`から導出したアカウントデータ鍵で包む`chat-account-v1` envelopeと、参加端末のX25519公開鍵で包む`x25519-v1` device envelopeを使う。各envelopeには同じDEKのクライアント検証用`key_commitment`を付け、サーバーはenvelopeの公開メタデータと暗号文だけを保存し、復号や鍵導出はしない。device envelopeの追加登録はmatch ownerが両参加者向けに行え、owner以外は自分のアカウントに属する端末だけを認証済み端末proof付きで登録できる。参加者が相手端末のimmutable rowを先取りできない制約は維持する。0046だけが適用済みの旧チャットは、owner端末が既存envelopeをcommitment付きで再送してmanifestを作成する。新端末はRecoveryまたは端末移行でKey-Aを復旧した後、自分のアカウントenvelopeを復号でき、別参加者の端末は自端末向けdevice envelopeを復号する。
 - 既存の `chat-mvp-v1` と旧 `chat-keyb-v1` はデータを失わないため読み取り互換だけを残す。新規送信・編集は `chat-dek-v1` のみを使い、旧本文をサーバーで再暗号化したり、Key-Bを共有したりしない。旧方式の本文は旧鍵が利用できる端末でのみ表示される。
 - 端末移行・Recoveryはアカウントroot／Key-Aを新端末へ復旧する経路であり、チャットDEK自体を平文で移行しない。新端末でチャットを開いた際に、保存済みアカウントenvelopeをKey-A由来鍵で復号する。新しい参加端末向けには、登録済みX25519公開鍵へ個別envelopeを追加する。厳密E2EEとして扱うには、実機2端末の送受信・Recovery・端末失効時のQA確認が必要である。
 - API へは平文本文ではなく暗号化 payload、nonce、key version を送る。Go API は配送・権限・保存を担当し、暗号鍵を持たない境界を維持する。
 - 本文送信前のOpenAI Moderationは例外である。クライアントは暗号化前に本文を`POST /chats/{id}/moderation`へ送り、サーバーは認可済みaccepted参加者の本文だけをOpenAIへ同期転送する。本文とOpenAI生応答はこの処理中だけ参照し、DB、キュー、ログ、監査イベントには保存しない。返すのは`allowed` / `blocked` / `unavailable`だけで、カテゴリやスコアは表示しない。`blocked`、`unavailable`（未設定・timeout・上流障害）、ネットワーク障害、HTTP 4xx/5xxのすべてでfail-closedとし、暗号化・配送を開始せずローカライズ済みの再試行案内を表示する。
-- 自動翻訳は認証済み参加者だけが `POST /chats/{id}/translate` を呼び出し、対象本文をリクエスト処理中だけGeminiへ転送する明示的な平文例外である。Geminiが本文の原言語を判定し、利用者の表示言語へ翻訳する。初回結果はクライアントがチャットDEKで暗号化し、メッセージrevision・対象言語とともに`chat_message_translations`へ保存するため、同じrevisionの再表示ではAIを呼び直さない。クライアントは同意済みの場合だけ初期表示の新しい8件を最大2並列で遅延翻訳し、古い本文はタップで翻訳する。サーバーが保持するのは暗号化envelopeだけで、編集・削除・保持期限で関連行も消去する。翻訳結果がある場合は本文下の `Original` タップで原文と切り替え、翻訳失敗時は原文を維持する。
+- 自動翻訳は認証済み参加者だけが `POST /chats/{id}/translate` を呼び出し、対象本文をリクエスト処理中だけGeminiへ転送する明示的な平文例外である。サーバーはmessageに保存したsalt付き本文commitmentと`text`を照合し、一致しない申告本文やbindingのない旧メッセージをGeminiへ渡さない。旧メッセージは既存の暗号化cache hitだけを返し、cache missは翻訳せずbinding unavailableとする。Geminiが本文の原言語を判定し、利用者の表示言語へ翻訳する。provider呼び出しはIPではなく認証済みアカウント単位の共有token bucket（既定30回burst／毎分30回）と同時実行数2で制限し、cache hitはprovider枠を消費しない。429には`Retry-After`を付け、provider呼び出し中のin-flight markerは短いTTLを更新し続けるため、正常終了・キャンセルでは即時解放され、プロセス異常終了時だけ期限切れで解放される。クライアントは429を自動再試行しない。初回結果はクライアントがチャットDEKで暗号化し、メッセージrevision・対象言語とともに`chat_message_translations`へ保存するため、同じrevisionの再表示ではAIを呼び直さない。クライアントは同意済みの場合だけ初期表示の新しい8件を最大2並列で遅延翻訳し、古い本文はタップで翻訳する。サーバーが保持するのは暗号化envelopeだけで、編集・削除・保持期限で関連行も消去する。翻訳結果がある場合は本文下の `Original` タップで原文と切り替え、翻訳失敗時は原文を維持する。
 - この送信前平文判定とAI翻訳が有効なため、現行チャットは**完全E2EEではない**。保存・配送がチャットDEK保護の暗号文であることと、送信前に外部AIへ平文を提示することは別の境界である。Key-B、Key-A、チャットDEK、翻訳平文はログ・DBへ保存しない。
 - HTTP/3 WebTransport / TLS 1.3が通信路の暗号化・完全性を担い、Chat Token（JWS）がチャット単位の認証・認可・接続管理を担う。JWSの署名を通信路暗号化の代わりにしない。
 - 0-RTTでは状態変更を受け付けず、JWSの期限・対象chat・セッション・token世代と`client_message_id`の冪等性でリプレイと重複登録を抑止する。
@@ -123,7 +123,7 @@ WebTransport/QUICの理由、JWS claimの検証、heartbeat、失敗時の自動
 - `POST /matches/{id}/meeting`
 - `GET|POST /meetings/{id}/proximity`
 - WebTransport endpoint：環境ごとにHTTPS URLとして提供する（`chat_id`単位。UDP/TLS 1.3 listenerが必要）
-- テーブル：`matches`、`chat_threads`、`messages`、`chat_message_translations`、`chat_key_envelopes`、`chat_read_states`、`chat_token_sequences`、`chat_message_deletions`、`chat_attachments`、`photos`
+- テーブル：`matches`、`chat_threads`、`messages`、`chat_message_translations`、`chat_key_envelopes`、`chat_key_manifests`、`chat_read_states`、`chat_token_sequences`、`chat_message_deletions`、`chat_attachments`、`chat_translation_rate_limits`、`chat_translation_inflight`、`photos`
 
 RESTのメッセージ送信・編集・削除・`transport-token`発行・WebTransport接続は`accepted`マッチの参加者だけが利用できます。`completed`マッチは一覧・履歴・既読・翻訳のみで、送信・編集・削除と接続は`chat_not_available`で拒否されます。本文ではなくBase64URLのAES-256-GCM暗号文を保存します。`client_message_id`で再送を冪等化し、WebTransport未接続・再接続直後は`sequence` cursorで`GET /chats/{id}/messages?after=`を使って補完します。サーバーは本文・翻訳・チャットDEKを復号しません。チャットDEKはKey-A由来アカウントenvelopeまたは対象端末向けX25519 envelopeで復旧し、Key-Bは端末proofに限定します。Moderationと翻訳は暗号化前に外部AIへ平文を渡す明示的な例外です。
 
