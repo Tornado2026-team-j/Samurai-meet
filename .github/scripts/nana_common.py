@@ -201,6 +201,10 @@ def pr_files(number: int) -> list[dict[str, Any]]:
     return pages(f"/pulls/{number}/files")
 
 
+def pr_changed_paths(number: int) -> set[str]:
+    return {f["filename"] for f in pr_files(number)}
+
+
 def diff_context(files: list[dict[str, Any]]) -> tuple[str, str, bool]:
     summary = "\n".join(
         f"- {f.get('status', 'modified')} +{f.get('additions', 0)}/-{f.get('deletions', 0)} `{f['filename']}`"
@@ -592,6 +596,25 @@ def patch_paths(patch: str) -> list[str]:
             if p != "/dev/null":
                 paths.append(p)
     return sorted(set(paths))
+
+
+def validate_existing_file_patch(patch: str) -> list[str]:
+    """Return validation errors for patch shapes Nana Apply intentionally does not support."""
+    errors: list[str] = []
+    lines = patch.splitlines()
+
+    if any(line.startswith("new file mode ") for line in lines):
+        errors.append("new files are not allowed")
+    if any(line.startswith("deleted file mode ") for line in lines):
+        errors.append("file deletions are not allowed")
+    if any(line.startswith("rename from ") or line.startswith("rename to ") for line in lines):
+        errors.append("renames are not allowed")
+    if any(line.startswith("old mode ") or line.startswith("new mode ") for line in lines):
+        errors.append("file mode changes are not allowed")
+    if any(line == "--- /dev/null" or line == "+++ /dev/null" for line in lines):
+        errors.append("file creation/deletion is not allowed")
+
+    return errors
 
 
 def forbidden_path(path: str) -> bool:

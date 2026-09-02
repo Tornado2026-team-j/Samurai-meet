@@ -15,6 +15,8 @@ from nana_common import (
     gh,
     pages,
     patch_paths,
+    pr_changed_paths,
+    validate_existing_file_patch,
 )
 
 EVENT = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text(encoding="utf-8"))
@@ -74,10 +76,29 @@ def prepare() -> None:
 
     patch = str(plan.get("patch") or "")
     paths = patch_paths(patch)
+
+    if not paths:
+        fail("plan contains no changed paths")
     if paths != sorted(set(plan.get("paths") or [])):
         fail("plan path mismatch")
     if any(forbidden_path(p) for p in paths):
         fail("forbidden apply path")
+
+    # Re-derive the security boundary from GitHub at apply time.
+    # Never trust only the model-generated Plan for which files are allowed.
+    current_pr_paths = pr_changed_paths(pr_number)
+    if not set(paths) <= current_pr_paths:
+        outside = sorted(set(paths) - current_pr_paths)
+        comment(
+            pr_number,
+            "🌸 Nana: Planに現在のPR差分外のファイルが含まれているため拒否しました。\n\n"
+            + ", ".join(f"`{p}`" for p in outside),
+        )
+        fail("plan contains paths outside the current PR diff")
+
+    patch_shape_errors = validate_existing_file_patch(patch)
+    if patch_shape_errors:
+        fail("unsupported patch shape: " + "; ".join(patch_shape_errors))
 
     Path("/tmp/nana-plan.json").write_text(json.dumps(plan, ensure_ascii=False), encoding="utf-8")
     Path("/tmp/nana.patch").write_text(patch, encoding="utf-8")
@@ -91,18 +112,45 @@ def prepare() -> None:
             f.write(f"pr_number={pr_number}\n")
 
 
-def verify_worktree() -> None:
-    plan = json.loads(Path("/tmp/nana-plan.json").read_text(encoding="utf-8"))
-    expected = sorted(set(plan["paths"]))
+def _git_paths(*args: str) -> list[str]:
     result = subprocess.run(
-        ["git", "diff", "--name-only"],
+        ["git", *args],
         check=True,
         capture_output=True,
         text=True,
     )
-    actual = sorted(x.strip() for x in result.stdout.splitlines() if x.strip())
+    return sorted(x.strip() for x in result.stdout.splitlines() if x.strip())
+
+
+def verify_worktree() -> None:
+    plan = json.loads(Path("/tmp/nana-plan.json").read_text(encoding="utf-8"))
+    expected = sorted(set(plan["paths"]))
+
+    unstaged = _git_paths("diff", "--name-only")
+    staged = _git_paths("diff", "--cached", "--name-only")
+    untracked = _git_paths("ls-files", "--others", "--exclude-standard")
+
+    actual = sorted(set(unstaged) | set(staged) | set(untracked))
     if actual != expected:
         fail(f"worktree path mismatch: expected={expected}, actual={actual}")
+
+
+def stage_planned_paths() -> None:
+    plan = json.loads(Path("/tmp/nana-plan.json").read_text(encoding="utf-8"))
+    expected = sorted(set(plan["paths"]))
+
+    subprocess.run(["git", "add", "--", *expected], check=True)
+
+    staged = _git_paths("diff", "--cached", "--name-only")
+    if staged != expected:
+        fail(f"staged path mismatch: expected={expected}, actual={staged}")
+
+    # No unplanned changes may remain outside the staged plan.
+    unstaged = _git_paths("diff", "--name-only")
+    untracked = _git_paths("ls-files", "--others", "--exclude-standard")
+    leftovers = sorted((set(unstaged) | set(untracked)) - set(expected))
+    if leftovers:
+        fail(f"unexpected leftover changes: {leftovers}")
 
 
 def complete() -> None:
@@ -122,6 +170,8 @@ if __name__ == "__main__":
         prepare()
     elif mode == "verify":
         verify_worktree()
+    elif mode == "stage":
+        stage_planned_paths()
     elif mode == "complete":
         complete()
     else:
