@@ -4,6 +4,7 @@ import {
   parseLanguage,
   parseLocalProfile,
 } from "../services/onboarding-contract";
+import { resolveDefaultAppMode, resolveDefaultNationalityCode } from "../services/device-locale";
 
 describe("onboarding storage validation", () => {
   test("accepts only supported languages", () => {
@@ -86,5 +87,28 @@ describe("onboarding storage validation", () => {
   test("rejects malformed profile storage", () => {
     expect(parseLocalProfile("not-json")).toBeNull();
     expect(parseLocalProfile(JSON.stringify({ name: "Rina" }))).toBeNull();
+  });
+});
+
+describe("initial nationality defaults", () => {
+  const supportedCountries = ["JP", "US", "FR"];
+
+  test("prefers the device region over the selected display language", () => {
+    expect(resolveDefaultNationalityCode("ja", supportedCountries, [{ regionCode: "FR" }])).toBe("FR");
+  });
+
+  test("falls back to the selected language when the device region is unavailable", () => {
+    expect(resolveDefaultNationalityCode("ja", supportedCountries, [{ regionCode: null }])).toBe("JP");
+    expect(resolveDefaultNationalityCode("en", supportedCountries, [])).toBe("US");
+  });
+
+  test("ignores an unsupported device region", () => {
+    expect(resolveDefaultNationalityCode("en", supportedCountries, [{ regionCode: "ZZ" }])).toBe("US");
+  });
+
+  test("chooses the initial app mode from the device region before language", () => {
+    expect(resolveDefaultAppMode("en", [{ regionCode: "JP" }])).toBe("local");
+    expect(resolveDefaultAppMode("ja", [{ regionCode: "US" }])).toBe("traveler");
+    expect(resolveDefaultAppMode("ja", [{ regionCode: null }])).toBe("local");
   });
 });

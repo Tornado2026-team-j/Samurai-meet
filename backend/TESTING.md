@@ -20,4 +20,4 @@ bun test
 
 Passkey/OAuth/native storageは正式`frontend/`とDevelopment Build／実機で確認します。Expo Goでnative moduleを使う経路の成功を本番相当の証拠にしません。通知のテストは現状アプリ内RESTの一覧・既読・イベント生成までで、OSプッシュ通知は対象外（未実装）です。
 
-起動時migrationは`backend/migrations/*.sql`を順に正規化し、`schema_migrations`のSHA-256 checksumと一致する適用済みファイルだけをスキップします。適用済みSQLを編集してchecksum mismatchを隠してはいけません。checksum mismatchは起動停止が期待動作であり、変更は新規migrationで行います。
+起動時migrationは`backend/migrations/*.sql`を順に正規化し、`schema_migrations`のSHA-256 checksumと一致する適用済みファイルだけをスキップします。適用済みSQLを編集してchecksum mismatchを隠してはいけません。checksum mismatchは原則として起動停止が期待動作であり、0040と0044だけは監査済みの旧checksumと現行checksumの組み合わせを限定許容し、後続migrationで前方移行します。変更は新規migrationで行います。

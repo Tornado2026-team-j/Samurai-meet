@@ -33,9 +33,20 @@ func passkeyWebOptions(passkeys *auth.PasskeyService, bootstraps *auth.PasskeyBo
 			return
 		}
 		bootstrap, err := bootstraps.LookupAny(r.Context(), token, time.Now())
-		if err != nil || bootstrap.CeremonyTokenHash != "" {
+		if err != nil {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid_passkey_bootstrap"})
 			return
+		}
+		if bootstrap.CeremonyTokenHash != "" {
+			if r.URL.Query().Get("retry") != "1" || bootstraps.ResetBoundCeremony(r.Context(), token, bootstrap.Scope, bootstrap.UserID, bootstrap.SessionID, time.Now()) != nil {
+				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid_passkey_bootstrap"})
+				return
+			}
+			bootstrap, err = bootstraps.LookupAny(r.Context(), token, time.Now())
+			if err != nil {
+				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid_passkey_bootstrap"})
+				return
+			}
 		}
 		var result auth.PasskeyOptions
 		switch bootstrap.Scope {

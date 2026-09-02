@@ -71,6 +71,7 @@ func TestValidateMigrationChecksum(t *testing.T) {
 		name    string
 		version string
 		stored  string
+		current string
 		wantErr bool
 	}{
 		{
@@ -82,6 +83,13 @@ func TestValidateMigrationChecksum(t *testing.T) {
 			name:    "audited legacy 0040 checksum",
 			version: legacyChatAttachmentKeyEnvelopesVersion,
 			stored:  legacyChatAttachmentKeyEnvelopesChecksum,
+			current: currentChatAttachmentKeyEnvelopesChecksum,
+		},
+		{
+			name:    "audited legacy 0044 checksum",
+			version: legacyChatMessageTranslationsVersion,
+			stored:  legacyChatMessageTranslationsChecksum,
+			current: currentChatMessageTranslationsChecksum,
 		},
 		{
 			name:    "legacy checksum with unexpected current 0040 checksum",
@@ -101,13 +109,27 @@ func TestValidateMigrationChecksum(t *testing.T) {
 			stored:  legacyChatAttachmentKeyEnvelopesChecksum,
 			wantErr: true,
 		},
+		{
+			name:    "legacy 0044 checksum with unexpected current checksum",
+			version: legacyChatMessageTranslationsVersion,
+			stored:  legacyChatMessageTranslationsChecksum,
+			current: currentChecksum,
+			wantErr: true,
+		},
+		{
+			name:    "unknown checksum for 0044",
+			version: legacyChatMessageTranslationsVersion,
+			stored:  "deadbeef",
+			current: currentChatMessageTranslationsChecksum,
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			current := currentChecksum
-			if tt.name == "audited legacy 0040 checksum" {
-				current = currentChatAttachmentKeyEnvelopesChecksum
+			if tt.current != "" {
+				current = tt.current
 			}
 			err := validateMigrationChecksum(tt.version, tt.stored, current)
 			if (err != nil) != tt.wantErr {
@@ -175,6 +197,92 @@ func TestPostgresLegacy0040ChecksumMigration(t *testing.T) {
 
 	if err := ApplyMigrations(ctx, database, migrationPath); err != nil {
 		t.Fatalf("second legacy migration application failed: %v", err)
+	}
+}
+
+func TestPostgresLegacy0044ForwardMigration(t *testing.T) {
+	if os.Getenv("TEST_POSTGRES") != "1" {
+		t.Skip("PostgreSQL integration test requires TEST_POSTGRES=1")
+	}
+
+	database := openIsolatedMigrationDatabase(t)
+	migrationPath := filepath.Join("..", "..", "migrations")
+	ctx := context.Background()
+	if err := ApplyMigrations(ctx, database, migrationPath); err != nil {
+		t.Fatalf("initial migration application failed: %v", err)
+	}
+
+	for _, statement := range []string{
+		`DROP TABLE chat_message_translations`,
+		`CREATE TABLE chat_message_translations (
+			message_id TEXT NOT NULL,
+			target_language TEXT NOT NULL CHECK (target_language IN ('ja', 'en')),
+			source_language TEXT NOT NULL,
+			translated_text TEXT NOT NULL,
+			message_revision TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			PRIMARY KEY (message_id, target_language)
+		)`,
+		`INSERT INTO chat_message_translations
+			(message_id,target_language,source_language,translated_text,message_revision,created_at,updated_at)
+			VALUES ('legacy-message','en','ja','旧平文翻訳','revision-1','2026-09-02T00:00:00Z','2026-09-02T00:00:00Z')`,
+		`DELETE FROM schema_migrations WHERE version='0045_chat_message_translations_encrypted.sql'`,
+		`UPDATE schema_migrations SET checksum='` + legacyChatMessageTranslationsChecksum + `' WHERE version='` + legacyChatMessageTranslationsVersion + `'`,
+	} {
+		if _, err := database.ExecContext(ctx, statement); err != nil {
+			t.Fatalf("prepare legacy 0044 schema: %v", err)
+		}
+	}
+
+	if err := ApplyMigrations(ctx, database, migrationPath); err != nil {
+		t.Fatalf("legacy 0044 migration failed: %v", err)
+	}
+
+	for _, column := range []string{"ciphertext", "nonce", "algorithm", "key_version"} {
+		var columnName string
+		if err := database.QueryRowContext(ctx, `
+			SELECT column_name
+			FROM information_schema.columns
+			WHERE table_schema = current_schema()
+			  AND table_name = 'chat_message_translations'
+			  AND column_name = $1`, column).Scan(&columnName); err != nil {
+			t.Fatalf("encrypted translation column %q: %v", column, err)
+		}
+	}
+	for _, column := range []string{"source_language", "translated_text"} {
+		var count int
+		if err := database.QueryRowContext(ctx, `
+			SELECT COUNT(*)
+			FROM information_schema.columns
+			WHERE table_schema = current_schema()
+			  AND table_name = 'chat_message_translations'
+			  AND column_name = $1`, column).Scan(&count); err != nil {
+			t.Fatalf("legacy translation column %q: %v", column, err)
+		}
+		if count != 0 {
+			t.Fatalf("legacy plaintext column %q still exists", column)
+		}
+	}
+
+	var rowCount int
+	if err := database.QueryRowContext(ctx, `SELECT COUNT(*) FROM chat_message_translations`).Scan(&rowCount); err != nil {
+		t.Fatalf("count migrated translations: %v", err)
+	}
+	if rowCount != 0 {
+		t.Fatalf("legacy plaintext translations = %d, want 0", rowCount)
+	}
+
+	var storedChecksum string
+	if err := database.QueryRowContext(ctx, `SELECT checksum FROM schema_migrations WHERE version=$1`, legacyChatMessageTranslationsVersion).Scan(&storedChecksum); err != nil {
+		t.Fatalf("read legacy 0044 migration history: %v", err)
+	}
+	if storedChecksum != legacyChatMessageTranslationsChecksum {
+		t.Fatalf("0044 checksum = %q, want audited legacy checksum", storedChecksum)
+	}
+
+	if err := ApplyMigrations(ctx, database, migrationPath); err != nil {
+		t.Fatalf("second legacy 0044 migration application failed: %v", err)
 	}
 }
 

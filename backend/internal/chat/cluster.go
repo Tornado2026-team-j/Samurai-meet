@@ -31,12 +31,13 @@ import (
 var schemaIdentifier = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 type clusterEvent struct {
-	Instance string `json:"instance"`
-	Kind     string `json:"kind"`
-	ChatID   string `json:"chat_id"`
-	Sequence int64  `json:"sequence,omitempty"`
-	UserID   string `json:"user_id,omitempty"`
-	State    string `json:"state,omitempty"`
+	Instance  string `json:"instance"`
+	Kind      string `json:"kind"`
+	ChatID    string `json:"chat_id"`
+	MessageID string `json:"message_id,omitempty"`
+	Sequence  int64  `json:"sequence,omitempty"`
+	UserID    string `json:"user_id,omitempty"`
+	State     string `json:"state,omitempty"`
 }
 
 func newInstanceID() string {
@@ -164,12 +165,17 @@ func (s *Service) handleClusterNotification(payload string) {
 		return
 	}
 	switch event.Kind {
-	case serverFrameMessageCreated:
+	case serverFrameMessageCreated, serverFrameMessageUpdated:
 		message, err := s.loadMessageBySequence(event.ChatID, event.Sequence)
 		if err != nil {
 			return
 		}
-		s.wtHub.broadcast(event.ChatID, encodeFrame(messageFrame{Type: serverFrameMessageCreated, Message: message}))
+		s.wtHub.broadcast(event.ChatID, encodeFrame(messageFrame{Type: event.Kind, Message: message}))
+	case serverFrameMessageDeleted:
+		if event.MessageID == "" {
+			return
+		}
+		s.wtHub.broadcast(event.ChatID, encodeFrame(deletedMessageFrame{Type: serverFrameMessageDeleted, MessageID: event.MessageID, Sequence: event.Sequence}))
 	case serverFrameMessageRead:
 		s.wtHub.broadcast(event.ChatID, encodeFrame(readFrame{Type: serverFrameMessageRead, UserID: event.UserID, LastMessageSequence: event.Sequence}))
 	case serverFrameTyping:
@@ -182,10 +188,10 @@ func (s *Service) loadMessageBySequence(chatID string, sequence int64) (Message,
 	defer cancel()
 	var message Message
 	err := s.db.QueryRowContext(ctx, `
-		SELECT id,chat_id,sender_user_id,client_message_id,sequence,ciphertext,nonce,algorithm,key_version,content_type,COALESCE(expires_at,''),created_at
+		SELECT id,chat_id,sender_user_id,client_message_id,sequence,ciphertext,nonce,algorithm,key_version,content_type,COALESCE(expires_at,''),COALESCE(edited_at,''),created_at
 		FROM messages WHERE chat_id=$1 AND sequence=$2 AND deleted_at IS NULL`, chatID, sequence).Scan(
 		&message.ID, &message.ChatID, &message.SenderUserID, &message.ClientMessageID, &message.Sequence,
-		&message.Ciphertext, &message.Nonce, &message.Algorithm, &message.KeyVersion, &message.ContentType, &message.ExpiresAt, &message.CreatedAt)
+		&message.Ciphertext, &message.Nonce, &message.Algorithm, &message.KeyVersion, &message.ContentType, &message.ExpiresAt, &message.EditedAt, &message.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Message{}, ErrMessageNotFound
 	}
@@ -200,5 +206,9 @@ func (s *Service) loadMessageBySequence(chatID string, sequence int64) (Message,
 		return Message{}, aErr
 	}
 	message.Attachment = attachment
-	return message, nil
+	cachedMessages := []Message{message}
+	if err := s.loadMessageTranslations(ctx, cachedMessages); err != nil {
+		return Message{}, err
+	}
+	return cachedMessages[0], nil
 }

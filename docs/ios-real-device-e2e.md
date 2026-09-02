@@ -108,6 +108,8 @@ if ($SourceDelta.Count -ne 0) { throw 'backend/frontend contains a source delta'
 
 #### 2.3.1 ローカルE2E用schema
 
+0044先行導入版のchecksumも、監査済みの旧checksumと現行checksumの組み合わせだけを許容し、`0045_chat_message_translations_encrypted.sql`で前方移行します。先行版が保持した平文翻訳キャッシュはKey-Bを持つクライアントで再暗号化できないため、0045で削除して暗号化キャッシュへ切り替えます。
+
 公開`public` schemaの`schema_migrations`に旧`0040_chat_attachment_key_envelopes.sql`を適用したときのchecksumが残っていても、`917854d2`以降のmigration runnerは、0040について監査済みの旧checksumと現行checksumの組み合わせだけを許容し、履歴を変更せず`0042_chat_attachment_key_envelope_primary_key.sql`を前方適用します。したがって、既知の旧状態でchecksum mismatchにより起動が停止し続ける仕様ではありません。一方、その他の不一致は引き続き停止します。適用済みmigration、`schema_migrations`の行、checksumを編集・削除して起動を通してはいけません。
 
 ローカルE2Eでは、公開schemaを修復・上書きせず、テストデータの分離と再現性のため専用の`samurai_meet_e2e` schemaを作成して`DB_SCHEMA`へ指定します。これは公開schemaの既知の旧0040エラーを回避するためではありません。公開schemaを使う場合も、`917854d2`以降の限定checksum互換と0042前方移行に任せ、履歴を直接変更しません。DB接続値はサーバープロセスへexport済みの値、Secret Manager、またはそれらを安全に注入するlauncherから渡します。`.env`に値を置くだけで設定済みとみなさず、パスワードをコマンド・ログへ出しません。
@@ -345,7 +347,9 @@ POST /api/v1/blocks               -> 204（body: `{"user_id":"..."}`）
 
 ### 6.4 翻訳の現状
 
-現行の`frontend/services/chat.ts`の`translateChatText`は限定的なローカル辞書です。`GEMINI_MODEL=gemini-3.1-flash-lite`は募集分類に使われ、チャット翻訳には接続されていません。したがって、チャット翻訳でGeminiの呼び出し、翻訳時の犯罪可能性検知、翻訳結果を用いた運営自動通知が確認できたとは記録しません。これらは別実装後にこの手順書へ再追加します。
+現行のチャット画面は、復号した各text本文を`POST /api/v1/chats/{id}/translate`へ送り、Geminiに原言語判定と利用者の表示言語（現行対応は日本語/英語）への翻訳を依頼します。クライアント側のローカル言語推測で短絡せず、AIの`source_language`を使って翻訳表示を決めます。初回結果はチャットDEKで暗号化し、メッセージrevision・対象言語とともに保存します。同じ条件では保存済みenvelopeを復号して再利用するため、Geminiを呼び直しません。翻訳表示中に本文下の`Original`をタップすると原文へ戻せます。DB・キュー・監査ログに保存されるのは暗号化envelopeだけで、翻訳本文は保存しません。チャット本文の新規暗号化は`chat-dek-v1`で行い、Key-Bは端末proof、Recovery／端末移行後のKey-Aはaccount envelope復旧に使います。
+
+実機では、認証済みaccepted chatで日本語本文と英語本文をそれぞれ送受信し、翻訳リクエスト、原言語判定、表示言語への変換、`Original`切替、provider障害時に原文を維持することを確認します。翻訳時の犯罪可能性検知や翻訳結果を用いた運営自動通知は現行要件・実装に含めず、確認済みとは記録しません。実機確認前はこの項目を`NOT RUN`として扱います。
 
 ## 7. チャット画像・暗号文保存
 

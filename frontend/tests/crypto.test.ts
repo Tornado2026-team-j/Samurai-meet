@@ -26,10 +26,14 @@ import {
   toBase64URL,
   unwrapMasterKeyForDevice,
   unwrapChatAttachmentKey,
+  unwrapChatKeyForAccount,
+  unwrapChatKeyForDevice,
   unwrapPhotoKey,
   unwrapPhotoKeyWithAccount,
   wrapMasterKeyForDevice,
   wrapChatAttachmentKey,
+  wrapChatKeyForAccount,
+  wrapChatKeyForDevice,
   CHAT_ATTACHMENT_MAX_BYTES,
   type Argon2idParams,
   type RandomBytes,
@@ -140,6 +144,34 @@ describe('フロント端末所有Master Key envelope', () => {
     const root = deriveAccountDataKey(material.keyA, material.envelope.kdf_params.data_salt);
     const sameRoot = deriveAccountDataKey(material.keyA, material.envelope.kdf_params.data_salt);
     expect(Array.from(root)).toEqual(Array.from(sameRoot));
+  });
+
+  it('チャットDEKはAccount envelopeと端末envelopeで復旧できる', async () => {
+    const material = await testKeyMaterial();
+    const accountDataKey = deriveAccountDataKey(material.keyA, material.envelope.kdf_params.data_salt);
+    const recipient = await createDeviceAgreementKeyMaterial(testRandomBytes(280));
+    const chatKey = new Uint8Array(32).fill(0x42);
+    const accountEnvelope = await wrapChatKeyForAccount(
+      chatKey,
+      accountDataKey,
+      'user-1',
+      'chat-1',
+      testRandomBytes(285),
+    );
+    const deviceEnvelope = await wrapChatKeyForDevice(
+      chatKey,
+      recipient.publicKey,
+      'chat-1',
+      'user-2',
+      'device-2',
+      testRandomBytes(290),
+    );
+
+    expect(Array.from(unwrapChatKeyForAccount(accountEnvelope, accountDataKey, 'user-1', 'chat-1'))).toEqual(Array.from(chatKey));
+    expect(Array.from(unwrapChatKeyForDevice(deviceEnvelope, recipient.privateKey, 'chat-1', 'user-2', 'device-2'))).toEqual(Array.from(chatKey));
+    expect(() => unwrapChatKeyForAccount(accountEnvelope, accountDataKey, 'user-2', 'chat-1')).toThrow();
+    expect(() => unwrapChatKeyForDevice(deviceEnvelope, recipient.privateKey, 'chat-1', 'user-2', 'other-device')).toThrow();
+    expect(() => unwrapChatKeyForDevice(deviceEnvelope, new Uint8Array(32).fill(7), 'chat-1', 'user-2', 'device-2')).toThrow();
   });
 
   it('画像鍵はアカウント包みと端末包みを分ける', async () => {

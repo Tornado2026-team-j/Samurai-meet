@@ -841,10 +841,24 @@ export async function acceptDeviceTransfer(session: Session, transferID: string)
     throw new Error('この端末への鍵移行はまだ承認されていません。');
   }
   const masterKey = unwrapMasterKeyForDevice(transfer.wrapped_master_key, bundle.agreement.privateKey, transfer.id, bundle.device.deviceID);
-  await saveStoredKeyA(session.user_id, masterKey);
-  if (transfer.status === 'approved') await completeDeviceTransfer(session, transfer.id);
-  await deleteDeviceStoredItem(deviceTransferDraftStorageKey(session.user_id));
-  return masterKey;
+  try {
+    if (masterKey.length !== 32) throw new Error('Transferred Master Key is invalid');
+    // The transfer endpoint carries Key-A only. Cache the matching account
+    // envelope on this device before acknowledging completion, so a later
+    // restart does not depend on another recent-Passkey fetch to open chats.
+    const envelopes = await listKeyEnvelopes(session);
+    const expectedRecoveryPublicKey = recoveryPublicKey(masterKey);
+    const rootEnvelope = envelopes.find((item) => item.recovery_public_key === expectedRecoveryPublicKey);
+    if (!rootEnvelope) throw new Error('Transferred root key envelope is unavailable');
+    await saveStoredKeyEnvelope(session.user_id, rootEnvelope);
+    await saveStoredKeyA(session.user_id, masterKey);
+    if (transfer.status === 'approved') await completeDeviceTransfer(session, transfer.id);
+    await deleteDeviceStoredItem(deviceTransferDraftStorageKey(session.user_id));
+    return masterKey;
+  } catch (reason) {
+    masterKey.fill(0);
+    throw reason;
+  }
 }
 
 export async function deriveCurrentDataKey(session: Session, envelope: KeyEnvelope): Promise<Uint8Array> {

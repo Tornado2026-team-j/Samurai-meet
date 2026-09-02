@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { FontAwesome, MaterialIcons } from "@expo/vector-icons";
+import { getLocales } from "expo-localization";
 import { Redirect } from "expo-router";
 import {
   ActivityIndicator,
@@ -35,6 +36,7 @@ import {
 } from "../services/key-management";
 import { createRecoveryMaterial, deriveAccountDataKey, type KeyEnvelope } from "../services/crypto";
 import { updateMyProfile } from "../services/profile";
+import { resolveDefaultAppMode } from "../services/device-locale";
 import {
   clearAppMode,
   clearLanguage,
@@ -65,6 +67,14 @@ const MUTED_GRAY = "#7d7d7d";
 const BORDER_GRAY = "#d4d4d4";
 const KEY_SETUP_TIMEOUT_MS = 45_000;
 const KEY_SETUP_TIMEOUT_MESSAGE = "暗号鍵の準備に時間がかかっています。通信または端末の状態を確認して、もう一度お試しください。";
+
+function defaultAppMode(language: AppLanguage): AppMode {
+  try {
+    return resolveDefaultAppMode(language, getLocales());
+  } catch {
+    return resolveDefaultAppMode(language, []);
+  }
+}
 
 function withTimeout<T>(promise: Promise<T>, timeoutMS: number, timeoutMessage: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -1048,7 +1058,7 @@ export default function OnboardingScreen() {
     return (
       <LanguageStep
         onContinue={async (selectedLanguage) => {
-          const defaultMode: AppMode = selectedLanguage === "ja" ? "local" : "traveler";
+          const defaultMode = defaultAppMode(selectedLanguage);
           await saveLanguage(selectedLanguage);
           await saveAppMode(defaultMode);
           setLanguage(selectedLanguage);
