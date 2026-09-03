@@ -374,7 +374,7 @@ if command.name in {"review", "security", "spec", "suggest"}:
             "_🔎 PR差分とNanaが選択/取得した関連情報を確認しています。リポジトリ全体の網羅監査ではありません。_"
         ),
     )
-    count = post_review_with_suggestions(number, pr["head"]["sha"], suggestions, files)
+    count = post_review_with_suggestions(number, pr["head"]["sha"], review, suggestions, files)
     print(f"Nana review posted; {count} inline suggestion(s).")
     raise SystemExit(0)
 

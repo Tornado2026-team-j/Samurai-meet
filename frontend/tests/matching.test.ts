@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { buildRecruitmentPreviewModel } from "../services/recruitment-preview";
 import {
+  addRecruitmentSearchRangeMonths,
 	closeRecruitment,
 	classifyRecruitmentDescription,
   createRecruitment,
@@ -42,7 +43,7 @@ const recruitment: Recruitment = {
   visibility_radius_km: 3,
   distance_band: "within_1_km",
   status: "open",
-  expires_at: "2026-08-27T11:00:00Z",
+  expires_at: "2026-08-26T09:00:00Z",
   created_at: "2026-08-26T00:00:00Z",
   updated_at: "2026-08-26T00:00:00Z",
 };
@@ -75,12 +76,19 @@ describe("募集APIクライアント", () => {
     expect(requestedURL).toContain("limit=50");
   });
 
-  it("募集期間はAPI契約どおり両端と31日差以内を検証する", () => {
+  it("募集期間はAPI契約どおり両端と2暦月以内を検証する", () => {
     expect(validateRecruitmentSearchDateRange("2026-09-01", "2026-09-30")).toBeNull();
-    expect(validateRecruitmentSearchDateRange("2026-09-01", "2026-10-02")).toBeNull();
+    expect(validateRecruitmentSearchDateRange("2026-09-01", "2026-11-01")).toBeNull();
+    expect(validateRecruitmentSearchDateRange("2026-01-31", "2026-03-31")).toBeNull();
+    expect(validateRecruitmentSearchDateRange("2026-12-31", "2027-03-03")).toBeNull();
+    expect(addRecruitmentSearchRangeMonths(new Date(Date.UTC(2026, 11, 31))).toISOString()).toBe(
+      "2027-03-03T00:00:00.000Z",
+    );
     expect(validateRecruitmentSearchDateRange("2026-09-01", undefined)).toBe("search_date_range_requires_both");
     expect(validateRecruitmentSearchDateRange("2026-09-30", "2026-09-01")).toBe("search_date_range_reversed");
-    expect(validateRecruitmentSearchDateRange("2026-09-01", "2026-10-03")).toBe("search_date_range_too_long");
+    expect(validateRecruitmentSearchDateRange("2026-09-01", "2026-11-02")).toBe("search_date_range_too_long");
+    expect(validateRecruitmentSearchDateRange("2026-02-28", "2026-04-29")).toBe("search_date_range_too_long");
+    expect(validateRecruitmentSearchDateRange("2026-12-31", "2027-03-04")).toBe("search_date_range_too_long");
     expect(validateRecruitmentSearchDateRange("2026-02-30", "2026-03-01")).toBe("search_date_range_invalid");
   });
 
@@ -287,17 +295,17 @@ describe("募集APIクライアント", () => {
       authorName: "Mika",
       countryFlag: "🇯🇵",
       countryName: "Japan",
-      date: "August,27 2026",
+      date: "2026/8/27",
       detailDate: "Aug 27, 2026 (Thu)",
       tags: ["local", "culture"],
-      expiresAt: "2026/08/27",
+      expiresAt: "2026/08/26 18:00",
     });
   });
 
-  it("募集期限の日付をJSTのカレンダー日で表示する", () => {
+  it("募集期限をJSTのカレンダー日と時刻で表示する", () => {
     expect(recruitmentToMatchCard({
       ...recruitment,
       expires_at: "2026-08-27T15:00:00Z",
-    }).expiresAt).toBe("2026/08/28");
+    }).expiresAt).toBe("2026/08/28 00:00");
   });
 });

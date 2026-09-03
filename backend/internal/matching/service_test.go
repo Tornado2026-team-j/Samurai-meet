@@ -34,7 +34,7 @@ func TestNormalizeRecruitmentInput(t *testing.T) {
 	if normalized.Timezone != recruitmentTimezone {
 		t.Fatalf("normalized timezone = %q, want %q", normalized.Timezone, recruitmentTimezone)
 	}
-	if want := "2026-08-27T11:00:00Z"; expiresAt != want {
+	if want := "2026-08-26T09:00:00Z"; expiresAt != want {
 		t.Fatalf("expiresAt = %q, want %q", expiresAt, want)
 	}
 
@@ -109,7 +109,7 @@ func TestNormalizeRecruitmentInputDefaultsToJSTAndRejectsOtherTimezones(t *testi
 	}
 }
 
-func TestRecruitmentExpiryUsesJSTAbsoluteTimeWithUTCNow(t *testing.T) {
+func TestRecruitmentExpiryUsesJSTStartMinus24Hours(t *testing.T) {
 	input := RecruitmentInput{
 		Category:           "Food",
 		AvailableDate:      "2026-08-27",
@@ -122,21 +122,21 @@ func TestRecruitmentExpiryUsesJSTAbsoluteTimeWithUTCNow(t *testing.T) {
 		Status:             "open",
 	}
 
-	justBeforeEnd := time.Date(2026, time.August, 27, 10, 59, 59, 0, time.UTC)
-	_, expiresAt, err := normalizeRecruitmentInput(input, justBeforeEnd)
+	justBeforeDeadline := time.Date(2026, time.August, 26, 8, 59, 59, 0, time.UTC)
+	_, expiresAt, err := normalizeRecruitmentInput(input, justBeforeDeadline)
 	if err != nil {
-		t.Fatalf("just before JST end error = %v", err)
+		t.Fatalf("just before JST start minus 24h error = %v", err)
 	}
-	if !beforeExpiry(expiresAt, justBeforeEnd) {
-		t.Fatalf("beforeExpiry(%q, %s) = false, want true", expiresAt, justBeforeEnd.Format(time.RFC3339))
+	if !beforeExpiry(expiresAt, justBeforeDeadline) {
+		t.Fatalf("beforeExpiry(%q, %s) = false, want true", expiresAt, justBeforeDeadline.Format(time.RFC3339))
 	}
 
-	atEnd := time.Date(2026, time.August, 27, 11, 0, 0, 0, time.UTC)
-	if beforeExpiry(expiresAt, atEnd) {
-		t.Fatalf("beforeExpiry(%q, %s) = true, want false", expiresAt, atEnd.Format(time.RFC3339))
+	atDeadline := time.Date(2026, time.August, 26, 9, 0, 0, 0, time.UTC)
+	if beforeExpiry(expiresAt, atDeadline) {
+		t.Fatalf("beforeExpiry(%q, %s) = true, want false", expiresAt, atDeadline.Format(time.RFC3339))
 	}
-	if _, _, err := normalizeRecruitmentInput(input, atEnd); !errors.Is(err, ErrRecruitmentExpired) {
-		t.Fatalf("at JST end error = %v, want ErrRecruitmentExpired", err)
+	if _, _, err := normalizeRecruitmentInput(input, atDeadline); !errors.Is(err, ErrRecruitmentExpired) {
+		t.Fatalf("at JST start minus 24h error = %v, want ErrRecruitmentExpired", err)
 	}
 }
 
@@ -199,16 +199,20 @@ func TestNormalizeSearchParams(t *testing.T) {
 }
 
 func TestNormalizeSearchParamsDateRange(t *testing.T) {
-	valid, err := normalizeSearchParams(SearchParams{AvailableFrom: "2026-09-01", AvailableTo: "2026-09-30"})
+	valid, err := normalizeSearchParams(SearchParams{AvailableFrom: "2026-09-01", AvailableTo: "2026-11-01"})
 	if err != nil {
 		t.Fatalf("valid date range rejected: %v", err)
 	}
-	if valid.AvailableFrom != "2026-09-01" || valid.AvailableTo != "2026-09-30" {
+	if valid.AvailableFrom != "2026-09-01" || valid.AvailableTo != "2026-11-01" {
 		t.Fatalf("date range changed: %#v", valid)
+	}
+	if _, err := normalizeSearchParams(SearchParams{AvailableFrom: "2026-12-31", AvailableTo: "2027-03-03"}); err != nil {
+		t.Fatalf("valid end-of-month date range rejected: %v", err)
 	}
 	for _, invalid := range []SearchParams{
 		{AvailableFrom: "2026-09-30", AvailableTo: "2026-09-01"},
-		{AvailableFrom: "2026-09-01", AvailableTo: "2026-11-01"},
+		{AvailableFrom: "2026-09-01", AvailableTo: "2026-11-02"},
+		{AvailableFrom: "2026-12-31", AvailableTo: "2027-03-04"},
 		{AvailableFrom: "2026-09-01"},
 	} {
 		if _, err := normalizeSearchParams(invalid); !errors.Is(err, ErrInvalidInput) {

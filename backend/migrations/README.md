@@ -41,6 +41,7 @@
 - `0051_chat_key_manifest_commitment_format.sql` は、chat DEK commitmentをSHA-256のraw Base64URL（パディングなし）43文字に制限する。
 - `0052_meeting_resume_consent.sql` は、中止済み会合の再開に参加者双方の明示同意を要求する時刻列を追加する。片側の中止は即時に反映され、双方が再開に同意した後も新たな相互開始が必要になる。
 - `0053_matching_search_indexes.sql` は、募集検索で空き枠を確認するaccepted match数の参照を高速化する部分indexを追加する。
+- `0054_backfill_recruitment_deadlines.sql` は、既存の募集中カードを開始24時間前締切へ前方移行し、期限列をPostgreSQLのtimestamp型へ変換して精度と検索性能を両立する。
 - runnerは`schema_migrations`へファイル名と正規化SQLのSHA-256を記録し、適用済みSQLを再実行しない。起動が同時になった場合もPostgreSQL advisory lockで直列化する。適用済みファイルの内容が変わった場合はchecksum mismatchで停止する。
 - 0040と0044には、既知の旧checksumと現行checksumの組み合わせだけをrunnerが監査済み互換として許容する。履歴行は変更せず、後続の0042または0045で前方移行する。
 - 既存DBへ導入する初回起動では、ファイル名順に現行schemaを確認しながら未登録migrationを一度だけ適用する。適用済み状態を手作業で捏造・削除せず、バックアップと監査ログを残してから運用する。

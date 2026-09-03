@@ -36,7 +36,9 @@ const (
 	maxDescriptionRunes  = 2000
 	maxLocationNameRunes = 120
 	maxParticipantLimit  = 10
+	maxSearchRangeMonths = 2
 	locationTTL          = time.Hour
+	recruitmentLeadTime  = 24 * time.Hour
 	recruitmentTimezone  = "Asia/Tokyo"
 )
 
@@ -1168,9 +1170,11 @@ func normalizeRecruitmentInput(input RecruitmentInput, now time.Time) (Recruitme
 	input.AvailableDate = date.Format("2006-01-02")
 	input.StartTime = startClock.Format("15:04")
 	input.EndTime = endClock.Format("15:04")
-	// Keep the database value as a canonical absolute instant. The wall-clock
-	// fields above are interpreted in JST before this UTC conversion.
-	expires := time.Date(date.Year(), date.Month(), date.Day(), endClock.Hour(), endClock.Minute(), 0, 0, recruitmentLocation).UTC()
+	// Keep the database value as a canonical absolute instant. Applications
+	// close 24 hours before the JST wall-clock start time.
+	expires := time.Date(date.Year(), date.Month(), date.Day(), startClock.Hour(), startClock.Minute(), 0, 0, recruitmentLocation).
+		Add(-recruitmentLeadTime).
+		UTC()
 	if input.Status == "open" && !expires.After(now.In(recruitmentLocation)) {
 		return RecruitmentInput{}, "", ErrRecruitmentExpired
 	}
@@ -1223,7 +1227,7 @@ func normalizeSearchParams(params SearchParams) (SearchParams, error) {
 	if params.AvailableFrom != "" || params.AvailableTo != "" {
 		from, fromErr := time.Parse("2006-01-02", params.AvailableFrom)
 		to, toErr := time.Parse("2006-01-02", params.AvailableTo)
-		if fromErr != nil || toErr != nil || to.Before(from) || to.Sub(from) > 31*24*time.Hour {
+		if fromErr != nil || toErr != nil || to.Before(from) || to.After(from.AddDate(0, maxSearchRangeMonths, 0)) {
 			return SearchParams{}, ErrInvalidInput
 		}
 	}

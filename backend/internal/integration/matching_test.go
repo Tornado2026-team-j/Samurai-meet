@@ -40,12 +40,12 @@ func TestSearchRecruitmentsAppliesFiltersBeforePageLimit(t *testing.T) {
 		t.Fatalf("valid recruitment create error = %v", err)
 	}
 
-	// These cards are newer than valid but fail the requested category and
-	// keyword filters. A SQL LIMIT applied before the Go-side filters would
-	// return none of the valid cards once this exceeds the old 50-row cap.
+	// These cards are newer than valid and pass the SQL-side category/date
+	// filters, but fail the requested keyword filter that runs in Go. A SQL
+	// LIMIT applied before the Go-side filters would hide the valid older card.
 	for i := 0; i < 51; i++ {
 		_, err := service.CreateRecruitment(ctx, ownerID, matching.RecruitmentInput{
-			Category:           "Activity",
+			Category:           "Food",
 			AvailableDate:      availableDate,
 			StartTime:          "12:00",
 			EndTime:            "13:00",
@@ -71,6 +71,42 @@ func TestSearchRecruitmentsAppliesFiltersBeforePageLimit(t *testing.T) {
 	}
 	if len(found) != 1 || found[0].ID != valid.ID {
 		t.Fatalf("filtered search result = %+v, want only %s", found, valid.ID)
+	}
+}
+
+func TestSearchRecruitmentsComparesSecondPrecisionExpiryAsTimestamp(t *testing.T) {
+	database := openIsolatedDatabase(t)
+	ctx := context.Background()
+	now := time.Date(2026, time.August, 26, 9, 0, 0, 500*1e6, time.UTC)
+	createdAt := now.Add(-time.Hour).UTC().Format(time.RFC3339Nano)
+	searcherID := randomID(t)
+	ownerID := randomID(t)
+	cardID := randomID(t)
+	insertMatchingTestUser(t, database, now, searcherID, "Search user", "US")
+	insertMatchingTestUser(t, database, now, ownerID, "Recruitment owner", "JP")
+
+	if _, err := database.ExecContext(ctx, `
+		INSERT INTO recruitment_cards (
+			id, owner_user_id, category, available_date, start_time, end_time,
+			timezone, keywords_json, description, visibility_radius_km, status,
+			expires_at, created_at, updated_at
+		)
+		VALUES ($1,$2,'Food','2026-08-27','18:00','20:00','Asia/Tokyo','["target"]',
+			'This card expired half a second ago.',1,'open','2026-08-26T09:00:00Z',$3,$3)`,
+		cardID, ownerID, createdAt); err != nil {
+		t.Fatalf("insert second precision expired recruitment error = %v", err)
+	}
+
+	found, err := matching.NewService(database).SearchRecruitments(ctx, searcherID, matching.SearchParams{
+		AvailableDate: "2026-08-27",
+		Keywords:      []string{"target"},
+		Limit:         1,
+	}, now)
+	if err != nil {
+		t.Fatalf("SearchRecruitments() error = %v", err)
+	}
+	if len(found) != 0 {
+		t.Fatalf("expired second-precision recruitment returned: %+v", found)
 	}
 }
 
@@ -184,9 +220,11 @@ func TestAcceptMatchHonorsParticipantLimitConcurrently(t *testing.T) {
 func TestRecruitmentMatchingLifecycle(t *testing.T) {
 	database := openIsolatedDatabase(t)
 	now := time.Now().UTC().Truncate(time.Second)
-	firstDate := now.In(time.FixedZone("Asia/Tokyo", 9*60*60)).AddDate(0, 0, 1).Format("2006-01-02")
-	secondDate := now.In(time.FixedZone("Asia/Tokyo", 9*60*60)).AddDate(0, 0, 2).Format("2006-01-02")
-	withdrawDate := now.In(time.FixedZone("Asia/Tokyo", 9*60*60)).AddDate(0, 0, 3).Format("2006-01-02")
+	// Open recruitments close 24 hours before their JST start. Keep these
+	// fixtures safely beyond that boundary regardless of the test run hour.
+	firstDate := now.In(time.FixedZone("Asia/Tokyo", 9*60*60)).AddDate(0, 0, 2).Format("2006-01-02")
+	secondDate := now.In(time.FixedZone("Asia/Tokyo", 9*60*60)).AddDate(0, 0, 3).Format("2006-01-02")
+	withdrawDate := now.In(time.FixedZone("Asia/Tokyo", 9*60*60)).AddDate(0, 0, 4).Format("2006-01-02")
 	ctx := context.Background()
 	travelerID := randomID(t)
 	guideID := randomID(t)

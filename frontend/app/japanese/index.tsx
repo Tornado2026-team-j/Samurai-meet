@@ -568,7 +568,7 @@ export default function JapaneseHomeScreen() {
               </View>
             ) : null}
             {filteredMatches.map((match) => (
-              <MatchCard key={match.id} match={match} onOpen={openMatch} />
+              <MatchCard key={match.id} language={language ?? "ja"} match={match} onOpen={openMatch} />
             ))}
           </>
         )}
