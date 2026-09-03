@@ -15,6 +15,9 @@ describe("募集プレビュー fallback のレイアウト契約", () => {
     expect(source).toContain("const compactConfirmationHeight = Math.min(");
     expect(source).toContain("manualFallbackVisible || previewStatus === \"success\"");
     expect(source).toContain("windowHeight,");
+    expect(source).toContain("const HOME_PEEK_HEIGHT = 96;");
+    expect(source).toContain("const homePeekHeight = Math.max(HOME_PEEK_HEIGHT, insets.bottom + 72);");
+    expect(source).toContain("windowHeight - homePeekHeight");
     expect(source).toContain("styles.confirmationKeyboardAvoiding");
     expect(source).toContain("automaticallyAdjustKeyboardInsets");
     expect(source).toContain('keyboardDismissMode="on-drag"');

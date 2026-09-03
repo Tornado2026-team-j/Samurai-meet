@@ -28,7 +28,6 @@ mock.module(join(testDir, "../components/ui/index.ts"), () => ({
 }));
 mock.module(join(testDir, "../hooks/useAuth.tsx"), () => ({ useAuth: () => ({}) }));
 mock.module(join(testDir, "../hooks/useUnreadNotifications.ts"), () => ({ useUnreadNotifications: () => false }));
-mock.module(join(testDir, "../services/chat.ts"), () => ({ listChats: noop }));
 mock.module(join(testDir, "../services/onboarding.ts"), () => ({ loadLanguage: noop, subscribeLanguage: () => noop }));
 
 const { formatApplicationBio } = await import("../app/foreigner/index");
