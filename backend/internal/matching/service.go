@@ -741,6 +741,11 @@ func (s *Service) ListMatches(ctx context.Context, userID string, params MatchLi
 		       OR $2 = 'owner' AND m.owner_user_id=$1
 		       OR $2 = 'requester' AND m.requester_user_id=$1)
 		  AND ($3 = '' OR m.status=$3)
+		  AND NOT EXISTS (
+				SELECT 1 FROM blocks b
+				WHERE (b.blocker_user_id=m.owner_user_id AND b.blocked_user_id=m.requester_user_id)
+				   OR (b.blocker_user_id=m.requester_user_id AND b.blocked_user_id=m.owner_user_id)
+		  )
 		ORDER BY m.updated_at DESC
 		LIMIT $4`, userID, params.Role, params.Status, params.Limit)
 	if err != nil {
@@ -793,7 +798,12 @@ func (s *Service) GetMatch(ctx context.Context, userID, matchID string) (MatchVi
 		FROM matches m
 		JOIN users requester ON requester.id=m.requester_user_id AND requester.status='active'
 		JOIN users owner ON owner.id=m.owner_user_id AND owner.status='active'
-		WHERE m.id=$1 AND (m.requester_user_id=$2 OR m.owner_user_id=$2)`, matchID, userID).Scan(
+		WHERE m.id=$1 AND (m.requester_user_id=$2 OR m.owner_user_id=$2)
+		  AND NOT EXISTS (
+				SELECT 1 FROM blocks b
+				WHERE (b.blocker_user_id=m.owner_user_id AND b.blocked_user_id=m.requester_user_id)
+				   OR (b.blocker_user_id=m.requester_user_id AND b.blocked_user_id=m.owner_user_id)
+		  )`, matchID, userID).Scan(
 		&record.ID, &record.RecruitmentID, &record.RequesterID, &record.OwnerID,
 		&record.Status, &record.MatchedAt, &record.CreatedAt, &record.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
