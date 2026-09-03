@@ -44,6 +44,30 @@ func notificationCollection(service *notification.Service, sessions *auth.Sessio
 	}
 }
 
+func notificationReadAll(service *notification.Service, sessions *auth.SessionService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims, ok := accessClaims(r, sessions)
+		if !ok {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing_or_invalid_access_token"})
+			return
+		}
+		if service == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "notifications_unavailable"})
+			return
+		}
+		if r.Method != http.MethodPost {
+			w.Header().Set("Allow", http.MethodPost)
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		if err := service.MarkAllRead(r.Context(), claims.Subject, time.Now()); err != nil {
+			writeNotificationError(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
 func notificationItem(service *notification.Service, sessions *auth.SessionService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		claims, ok := accessClaims(r, sessions)

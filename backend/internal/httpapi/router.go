@@ -150,6 +150,7 @@ func NewRouterWithOptions(o RouterOptions) http.Handler {
 	}
 	if o.Sessions != nil && o.Notifications != nil {
 		m.HandleFunc(notificationPath, notificationCollection(o.Notifications, o.Sessions))
+		m.HandleFunc(notificationPath+"/read-all", notificationReadAll(o.Notifications, o.Sessions))
 		m.HandleFunc(notificationPath+"/", notificationItem(o.Notifications, o.Sessions))
 	}
 	if o.Sessions != nil && o.Meetings != nil {
