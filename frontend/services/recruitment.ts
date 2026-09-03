@@ -15,6 +15,12 @@ import {
   buildRecruitmentPreviewModel,
   isManualRecruitmentPreview,
 } from "./recruitment-preview";
+import { RECRUITMENT_RECOMMENDED_LEAD_TIME_MS } from "./recruitment-policy";
+
+export {
+  RECRUITMENT_RECOMMENDED_LEAD_TIME_MS,
+  RECRUITMENT_PUBLICATION_LEAD_TIME_MS,
+} from "./recruitment-policy";
 
 type RecruitmentClassificationResponse = {
   data?: {
@@ -136,7 +142,6 @@ export const JST_TIME_ZONE = "Asia/Tokyo";
 
 const JST_OFFSET_MINUTES = 9 * 60;
 const MINUTES_PER_DAY = 24 * 60;
-const RECRUITMENT_LEAD_TIME_MS = 24 * 60 * 60 * 1000;
 
 type CalendarDateParts = {
   year: number;
@@ -313,7 +318,7 @@ export type DefaultRecruitmentSchedule = {
 
 export type RecruitmentScheduleIssue =
   | "recruitment_date_in_past"
-  | "recruitment_deadline_passed"
+  | "recruitment_short_notice"
   | "recruitment_must_end_same_day";
 
 function formatTimeInput(totalMinutes: number): string {
@@ -326,7 +331,7 @@ export function defaultRecruitmentSchedule(
   reference = new Date(),
 ): DefaultRecruitmentSchedule {
   const now = getJSTDateTimeParts(
-    new Date(reference.getTime() + RECRUITMENT_LEAD_TIME_MS),
+    new Date(reference.getTime() + RECRUITMENT_RECOMMENDED_LEAD_TIME_MS),
   );
   const roundedMinutes =
     Math.floor((now.hour * 60 + now.minute) / 30) * 30 + 30;
@@ -466,8 +471,8 @@ export function getRecruitmentScheduleIssue(
   if (dateAtStart <= now) {
     return "recruitment_date_in_past";
   }
-  if (dateAtStart.getTime() - RECRUITMENT_LEAD_TIME_MS <= now.getTime()) {
-    return "recruitment_deadline_passed";
+  if (dateAtStart.getTime() - RECRUITMENT_RECOMMENDED_LEAD_TIME_MS <= now.getTime()) {
+    return "recruitment_short_notice";
   }
 
   return null;
@@ -490,8 +495,7 @@ export function buildRecruitmentCreateRequest(
   const scheduleIssue = getRecruitmentScheduleIssue(draft, now);
   if (
     scheduleIssue === "recruitment_must_end_same_day" ||
-    ((scheduleIssue === "recruitment_date_in_past" ||
-      scheduleIssue === "recruitment_deadline_passed") &&
+    (scheduleIssue === "recruitment_date_in_past" &&
       status === "open")
   ) {
     throw new Error(scheduleIssue);

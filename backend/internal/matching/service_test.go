@@ -34,7 +34,7 @@ func TestNormalizeRecruitmentInput(t *testing.T) {
 	if normalized.Timezone != recruitmentTimezone {
 		t.Fatalf("normalized timezone = %q, want %q", normalized.Timezone, recruitmentTimezone)
 	}
-	if want := "2026-08-26T09:00:00Z"; expiresAt != want {
+	if want := "2026-08-27T09:00:00Z"; expiresAt != want {
 		t.Fatalf("expiresAt = %q, want %q", expiresAt, want)
 	}
 
@@ -109,7 +109,7 @@ func TestNormalizeRecruitmentInputDefaultsToJSTAndRejectsOtherTimezones(t *testi
 	}
 }
 
-func TestRecruitmentExpiryUsesJSTStartMinus24Hours(t *testing.T) {
+func TestRecruitmentExpiryUsesJSTStart(t *testing.T) {
 	input := RecruitmentInput{
 		Category:           "Food",
 		AvailableDate:      "2026-08-27",
@@ -122,21 +122,21 @@ func TestRecruitmentExpiryUsesJSTStartMinus24Hours(t *testing.T) {
 		Status:             "open",
 	}
 
-	justBeforeDeadline := time.Date(2026, time.August, 26, 8, 59, 59, 0, time.UTC)
-	_, expiresAt, err := normalizeRecruitmentInput(input, justBeforeDeadline)
+	justBeforeStart := time.Date(2026, time.August, 27, 8, 59, 59, 0, time.UTC)
+	_, expiresAt, err := normalizeRecruitmentInput(input, justBeforeStart)
 	if err != nil {
-		t.Fatalf("just before JST start minus 24h error = %v", err)
+		t.Fatalf("just before JST start error = %v", err)
 	}
-	if !beforeExpiry(expiresAt, justBeforeDeadline) {
-		t.Fatalf("beforeExpiry(%q, %s) = false, want true", expiresAt, justBeforeDeadline.Format(time.RFC3339))
+	if !beforeExpiry(expiresAt, justBeforeStart) {
+		t.Fatalf("beforeExpiry(%q, %s) = false, want true", expiresAt, justBeforeStart.Format(time.RFC3339))
 	}
 
-	atDeadline := time.Date(2026, time.August, 26, 9, 0, 0, 0, time.UTC)
-	if beforeExpiry(expiresAt, atDeadline) {
-		t.Fatalf("beforeExpiry(%q, %s) = true, want false", expiresAt, atDeadline.Format(time.RFC3339))
+	atStart := time.Date(2026, time.August, 27, 9, 0, 0, 0, time.UTC)
+	if beforeExpiry(expiresAt, atStart) {
+		t.Fatalf("beforeExpiry(%q, %s) = true, want false", expiresAt, atStart.Format(time.RFC3339))
 	}
-	if _, _, err := normalizeRecruitmentInput(input, atDeadline); !errors.Is(err, ErrRecruitmentExpired) {
-		t.Fatalf("at JST start minus 24h error = %v, want ErrRecruitmentExpired", err)
+	if _, _, err := normalizeRecruitmentInput(input, atStart); !errors.Is(err, ErrRecruitmentExpired) {
+		t.Fatalf("at JST start error = %v, want ErrRecruitmentExpired", err)
 	}
 }
 

@@ -38,7 +38,7 @@ const (
 	maxParticipantLimit  = 10
 	maxSearchRangeMonths = 2
 	locationTTL          = time.Hour
-	recruitmentLeadTime  = 24 * time.Hour
+	recruitmentLeadTime  = 0
 	recruitmentTimezone  = "Asia/Tokyo"
 )
 
@@ -1127,7 +1127,10 @@ func (s *Service) LikeMatch(ctx context.Context, userID, matchID string, now tim
 		return MatchLike{}, ErrInvalidState
 	}
 	scheduledEnd, err := time.ParseInLocation("2006-01-02 15:04", availableDate+" "+endTime, recruitmentLocation)
-	if err != nil || now.In(recruitmentLocation).Before(scheduledEnd) {
+	// An explicitly completed match may end before the scheduled wall-clock
+	// end, so its participants can review it immediately. An accepted match
+	// still waits until the scheduled end time.
+	if err != nil || (status == "accepted" && now.In(recruitmentLocation).Before(scheduledEnd)) {
 		return MatchLike{}, ErrInvalidState
 	}
 	createdAt := now.UTC().Format(time.RFC3339Nano)
@@ -1251,7 +1254,7 @@ func normalizeRecruitmentInput(input RecruitmentInput, now time.Time) (Recruitme
 	input.StartTime = startClock.Format("15:04")
 	input.EndTime = endClock.Format("15:04")
 	// Keep the database value as a canonical absolute instant. Applications
-	// close 24 hours before the JST wall-clock start time.
+	// remain available until the JST wall-clock start time.
 	expires := time.Date(date.Year(), date.Month(), date.Day(), startClock.Hour(), startClock.Minute(), 0, 0, recruitmentLocation).
 		Add(-recruitmentLeadTime).
 		UTC()

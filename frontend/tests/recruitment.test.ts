@@ -69,7 +69,7 @@ describe("募集プレビュー", () => {
     expect(preview.conditions).toEqual(draft);
     expect(preview.category).toBe("Food");
     expect(preview.tags).toEqual(["Takoyaki", "Local"]);
-    expect(preview.expiresAt).toBe("August 24 at 14:30");
+    expect(preview.expiresAt).toBe("August 25 at 14:30");
   });
 
   it("制作者情報をサービス応答として返す", () => {
@@ -100,7 +100,7 @@ describe("募集プレビュー", () => {
 
   it("公開用の日付をバックエンド形式へ変換する", () => {
     expect(defaultRecruitmentDate(new Date("2026-08-26T00:00:00.000Z"))).toBe(
-      "2026-08-27",
+      "2026-08-26",
     );
     expect(normalizeRecruitmentDate("August,27 2026")).toBe("2026-08-27");
     expect(normalizeRecruitmentDate("August 27, 2026")).toBe("2026-08-27");
@@ -118,22 +118,22 @@ describe("募集プレビュー", () => {
     );
   });
 
-  it("開始24時間前より後の次の30分区切りを初期時刻にする", () => {
+  it("今から6時間後より後の次の30分区切りを初期時刻にする", () => {
     expect(
       defaultRecruitmentSchedule(new Date("2026-08-26T05:31:00.000Z")),
     ).toEqual({
-      date: "2026-08-27",
-      startTime: "15:00",
+      date: "2026-08-26",
+      startTime: "21:00",
       durationHours: 1,
     });
   });
 
-  it("JSTの深夜を越える24時間後の次の30分を翌日のISO日付で返す", () => {
+  it("JSTの深夜を越える6時間後の次の30分を翌日のISO日付で返す", () => {
     expect(
       defaultRecruitmentSchedule(new Date("2026-08-26T14:31:00.000Z")),
     ).toMatchObject({
-      date: "2026-08-28",
-      startTime: "00:00",
+      date: "2026-08-27",
+      startTime: "06:00",
     });
   });
 
@@ -158,14 +158,14 @@ describe("募集プレビュー", () => {
     ).toBe("recruitment_must_end_same_day");
   });
 
-  it("開始24時間前の締切を過ぎた公開時刻を区別する", () => {
+  it("開始まで6時間以内の公開時刻を注意扱いにする", () => {
     const now = new Date("2026-08-26T05:31:00.000Z");
     expect(
       getRecruitmentScheduleIssue(
-        { ...draft, date: "2026-08-27", startTime: "14:30" },
+        { ...draft, date: "2026-08-26", startTime: "20:30" },
         now,
       ),
-    ).toBe("recruitment_deadline_passed");
+    ).toBe("recruitment_short_notice");
   });
 
   it("JSTの日時をUTCの瞬間へ変換する", () => {
@@ -296,16 +296,16 @@ describe("募集プレビュー", () => {
     );
   });
 
-  it("締切済みの募集は公開API入力へ変換しない", () => {
+  it("開始まで6時間以内でも公開API入力へ変換できる", () => {
     const preview = buildRecruitmentPreviewModel({ ...draft, date: "2026-08-27" }, "Food");
 
-    expect(() =>
+    expect(
       buildRecruitmentCreateRequest(
         { ...draft, date: "2026-08-27", startTime: "14:30" },
         preview,
         new Date("2026-08-26T05:31:00.000Z"),
       ),
-    ).toThrow("recruitment_deadline_passed");
+    ).toMatchObject({ available_date: "2026-08-27", start_time: "14:30" });
   });
 
   it("日付をまたぐ公開時刻を送信前に拒否する", () => {

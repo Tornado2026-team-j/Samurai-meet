@@ -3,10 +3,10 @@ import type {
   RecruitmentPreview,
 } from "../types/recruitment";
 import { isMatchCategory, type MatchCategory } from "../types/match";
+import { RECRUITMENT_PUBLICATION_LEAD_TIME_MS } from "./recruitment-policy";
 
 const JST_TIME_ZONE = "Asia/Tokyo";
 const JST_OFFSET_MINUTES = 9 * 60;
-const RECRUITMENT_LEAD_TIME_MS = 24 * 60 * 60 * 1000;
 export const MANUAL_RECRUITMENT_PREVIEW_ID = "manual-recruitment-preview";
 
 const TAG_RULES: ReadonlyArray<{ pattern: RegExp; tag: string }> = [
@@ -40,10 +40,10 @@ function extractPreviewTags(activity: string): string[] {
 function formatExpiry(draft: RecruitmentDraft): string {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(draft.date.trim());
   const timeMatch = /^(\d{2}):([0-5]\d)$/.exec(draft.startTime.trim());
-  if (!match || !timeMatch) return "24 hours before the start time";
+  if (!match || !timeMatch) return "at the start time";
 
   const hour = Number(timeMatch[1]);
-  if (hour > 23) return "24 hours before the start time";
+  if (hour > 23) return "at the start time";
 
   const startAt = new Date(
     Date.UTC(
@@ -55,8 +55,8 @@ function formatExpiry(draft: RecruitmentDraft): string {
     ) -
       JST_OFFSET_MINUTES * 60 * 1000,
   );
-  const deadline = new Date(startAt.getTime() - RECRUITMENT_LEAD_TIME_MS);
-  if (Number.isNaN(deadline.getTime())) return "24 hours before the start time";
+  const deadline = new Date(startAt.getTime() - RECRUITMENT_PUBLICATION_LEAD_TIME_MS);
+  if (Number.isNaN(deadline.getTime())) return "at the start time";
 
   const date = deadline.toLocaleDateString("en-US", {
     timeZone: JST_TIME_ZONE,
@@ -80,7 +80,7 @@ function formatExpiry(draft: RecruitmentDraft): string {
     parsedDate.getUTCMonth() !== Number(match[2]) - 1 ||
     parsedDate.getUTCDate() !== Number(match[3])
   ) {
-    return "24 hours before the start time";
+    return "at the start time";
   }
 
   return `${date} at ${time}`;

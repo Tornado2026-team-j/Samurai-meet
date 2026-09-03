@@ -1,5 +1,5 @@
 import DateTimePicker, {
-  type DateTimePickerChangeEvent,
+  type DateTimePickerEvent,
 } from "@react-native-community/datetimepicker";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { useState } from "react";
@@ -177,7 +177,12 @@ export default function JapaneseFiltersScreen() {
     closeDatePicker();
   };
 
-  const handleDatePickerValueChange = (_event: DateTimePickerChangeEvent, value: Date) => {
+  const handleDatePickerChange = (event: DateTimePickerEvent, value?: Date) => {
+    if (event.type === "dismissed" || !value) {
+      closeDatePicker();
+      return;
+    }
+
     if (Platform.OS === "android") {
       commitDate(value);
       return;
@@ -282,7 +287,7 @@ export default function JapaneseFiltersScreen() {
           mode="date"
           minimumDate={pickerBounds.minimumDate}
           onDismiss={closeDatePicker}
-          onValueChange={handleDatePickerValueChange}
+          onChange={handleDatePickerChange}
           timeZoneName={JST_TIME_ZONE}
           value={pickerDate}
         />
@@ -319,7 +324,7 @@ export default function JapaneseFiltersScreen() {
                 mode="date"
                 minimumDate={pickerBounds.minimumDate}
                 onDismiss={closeDatePicker}
-                onValueChange={handleDatePickerValueChange}
+                onChange={handleDatePickerChange}
                 style={styles.nativePicker}
                 themeVariant="light"
                 timeZoneName={JST_TIME_ZONE}

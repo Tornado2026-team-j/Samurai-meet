@@ -156,6 +156,41 @@ func TestMatchLikeIsAvailableOnlyAfterPlanAndIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestMatchLikeIsAvailableAfterManualEarlyCompletion(t *testing.T) {
+	database := openIsolatedDatabase(t)
+	ctx := context.Background()
+	now := time.Date(2026, time.September, 4, 12, 0, 0, 0, time.UTC)
+	ownerID := randomID(t)
+	requesterID := randomID(t)
+	cardID := randomID(t)
+	matchID := randomID(t)
+	insertMatchingTestUser(t, database, now, ownerID, "Owner", "JP")
+	insertMatchingTestUser(t, database, now, requesterID, "Requester", "US")
+	stamp := now.UTC().Format(time.RFC3339Nano)
+	if _, err := database.ExecContext(ctx, `
+		INSERT INTO recruitment_cards (id,owner_user_id,category,available_date,start_time,end_time,timezone,visibility_radius_km,status,expires_at,created_at,updated_at)
+		VALUES ($1,$2,'Food','2026-09-05','18:00','20:00','Asia/Tokyo',1,'matched','2026-09-05T09:00:00Z',$3,$3)`,
+		cardID, ownerID, stamp); err != nil {
+		t.Fatalf("insert future recruitment = %v", err)
+	}
+	if _, err := database.ExecContext(ctx, `
+		INSERT INTO matches (id,card_id,requester_user_id,owner_user_id,status,matched_at,created_at,updated_at)
+		VALUES ($1,$2,$3,$4,'accepted',$5,$5,$5)`, matchID, cardID, requesterID, ownerID, stamp); err != nil {
+		t.Fatalf("insert accepted match = %v", err)
+	}
+
+	service := matching.NewService(database)
+	if _, err := service.LikeMatch(ctx, requesterID, matchID, now); !errors.Is(err, matching.ErrInvalidState) {
+		t.Fatalf("early LikeMatch before completion error = %v, want ErrInvalidState", err)
+	}
+	if _, err := service.CompleteMatch(ctx, ownerID, matchID, now); err != nil {
+		t.Fatalf("manual early CompleteMatch error = %v", err)
+	}
+	if _, err := service.LikeMatch(ctx, requesterID, matchID, now); err != nil {
+		t.Fatalf("LikeMatch after manual early completion error = %v", err)
+	}
+}
+
 func TestAcceptMatchHonorsParticipantLimitConcurrently(t *testing.T) {
 	database := openIsolatedDatabase(t)
 	ctx := context.Background()
@@ -266,8 +301,8 @@ func TestAcceptMatchHonorsParticipantLimitConcurrently(t *testing.T) {
 func TestRecruitmentMatchingLifecycle(t *testing.T) {
 	database := openIsolatedDatabase(t)
 	now := time.Now().UTC().Truncate(time.Second)
-	// Open recruitments close 24 hours before their JST start. Keep these
-	// fixtures safely beyond that boundary regardless of the test run hour.
+	// Keep these fixtures safely before their JST start regardless of the test
+	// run hour because applications remain available until the start time.
 	firstDate := now.In(time.FixedZone("Asia/Tokyo", 9*60*60)).AddDate(0, 0, 2).Format("2006-01-02")
 	secondDate := now.In(time.FixedZone("Asia/Tokyo", 9*60*60)).AddDate(0, 0, 3).Format("2006-01-02")
 	withdrawDate := now.In(time.FixedZone("Asia/Tokyo", 9*60*60)).AddDate(0, 0, 4).Format("2006-01-02")

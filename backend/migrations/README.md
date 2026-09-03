@@ -43,6 +43,7 @@
 - `0053_matching_search_indexes.sql` は、募集検索で空き枠を確認するaccepted match数の参照を高速化する部分indexを追加する。
 - `0054_backfill_recruitment_deadlines.sql` は、既存の募集中カードを開始24時間前締切へ前方移行し、期限列をPostgreSQLのtimestamp型へ変換して精度と検索性能を両立する。
 - `0055_match_likes.sql` は、終了済みのマッチで参加者が相手へ一度だけ送れる「いいね」を保存する。重複送信は一意制約で防ぎ、受信者の公開like数だけを集計する。
+- `0056_recruitments_expire_at_start.sql` は、公開中・マッチ済みの募集カードを開始時刻まで公開する現在の募集期限へ前方移行する。
 - runnerは`schema_migrations`へファイル名と正規化SQLのSHA-256を記録し、適用済みSQLを再実行しない。起動が同時になった場合もPostgreSQL advisory lockで直列化する。適用済みファイルの内容が変わった場合はchecksum mismatchで停止する。
 - 0040と0044には、既知の旧checksumと現行checksumの組み合わせだけをrunnerが監査済み互換として許容する。履歴行は変更せず、後続の0042または0045で前方移行する。
 - 既存DBへ導入する初回起動では、ファイル名順に現行schemaを確認しながら未登録migrationを一度だけ適用する。適用済み状態を手作業で捏造・削除せず、バックアップと監査ログを残してから運用する。

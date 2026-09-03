@@ -1,8 +1,8 @@
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useFocusEffect, useRouter } from "expo-router";
 import {
-  ActivityIndicator,
+  Modal,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -12,13 +12,14 @@ import {
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { Header, colors, radius, shadows, typography } from "../components/ui";
+import { Header, colors, LoadingSpinner, radius, shadows, typography } from "../components/ui";
 import { useAuth } from "../hooks/useAuth";
 import { APIError } from "../services/api-client";
 import { cancelMeeting, createMeeting, endMeeting, getMeetingForMatch, meetingProximityCapability, resumeMeeting, startMeeting, type Meeting } from "../services/meeting";
 import { completeMatch, likeMatch, listMatches, type MatchView } from "../services/matching";
 import { loadLanguage, subscribeLanguage, type AppLanguage } from "../services/onboarding";
-import { formatTimeRange } from "../utils/time";
+import { formatTimeRange, isJSTScheduleEnded } from "../utils/time";
+import { getTabBarContentBottomPadding } from "../utils/layout";
 
 type PlanTab = "today" | "upcoming" | "past";
 
@@ -49,6 +50,9 @@ const COPY = {
     like: "いいね",
     liked: "いいね済み",
     likeError: "いいねを送信できませんでした。予定終了後にもう一度お試しください。",
+    reviewTitle: "予定はいかがでしたか？",
+    reviewMessage: "相手にいいねを送れます。",
+    reviewLater: "あとで評価する",
     people: (count: number) => `募集 ${count}人`,
   },
   en: {
@@ -77,6 +81,9 @@ const COPY = {
     like: "Like",
     liked: "Liked",
     likeError: "The like could not be sent. Try again after the plan has ended.",
+    reviewTitle: "How was your plan?",
+    reviewMessage: "You can send the other participant a like.",
+    reviewLater: "Rate later",
     people: (count: number) => `${count} people needed`,
   },
 } as const;
@@ -130,6 +137,8 @@ export default function PlansScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [busyMatchId, setBusyMatchId] = useState<string | null>(null);
+  const [reviewPlan, setReviewPlan] = useState<MatchView | null>(null);
+  const reviewPromptedRef = useRef(new Set<string>());
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const copy = COPY[language];
@@ -156,7 +165,11 @@ export default function PlansScreen() {
       setError(COPY[language].loadError);
       return;
     }
-    refreshMode ? setRefreshing(true) : setLoading(true);
+    if (refreshMode) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
+    }
     setError(null);
     try {
       let result: MatchView[];
@@ -169,7 +182,14 @@ export default function PlansScreen() {
         if (!nextSession) throw requestError;
         result = await listMatches(nextSession, { role: "all", limit: 50 });
       }
-      setPlans(result.filter((item) => item.status === "accepted" || item.status === "completed"));
+      const nextPlans = result.filter((item) => item.status === "accepted" || item.status === "completed");
+      setPlans(nextPlans);
+      const reviewCandidate = nextPlans.find((item) =>
+        item.status === "completed" && !item.liked_by_me && !reviewPromptedRef.current.has(item.id));
+      if (reviewCandidate) {
+        reviewPromptedRef.current.add(reviewCandidate.id);
+        setReviewPlan(reviewCandidate);
+      }
       setActionError(null);
     } catch {
       setError(COPY[language].loadError);
@@ -220,12 +240,14 @@ export default function PlansScreen() {
 
   const visiblePlans = useMemo(() => {
     const today = jstDateKey();
+    const now = new Date();
     return plans
       .filter((plan) => {
         const date = plan.recruitment.available_date;
-        if (activeTab === "today") return date === today && plan.status === "accepted";
+        const ended = isJSTScheduleEnded(plan.recruitment.available_date, plan.recruitment.end_time, now);
+        if (activeTab === "today") return date === today && plan.status === "accepted" && !ended;
         if (activeTab === "upcoming") return date > today && plan.status === "accepted";
-        return date < today || plan.status === "completed";
+        return date < today || plan.status === "completed" || ended;
       })
       .sort((left, right) => {
         const direction = activeTab === "past" ? -1 : 1;
@@ -265,7 +287,9 @@ export default function PlansScreen() {
       setMeetings((items) => ({ ...items, [plan.id]: next }));
       if (next.status === "completed") {
         await completeMatch(plan.id, activeSession).catch(() => undefined);
-        setPlans((items) => items.map((item) => item.id === plan.id ? { ...item, status: "completed" } : item));
+        const completedPlan = { ...plan, status: "completed" as const };
+        setPlans((items) => items.map((item) => item.id === plan.id ? completedPlan : item));
+        setReviewPlan(completedPlan);
       }
     } catch (error) {
       setActionError(meetingActionError(error, copy));
@@ -294,6 +318,7 @@ export default function PlansScreen() {
         await likeMatch(plan.id, refreshedSession);
       }
       setPlans((items) => items.map((item) => item.id === plan.id ? { ...item, liked_by_me: true } : item));
+      setReviewPlan((current) => current?.id === plan.id ? null : current);
     } catch {
       setActionError(copy.likeError);
     } finally {
@@ -327,12 +352,12 @@ export default function PlansScreen() {
       </View>
 
       <ScrollView
-        contentContainerStyle={[styles.content, { paddingBottom: Math.max(insets.bottom + 116, 132) }]}
+        contentContainerStyle={[styles.content, { paddingBottom: getTabBarContentBottomPadding(insets.bottom) }]}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void load(true)} tintColor={colors.brand.sky} />}
         showsVerticalScrollIndicator={false}
       >
         {loading ? (
-          <View style={styles.state}><ActivityIndicator color={colors.brand.sky} /><Text style={styles.stateText}>{copy.loading}</Text></View>
+          <View style={styles.state}><LoadingSpinner color={colors.brand.sky} size={26} speedMs={680} /><Text style={styles.stateText}>{copy.loading}</Text></View>
         ) : error ? (
           <View style={styles.state}>
             <Text accessibilityRole="alert" style={styles.stateText}>{error}</Text>
@@ -396,6 +421,35 @@ export default function PlansScreen() {
         })}
         {actionError ? <Text accessibilityRole="alert" style={styles.error}>{actionError}</Text> : null}
       </ScrollView>
+      <Modal
+        animationType="fade"
+        onRequestClose={() => setReviewPlan(null)}
+        transparent
+        visible={reviewPlan !== null}
+      >
+        <View style={styles.reviewBackdrop}>
+          <View style={styles.reviewSheet}>
+            <MaterialIcons color={colors.brand.sky} name="thumb-up" size={32} />
+            <Text style={styles.reviewTitle}>{copy.reviewTitle}</Text>
+            <Text style={styles.reviewMessage}>{copy.reviewMessage}</Text>
+            <Pressable
+              accessibilityRole="button"
+              disabled={busyMatchId !== null || !reviewPlan}
+              onPress={() => { if (reviewPlan) void sendLike(reviewPlan); }}
+              style={[styles.reviewPrimary, (busyMatchId !== null || !reviewPlan) && styles.disabled]}
+            >
+              <Text style={styles.reviewPrimaryText}>{reviewPlan?.liked_by_me ? copy.liked : copy.like}</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setReviewPlan(null)}
+              style={styles.reviewLater}
+            >
+              <Text style={styles.reviewLaterText}>{copy.reviewLater}</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -449,4 +503,12 @@ const styles = StyleSheet.create({
   disabled: { opacity: 0.55 },
   error: { color: colors.state.danger, fontSize: 13, fontWeight: "700", textAlign: "center" },
   proximityNotice: { marginTop: 8, color: colors.text.subtle, fontSize: 12, lineHeight: 18, textAlign: "center" },
+  reviewBackdrop: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24, backgroundColor: "rgba(0,0,0,0.35)" },
+  reviewSheet: { width: "100%", maxWidth: 420, alignItems: "center", padding: 26, borderRadius: radius.xl, backgroundColor: colors.surface.default, ...shadows.card },
+  reviewTitle: { marginTop: 12, color: colors.text.primary, fontSize: 20, fontWeight: "800", textAlign: "center" },
+  reviewMessage: { marginTop: 8, color: colors.text.secondary, fontSize: 14, fontWeight: "600", textAlign: "center" },
+  reviewPrimary: { width: "100%", minHeight: 46, marginTop: 22, alignItems: "center", justifyContent: "center", borderRadius: radius.md, backgroundColor: colors.brand.sky },
+  reviewPrimaryText: { color: colors.text.inverse, fontSize: 14, fontWeight: "800" },
+  reviewLater: { minHeight: 42, marginTop: 8, alignItems: "center", justifyContent: "center", paddingHorizontal: 18 },
+  reviewLaterText: { color: colors.text.subtle, fontSize: 13, fontWeight: "700" },
 });

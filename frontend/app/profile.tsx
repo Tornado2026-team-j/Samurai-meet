@@ -27,6 +27,7 @@ import {
 } from "../services/key-management";
 import { resetDeviceLocalData } from "../services/device-reset";
 import { toBase64URL } from "../services/crypto";
+import { getTabBarContentBottomPadding } from "../utils/layout";
 import type { Session } from "../services/auth-contract";
 import {
   loadAppMode,
@@ -646,7 +647,7 @@ export default function ProfileScreen() {
         style={styles.profileScrollView}
         contentContainerStyle={[
           styles.content,
-          { paddingBottom: Math.max(insets.bottom + 120, 132) },
+          { paddingBottom: getTabBarContentBottomPadding(insets.bottom) },
         ]}
         showsVerticalScrollIndicator={false}
       >

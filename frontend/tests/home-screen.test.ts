@@ -18,6 +18,7 @@ mock.module("react-native", () => ({
 }));
 mock.module("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ bottom: 0, left: 0, right: 0, top: 0 }) }));
 mock.module(join(testDir, "../components/ui/index.ts"), () => ({
+  LoadingSpinner: noop,
   colors: {
     brand: { sky: "#5ec5f5", gold: "#e7b454" },
     border: { default: "#e4e4e4", subtle: "#e4e4e4" },
@@ -43,6 +44,8 @@ describe("ホーム画面の更新契約", () => {
     expect(source).toContain('loadRecruitmentsRef.current("initial")');
     expect(source).toContain('loadRecruitments("refresh")');
     expect(source).toContain("<RefreshControl");
+    expect(source).toContain("alwaysBounceVertical");
+    expect(source).toContain('pointerEvents="box-none"');
   });
 
   it("日本語ホームはカード検索を優先し、位置保存と応募履歴を待たない", async () => {
@@ -51,6 +54,9 @@ describe("ホーム画面の更新契約", () => {
     expect(source).toContain("SEARCH_LOCATION_CACHE_TTL_MS");
     expect(source).toContain("void updateCurrentLocation");
     expect(source).not.toContain("await updateCurrentLocation");
+    expect(source).toContain("const locationRefresh = locationIsFresh");
+    expect(source).not.toContain("coordinates = await getCurrentCoordinates()");
+    expect(source).toContain("setRecruitments(refinedResult);");
     expect(source).toContain("setRecruitments(result);");
     expect(source).toContain("hydrated independently below");
     expect(source).toContain("activeSearchRequestRef");
@@ -67,6 +73,29 @@ describe("ホーム画面の更新契約", () => {
     expect(source).toContain('loadApplicationsRef.current("initial")');
     expect(source).toContain('loadApplications("refresh")');
     expect(source).toContain("<RefreshControl");
+    expect(source).toContain("useDelayedLoading");
+    expect(source).toContain("LoadingSpinner");
+    expect(source).toContain("getTabBarContentBottomPadding");
+  });
+
+  it("日時pickerは標準のonChangeで確定・キャンセルを処理する", async () => {
+    const source = await readScreen("../app/japanese/filters.tsx");
+
+    expect(source).toContain("onChange={handleDatePickerChange}");
+    expect(source).not.toContain("onValueChange");
+    expect(source).toContain('event.type === "dismissed"');
+  });
+
+  it("予定終了後の評価は日付ではなく終了時刻を基準にする", async () => {
+    const source = await readScreen("../app/plans.tsx");
+    const chatSource = await readScreen("../app/chat/[id].tsx");
+
+    expect(source).toContain("isJSTScheduleEnded");
+    expect(source).toContain("plan.recruitment.end_time");
+    expect(source).toContain("setReviewPlan(completedPlan)");
+    expect(source).toContain("reviewPromptedRef");
+    expect(source).toContain("reviewTitle");
+    expect(chatSource).toContain('if (match.status === "completed") return true;');
   });
 
   it("外国人ホームは構造化プロフィールJSONをそのまま描画しない", async () => {

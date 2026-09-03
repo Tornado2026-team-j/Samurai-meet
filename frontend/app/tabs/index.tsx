@@ -58,6 +58,7 @@ import {
   type RecruitmentSelection,
   type RecruitmentScheduleIssue,
 } from "../../services/recruitment";
+import { RECRUITMENT_PUBLICATION_LEAD_TIME_MS } from "../../services/recruitment-policy";
 import {
   buildManualRecruitmentPreviewModel,
   isManualRecruitmentPreview,
@@ -85,7 +86,6 @@ const MIN_DURATION_HOURS = 0.5;
 const MAX_DURATION_HOURS = 8;
 const DURATION_STEP_HOURS = 0.5;
 const LOCATION_SEARCH_DEBOUNCE_MS = 300;
-const RECRUITMENT_LEAD_TIME_MS = 24 * 60 * 60 * 1000;
 const TIME_PICKER_HOURS = Array.from({ length: 24 }, (_, hourValue) => hourValue);
 const TIME_PICKER_MINUTES = Array.from(
   { length: 12 },
@@ -122,7 +122,7 @@ const RECRUITMENT_COPY = {
     distanceLabel: "Distance",
     next: "NEXT",
     confirmationTitle: "Is everything correct?",
-    confirmationExpiry: "Visible until 24 hours before the start:",
+    confirmationExpiry: "Visible until the start time:",
     categoryLabel: "Guide category",
     keywordLabel: "Suggested keywords",
     keywordHint: "Tap a keyword to select or remove it.",
@@ -152,22 +152,23 @@ const RECRUITMENT_COPY = {
     noLocationResults: "No places found",
     closeScheduleWarning: "Close schedule warning",
     pastStartTitle: "This start time has passed.",
-    deadlinePassedTitle: "The application deadline has passed.",
+    shortNoticeTitle: "The start time is within 6 hours.",
     midnightTitle: "This duration crosses midnight.",
     pastStartQuestion: "Change it to tomorrow?",
-    deadlinePassedQuestion: "Change it to the next available time?",
+    shortNoticeQuestion:
+      "It may be harder to find participants on short notice. Choose a later time?",
     midnightQuestion: "Change it to tomorrow at 09:00?",
     suggestedSchedule: "Suggested schedule",
     useSuggestion: "YES, USE THIS",
     editSchedule: "NO, EDIT",
+    useLaterSuggestion: "USE A LATER TIME",
+    continueShortNotice: "CONTINUE WITH THIS TIME",
     invalidDate: "Choose a valid recruitment date.",
     invalidTime: "Choose a valid start time.",
     invalidDuration: "Choose a duration from 1 to 8 hours.",
     activityRequired: "Tell us what you would like to do before continuing.",
     locationRequired: "Choose a valid place for Where.",
     pastDate: "The selected start time has already passed. Choose another time.",
-    deadlinePassed:
-      "Recruitments must be published more than 24 hours before the start time.",
     crossesMidnight:
       "The selected duration crosses midnight. Choose an earlier time or shorter duration.",
     invalidDetails: "Check the recruitment details.",
@@ -196,7 +197,7 @@ const RECRUITMENT_COPY = {
     invalidProfile:
       "Your profile could not be synchronized. Check your name and nationality.",
     expiredRecruitment:
-      "The application deadline has passed. Choose a start time more than 24 hours away.",
+      "This recruitment cannot be published because its start time has passed.",
     invalidMatchingRequest:
       "Review the entire recruitment details and try again.",
     publishFailed:
@@ -235,7 +236,7 @@ const RECRUITMENT_COPY = {
     distanceLabel: "距離",
     next: "次へ",
     confirmationTitle: "この内容でよろしいですか？",
-    confirmationExpiry: "開始24時間前まで公開されます：",
+    confirmationExpiry: "開始時刻まで公開されます：",
     categoryLabel: "案内カテゴリー",
     keywordLabel: "キーワード候補",
     keywordHint: "タップしてキーワードを選択・解除できます。",
@@ -265,22 +266,23 @@ const RECRUITMENT_COPY = {
     noLocationResults: "候補が見つかりません",
     closeScheduleWarning: "日時の確認を閉じる",
     pastStartTitle: "開始時刻が過ぎています。",
-    deadlinePassedTitle: "募集締切が過ぎています。",
+    shortNoticeTitle: "開始まで6時間以内です。",
     midnightTitle: "所要時間が日付をまたぎます。",
     pastStartQuestion: "明日に変更しますか？",
-    deadlinePassedQuestion: "公開できる次の日時に変更しますか？",
+    shortNoticeQuestion:
+      "直前の募集は参加者が集まりにくい可能性があります。もう少し余裕のある日時に変更しますか？",
     midnightQuestion: "明日の09:00に変更しますか？",
     suggestedSchedule: "変更案",
     useSuggestion: "はい、これを使う",
     editSchedule: "いいえ、編集する",
+    useLaterSuggestion: "余裕のある日時に変更",
+    continueShortNotice: "この日時のまま続ける",
     invalidDate: "有効な募集日を選択してください。",
     invalidTime: "有効な開始時刻を選択してください。",
     invalidDuration: "所要時間は1〜8時間から選択してください。",
     activityRequired: "したいことを入力してから次へ進んでください。",
     locationRequired: "Whereで有効な場所を選択してください。",
     pastDate: "選択した開始時刻は過ぎています。別の時刻を選択してください。",
-    deadlinePassed:
-      "募集は開始時刻の24時間前までに公開する必要があります。開始24時間より先の日時を選択してください。",
     crossesMidnight:
       "所要時間が日付をまたぎます。早い時刻または短い所要時間を選択してください。",
     invalidDetails: "募集内容を確認してください。",
@@ -307,7 +309,7 @@ const RECRUITMENT_COPY = {
     expiredSession: "セッションの有効期限が切れました。このAPI環境で再度ログインしてください。",
     incompleteProfile: "公開前にプロフィールを完成させてください。",
     invalidProfile: "プロフィールを同期できませんでした。名前と国籍を確認してください。",
-    expiredRecruitment: "募集締切が過ぎています。開始24時間より先の日時を選択してください。",
+    expiredRecruitment: "募集を公開できません。開始時刻が過ぎています。",
     invalidMatchingRequest: "募集内容全体を確認してもう一度お試しください。",
     publishFailed: "募集を公開できませんでした。しばらくしてからもう一度お試しください。",
     signInAgain: "セッションの有効期限が切れました。公開前に再度ログインしてください。",
@@ -351,8 +353,6 @@ function recruitmentInputMessage(
       return copy.invalidDuration;
     case "recruitment_date_in_past":
       return copy.pastDate;
-    case "recruitment_deadline_passed":
-      return copy.deadlinePassed;
     case "recruitment_must_end_same_day":
       return copy.crossesMidnight;
     case "recruitment_keywords_required":
@@ -456,7 +456,7 @@ function formatPreviewExpiry(
       preview.conditions.date,
       preview.conditions.startTime,
     );
-    const deadline = new Date(startAt.getTime() - RECRUITMENT_LEAD_TIME_MS);
+    const deadline = new Date(startAt.getTime() - RECRUITMENT_PUBLICATION_LEAD_TIME_MS);
     const time = new Intl.DateTimeFormat("en-US", {
       hour: "2-digit",
       hourCycle: "h23",
@@ -898,13 +898,13 @@ export default function SearchPreferencesScreen() {
   ) => {
     const suggestion = defaultRecruitmentSchedule();
     const suggestedDate =
-      issue === "recruitment_deadline_passed"
+      issue === "recruitment_short_notice"
         ? suggestion.date
         : shiftRecruitmentDate(draft.date, 1);
     const suggestedStartTime =
       issue === "recruitment_must_end_same_day"
         ? "09:00"
-        : issue === "recruitment_deadline_passed"
+        : issue === "recruitment_short_notice"
           ? suggestion.startTime
           : draft.startTime;
 
@@ -916,7 +916,10 @@ export default function SearchPreferencesScreen() {
     });
   };
 
-  const showConfirmation = async (draft = createDraft()) => {
+  const showConfirmation = async (
+    draft = createDraft(),
+    skipScheduleWarning = false,
+  ) => {
     if (previewStatus === "loading") {
       return;
     }
@@ -926,17 +929,19 @@ export default function SearchPreferencesScreen() {
       return;
     }
 
-    try {
-      const issue = getRecruitmentScheduleIssue(draft);
-      if (issue) {
-        openScheduleWarning(draft, issue);
+    if (!skipScheduleWarning) {
+      try {
+        const issue = getRecruitmentScheduleIssue(draft);
+        if (issue) {
+          openScheduleWarning(draft, issue);
+          return;
+        }
+      } catch (error) {
+        setFormError(
+          recruitmentInputMessage(error, language) ?? RECRUITMENT_COPY[language].invalidDetails,
+        );
         return;
       }
-    } catch (error) {
-      setFormError(
-        recruitmentInputMessage(error, language) ?? RECRUITMENT_COPY[language].invalidDetails,
-      );
-      return;
     }
 
     const coordinates = await resolveWhereCoordinates();
@@ -1014,7 +1019,7 @@ export default function SearchPreferencesScreen() {
     setFormError(null);
     setPublishError(null);
     setScheduleWarning(null);
-    void showConfirmation(nextDraft);
+    void showConfirmation(nextDraft, true);
   };
 
   const editSchedule = () => {
@@ -1146,7 +1151,7 @@ export default function SearchPreferencesScreen() {
     }
   };
 
-  const publish = async () => {
+  const publish = async (skipScheduleWarning = false) => {
     if (
       publishStatus === "publishing" ||
       draftSaveStatus === "saving" ||
@@ -1162,10 +1167,12 @@ export default function SearchPreferencesScreen() {
     const draft = createDraft();
 
     try {
-      const scheduleIssue = getRecruitmentScheduleIssue(draft);
-      if (scheduleIssue) {
-        openScheduleWarning(draft, scheduleIssue, true);
-        return;
+      if (!skipScheduleWarning) {
+        const scheduleIssue = getRecruitmentScheduleIssue(draft);
+        if (scheduleIssue) {
+          openScheduleWarning(draft, scheduleIssue, true);
+          return;
+        }
       }
 
       if (status !== "signed_in") {
@@ -1244,6 +1251,22 @@ export default function SearchPreferencesScreen() {
     } finally {
       setPublishStatus("idle");
     }
+  };
+
+  const continueScheduleWarning = () => {
+    if (!scheduleWarning) return;
+    if (scheduleWarning.issue !== "recruitment_short_notice") {
+      editSchedule();
+      return;
+    }
+
+    const returnToConfirmation = scheduleWarning.fromConfirmation;
+    setScheduleWarning(null);
+    if (returnToConfirmation) {
+      void publish(true);
+      return;
+    }
+    void showConfirmation(createDraft(), true);
   };
 
   const saveDraft = async () => {
@@ -2234,15 +2257,15 @@ export default function SearchPreferencesScreen() {
               <Text style={styles.selectionTitle}>
                 {scheduleWarning.issue === "recruitment_date_in_past"
                   ? copy.pastStartTitle
-                  : scheduleWarning.issue === "recruitment_deadline_passed"
-                    ? copy.deadlinePassedTitle
+                  : scheduleWarning.issue === "recruitment_short_notice"
+                    ? copy.shortNoticeTitle
                     : copy.midnightTitle}
               </Text>
               <Text style={styles.warningMessage}>
                 {scheduleWarning.issue === "recruitment_date_in_past"
                   ? copy.pastStartQuestion
-                  : scheduleWarning.issue === "recruitment_deadline_passed"
-                    ? copy.deadlinePassedQuestion
+                  : scheduleWarning.issue === "recruitment_short_notice"
+                    ? copy.shortNoticeQuestion
                     : copy.midnightQuestion}
               </Text>
               <View style={styles.warningSuggestion}>
@@ -2256,14 +2279,22 @@ export default function SearchPreferencesScreen() {
                 onPress={applyScheduleSuggestion}
                 style={({ pressed }) => [styles.warningPrimaryButton, pressed && styles.pressed]}
               >
-                <Text style={styles.warningPrimaryText}>{copy.useSuggestion}</Text>
+                <Text style={styles.warningPrimaryText}>
+                  {scheduleWarning.issue === "recruitment_short_notice"
+                    ? copy.useLaterSuggestion
+                    : copy.useSuggestion}
+                </Text>
               </Pressable>
               <Pressable
                 accessibilityRole="button"
-                onPress={editSchedule}
+                onPress={scheduleWarning.issue === "recruitment_short_notice" ? continueScheduleWarning : editSchedule}
                 style={({ pressed }) => [styles.warningSecondaryButton, pressed && styles.pressed]}
               >
-                <Text style={styles.warningSecondaryText}>{copy.editSchedule}</Text>
+                <Text style={styles.warningSecondaryText}>
+                  {scheduleWarning.issue === "recruitment_short_notice"
+                    ? copy.continueShortNotice
+                    : copy.editSchedule}
+                </Text>
               </Pressable>
             </View>
           ) : null}

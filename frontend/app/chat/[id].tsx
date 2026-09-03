@@ -22,6 +22,7 @@ import { StatusBar } from "expo-status-bar";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import ChatBubble from "../../components/ChatBubble";
+import { LoadingSpinner } from "../../components/ui";
 import { useAuth } from "../../hooks/useAuth";
 import { APIError } from "../../services/api-client";
 import {
@@ -74,10 +75,12 @@ import { resolveCurrentLocationDisplay } from "../../services/location";
 import { declineMatch, getMatch, likeMatch, type MatchView } from "../../services/matching";
 import {
   loadLanguage,
+  loadAppMode,
   loadTranslationConsent,
   saveTranslationConsent,
   subscribeLanguage,
   type AppLanguage,
+  type AppMode,
   type TranslationConsent,
 } from "../../services/onboarding";
 import { formatTimeRange } from "../../utils/time";
@@ -99,10 +102,12 @@ type SafetyModal =
   | { kind: "confirm"; action: ConfirmAction; target: ReportTarget | null }
   | { kind: "report"; target: ReportTarget };
 type ChatMigrationState = "not_needed" | "pending" | "retry_required" | "owner_required";
+type ChatKeyContext = "none" | "current" | "legacy";
 type MaterialIconName = ComponentProps<typeof MaterialIcons>["name"];
 
 function scheduledPlanEnded(match: MatchView | null): boolean {
   if (!match) return false;
+  if (match.status === "completed") return true;
   const end = new Date(`${match.recruitment.available_date}T${match.recruitment.end_time}:00+09:00`);
   return !Number.isNaN(end.getTime()) && end.getTime() <= Date.now();
 }
@@ -117,6 +122,7 @@ const CATEGORY_ICONS: Record<MatchCategory, MaterialIconName> = {
 const COPY = {
   ja: {
     back: "戻る",
+    home: "ホーム",
     loading: "チャットを読み込み中…",
     retry: "再試行",
     signInRequired: "ログイン後にチャットを表示できます。",
@@ -187,6 +193,8 @@ const COPY = {
     loadOlder: "過去のメッセージを読み込む",
     loadingOlder: "過去のメッセージを読み込み中…",
     chatKeyMigrationPending: "このチャットの暗号鍵を移行中です。案内の所有者が一度チャットを開いた後、再試行してください。",
+    chatKeySetupPending: "新しいチャットの暗号鍵を準備できません。案内の所有者が一度チャットを開いてから、もう一度送信してください。",
+    chatKeyDeviceSetupPending: "この端末の暗号鍵をチャットに追加できません。案内の所有者がチャットを開いた後、もう一度送信してください。",
     photo: "画像",
     sendPhoto: "画像を送信",
     photoSelecting: "画像を選択中…",
@@ -244,6 +252,7 @@ const COPY = {
   },
   en: {
     back: "Back",
+    home: "Home",
     loading: "Loading chat…",
     retry: "Retry",
     signInRequired: "Sign in to view this chat.",
@@ -314,6 +323,8 @@ const COPY = {
     loadOlder: "Load older messages",
     loadingOlder: "Loading older messages…",
     chatKeyMigrationPending: "This chat's encryption key is waiting to be migrated. Ask the guide owner to open the chat once, then try again.",
+    chatKeySetupPending: "The new chat encryption key is not ready yet. Ask the guide owner to open the chat once, then try again.",
+    chatKeyDeviceSetupPending: "This device cannot be added to the chat encryption key yet. Ask the guide owner to open the chat, then try again.",
     photo: "Photo",
     sendPhoto: "Send photo",
     photoSelecting: "Selecting photo…",
@@ -482,6 +493,7 @@ export default function ChatDetailScreen() {
   const chatID = Array.isArray(id) ? id[0] : id;
   const { getCurrentSession, refresh, session, status } = useAuth();
   const [language, setLanguage] = useState<AppLanguage | null>(null);
+  const [appMode, setAppMode] = useState<AppMode>("local");
   const [translationConsent, setTranslationConsent] = useState<TranslationConsent | null>(null);
   const [realtimeMode] = useState(() => {
     installNativeChatWebTransportBridge();
@@ -504,6 +516,7 @@ export default function ChatDetailScreen() {
   const [chatKeyUnavailable, setChatKeyUnavailable] = useState(false);
   const [legacyChatKeyUnavailable, setLegacyChatKeyUnavailable] = useState(false);
   const [migrationState, setMigrationState] = useState<ChatMigrationState>("not_needed");
+  const [chatKeyContext, setChatKeyContext] = useState<ChatKeyContext>("none");
   const [attachmentSources, setAttachmentSources] = useState<Record<string, string>>({});
   const [attachmentLoading, setAttachmentLoading] = useState<Record<string, boolean>>({});
   const [attachmentErrors, setAttachmentErrors] = useState<Record<string, boolean>>({});
@@ -540,6 +553,7 @@ export default function ChatDetailScreen() {
   const editingMessageIDRef = useRef<string | null>(null);
   editingMessageIDRef.current = editingMessageID;
   const copy = COPY[language ?? "ja"];
+  const homeHref = appMode === "traveler" ? "/foreigner" : "/japanese";
   const displayMessages = useMemo(() => deduplicateChatMessages(messages), [messages]);
   const validation = validateChatDraft(draft);
   const chatUpdatedAt = chat?.updated_at;
@@ -863,6 +877,7 @@ export default function ChatDetailScreen() {
           setMatch(result.currentMatch);
           setMessages(messageViews);
           setHasMoreOlderMessages(result.hasMoreOlder);
+          setChatKeyContext(result.hasCurrentChatKeyMessage ? "current" : result.hasLegacyChatMessage ? "legacy" : "none");
           setChatKeyUnavailable(result.currentKeyLoadFailed);
           setLegacyChatKeyUnavailable(result.legacyKeyLoadFailed);
           setChatKeyLoading(false);
@@ -1046,6 +1061,11 @@ export default function ChatDetailScreen() {
       if (active) setLanguage(storedLanguage ?? "ja");
     }).catch(() => {
       if (active) setLanguage("ja");
+    });
+    void loadAppMode().then((storedMode) => {
+      if (active) setAppMode(storedMode ?? "local");
+    }).catch(() => {
+      if (active) setAppMode("local");
     });
     return () => {
       active = false;
@@ -1430,7 +1450,11 @@ export default function ChatDetailScreen() {
         // allowed the text, report a send/key failure instead of mislabeling
         // it as an unavailable safety provider.
         setSendError(error instanceof ModeratedChatMessageSendError
-          ? error.code === "chat_key_envelope_authority_required" ? copy.chatKeyMigrationPending : copy.sendFailed
+          ? error.code === "chat_key_envelope_authority_required"
+            ? chatKeyContext === "legacy"
+              ? copy.chatKeyMigrationPending
+              : chatKeyContext === "current" ? copy.chatKeyDeviceSetupPending : copy.chatKeySetupPending
+            : copy.sendFailed
           : copy.moderationUnavailable);
         return;
       }
@@ -1893,7 +1917,7 @@ export default function ChatDetailScreen() {
     return (
       <View style={styles.loadingScreen}>
         <StatusBar style="light" />
-        <ActivityIndicator color={BLUE} />
+        <LoadingSpinner color={BLUE} size={26} speedMs={680} />
         <Text style={styles.loadingText}>{copy.loading}</Text>
       </View>
     );
@@ -1934,6 +1958,19 @@ export default function ChatDetailScreen() {
           style={({ pressed }) => [styles.backButton, { top: Math.max(insets.top + 8, 49) }, pressed && styles.pressed]}
         >
           <MaterialIcons color="#ffffff" name="chevron-left" size={30} />
+        </Pressable>
+        <Pressable
+          accessibilityLabel={copy.home}
+          accessibilityRole="button"
+          hitSlop={10}
+          onPress={() => router.replace(homeHref)}
+          style={({ pressed }) => [
+            styles.homeButton,
+            { top: Math.max(insets.top + 8, 49) },
+            pressed && styles.pressed,
+          ]}
+        >
+          <MaterialIcons color="#ffffff" name="home" size={24} />
         </Pressable>
         <View style={styles.headerProfile}>
           <View style={styles.headerAvatar}>
@@ -2426,6 +2463,16 @@ const styles = StyleSheet.create({
     height: 34,
     alignItems: "center",
     justifyContent: "center",
+  },
+  homeButton: {
+    position: "absolute",
+    right: 58,
+    width: 34,
+    height: 34,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 17,
+    backgroundColor: "rgba(255,255,255,0.18)",
   },
   headerProfile: {
     flexDirection: "row",
