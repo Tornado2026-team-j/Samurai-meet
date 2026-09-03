@@ -1,5 +1,5 @@
 import DateTimePicker, {
-  type DateTimePickerEvent,
+  type DateTimePickerChangeEvent,
 } from "@react-native-community/datetimepicker";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { useState } from "react";
@@ -157,13 +157,7 @@ export default function JapaneseFiltersScreen() {
     closeDatePicker();
   };
 
-  const handleDatePickerChange = (event: DateTimePickerEvent, value?: Date) => {
-    if (event.type === "dismissed") {
-      closeDatePicker();
-      return;
-    }
-    if (!value) return;
-
+  const handleDatePickerValueChange = (_event: DateTimePickerChangeEvent, value: Date) => {
     if (Platform.OS === "android") {
       commitDate(value);
       return;
@@ -178,14 +172,43 @@ export default function JapaneseFiltersScreen() {
     } else {
       setAvailableTo("");
     }
+  };
+
+  const resetFilters = () => {
+    setCategory("");
+    setTime("");
+    setAvailableFrom("");
+    setAvailableTo("");
+    setRadius("3");
     setDateError(null);
   };
+
+  const hasActiveFilters = Boolean(
+    category || time || availableFrom || availableTo || radius !== "3"
+  );
 
   return (
     <View style={styles.screen}>
       <StatusBar style="light" />
-      <Header iconName="tune" onBack={() => router.back()} title="検索条件" variant="hero" />
-      <ScrollView contentContainerStyle={styles.content}>
+      <Header
+        onBack={() => router.back()}
+        right={
+          <Pressable
+            accessibilityLabel="検索条件をリセット"
+            accessibilityRole="button"
+            hitSlop={8}
+            onPress={resetFilters}
+            style={({ pressed }) => [styles.resetButton, pressed && styles.pressed]}
+          >
+            <MaterialIcons color={hasActiveFilters ? colors.brand.gold : "rgba(255, 255, 255, 0.75)"} name="refresh" size={18} />
+            <Text style={[styles.resetText, hasActiveFilters && styles.resetTextActive]}>リセット</Text>
+          </Pressable>
+        }
+        title="検索条件"
+        titleStyle={{ marginLeft: 42 }}
+        variant="compact"
+      />
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <FilterGroup label="カテゴリ">
           <View style={styles.choices}>{CATEGORIES.map((item) => <Choice key={item.label} label={item.label} onPress={() => setCategory(item.value)} selected={category === item.value} />)}</View>
         </FilterGroup>
@@ -193,7 +216,6 @@ export default function JapaneseFiltersScreen() {
           <View style={styles.choices}>{TIMES.map((item) => <Choice key={item.value} label={item.label} onPress={() => setTime(item.value)} selected={time === item.value} />)}</View>
         </FilterGroup>
         <FilterGroup label="募集日（期間）">
-          <Text style={styles.hint}>OS標準の日付選択で指定（開始日・終了日必須、最大31日差）</Text>
           <View style={styles.dateRow}>
             <DateFilterField
               label="開始日"
@@ -223,14 +245,13 @@ export default function JapaneseFiltersScreen() {
         >
           <View style={styles.checkboxCopy}>
             <View style={styles.checkboxLabelRow}>
-              <MaterialIcons color={colors.text.muted} name="check-box-outline-blank" size={22} />
-              <Text style={styles.groupLabel}>本人確認済みのみ</Text>
+              <MaterialIcons color={colors.text.muted} name="check-box-outline-blank" size={18} />
+              <Text style={styles.compactGroupLabel}>本人確認済みのみ</Text>
               <Text style={styles.comingSoon}>Coming Soon</Text>
             </View>
-            <Text style={styles.hint}>確認済みバッジのある募集者に絞ります</Text>
           </View>
         </Pressable>
-        <Pressable onPress={apply} style={styles.apply}><MaterialIcons color={colors.text.inverse} name="search" size={21} /><Text style={styles.applyText}>この条件で検索</Text></Pressable>
+        <Pressable onPress={apply} style={styles.apply}><MaterialIcons color={colors.text.inverse} name="search" size={20} /><Text style={styles.applyText}>この条件で検索</Text></Pressable>
       </ScrollView>
 
       {Platform.OS !== "ios" && datePickerField ? (
@@ -239,7 +260,8 @@ export default function JapaneseFiltersScreen() {
           maximumDate={pickerBounds.maximumDate}
           mode="date"
           minimumDate={pickerBounds.minimumDate}
-          onChange={handleDatePickerChange}
+          onDismiss={closeDatePicker}
+          onValueChange={handleDatePickerValueChange}
           timeZoneName={JST_TIME_ZONE}
           value={pickerDate}
         />
@@ -275,7 +297,8 @@ export default function JapaneseFiltersScreen() {
                 maximumDate={pickerBounds.maximumDate}
                 mode="date"
                 minimumDate={pickerBounds.minimumDate}
-                onChange={handleDatePickerChange}
+                onDismiss={closeDatePicker}
+                onValueChange={handleDatePickerValueChange}
                 style={styles.nativePicker}
                 themeVariant="light"
                 timeZoneName={JST_TIME_ZONE}
@@ -338,30 +361,34 @@ function DateFilterField({
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.surface.screen },
-  content: { padding: 22, paddingBottom: 48, gap: 24 },
-  group: { gap: 10 },
-  groupLabel: { color: colors.text.primary, fontSize: 15, fontWeight: "900" },
-  choices: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  choice: { minHeight: 42, justifyContent: "center", paddingHorizontal: 15, borderWidth: 1, borderColor: colors.border.default, borderRadius: radius.pill, backgroundColor: colors.surface.default },
+  content: { paddingHorizontal: 18, paddingTop: 12, paddingBottom: 24, gap: 12 },
+  group: { gap: 5 },
+  groupLabel: { color: colors.text.primary, fontSize: 13, fontWeight: "900" },
+  compactGroupLabel: { color: colors.text.primary, fontSize: 12, fontWeight: "700" },
+  choices: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
+  choice: { minHeight: 34, justifyContent: "center", paddingHorizontal: 11, borderWidth: 1, borderColor: colors.border.default, borderRadius: radius.pill, backgroundColor: colors.surface.default },
   choiceSelected: { borderColor: colors.brand.sky, backgroundColor: colors.surface.blueSoft },
-  choiceText: { color: colors.text.secondary, fontSize: 13, fontWeight: "700" },
+  choiceText: { color: colors.text.secondary, fontSize: 12, fontWeight: "700" },
   choiceTextSelected: { color: colors.brand.sky, fontWeight: "900" },
-  switchRow: { minHeight: 64, flexDirection: "row", alignItems: "center", gap: 14 },
+  switchRow: { minHeight: 32, flexDirection: "row", alignItems: "center", gap: 8 },
   disabledRow: { opacity: 0.62 },
-  checkboxCopy: { flex: 1, gap: 4 },
+  checkboxCopy: { flex: 1, gap: 2 },
   checkboxLabelRow: { flexDirection: "row", alignItems: "center", gap: 6 },
-  comingSoon: { color: colors.text.muted, fontSize: 11, fontWeight: "800" },
-  hint: { marginTop: 4, color: colors.text.muted, fontSize: 11 },
-  validationText: { color: colors.state.danger, fontSize: 12, fontWeight: "800" },
+  comingSoon: { color: colors.text.muted, fontSize: 10, fontWeight: "800" },
+  hint: { marginTop: 2, color: colors.text.muted, fontSize: 11 },
+  validationText: { color: colors.state.danger, fontSize: 11, fontWeight: "800" },
   dateRow: { flexDirection: "row", alignItems: "center", gap: 6 },
   dateFieldWrap: { flex: 1, minWidth: 0, position: "relative" },
-  dateField: { minHeight: 48, paddingHorizontal: 10, paddingRight: 34, flexDirection: "row", alignItems: "center", gap: 7, borderWidth: 1, borderColor: colors.border.default, borderRadius: radius.md, backgroundColor: colors.surface.default },
+  dateField: { minHeight: 38, paddingHorizontal: 10, paddingRight: 30, flexDirection: "row", alignItems: "center", gap: 6, borderWidth: 1, borderColor: colors.border.default, borderRadius: radius.md, backgroundColor: colors.surface.default },
   dateFieldText: { flex: 1, color: colors.text.primary, fontSize: 12, fontWeight: "700" },
   dateFieldPlaceholder: { color: colors.text.muted, fontWeight: "600" },
-  clearDateButton: { position: "absolute", top: 2, right: 2, bottom: 2, width: 32, alignItems: "center", justifyContent: "center" },
-  dateSeparator: { color: colors.text.secondary, fontWeight: "900" },
-  apply: { minHeight: 50, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7, borderRadius: radius.md, backgroundColor: colors.brand.sky },
-  applyText: { color: colors.text.inverse, fontSize: 15, fontWeight: "900" },
+  clearDateButton: { position: "absolute", top: 2, right: 2, bottom: 2, width: 28, alignItems: "center", justifyContent: "center" },
+  dateSeparator: { color: colors.text.secondary, fontWeight: "900", fontSize: 13 },
+  apply: { minHeight: 46, marginTop: 4, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, borderRadius: radius.md, backgroundColor: colors.brand.sky },
+  applyText: { color: colors.text.inverse, fontSize: 14, fontWeight: "900" },
+  resetButton: { flexDirection: "row", alignItems: "center", gap: 3, paddingHorizontal: 8, paddingVertical: 4, borderRadius: radius.pill, backgroundColor: "rgba(255, 255, 255, 0.2)" },
+  resetText: { color: "rgba(255, 255, 255, 0.85)", fontSize: 12, fontWeight: "700" },
+  resetTextActive: { color: colors.brand.gold, fontWeight: "900" },
   modalBackdrop: { flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0, 0, 0, 0.28)" },
   pickerSheet: { minHeight: 286, paddingTop: 8, borderTopLeftRadius: 28, borderTopRightRadius: 28, backgroundColor: colors.surface.default },
   pickerHeader: { height: 48, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16 },

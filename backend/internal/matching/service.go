@@ -279,9 +279,9 @@ func (s *Service) SearchRecruitments(ctx context.Context, userID string, params 
 		params.Latitude, params.Longitude = s.currentLocation(ctx, userID, now)
 	}
 	nowText := now.UTC().Format(time.RFC3339Nano)
-	// Keyword, date/time, identity, and distance matching is finalized below
-	// in Go. Do not cap this candidate query before those filters run: doing so
-	// would make the page boundary depend on unrelated newer cards.
+	// Keyword and exact distance matching is finalized below in Go. Do not cap
+	// this candidate query before those filters run: doing so would make the
+	// page boundary depend on unrelated newer cards.
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT r.id, r.owner_user_id, r.category, COALESCE(p.name,''),
 		       COALESCE(p.nationality_code,''), r.available_date, r.start_time,
@@ -295,13 +295,20 @@ func (s *Service) SearchRecruitments(ctx context.Context, userID string, params 
 		WHERE r.owner_user_id <> $1
 		  AND r.status IN ('open','matched')
 		  AND r.expires_at > $2
+		  AND ($3 = '' OR r.category = $3)
+		  AND ($4 = '' OR r.available_date = $4)
+		  AND ($5 = '' OR r.available_date >= $5)
+		  AND ($6 = '' OR r.available_date <= $6)
+		  AND ($7 = '' OR (r.start_time < $8 AND r.end_time > $7))
+		  AND ($9 = false OR COALESCE(p.identity_status,'unverified') = 'verified')
 		  AND (SELECT COUNT(*) FROM matches accepted WHERE accepted.card_id=r.id AND accepted.status='accepted') < r.participant_limit
 		  AND NOT EXISTS (
 				SELECT 1 FROM blocks b
 				WHERE (b.blocker_user_id = $1 AND b.blocked_user_id = r.owner_user_id)
 				   OR (b.blocker_user_id = r.owner_user_id AND b.blocked_user_id = $1)
 		  )
-		ORDER BY r.created_at DESC`, userID, nowText)
+		ORDER BY r.created_at DESC`, userID, nowText, params.Category, params.AvailableDate,
+		params.AvailableFrom, params.AvailableTo, params.StartTime, params.EndTime, params.VerifiedOnly)
 	if err != nil {
 		return nil, err
 	}
