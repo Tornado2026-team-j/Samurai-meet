@@ -1,5 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { BlurView } from "expo-blur";
+import { LinearGradient } from "expo-linear-gradient";
 import { usePathname, useRouter, type Href } from "expo-router";
 import { useEffect, useRef, useState, type ComponentProps } from "react";
 import { Platform, Pressable, StyleSheet, Text, useColorScheme, View } from "react-native";
@@ -80,8 +81,7 @@ export default function GlassTabBar({
       highlight: "rgba(94, 197, 245, 0.2)",
       muted: "rgba(255, 255, 255, 0.68)",
       text: "rgba(255, 255, 255, 0.9)",
-      tint: "rgba(255, 255, 255, 0.05)",
-      underlay: "rgba(0, 0, 0, 0.16)",
+      fade: ["rgba(0, 0, 0, 0.02)", "rgba(0, 0, 0, 0.2)"] as const,
       shadow: "0 8px 22px rgba(0, 0, 0, 0.28)",
     }
     : {
@@ -89,8 +89,7 @@ export default function GlassTabBar({
       highlight: "rgba(94, 197, 245, 0.16)",
       muted: "#8A8A8A",
       text: "#535353",
-      tint: "rgba(255, 255, 255, 0.3)",
-      underlay: "rgba(31, 45, 61, 0.07)",
+      fade: ["rgba(255, 255, 255, 0.02)", "rgba(31, 45, 61, 0.08)"] as const,
       shadow: "0 8px 22px rgba(31, 45, 61, 0.14)",
     };
 
@@ -143,13 +142,16 @@ export default function GlassTabBar({
 
   return (
     <View pointerEvents="box-none" style={[styles.wrapper, { bottom }]}>
-      <View pointerEvents="none" style={[styles.contentShield, { backgroundColor: visual.underlay }]} />
       <BlurView
         intensity={Platform.OS === "ios" ? 56 : 38}
         tint={isDark ? "dark" : "light"}
         style={[styles.bar, { backgroundColor: visual.bar, boxShadow: visual.shadow }]}
       >
-        <View style={[styles.tint, { backgroundColor: visual.tint }]} />
+        <LinearGradient
+          colors={visual.fade}
+          pointerEvents="none"
+          style={styles.contentFade}
+        />
         {TAB_ITEMS.map((item) => {
           const selected = item.key === activeTab;
           const label = labels[item.key];
@@ -202,19 +204,13 @@ const styles = StyleSheet.create({
     borderRadius: 34,
     elevation: 12,
   },
-  contentShield: {
-    position: "absolute",
-    top: -42,
-    right: -14,
-    bottom: -12,
-    left: -14,
-  },
-  tint: {
+  contentFade: {
     position: "absolute",
     top: 0,
     right: 0,
     bottom: 0,
     left: 0,
+    borderRadius: 34,
   },
   tab: {
     minWidth: 56,
