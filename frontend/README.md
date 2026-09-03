@@ -13,7 +13,9 @@ bun install --frozen-lockfile
 
 ## Expo Goとの互換性
 
-このフロントエンドは、ストア版Expo Goで開発確認できるよう **Expo SDK 54系** に揃えています。Expo SDKを更新する場合は、先にExpo Goの対応SDKを確認してください。ストア版より新しいSDKを使う場合は、Expo GoではなくDevelopment Buildを用意します。
+このフロントエンドは、Expo Go 57系で開発確認できるよう **Expo SDK 57系** に揃えています。Expo SDKを更新する場合は、先にExpo Goの対応SDKを確認してください。Expo Goに含まれないネイティブモジュールを確認する場合は、Development Buildを用意します。
+
+Expoアカウントなしでローカル確認する場合は、PCと端末を同じLANへ接続し、`bun run start:offline`（`expo start --offline --lan`）を実行してQRコードを読み取ります。これはリモートのテスト配布ではありません。Expo Goの公開URL／EAS Updateはログインが必要なため、ログインなしで配布する場合はAndroid APKまたはiOSのTestFlight／Ad Hocビルドを使います。
 
 Recovery PhraseのArgon2idは、Development Build / ストアビルドでは`react-native-libsodium`のネイティブ実装を使います。Expo GoとWebでは同じ`memory_kib=32768`、`iterations=3`、`parallelism=1`のパラメータでJS実装へフォールバックします。したがって、Expo Go上での速度はネイティブ実機ビルドの速度にはなりません。iOS実機で高速化を確認する場合は、ネイティブモジュールを含むDevelopment Buildを作成してください。
 

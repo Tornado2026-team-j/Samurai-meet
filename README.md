@@ -31,7 +31,9 @@ DBの期限や監査用の絶対時刻はUTCのRFC3339で保存・返却しま�
 
 ## Expo Go / Development Build
 
-Expo SDK 54系で、通常の画面・API接続・Web Passkeyの開発確認はExpo Goを使えます。Expo GoではRecovery Phrase処理がJavaScript互換実装へフォールバックするため、ネイティブ実機ビルドより遅くなることがあります。
+Expo SDK 57系で、通常の画面・API接続・Web Passkeyの開発確認はExpo Go 57系を使えます。Expo GoではRecovery Phrase処理がJavaScript互換実装へフォールバックするため、ネイティブ実機ビルドより遅くなることがあります。
+
+同一LAN内でExpoアカウントなしにローカル確認する場合は、`frontend`で `bun run start:offline`（`expo start --offline --lan`）を使います。これは公開配布ではなく、PCと端末が同じネットワークにいる間だけ使える開発用接続です。Expo Goの公開URL／EAS Updateをテスターへ配布する場合はExpoログインが必要になったため、ログインなしの配布にはAndroid APKまたはiOSのTestFlight／Ad Hocビルドを使います。
 
 native Passkey、Secure Enclave/Android Keystore、hardware-backedな鍵保護、ネイティブQUIC transportはExpo Goの対象外です。これらはDevelopment Buildまたはストア相当ビルドと実機で確認します。詳細は [frontend/README.md](frontend/README.md) を参照してください。
 
@@ -46,6 +48,7 @@ go run ./cmd/server
 
 cd ../frontend
 bun install --frozen-lockfile
+bun run start:offline
 bun run typecheck
 bun run lint
 bun test

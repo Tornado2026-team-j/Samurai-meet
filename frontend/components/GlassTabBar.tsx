@@ -184,7 +184,11 @@ const styles = StyleSheet.create({
     boxShadow: "0 8px 22px rgba(31, 45, 61, 0.12)",
   },
   tint: {
-    ...StyleSheet.absoluteFillObject,
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
     backgroundColor: GLASS,
   },
   tab: {

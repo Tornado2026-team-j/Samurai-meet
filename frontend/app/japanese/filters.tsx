@@ -256,7 +256,7 @@ export default function JapaneseFiltersScreen() {
             <Pressable
               accessibilityLabel="日付選択を閉じる"
               onPress={closeDatePicker}
-              style={StyleSheet.absoluteFillObject}
+              style={StyleSheet.absoluteFill}
             />
             <View style={[styles.pickerSheet, { paddingBottom: Math.max(insets.bottom, 16) }]}>
               <View style={styles.pickerHeader}>

@@ -2161,7 +2161,7 @@ export default function SearchPreferencesScreen() {
             <Pressable
               accessibilityLabel={copy.closeDatePicker}
               onPress={() => setDatePickerVisible(false)}
-              style={StyleSheet.absoluteFillObject}
+              style={StyleSheet.absoluteFill}
             />
             <View
               style={[
@@ -2215,7 +2215,7 @@ export default function SearchPreferencesScreen() {
             <Pressable
               accessibilityLabel={copy.closeTimePicker}
               onPress={() => setTimePickerVisible(false)}
-              style={StyleSheet.absoluteFillObject}
+              style={StyleSheet.absoluteFill}
             />
             <View
               style={[
@@ -2268,7 +2268,7 @@ export default function SearchPreferencesScreen() {
           <Pressable
             accessibilityLabel={copy.closeScheduleWarning}
             onPress={editSchedule}
-            style={StyleSheet.absoluteFillObject}
+            style={StyleSheet.absoluteFill}
           />
           {scheduleWarning ? (
             <View style={styles.warningSheet}>
@@ -2422,7 +2422,11 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface.screen,
   },
   homeLayer: {
-    ...StyleSheet.absoluteFillObject,
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
   },
   homeDismissLayer: {
     position: "absolute",

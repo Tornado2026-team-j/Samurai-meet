@@ -2,6 +2,7 @@
   "expo": {
     "name": "Samurai Meet",
     "slug": "samurai-meet",
+    "owner": "disnanas-team",
     "scheme": "samuraimeet",
     "version": "0.1.0",
     "orientation": "portrait",
@@ -41,7 +42,8 @@
         }
       ],
       "@react-native-community/datetimepicker",
-      "expo-localization"
+      "expo-localization",
+      "expo-status-bar"
     ]
   }
 }
