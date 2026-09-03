@@ -607,27 +607,46 @@ function legacyDeviceChatAAD(chatID: string): Uint8Array {
 
 /** Returns a copy of the device Key-B for legacy chat reads/device proof use. */
 export async function loadChatMessageKey(session: Session): Promise<Uint8Array> {
-  const { ensureDeviceKeyB, loadStoredDeviceKeyB } = await loadDeviceKeyManagement();
-  let device = await loadStoredDeviceKeyB(session.user_id);
-  if (!device) device = await ensureDeviceKeyB(session);
-  try {
-    if (device.keyB.length !== 32) throw new Error("chat_key_unavailable");
+	const { loadStoredDeviceKeyB } = await loadDeviceKeyManagement();
+	const device = await loadStoredDeviceKeyB(session.user_id);
+	if (!device) throw new Error("legacy_chat_key_unavailable");
+	try {
+		if (device.keyB.length !== 32) throw new Error("chat_key_unavailable");
     return device.keyB.slice();
   } finally {
     device.keyB.fill(0);
   }
 }
 
+type ChatDeviceProofBundle = Pick<DeviceKeyBundle, "device">;
+
+export type ChatContentKeyLoadOptions = {
+  /** Do not create a new DEK when existing chat-dek-v1 ciphertext is present. */
+  allowCreate?: boolean;
+};
+
+async function ensureChatDeviceProofBundle(session: Session, allowCreate = true): Promise<ChatDeviceProofBundle> {
+  const { ensureDeviceKeyB, loadStoredDeviceKeyB } = await loadDeviceKeyManagement();
+  const device = allowCreate
+    ? await ensureDeviceKeyB(session)
+    : await loadStoredDeviceKeyB(session.user_id);
+  if (!device) throw new Error("chat_device_proof_unavailable");
+  return { device };
+}
+
 /**
- * Loads the stable per-chat DEK. The account envelope makes Recovery and the
- * existing root-key device transfer sufficient for the user's own devices;
- * the device envelope covers the first open on another participant device.
+ * Loads the stable per-chat DEK. Ordinary reads need only the stored signing
+ * key for the device proof; the X25519 agreement key is requested lazily only
+ * when a device envelope must actually be opened or a new envelope set must
+ * be created. This keeps restart-time chat reads outside the recent-Passkey
+ * registration boundary.
  */
 export async function loadChatContentKey(
   chatID: string,
   session: Session,
   signal?: AbortSignal,
   random: (length: number) => Promise<Uint8Array> = randomBytes,
+  options: ChatContentKeyLoadOptions = {},
 ): Promise<Uint8Array> {
   if (!chatID) throw new Error("chat_key_unavailable");
   const {
@@ -635,7 +654,16 @@ export async function loadChatContentKey(
     loadStoredKeyEnvelope,
     listKeyEnvelopes,
   } = await loadDeviceKeyManagement();
-  const bundle = await ensureChatDeviceAgreementKey(session);
+  let deviceBundle = await ensureChatDeviceProofBundle(session, options.allowCreate !== false);
+  let agreementBundle: DeviceKeyBundle | null = null;
+  const ensureAgreementBundle = async (): Promise<DeviceKeyBundle> => {
+    if (agreementBundle) return agreementBundle;
+    const next = await ensureChatDeviceAgreementKey(session);
+    wipeChatDeviceProofBundle(deviceBundle);
+    agreementBundle = next;
+    deviceBundle = next;
+    return next;
+  };
   let keyA: Uint8Array | null = null;
   let accountDataKey: Uint8Array | null = null;
   let contentKey: Uint8Array | null = null;
@@ -644,7 +672,7 @@ export async function loadChatContentKey(
     let rootEnvelope = await loadStoredKeyEnvelope(session.user_id);
     if (!rootEnvelope) {
       // A transferred/recovered device may already have a usable device
-      // envelope while the root envelope is still behind the recent-passkey
+      // envelope while the root envelope is still behind the recent-Passkey
       // gate. Do not make device-envelope chat recovery depend on fetching it.
       const remoteEnvelopes = await listKeyEnvelopes(session).catch(() => []);
       rootEnvelope = remoteEnvelopes[0] ?? null;
@@ -654,7 +682,7 @@ export async function loadChatContentKey(
       if (keyA) accountDataKey = deriveAccountDataKey(keyA, rootEnvelope.kdf_params.data_salt);
     }
 
-    const stored = await getChatKeyEnvelope(chatID, session, bundle, signal);
+    const stored = await getChatKeyEnvelope(chatID, session, deviceBundle, signal);
     const storedCommitment = chatKeyEnvelopeCommitment(stored);
     if (stored.account_envelope && accountDataKey) {
       try {
@@ -673,6 +701,7 @@ export async function loadChatContentKey(
       }
     }
     if (!contentKey && stored.device_envelope) {
+      const bundle = await ensureAgreementBundle();
       try {
         contentKey = unwrapChatKeyForDevice(
           stored.device_envelope.envelope,
@@ -709,7 +738,7 @@ export async function loadChatContentKey(
             algorithm: CHAT_ACCOUNT_KEY_WRAPPING_ALGORITHM,
             envelope: accountEnvelope,
             key_commitment: commitment,
-          }], session, bundle, signal);
+          }], session, deviceBundle, signal);
         } catch (error) {
           if (signal?.aborted) throw error;
           if (!(error instanceof APIError) || error.code !== "chat_key_envelope_authority_required") throw error;
@@ -717,14 +746,14 @@ export async function loadChatContentKey(
       }
       if (!storedCommitment) {
         try {
-          await ensureChatKeyManifest(chatID, contentKey, stored, session, bundle, signal);
+          await ensureChatKeyManifest(chatID, contentKey, stored, session, deviceBundle, signal);
         } catch (error) {
           if (signal?.aborted) throw error;
           if (!(error instanceof APIError) || error.code !== "chat_key_envelope_authority_required") throw error;
         }
       }
       try {
-        await provisionMissingChatDeviceEnvelopes(chatID, contentKey, session, bundle, signal, random);
+        await provisionMissingChatDeviceEnvelopes(chatID, contentKey, session, deviceBundle, signal, random);
       } catch (error) {
         // The current device can still read and write with its chat DEK when a
         // newly registered peer device is temporarily unavailable. Abort is
@@ -738,6 +767,7 @@ export async function loadChatContentKey(
     if (stored.account_envelope || stored.device_envelope) {
       throw new Error("chat_key_unwrap_failed");
     }
+    if (options.allowCreate === false) throw new Error("chat_key_envelope_missing");
     if (!accountDataKey) throw new Error("chat_key_recovery_unavailable");
 
     const generatedKey = await random(32);
@@ -754,7 +784,11 @@ export async function loadChatContentKey(
         chatID,
         random,
       );
-      const recipients = await getChatKeyRecipients(chatID, session, bundle, signal);
+      // Creating a new chat DEK requires agreement public keys for every
+      // participant device. This is the one migration/setup step that may
+      // legitimately require recent Passkey authorization.
+      await ensureAgreementBundle();
+      const recipients = await getChatKeyRecipients(chatID, session, deviceBundle, signal);
       const deviceEnvelopes = await Promise.all(recipients.map(async (recipient) => ({
         scope: "device" as const,
         user_id: recipient.user_id,
@@ -781,14 +815,14 @@ export async function loadChatContentKey(
         algorithm: CHAT_ACCOUNT_KEY_WRAPPING_ALGORITHM,
         envelope: accountEnvelope,
         key_commitment: generatedCommitment,
-      }, ...deviceEnvelopes], session, bundle, signal);
+      }, ...deviceEnvelopes], session, deviceBundle, signal);
       contentKey = generatedKey.slice();
       returned = true;
       return contentKey;
     } catch (error) {
       // Two devices can initialize the same chat concurrently. Re-read the
       // immutable row once and use the winner instead of creating a split key.
-      const winner = await getChatKeyEnvelope(chatID, session, bundle, signal).catch(() => null);
+      const winner = await getChatKeyEnvelope(chatID, session, deviceBundle, signal).catch(() => null);
       const winnerCommitment = winner ? chatKeyEnvelopeCommitment(winner) : "";
       if (winner?.account_envelope && accountDataKey) {
         try {
@@ -810,6 +844,7 @@ export async function loadChatContentKey(
           // The winning initializer may belong to the other participant, so
           // there may be no account envelope for this caller. The immutable
           // device envelope is still sufficient to recover the same DEK.
+          const bundle = await ensureAgreementBundle();
           contentKey = unwrapChatKeyForDevice(
             winner.device_envelope.envelope,
             bundle.agreement.privateKey,
@@ -837,7 +872,8 @@ export async function loadChatContentKey(
     keyA?.fill(0);
     accountDataKey?.fill(0);
     if (!returned) contentKey?.fill(0);
-    wipeDeviceBundle(bundle);
+    if (agreementBundle) wipeDeviceBundle(agreementBundle);
+    else wipeChatDeviceProofBundle(deviceBundle);
     // The returned key is intentionally owned by the caller and is not wiped.
   }
 }
@@ -879,7 +915,7 @@ function signedChatAPIPath(path: string): string {
 async function deviceAttachmentRequest(
   path: string,
   session: Session,
-  bundle: DeviceKeyBundle,
+  bundle: ChatDeviceProofBundle,
   method: "GET" | "PUT" | "POST",
   body?: Uint8Array,
   headers: Record<string, string> = {},
@@ -985,7 +1021,7 @@ async function ensureChatKeyManifest(
   contentKey: Uint8Array,
   stored: ChatKeyEnvelopeBundle,
   session: Session,
-  deviceBundle: DeviceKeyBundle,
+  deviceBundle: ChatDeviceProofBundle,
   signal: AbortSignal | undefined,
 ): Promise<void> {
   const existing = stored.account_envelope ?? stored.device_envelope;
@@ -999,17 +1035,17 @@ async function ensureChatKeyManifest(
 export async function getChatKeyEnvelope(
   chatID: string,
   session: Session,
-  deviceBundle?: DeviceKeyBundle,
+  deviceBundle?: ChatDeviceProofBundle,
   signal?: AbortSignal,
 ): Promise<ChatKeyEnvelopeBundle> {
-  const bundle = deviceBundle ?? await ensureChatDeviceAgreementKey(session);
+  const bundle = deviceBundle ?? await ensureChatDeviceProofBundle(session);
   try {
     const path = `/chats/${encodeURIComponent(chatID)}/key-envelope`;
     const response = await deviceAttachmentRequest(path, session, bundle, "GET", undefined, undefined, signal);
     const payload = await readAttachmentJSON<DataResponse<unknown>>(response);
     return parseChatKeyEnvelopeBundle(payload.data);
   } finally {
-    if (!deviceBundle) wipeDeviceBundle(bundle);
+    if (!deviceBundle) wipeChatDeviceProofBundle(bundle);
   }
 }
 
@@ -1017,11 +1053,11 @@ export async function saveChatKeyEnvelopes(
   chatID: string,
   envelopes: ChatKeyEnvelope[],
   session: Session,
-  deviceBundle?: DeviceKeyBundle,
+  deviceBundle?: ChatDeviceProofBundle,
   signal?: AbortSignal,
 ): Promise<void> {
   if (envelopes.length === 0 || envelopes.length > 64) throw new Error("Invalid chat key envelopes");
-  const bundle = deviceBundle ?? await ensureChatDeviceAgreementKey(session);
+  const bundle = deviceBundle ?? await ensureChatDeviceProofBundle(session);
   try {
     const body = new TextEncoder().encode(JSON.stringify({ envelopes }));
     const path = `/chats/${encodeURIComponent(chatID)}/key-envelopes`;
@@ -1030,24 +1066,24 @@ export async function saveChatKeyEnvelopes(
     }, signal);
     if (!response.ok) await readAttachmentJSON(response);
   } finally {
-    if (!deviceBundle) wipeDeviceBundle(bundle);
+    if (!deviceBundle) wipeChatDeviceProofBundle(bundle);
   }
 }
 
 export async function getChatKeyRecipients(
   chatID: string,
   session: Session,
-  deviceBundle?: DeviceKeyBundle,
+  deviceBundle?: ChatDeviceProofBundle,
   signal?: AbortSignal,
 ): Promise<ChatKeyRecipient[]> {
-  const bundle = deviceBundle ?? await ensureChatDeviceAgreementKey(session);
+  const bundle = deviceBundle ?? await ensureChatDeviceProofBundle(session);
   try {
     const path = `/chats/${encodeURIComponent(chatID)}/key-recipients`;
     const response = await deviceAttachmentRequest(path, session, bundle, "GET", undefined, undefined, signal);
     const payload = await readAttachmentJSON<DataResponse<unknown>>(response);
     return parseChatKeyRecipients(payload.data);
   } finally {
-    if (!deviceBundle) wipeDeviceBundle(bundle);
+    if (!deviceBundle) wipeChatDeviceProofBundle(bundle);
   }
 }
 
@@ -1055,7 +1091,7 @@ async function provisionMissingChatDeviceEnvelopes(
   chatID: string,
   contentKey: Uint8Array,
   session: Session,
-  deviceBundle: DeviceKeyBundle,
+  deviceBundle: ChatDeviceProofBundle,
   signal: AbortSignal | undefined,
   random: (length: number) => Promise<Uint8Array>,
 ): Promise<void> {
@@ -1121,8 +1157,12 @@ async function readAttachmentJSON<T>(response: Response): Promise<T> {
   return body as T;
 }
 
-function wipeDeviceBundle(bundle: DeviceKeyBundle): void {
+function wipeChatDeviceProofBundle(bundle: ChatDeviceProofBundle): void {
   bundle.device.keyB.fill(0);
+}
+
+function wipeDeviceBundle(bundle: DeviceKeyBundle): void {
+  wipeChatDeviceProofBundle(bundle);
   bundle.agreement.privateKey.fill(0);
 }
 
