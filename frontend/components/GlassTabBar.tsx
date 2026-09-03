@@ -77,22 +77,20 @@ export default function GlassTabBar({
   const visual = isDark
     ? {
       bar: "rgba(24, 29, 34, 0.88)",
-      border: "rgba(255, 255, 255, 0.14)",
       highlight: "rgba(94, 197, 245, 0.2)",
       muted: "rgba(255, 255, 255, 0.68)",
       text: "rgba(255, 255, 255, 0.9)",
       tint: "rgba(255, 255, 255, 0.05)",
-      shield: "rgba(24, 29, 34, 0.2)",
+      underlay: "rgba(0, 0, 0, 0.16)",
       shadow: "0 8px 22px rgba(0, 0, 0, 0.28)",
     }
     : {
       bar: "rgba(255, 255, 255, 0.84)",
-      border: "rgba(255, 255, 255, 0.78)",
       highlight: "rgba(94, 197, 245, 0.16)",
       muted: "#8A8A8A",
       text: "#535353",
       tint: "rgba(255, 255, 255, 0.3)",
-      shield: "rgba(255, 255, 255, 0.48)",
+      underlay: "rgba(31, 45, 61, 0.07)",
       shadow: "0 8px 22px rgba(31, 45, 61, 0.14)",
     };
 
@@ -145,11 +143,11 @@ export default function GlassTabBar({
 
   return (
     <View pointerEvents="box-none" style={[styles.wrapper, { bottom }]}>
-      <View pointerEvents="none" style={[styles.contentShield, { backgroundColor: visual.shield }]} />
+      <View pointerEvents="none" style={[styles.contentShield, { backgroundColor: visual.underlay }]} />
       <BlurView
         intensity={Platform.OS === "ios" ? 56 : 38}
         tint={isDark ? "dark" : "light"}
-        style={[styles.bar, { backgroundColor: visual.bar, borderColor: visual.border, boxShadow: visual.shadow }]}
+        style={[styles.bar, { backgroundColor: visual.bar, boxShadow: visual.shadow }]}
       >
         <View style={[styles.tint, { backgroundColor: visual.tint }]} />
         {TAB_ITEMS.map((item) => {
@@ -200,17 +198,16 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     paddingHorizontal: 8,
     paddingVertical: 5,
-    borderWidth: 1,
+    borderWidth: 0,
     borderRadius: 34,
     elevation: 12,
   },
   contentShield: {
     position: "absolute",
-    top: -28,
-    right: -4,
-    bottom: -4,
-    left: -4,
-    borderRadius: 42,
+    top: -42,
+    right: -14,
+    bottom: -12,
+    left: -14,
   },
   tint: {
     position: "absolute",

@@ -107,6 +107,9 @@ describe("ホーム画面の更新契約", () => {
     expect(source).toContain("useColorScheme");
     expect(source).toContain('tint={isDark ? "dark" : "light"}');
     expect(source).toContain('bar: "rgba(255, 255, 255, 0.84)"');
+    expect(source).toContain("borderWidth: 0");
+    expect(source).not.toContain("borderColor: visual.border");
+    expect(source).toContain("underlay: ");
     expect(source).toContain("contentShield");
     expect(source).toContain("router.replace(href)");
   });
