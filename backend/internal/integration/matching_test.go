@@ -110,6 +110,52 @@ func TestSearchRecruitmentsComparesSecondPrecisionExpiryAsTimestamp(t *testing.T
 	}
 }
 
+func TestMatchLikeIsAvailableOnlyAfterPlanAndIsIdempotent(t *testing.T) {
+	database := openIsolatedDatabase(t)
+	ctx := context.Background()
+	now := time.Date(2026, time.September, 4, 12, 0, 0, 0, time.UTC)
+	ownerID := randomID(t)
+	requesterID := randomID(t)
+	outsiderID := randomID(t)
+	cardID := randomID(t)
+	matchID := randomID(t)
+	insertMatchingTestUser(t, database, now, ownerID, "Owner", "JP")
+	insertMatchingTestUser(t, database, now, requesterID, "Requester", "US")
+	insertMatchingTestUser(t, database, now, outsiderID, "Outsider", "CA")
+	stamp := now.UTC().Format(time.RFC3339Nano)
+	if _, err := database.ExecContext(ctx, `
+		INSERT INTO recruitment_cards (id,owner_user_id,category,available_date,start_time,end_time,timezone,visibility_radius_km,status,expires_at,created_at,updated_at)
+		VALUES ($1,$2,'Food','2026-09-03','18:00','20:00','Asia/Tokyo',1,'matched',$3,$4,$4)`,
+		cardID, ownerID, now.Add(-time.Hour), stamp); err != nil {
+		t.Fatalf("insert past recruitment = %v", err)
+	}
+	if _, err := database.ExecContext(ctx, `
+		INSERT INTO matches (id,card_id,requester_user_id,owner_user_id,status,matched_at,created_at,updated_at)
+		VALUES ($1,$2,$3,$4,'accepted',$5,$5,$5)`, matchID, cardID, requesterID, ownerID, stamp); err != nil {
+		t.Fatalf("insert accepted match = %v", err)
+	}
+
+	service := matching.NewService(database)
+	if _, err := service.LikeMatch(ctx, outsiderID, matchID, now); !errors.Is(err, matching.ErrForbidden) {
+		t.Fatalf("outsider LikeMatch error = %v, want ErrForbidden", err)
+	}
+	like, err := service.LikeMatch(ctx, requesterID, matchID, now)
+	if err != nil || !like.Liked || like.MatchID != matchID || like.LikedAt == "" {
+		t.Fatalf("first LikeMatch = %+v, err=%v", like, err)
+	}
+	if _, err := service.LikeMatch(ctx, requesterID, matchID, now.Add(time.Minute)); err != nil {
+		t.Fatalf("idempotent LikeMatch error = %v", err)
+	}
+	var count int
+	if err := database.QueryRowContext(ctx, `SELECT likes_count FROM profiles WHERE user_id=$1`, ownerID).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("owner like count = %d, err=%v; want 1", count, err)
+	}
+	items, err := service.ListMatches(ctx, requesterID, matching.MatchListParams{Role: "requester"}, now)
+	if err != nil || len(items) != 1 || !items[0].LikedByMe {
+		t.Fatalf("liked match list = %+v, err=%v", items, err)
+	}
+}
+
 func TestAcceptMatchHonorsParticipantLimitConcurrently(t *testing.T) {
 	database := openIsolatedDatabase(t)
 	ctx := context.Background()

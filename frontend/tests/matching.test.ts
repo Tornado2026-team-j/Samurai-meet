@@ -5,6 +5,7 @@ import {
 	closeRecruitment,
 	classifyRecruitmentDescription,
   createRecruitment,
+  likeMatch,
   listMatches,
   listMyRecruitments,
   recruitmentToMatchCard,
@@ -216,6 +217,22 @@ describe("募集APIクライアント", () => {
     globalThis.fetch = (async () => new Response(JSON.stringify({}), { status: 200 })) as unknown as typeof fetch;
 
     await expect(listMatches(session, { role: "requester" })).rejects.toThrow("matches response is invalid");
+  });
+
+  it("終了済みマッチへのいいねAPI契約を呼び出す", async () => {
+    let requestedURL = "";
+    let requestedMethod = "";
+    globalThis.fetch = (async (input, init) => {
+      requestedURL = String(input);
+      requestedMethod = init?.method ?? "";
+      return new Response(JSON.stringify({
+        data: { match_id: "match-1", liked: true, liked_at: "2026-09-04T12:00:00Z" },
+      }), { status: 200 });
+    }) as typeof fetch;
+
+    await expect(likeMatch("match-1", session)).resolves.toMatchObject({ match_id: "match-1", liked: true });
+    expect(requestedURL).toContain("/matches/match-1/like");
+    expect(requestedMethod).toBe("POST");
   });
 
   it("自分の募集管理APIと応募取り下げAPIの契約を組み立てる", async () => {

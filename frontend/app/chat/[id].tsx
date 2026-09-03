@@ -71,7 +71,7 @@ import {
   type ChatAttachmentContentType,
 } from "../../services/crypto";
 import { resolveCurrentLocationDisplay } from "../../services/location";
-import { declineMatch, getMatch, type MatchView } from "../../services/matching";
+import { declineMatch, getMatch, likeMatch, type MatchView } from "../../services/matching";
 import {
   loadLanguage,
   loadTranslationConsent,
@@ -100,6 +100,12 @@ type SafetyModal =
   | { kind: "report"; target: ReportTarget };
 type ChatMigrationState = "not_needed" | "pending" | "retry_required" | "owner_required";
 type MaterialIconName = ComponentProps<typeof MaterialIcons>["name"];
+
+function scheduledPlanEnded(match: MatchView | null): boolean {
+  if (!match) return false;
+  const end = new Date(`${match.recruitment.available_date}T${match.recruitment.end_time}:00+09:00`);
+  return !Number.isNaN(end.getTime()) && end.getTime() <= Date.now();
+}
 
 const CATEGORY_ICONS: Record<MatchCategory, MaterialIconName> = {
   Food: "restaurant",
@@ -211,6 +217,10 @@ const COPY = {
     scheduleTitle: "案内内容",
     date: "日付",
     time: "時刻",
+    like: "いいね",
+    liked: "いいね済み",
+    likeSent: "いいねを送りました。",
+    likeFailed: "いいねを送信できませんでした。予定終了後にもう一度お試しください。",
     quickWhere: "集合場所はどこですか？",
     quickGate: "改札前で待ち合わせしましょう。",
     quickThanks: "ありがとうございます。よろしくお願いします。",
@@ -334,6 +344,10 @@ const COPY = {
     scheduleTitle: "Guide details",
     date: "Date",
     time: "Time",
+    like: "Like",
+    liked: "Liked",
+    likeSent: "Like sent.",
+    likeFailed: "The like could not be sent. Try again after the plan has ended.",
     quickWhere: "Where should we meet?",
     quickGate: "Let's meet in front of the ticket gates.",
     quickThanks: "Thank you. I look forward to it.",
@@ -502,6 +516,7 @@ export default function ChatDetailScreen() {
   const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
   const [safetyModal, setSafetyModal] = useState<SafetyModal | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [liking, setLiking] = useState(false);
   const [locallyClosed, setLocallyClosed] = useState<"declined" | "blocked" | null>(null);
   const [safetySubmitting, setSafetySubmitting] = useState(false);
   const safetySubmittingRef = useRef(false);
@@ -530,6 +545,7 @@ export default function ChatDetailScreen() {
   const chatUpdatedAt = chat?.updated_at;
   const readOnly = chat?.status === "completed" || locallyClosed !== null;
   const canSend = safetyModal === null && !readOnly && !chatKeyLoading && !chatKeyUnavailable && !sending && !deletingMessageID && !sharingLocation && !sendingPhoto && !validation;
+  const canLike = scheduledPlanEnded(match);
 
   const cancelTranslationsForMessage = useCallback((messageID: string) => {
     for (const [key, controller] of translationControllersRef.current) {
@@ -613,6 +629,20 @@ export default function ChatDetailScreen() {
       return action(refreshedSession, signal);
     }
   }, [getCurrentSession, refresh, session, status]);
+
+  const sendLike = useCallback(async () => {
+    if (!match || match.liked_by_me || liking) return;
+    setLiking(true);
+    try {
+      await runWithSession((activeSession, signal) => likeMatch(match.id, activeSession, signal), new AbortController().signal);
+      setMatch((current) => current ? { ...current, liked_by_me: true } : current);
+      setNotice(copy.likeSent);
+    } catch {
+      setNotice(copy.likeFailed);
+    } finally {
+      setLiking(false);
+    }
+  }, [copy.likeFailed, copy.likeSent, liking, match, runWithSession]);
 
   const hydrateAttachment = useCallback(async (message: ChatMessageView, force = false) => {
     const attachment = message.attachment;
@@ -1960,6 +1990,18 @@ export default function ChatDetailScreen() {
                   </Text>
                 </View>
               </View>
+              {canLike ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityState={{ disabled: match.liked_by_me || liking }}
+                  disabled={match.liked_by_me || liking}
+                  onPress={() => void sendLike()}
+                  style={[styles.scheduleLikeAction, (match.liked_by_me || liking) && styles.scheduleLikeActionDisabled]}
+                >
+                  <MaterialIcons color={match.liked_by_me ? BLUE : TEXT_GRAY} name={match.liked_by_me ? "thumb-up" : "thumb-up-off-alt"} size={17} />
+                  <Text style={[styles.scheduleLikeText, match.liked_by_me && styles.scheduleLikeTextSelected]}>{match.liked_by_me ? copy.liked : copy.like}</Text>
+                </Pressable>
+              ) : null}
             </View>
           </View>
         ) : null}
@@ -2475,6 +2517,23 @@ const styles = StyleSheet.create({
     letterSpacing: 0,
     lineHeight: 17,
   },
+  scheduleLikeAction: {
+    minHeight: 36,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    alignSelf: "flex-start",
+    gap: 6,
+    marginTop: 12,
+    paddingHorizontal: 14,
+    borderWidth: 1,
+    borderColor: BORDER_GRAY,
+    borderRadius: 18,
+    backgroundColor: SOFT_BLUE,
+  },
+  scheduleLikeActionDisabled: { opacity: 0.62 },
+  scheduleLikeText: { color: TEXT_GRAY, fontSize: 12, fontWeight: "800" },
+  scheduleLikeTextSelected: { color: BLUE },
   noticePanel: {
     width: "100%",
     maxWidth: 348,
