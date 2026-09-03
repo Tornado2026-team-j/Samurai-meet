@@ -39,6 +39,11 @@ jobs:
           fetch-depth: 0
           persist-credentials: true
 
+      - name: Node.js をセットアップ
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.17.0"
+
       - name: Bun をセットアップ
         uses: oven-sh/setup-bun@v2
 
