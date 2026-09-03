@@ -176,7 +176,12 @@ export default function JapaneseHomeScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const initialLoadStarted = useRef(false);
-  const loadInFlight = useRef(false);
+  const searchRequestIDRef = useRef(0);
+  const activeSearchRequestRef = useRef<{
+    id: number;
+    controller: AbortController;
+    cancelled: boolean;
+  } | null>(null);
   const locationCacheRef = useRef<{ coordinates: Coordinates; cachedAt: number } | null>(null);
   const [selectedDate, setSelectedDate] = useState(params.date ?? todayDateKey);
   const [sortMode, setSortMode] = useState<SortMode>(params.sort === "deadline" ? "deadline" : "near");
@@ -195,19 +200,20 @@ export default function JapaneseHomeScreen() {
 
   const resetSearchConditions = useCallback(() => {
     Keyboard.dismiss();
+    const today = todayDateKey();
     setQuery("");
     setSubmittedQuery("");
-    setSelectedDate(todayDateKey());
+    setSelectedDate(today);
     setSortMode("near");
     router.setParams({
-      query: undefined,
-      date: undefined,
-      sort: undefined,
-      category: undefined,
-      time: undefined,
-      radius: undefined,
-      availableFrom: undefined,
-      availableTo: undefined,
+      query: "",
+      date: today,
+      sort: "near",
+      category: "",
+      time: "",
+      radius: "3",
+      availableFrom: "",
+      availableTo: "",
     });
   }, [router]);
 
@@ -269,32 +275,46 @@ export default function JapaneseHomeScreen() {
   const headerHeight = Math.max(hasDateRange ? 184 : 246, sortTop + 58);
 
   const loadRecruitments = useCallback((mode: "initial" | "refresh" = "refresh") => {
-    if (loadInFlight.current) return;
-    loadInFlight.current = true;
+    const previousRequest = activeSearchRequestRef.current;
+    if (previousRequest) {
+      previousRequest.cancelled = true;
+      previousRequest.controller.abort();
+    }
+    const requestId = searchRequestIDRef.current + 1;
+    searchRequestIDRef.current = requestId;
     const controller = new AbortController();
-    let cancelled = false;
+    const request = { id: requestId, controller, cancelled: false };
+    activeSearchRequestRef.current = request;
+    const isCurrentRequest = () =>
+      activeSearchRequestRef.current?.id === requestId && !request.cancelled;
+    const releaseRequest = () => {
+      if (activeSearchRequestRef.current?.id === requestId) {
+        activeSearchRequestRef.current = null;
+      }
+    };
+
+    setRecruitments([]);
+    setApplicationStatuses({});
+    setTodayPlanCount(0);
+    setLoading(true);
+    setRefreshing(mode !== "initial");
+    setLoadError(null);
 
     const run = async () => {
       const activeSession = getCurrentSession() ?? session;
       if (status !== "signed_in" || !activeSession) {
-        if (!cancelled) {
+        if (isCurrentRequest()) {
           setRecruitments([]);
           setApplicationStatuses({});
           setTodayPlanCount(0);
           setLoading(false);
-			setRefreshing(false);
-			setLoadError(copyRef.current.signInRequired);
+          setRefreshing(false);
+          setLoadError(copyRef.current.signInRequired);
         }
-        loadInFlight.current = false;
+        releaseRequest();
         return;
       }
 
-      if (mode === "initial") {
-        setLoading(true);
-      } else {
-        setRefreshing(true);
-      }
-      setLoadError(null);
       try {
         let coordinates: Coordinates | null = null;
         let locationWasRefreshed = false;
@@ -345,7 +365,7 @@ export default function JapaneseHomeScreen() {
           searchSession = refreshedSession;
           result = await requestSearch(searchSession);
         }
-        if (cancelled) return;
+        if (!isCurrentRequest()) return;
 
         // Recruitment cards are the critical path. Show them as soon as the
         // search response arrives; application badges and today's count are
@@ -371,33 +391,41 @@ export default function JapaneseHomeScreen() {
               return;
             }
           }
-          if (cancelled) return;
+          if (!isCurrentRequest()) return;
           const nextStatuses: Record<string, NonNullable<MatchCardData["applicationStatus"]>> = {};
           for (const item of applicationResult) nextStatuses[item.recruitment.id] = item.status;
           setApplicationStatuses(nextStatuses);
           setTodayPlanCount(applicationResult.filter((item) => item.status === "accepted" && item.recruitment.available_date === todayDateKey()).length);
         })();
       } catch (error) {
-        if (error instanceof Error && error.name === "AbortError" && (cancelled || controller.signal.aborted)) return;
-        if (!cancelled) {
+        if (error instanceof Error && error.name === "AbortError" && (request.cancelled || controller.signal.aborted)) return;
+        if (isCurrentRequest()) {
           setLoadError(copyRef.current.loadError);
         }
       } finally {
-        if (!cancelled) {
+        if (isCurrentRequest()) {
           setLoading(false);
           setRefreshing(false);
         }
-        loadInFlight.current = false;
+        releaseRequest();
       }
     };
 
     void run();
     return () => {
-      cancelled = true;
+      request.cancelled = true;
       controller.abort();
-      loadInFlight.current = false;
+      releaseRequest();
     };
   }, [getCurrentSession, params.availableFrom, params.availableTo, refresh, selectedCategory, selectedDate, selectedRadius, session, status, submittedQuery, timeRange]);
+
+  useEffect(() => () => {
+    const activeRequest = activeSearchRequestRef.current;
+    if (!activeRequest) return;
+    activeRequest.cancelled = true;
+    activeRequest.controller.abort();
+    activeSearchRequestRef.current = null;
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -433,7 +461,7 @@ export default function JapaneseHomeScreen() {
       return loadRecruitmentsRef.current("initial");
     }
 
-    if (previousSearchSignature.current === searchSignature || loadInFlight.current) return;
+    if (previousSearchSignature.current === searchSignature) return;
     previousSearchSignature.current = searchSignature;
     return loadRecruitmentsRef.current("refresh");
   }, [searchSignature, status]);

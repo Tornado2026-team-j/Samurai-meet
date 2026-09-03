@@ -54,6 +54,10 @@ describe("ホーム画面の更新契約", () => {
     expect(source).not.toContain("await updateCurrentLocation");
     expect(source).toContain("setRecruitments(result);");
     expect(source).toContain("hydrated independently below");
+    expect(source).toContain("activeSearchRequestRef");
+    expect(source).toContain("previousRequest.controller.abort()");
+    expect(source).not.toContain("loadInFlight.current");
+    expect(source).toContain('availableFrom: "",');
   });
 
   it("外国人ホームは復帰フォーカスではなく初回取得とPull-to-Refreshだけを使う", async () => {
