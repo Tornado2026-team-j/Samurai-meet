@@ -2,7 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { BlurView } from "expo-blur";
 import { usePathname, useRouter, type Href } from "expo-router";
 import { useEffect, useRef, useState, type ComponentProps } from "react";
-import { Platform, Pressable, StyleSheet, Text, View } from "react-native";
+import { Platform, Pressable, StyleSheet, Text, useColorScheme, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   loadLanguage,
@@ -12,10 +12,6 @@ import {
 } from "../services/onboarding";
 
 const BLUE = "#5EC5F5";
-const TEXT = "#535353";
-const MUTED = "#8A8A8A";
-const GLASS = "rgba(255, 255, 255, 0.92)";
-const HIGHLIGHT = "rgba(94, 197, 245, 0.16)";
 
 type TabKey = "home" | "chat" | "plans" | "monsters" | "profile";
 type IoniconName = ComponentProps<typeof Ionicons>["name"];
@@ -70,13 +66,35 @@ export default function GlassTabBar({
   const insets = useSafeAreaInsets();
   const pathname = usePathname();
   const router = useRouter();
+  const isDark = useColorScheme() === "dark";
   const pendingHref = useRef<string | null>(null);
   const [language, setLanguage] = useState<AppLanguage | null>(null);
-  const bottom = Math.max(insets.bottom + 8, 18);
+  const bottom = Math.max(insets.bottom + 3, 10);
   const defaultHomeHref: Href = appMode === "traveler" ? "/foreigner" : "/japanese";
   const defaultPlansHref: Href = "/plans";
   const fallbackLanguage: AppLanguage = appMode === "traveler" ? "en" : "ja";
   const labels = TAB_LABELS[language ?? fallbackLanguage];
+  const visual = isDark
+    ? {
+      bar: "rgba(24, 29, 34, 0.88)",
+      border: "rgba(255, 255, 255, 0.14)",
+      highlight: "rgba(94, 197, 245, 0.2)",
+      muted: "rgba(255, 255, 255, 0.68)",
+      text: "rgba(255, 255, 255, 0.9)",
+      tint: "rgba(255, 255, 255, 0.05)",
+      shield: "rgba(24, 29, 34, 0.2)",
+      shadow: "0 8px 22px rgba(0, 0, 0, 0.28)",
+    }
+    : {
+      bar: "rgba(255, 255, 255, 0.84)",
+      border: "rgba(255, 255, 255, 0.78)",
+      highlight: "rgba(94, 197, 245, 0.16)",
+      muted: "#8A8A8A",
+      text: "#535353",
+      tint: "rgba(255, 255, 255, 0.3)",
+      shield: "rgba(255, 255, 255, 0.48)",
+      shadow: "0 8px 22px rgba(31, 45, 61, 0.14)",
+    };
 
   useEffect(() => {
     pendingHref.current = null;
@@ -127,9 +145,13 @@ export default function GlassTabBar({
 
   return (
     <View pointerEvents="box-none" style={[styles.wrapper, { bottom }]}>
-      <View pointerEvents="none" style={styles.contentShield} />
-      <BlurView intensity={Platform.OS === "ios" ? 48 : 35} tint="light" style={styles.bar}>
-        <View style={styles.tint} />
+      <View pointerEvents="none" style={[styles.contentShield, { backgroundColor: visual.shield }]} />
+      <BlurView
+        intensity={Platform.OS === "ios" ? 56 : 38}
+        tint={isDark ? "dark" : "light"}
+        style={[styles.bar, { backgroundColor: visual.bar, borderColor: visual.border, boxShadow: visual.shadow }]}
+      >
+        <View style={[styles.tint, { backgroundColor: visual.tint }]} />
         {TAB_ITEMS.map((item) => {
           const selected = item.key === activeTab;
           const label = labels[item.key];
@@ -145,14 +167,14 @@ export default function GlassTabBar({
                 pressed && styles.pressed,
               ]}
             >
-              <View style={[styles.iconBubble, selected && styles.iconBubbleSelected]}>
+              <View style={[styles.iconBubble, selected && { backgroundColor: visual.highlight }]}>
                 <Ionicons
-                  color={selected ? BLUE : MUTED}
+                  color={selected ? BLUE : visual.muted}
                   name={selected ? item.activeIcon : item.icon}
                   size={22}
                 />
               </View>
-              <Text numberOfLines={1} style={[styles.label, selected && styles.labelSelected]}>
+              <Text numberOfLines={1} style={[styles.label, { color: visual.text }, selected && styles.labelSelected]}>
                 {label}
               </Text>
             </Pressable>
@@ -166,8 +188,8 @@ export default function GlassTabBar({
 const styles = StyleSheet.create({
   wrapper: {
     position: "absolute",
-    right: 18,
-    left: 18,
+    right: 14,
+    left: 14,
     zIndex: 20,
   },
   bar: {
@@ -177,13 +199,10 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     overflow: "hidden",
     paddingHorizontal: 8,
-    paddingVertical: 7,
+    paddingVertical: 5,
     borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.78)",
     borderRadius: 34,
-    backgroundColor: GLASS,
-    boxShadow: "0 8px 22px rgba(31, 45, 61, 0.12)",
-    elevation: 10,
+    elevation: 12,
   },
   contentShield: {
     position: "absolute",
@@ -192,7 +211,6 @@ const styles = StyleSheet.create({
     bottom: -4,
     left: -4,
     borderRadius: 42,
-    backgroundColor: "rgba(255, 255, 255, 0.68)",
   },
   tint: {
     position: "absolute",
@@ -200,7 +218,6 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     left: 0,
-    backgroundColor: GLASS,
   },
   tab: {
     minWidth: 56,
@@ -217,11 +234,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     borderRadius: 17,
   },
-  iconBubbleSelected: {
-    backgroundColor: HIGHLIGHT,
-  },
   label: {
-    color: TEXT,
     fontSize: 10,
     fontWeight: "600",
     letterSpacing: 0,

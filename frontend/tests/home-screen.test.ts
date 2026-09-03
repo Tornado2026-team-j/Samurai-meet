@@ -94,8 +94,21 @@ describe("ホーム画面の更新契約", () => {
     expect(source).toContain("plan.recruitment.end_time");
     expect(source).toContain("setReviewPlan(completedPlan)");
     expect(source).toContain("reviewPromptedRef");
+    expect(source).toContain("reviewPlan.recruitment.available_date");
+    expect(source).toContain("reviewPlan.other_user.name");
+    expect(source).toContain("reviewAlreadyLiked");
     expect(source).toContain("reviewTitle");
     expect(chatSource).toContain('if (match.status === "completed") return true;');
+  });
+
+  it("下部ナビはLINE風のテーマ連動半透明固定バーを使う", async () => {
+    const source = await readScreen("../components/GlassTabBar.tsx");
+
+    expect(source).toContain("useColorScheme");
+    expect(source).toContain('tint={isDark ? "dark" : "light"}');
+    expect(source).toContain('bar: "rgba(255, 255, 255, 0.84)"');
+    expect(source).toContain("contentShield");
+    expect(source).toContain("router.replace(href)");
   });
 
   it("外国人ホームは構造化プロフィールJSONをそのまま描画しない", async () => {

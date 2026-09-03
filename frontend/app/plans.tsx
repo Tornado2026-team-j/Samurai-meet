@@ -52,6 +52,10 @@ const COPY = {
     likeError: "いいねを送信できませんでした。予定終了後にもう一度お試しください。",
     reviewTitle: "予定はいかがでしたか？",
     reviewMessage: "相手にいいねを送れます。",
+    reviewDate: "実施日時",
+    reviewPerson: "評価する相手",
+    reviewPending: "未評価",
+    reviewAlreadyLiked: "評価済み",
     reviewLater: "あとで評価する",
     people: (count: number) => `募集 ${count}人`,
   },
@@ -83,6 +87,10 @@ const COPY = {
     likeError: "The like could not be sent. Try again after the plan has ended.",
     reviewTitle: "How was your plan?",
     reviewMessage: "You can send the other participant a like.",
+    reviewDate: "When",
+    reviewPerson: "Person to rate",
+    reviewPending: "Not rated yet",
+    reviewAlreadyLiked: "Already rated",
     reviewLater: "Rate later",
     people: (count: number) => `${count} people needed`,
   },
@@ -288,6 +296,7 @@ export default function PlansScreen() {
       if (next.status === "completed") {
         await completeMatch(plan.id, activeSession).catch(() => undefined);
         const completedPlan = { ...plan, status: "completed" as const };
+        reviewPromptedRef.current.add(plan.id);
         setPlans((items) => items.map((item) => item.id === plan.id ? completedPlan : item));
         setReviewPlan(completedPlan);
       }
@@ -432,6 +441,14 @@ export default function PlansScreen() {
             <MaterialIcons color={colors.brand.sky} name="thumb-up" size={32} />
             <Text style={styles.reviewTitle}>{copy.reviewTitle}</Text>
             <Text style={styles.reviewMessage}>{copy.reviewMessage}</Text>
+            {reviewPlan ? (
+              <View style={styles.reviewPlanCard}>
+                <Text style={styles.reviewPlanDate}>{copy.reviewDate}: {displayDate(reviewPlan.recruitment.available_date, language)}</Text>
+                <Text style={styles.reviewPlanTime}>{formatTimeRange(reviewPlan.recruitment.start_time, reviewPlan.recruitment.duration_hours)}</Text>
+                <Text numberOfLines={1} style={styles.reviewPlanPerson}>{copy.reviewPerson}: {reviewPlan.other_user.name}</Text>
+                <Text style={styles.reviewPlanStatus}>{reviewPlan.liked_by_me ? copy.reviewAlreadyLiked : copy.reviewPending}</Text>
+              </View>
+            ) : null}
             <Pressable
               accessibilityRole="button"
               disabled={busyMatchId !== null || !reviewPlan}
@@ -507,6 +524,11 @@ const styles = StyleSheet.create({
   reviewSheet: { width: "100%", maxWidth: 420, alignItems: "center", padding: 26, borderRadius: radius.xl, backgroundColor: colors.surface.default, ...shadows.card },
   reviewTitle: { marginTop: 12, color: colors.text.primary, fontSize: 20, fontWeight: "800", textAlign: "center" },
   reviewMessage: { marginTop: 8, color: colors.text.secondary, fontSize: 14, fontWeight: "600", textAlign: "center" },
+  reviewPlanCard: { width: "100%", marginTop: 18, padding: 14, borderRadius: radius.md, backgroundColor: colors.surface.blueSoft },
+  reviewPlanDate: { color: colors.text.secondary, fontSize: 12, fontWeight: "700" },
+  reviewPlanTime: { marginTop: 4, color: colors.text.primary, fontSize: 15, fontWeight: "800" },
+  reviewPlanPerson: { marginTop: 4, color: colors.text.secondary, fontSize: 13, fontWeight: "700" },
+  reviewPlanStatus: { marginTop: 8, color: colors.brand.sky, fontSize: 12, fontWeight: "800" },
   reviewPrimary: { width: "100%", minHeight: 46, marginTop: 22, alignItems: "center", justifyContent: "center", borderRadius: radius.md, backgroundColor: colors.brand.sky },
   reviewPrimaryText: { color: colors.text.inverse, fontSize: 14, fontWeight: "800" },
   reviewLater: { minHeight: 42, marginTop: 8, alignItems: "center", justifyContent: "center", paddingHorizontal: 18 },
