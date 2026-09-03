@@ -22,7 +22,7 @@
     "@noble/curves": "^2.3.0",
     "@noble/hashes": "^2.3.0",
     "@react-native-community/datetimepicker": "9.1.0",
-    "@scure/bip39": "^1.6.0",
+    "@scure/bip39": "^2.3.0",
     "expo": "^57.0.0",
     "expo-blur": "~57.0.2",
     "expo-clipboard": "~57.0.1",
