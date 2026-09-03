@@ -57,7 +57,7 @@ jobs:
       # pull_request_target / issue_commentではdefault branchの信頼済みNanaコードだけを実行。
       # PR headはcheckoutしない。
       - name: Checkout trusted Nana code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Setup Python
         uses: actions/setup-python@v7
