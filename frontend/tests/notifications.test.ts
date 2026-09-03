@@ -3,6 +3,7 @@ import {
   getNotificationNavigation,
   isNotificationRecord,
   listNotifications,
+  markAllNotificationsRead,
   markNotificationRead,
   navigateFromForeignerNotifications,
   navigateFromJapaneseNotifications,
@@ -62,6 +63,21 @@ describe("通知APIクライアント", () => {
     await markNotificationRead(session, "notification-1");
 
     expect(requestedURL).toContain("/notifications/notification-1/read");
+    expect(requestedMethod).toBe("POST");
+  });
+
+  it("すべての通知を既読にするエンドポイントをPOSTする", async () => {
+    let requestedURL = "";
+    let requestedMethod = "";
+    globalThis.fetch = (async (input, init) => {
+      requestedURL = String(input);
+      requestedMethod = String(init?.method);
+      return new Response(null, { status: 204 });
+    }) as typeof fetch;
+
+    await markAllNotificationsRead(session);
+
+    expect(requestedURL).toContain("/notifications/read-all");
     expect(requestedMethod).toBe("POST");
   });
 
@@ -204,6 +220,8 @@ describe("通知画面のロード契約", () => {
       expect(source).toContain('if (status === "loading")');
       expect(source).toContain('if (status !== "signed_in")');
       expect(source).toContain("activeLoadRef.current?.cancel()");
+      expect(source).toContain("markAllNotificationsRead");
+      expect(source).toContain("markAllRead");
     });
   }
 });

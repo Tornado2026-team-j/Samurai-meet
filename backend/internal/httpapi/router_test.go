@@ -284,12 +284,13 @@ func TestProtectedHandlersRejectMissingAccessToken(t *testing.T) {
 		"match action":               matchAction(nil, nil),
 		"location":                   updateLocation(nil, nil),
 		"notifications":              notificationCollection(nil, nil),
+		"notification read all":      notificationReadAll(nil, nil),
 		"notification item":          notificationItem(nil, nil),
 	}
 	for name, handler := range tests {
 		t.Run(name, func(t *testing.T) {
 			method := http.MethodGet
-			if name == "logout all" || name == "logout other" || name == "handoff start" || name == "register verify" || name == "reauth verify" || name == "upload photo" || name == "delete account" || name == "profile patch" || name == "recruitments" || name == "match action" || name == "location" || name == "notification item" {
+			if name == "logout all" || name == "logout other" || name == "handoff start" || name == "register verify" || name == "reauth verify" || name == "upload photo" || name == "delete account" || name == "profile patch" || name == "recruitments" || name == "match action" || name == "location" || name == "notification read all" || name == "notification item" {
 				method = http.MethodPost
 			}
 			if name == "delete account" || name == "device transfer cancel" {

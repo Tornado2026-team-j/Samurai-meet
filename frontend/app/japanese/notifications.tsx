@@ -21,6 +21,7 @@ import {
 } from "../../services/onboarding";
 import {
   listNotifications,
+  markAllNotificationsRead,
   markNotificationRead,
   navigateFromJapaneseNotifications,
   toNotificationView,
@@ -55,11 +56,13 @@ const COPY = {
     back: "戻る", title: "通知", all: "すべて", unread: "未読", today: "今日", past7Days: "過去7日間",
     loading: "通知を読み込み中…", retry: "再試行", empty: "通知はまだありません",
     signInRequired: "ログイン後に通知を表示できます。", loadError: "通知を読み込めませんでした。時間をおいて再試行してください。",
+    markAllRead: "すべて既読にする", markingAllRead: "既読にしています…", markAllReadError: "すべて既読にできませんでした。時間をおいて再試行してください。",
   },
   en: {
     back: "Back", title: "Notifications", all: "All", unread: "Unread", today: "Today", past7Days: "Past 7 days",
     loading: "Loading notifications…", retry: "Retry", empty: "No notifications yet",
     signInRequired: "Sign in to view notifications.", loadError: "Notifications could not be loaded. Please try again later.",
+    markAllRead: "Mark all as read", markingAllRead: "Marking as read…", markAllReadError: "Could not mark all notifications as read. Please try again later.",
   },
 } as const;
 
@@ -189,6 +192,8 @@ export default function JapaneseNotificationsScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [markingAllRead, setMarkingAllRead] = useState(false);
+  const [markAllError, setMarkAllError] = useState<string | null>(null);
   const initialLoadStartedRef = useRef(false);
   const activeLoadRef = useRef<{ cancel: () => void } | null>(null);
   const copy = COPY[language ?? "ja"];
@@ -259,6 +264,34 @@ export default function JapaneseNotificationsScreen() {
   const loadNotificationsRef = useRef(loadNotifications);
   loadNotificationsRef.current = loadNotifications;
 
+  const handleMarkAllRead = useCallback(async () => {
+    if (markingAllRead || status !== "signed_in") return;
+    const activeSession = getCurrentSession() ?? session;
+    if (!activeSession) return;
+
+    setMarkAllError(null);
+    setMarkingAllRead(true);
+    try {
+      try {
+        await markAllNotificationsRead(activeSession);
+      } catch (error) {
+        if (!(error instanceof APIError) || error.status !== 401) throw error;
+        await refresh();
+        const refreshedSession = getCurrentSession();
+        if (!refreshedSession) throw error;
+        await markAllNotificationsRead(refreshedSession);
+      }
+      const readAt = new Date().toISOString();
+      setNotificationRecords((current) => current.map((item) => (
+        item.read_at ? item : { ...item, read_at: readAt }
+      )));
+    } catch {
+      setMarkAllError(copyRef.current.markAllReadError);
+    } finally {
+      setMarkingAllRead(false);
+    }
+  }, [getCurrentSession, markingAllRead, refresh, session, status]);
+
 	useEffect(() => () => {
 		activeLoadRef.current?.cancel();
 	}, []);
@@ -325,6 +358,8 @@ export default function JapaneseNotificationsScreen() {
     today: copy.today,
     past_7_days: copy.past7Days,
   };
+  const markAllDisabled =
+    loading || refreshing || markingAllRead || status !== "signed_in";
   const openNotification = (notification: NotificationView) => {
     const activeSession = getCurrentSession() ?? session;
     if (notification.unread) {
@@ -412,6 +447,32 @@ export default function JapaneseNotificationsScreen() {
               </Pressable>
             );
           })}
+        </View>
+
+        <View style={styles.actions}>
+          <Pressable
+            accessibilityLabel={markingAllRead ? copy.markingAllRead : copy.markAllRead}
+            accessibilityRole="button"
+            accessibilityState={{ disabled: markAllDisabled }}
+            disabled={markAllDisabled}
+            onPress={() => {
+              void handleMarkAllRead();
+            }}
+            style={({ pressed }) => [
+              styles.markAllButton,
+              markAllDisabled && styles.markAllButtonDisabled,
+              pressed && styles.pressed,
+            ]}
+          >
+            <Text style={styles.markAllButtonText}>
+              {markingAllRead ? copy.markingAllRead : copy.markAllRead}
+            </Text>
+          </Pressable>
+          {markAllError ? (
+            <Text accessibilityRole="alert" style={styles.actionError}>
+              {markAllError}
+            </Text>
+          ) : null}
         </View>
 
         {loading && notificationRecords.length === 0 ? (
@@ -510,6 +571,40 @@ const styles = StyleSheet.create({
     borderColor: BORDER_GRAY,
     borderRadius: 24,
     backgroundColor: "#ffffff",
+  },
+  actions: {
+    width: "100%",
+    maxWidth: 306,
+    alignItems: "stretch",
+    marginTop: 12,
+  },
+  markAllButton: {
+    minHeight: 42,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 16,
+    borderWidth: 1,
+    borderColor: LINK_BLUE,
+    borderRadius: 21,
+    backgroundColor: "#ffffff",
+  },
+  markAllButtonDisabled: {
+    opacity: 0.45,
+  },
+  markAllButtonText: {
+    color: LINK_BLUE,
+    fontSize: 14,
+    fontWeight: "900",
+    lineHeight: 18,
+    textAlign: "center",
+  },
+  actionError: {
+    marginTop: 8,
+    color: "#c25a24",
+    fontSize: 12,
+    fontWeight: "800",
+    lineHeight: 17,
+    textAlign: "center",
   },
   segment: {
     flex: 1,
