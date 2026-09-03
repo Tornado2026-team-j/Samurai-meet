@@ -133,6 +133,7 @@ WebTransport/QUICの理由、JWS claimの検証、heartbeat、失敗時の自動
 - `POST /chats/{id}/attachments`（チャット写真の暗号文アップロード。`accepted` のみ）
 - `GET /chats/{id}/attachments/{attachment_id}`（チャット写真の暗号文取得。`accepted` / `completed`）
 - `POST /matches/{id}/meeting`
+- `POST /matches/{id}/cancel`（チャット画面からの案件辞退。`accepted` マッチをどちらの参加者でも `cancelled` にでき、募集枠を解放し相手へ通知する。[matching.md](matching.md)）
 - `GET|POST /meetings/{id}/proximity`
 - WebTransport endpoint：環境ごとにHTTPS URLとして提供する（`chat_id`単位。UDP/TLS 1.3 listenerが必要）
 - テーブル：`matches`、`chat_threads`、`messages`、`chat_message_translations`、`chat_key_envelopes`、`chat_key_manifests`、`chat_read_states`、`chat_token_sequences`、`chat_message_deletions`、`chat_attachments`、`chat_translation_rate_limits`、`chat_translation_inflight`、`photos`

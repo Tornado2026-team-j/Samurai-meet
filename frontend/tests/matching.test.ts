@@ -3,7 +3,9 @@ import { buildRecruitmentPreviewModel } from "../services/recruitment-preview";
 import {
 	closeRecruitment,
 	classifyRecruitmentDescription,
+  cancelMatch,
   createRecruitment,
+  declineMatch,
   listMatches,
   listMyRecruitments,
   recruitmentToMatchCard,
@@ -263,6 +265,48 @@ describe("募集APIクライアント", () => {
     });
     expect(requests[2]?.method).toBe("DELETE");
     expect(requests[3]?.url).toContain("/matches/match-1/withdraw");
+  });
+
+  it("案件の辞退はaccepted対応の /matches/{id}/cancel を呼ぶ", async () => {
+    const requests: { url: string; method?: string }[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      requests.push({ url, method: init?.method });
+      return new Response(JSON.stringify({
+        data: {
+          id: "match-1",
+          recruitment_id: recruitment.id,
+          status: "cancelled",
+          created_at: recruitment.created_at,
+          updated_at: recruitment.updated_at,
+        },
+      }), { status: 200 });
+    }) as unknown as typeof fetch;
+
+    await expect(cancelMatch("match-1", session)).resolves.toMatchObject({ status: "cancelled" });
+    await expect(declineMatch("match-1", session)).resolves.toMatchObject({ status: "cancelled" });
+
+    expect(requests[0]?.method).toBe("POST");
+    expect(requests[0]?.url).toContain("/matches/match-1/cancel");
+    expect(requests[1]?.url).toContain("/matches/match-1/cancel");
+  });
+
+  it("cancelが404のときはwithdraw→rejectへフォールバックする", async () => {
+    const requests: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      requests.push(url);
+      if (url.includes("/cancel")) return new Response(JSON.stringify({ error: "match_not_found" }), { status: 404 });
+      if (url.includes("/withdraw")) return new Response(JSON.stringify({ error: "matching_forbidden" }), { status: 403 });
+      return new Response(JSON.stringify({
+        data: { id: "match-1", recruitment_id: recruitment.id, status: "rejected", created_at: recruitment.created_at, updated_at: recruitment.updated_at },
+      }), { status: 200 });
+    }) as unknown as typeof fetch;
+
+    await expect(declineMatch("match-1", session)).resolves.toMatchObject({ status: "rejected" });
+    expect(requests.some((url) => url.includes("/cancel"))).toBe(true);
+    expect(requests.some((url) => url.includes("/withdraw"))).toBe(true);
+    expect(requests.some((url) => url.includes("/reject"))).toBe(true);
   });
 
   it("既存応募の409 dataを既存matchとして返す", async () => {

@@ -31,7 +31,8 @@ card:  draft -> open -> matched
                   └-> expired
 
 match: pending -> accepted -> completed
-       └-> cancelled（応募者が取り下げ）
+       ├-> cancelled（pending: 応募者が取り下げ / accepted: どちらかがチャットから辞退）
+       └-> rejected（募集者が却下）
 ```
 
 - `draft`：未公開。作成者だけが閲覧可能。
@@ -79,7 +80,8 @@ match: pending -> accepted -> completed
 - `GET /api/v1/matches/{id}`
 - `POST /api/v1/matches/{id}/accept`
 - `POST /api/v1/matches/{id}/reject`
-- `POST /api/v1/matches/{id}/withdraw`
+- `POST /api/v1/matches/{id}/withdraw`（応募者・`pending`のみ）
+- `POST /api/v1/matches/{id}/cancel`（どちらの参加者でも・`pending`／`accepted`。チャット画面の「辞退」）
 - `POST /api/v1/matches/{id}/complete`
 - `GET /api/v1/matches/{id}/meeting`
 - `POST /api/v1/matches/{id}/meeting`
@@ -100,6 +102,8 @@ match: pending -> accepted -> completed
 応募者は`pending`中に関心を取り下げられ、matchの状態は`cancelled`になります。取り下げ後の行は履歴と通知の冪等性のため保持します。ブロック関係がある2ユーザーのmatchは、`GET /matches`と`GET /matches/{id}`の結果から除外します。ブロック解除後の明示的な再読み込みで再び取得できます。会合APIでも操作直前に同じ双方向ブロック判定を行うため、一覧の古い表示だけで会合を開始することはできません。
 
 会合セッションは`planned -> active -> completed`、または安全のため`planned|active -> cancelled`へ遷移します。`cancelled`を再開する場合は、片側の`resume`だけでは状態を戻さず、参加者双方が明示的に同意したときだけ`planned`へ戻します。再開後は開始時刻・近接状態・以前の開始同意をクリアし、双方が改めて`start`する必要があります。`completed`は再開できません。これにより、一方の参加者が開始・中止を繰り返して相手の同意を操作することを防ぎます。
+
+`accepted`後は、募集者・応募者のどちらでも`POST /matches/{id}/cancel`でチャット画面から辞退でき、matchは`cancelled`へ遷移します。`accepted`が占有していた募集枠は解放され、`matched`だったカードは`open`へ戻ります。相手には通知（応募者発=`application_withdrawn`、募集者発=`guide_canceled`）が届きます。`completed`のmatchは辞退できません。
 
 ## 7. 受け入れ条件
 
