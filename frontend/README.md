@@ -54,6 +54,12 @@ $env:EXPO_PUBLIC_WEB_APP_ORIGIN="http://localhost:8081"
 
 iPhoneのExpo GoからローカルGo APIを確認する場合だけ、`EXPO_PUBLIC_API_BASE_URL`へiPhoneから到達できるURL（例: `http://192.168.11.16:8080/api/v1`）を明示してください。通常は本番APIドメインへ接続します。API接続先を切り替えた場合、セッションはサーバー環境ごとに別なので、その環境で再ログインします。Google OAuthをトンネルで完結させる場合は、Go側のcallbackとGoogle Cloud Consoleの登録値も同じ公開Originに揃え、環境変数を変更した後はExpoを再起動してください。
 
+## チャットの現行境界
+
+`app/chat/[id].tsx` は暗号化RESTの履歴・送信・既読、画像添付、本文編集・削除、チャットDEK復号、翻訳と`Original`切替に接続済みです。バックエンドのリアルタイム経路はHTTP/3 WebTransportですが、Expo Goにはnative WebTransport APIがないため、Expo GoではREST同期を使います。native bridgeを含むDevelopment Buildと2端末の実機E2Eは別ゲートです。
+
+本文送信前の安全確認はバックエンドのModeration APIを先に呼び、`allowed`のときだけ暗号化して送信します。OpenAIキー未設定時は通常送信不可です。テスト環境でサーバーの`CHAT_MODERATION_DEV_FREE_MODE=true`を明示した場合だけ、外部送信をしないローカル保守的判定が使われます。アプリ側はこの設定を持たず、実データを使った確認には利用しません。
+
 募集フローは、プロフィール同期後に募集を公開し、別ユーザーが現在地・キーワードで検索して関心を送り、募集者が応募一覧から承認または辞退できます。現在地を使う場合は`expo-location`の前景位置情報許可が必要です。許可しなくてもキーワード検索と募集公開は継続できますが、距離による絞り込みは行われません。
 
 募集の利用日は日本国内向けに`Asia/Tokyo`へ固定しています。`available_date`は`YYYY-MM-DD`、`start_time` / `end_time`は24時間制の`HH:mm`で扱い、APIへ送る`timezone`も`Asia/Tokyo`です。DBの期限などの絶対時刻はUTC RFC3339ですが、募集の日付・時刻は端末や実行ホストのローカルタイムゾーンへ変換しません。

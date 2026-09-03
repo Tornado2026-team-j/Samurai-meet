@@ -1,6 +1,6 @@
 # アーキテクチャ概要
 
-現行の実装はGo REST API、PostgreSQL、非公開画像ストレージを中心とする。QUIC／WebTransportによるリアルタイム配送とPostGISは将来構成であり、図中の点線で示す。募集の利用日・開始／終了時刻は`Asia/Tokyo`固定の壁時計、絶対時刻はUTCで扱う。
+現行の実装はGo REST API、PostgreSQL、非公開画像ストレージを中心とする。チャットのリアルタイム配送は、設定時だけ起動するGoのHTTP/3 WebTransportサーバーで提供し、native client bridgeがない環境ではREST同期へ戻る。PostGIS、OSプッシュ、管理画面などは未実装または将来候補である。募集の利用日・開始／終了時刻は`Asia/Tokyo`固定の壁時計、絶対時刻はUTCで扱う。
 
 ## 1. システム構成
 
@@ -8,7 +8,7 @@
 flowchart LR
     App[Expo / React Native<br/>TypeScript]
     API[Go REST API]
-    QUIC[予定: Go QUIC / HTTP3 WebTransport]
+    QUIC[条件付き: Go HTTP3 WebTransport]
     Auth[Google OAuth2 / OIDC]
     Passkey[Passkey / WebAuthn]
     DB[(PostgreSQL)]
@@ -17,13 +17,13 @@ flowchart LR
     Admin[予定: 運営管理 API / UI]
 
     App --> API
-    App -. 予定 .-> QUIC
+    App -. native Development Build .-> QUIC
     API --> Auth
     API --> Passkey
     API --> DB
     API --> Storage
     API --> KMS
-    QUIC -. 予定 .-> DB
+    QUIC --> DB
     Admin -. 予定 .-> API
 ```
 
@@ -32,13 +32,13 @@ flowchart LR
 | レイヤー | 主な責務 | 実装 |
 | --- | --- | --- |
 | Presentation | 画面、フォーム、ナビゲーション、表示状態 | React Native / TypeScript |
-| Client Service | REST、位置情報、Secure Storage。QUIC／WebTransportは予定 | TypeScript |
+| Client Service | REST、位置情報、Secure Storage、WebTransport connector契約。Expo GoはREST同期 | TypeScript |
 | API Handler | HTTP 入出力、認証コンテキスト、エラー変換 | Go |
-| Domain Service | カード公開、Haversine距離、マッチのルール。評価・通報は予定 | Go |
+| Domain Service | カード公開、Haversine距離、マッチ、通報・ブロック、チャットのルール | Go |
 | Repository | SQL、トランザクション | Go + SQL |
 | Persistence | ユーザー、カード、マッチ、メッセージ等 | PostgreSQL（PostGIS未導入） |
 | File Storage | 写真本体、暗号化済みファイル | 非公開ストレージ |
-| QUIC / HTTP/3 | チャット用の低遅延transport、Chat Token検証（予定） | Go + native client module |
+| QUIC / HTTP/3 | チャット用の低遅延transport、Chat Token検証、heartbeat、0-RTT拒否、複数インスタンスfan-out | Go（native client moduleは未同梱） |
 
 ## 3. データの流れ
 
@@ -56,10 +56,10 @@ flowchart LR
 1. マッチ成立後、アプリがRESTでチャットを遅延作成し、対象chat専用の短命Chat Tokenを取得する。
 2. 現行MVPでは暗号化メッセージをRESTで送受信し、`sequence` cursorで未同期分を補完する。
 3. Go APIがユーザー、match、block、sessionの権限を確認し、平文を復号せず暗号文を保存する。
-4. 将来、QUIC（native QUICまたはHTTP/3 WebTransport）へ同じChat Tokenで接続し、サーバー時刻・sequenceを付与して相手へ配信する。現行はこの段階を実装していない。
+4. WebTransportが有効な環境では、native clientが同じChat TokenでHTTP/3へ接続し、サーバーが`sequence`付きで配送する。native clientがない環境ではRESTの明示同期を使う。
 5. 会合中のBluetooth／位置推測値は別の短期補助APIで受け、認証や安全判定には利用しない。
 
-現行のチャットはRESTの履歴取得・暗号文送信・既読更新を中心とし、リアルタイム配送は未実装です。将来の候補としてQUICを標準とし、HTTP/3 WebTransportもQUIC上の実装形態として扱います。WebSocketを採用する場合は、技術的成立性・性能・保守性・セキュリティ影響を比較してチームで合意します。Chat Tokenは通常のAccess Tokenとは別に発行する設計ですが、現行HTTP handlerの既定`quic`とチャットサービスの受理値`websocket`／`webtransport`が不一致であるため、token endpointもコード整合まで動作済みとみなしません。Refresh Tokenは将来のtransportへ送信しません。
+現行のチャットはRESTの履歴取得・暗号文送信・既読更新を同期・復旧経路として残し、HTTP/3 WebTransportを唯一のリアルタイム配送経路として実装しています。WebTransport listenerは`ENABLE_CHAT_WEBTRANSPORT=true`とUDP/TLS設定がそろった場合だけ起動し、Expo Goでは利用しません。旧WebSocket endpointは410であり、自動fallbackやtokenのquery/cookie提示は行いません。Chat Tokenは通常のAccess Tokenとは別audienceで、chat・session・transport・世代に束縛します。Refresh Tokenはtransportへ送信しません。
 
 ### 3.3 写真
 
@@ -118,7 +118,7 @@ stateDiagram-v2
 | Google 認証失敗 | セッションを作成せず、再試行可能なエラーを表示 |
 | Passkey 認証失敗 | 認証情報の有無を推測できないメッセージを表示 |
 | 位置情報拒否 | 位置情報なし検索へフォールバック。正確な距離検索は不可 |
-| WebTransport/QUIC 切断（次実装） | 再接続し、`sequence` cursorでRESTから未同期メッセージを補完。0-RTTで状態変更は許可しない |
+| WebTransport/QUIC 切断 | native clientが再接続し、`sequence` cursorでRESTから未同期メッセージを補完。0-RTTで状態変更は許可しない。native client未導入時はREST同期を使う |
 | チャット送信結果不明 | 同じ `client_message_id` で期限・回数を制限して再送し、サーバー側の冪等結果を受け取る |
 | 写真アップロード失敗 | 再試行可能な状態を表示し、未完了ファイルを公開しない |
 | DB 一時障害 | リクエスト ID を返し、リトライ可能な処理だけ再試行 |
@@ -131,7 +131,7 @@ stateDiagram-v2
 - アクセストークンは JWS 署名付き JWT とし、JWT の `sid` で DB のセッションを参照する。
 - API は署名と有効期限の検証後、`sessions.revoked_at IS NULL`、ユーザー状態、セッション期限を確認する。
 - Redis 等の別セッション DB は導入しない。
-- 次実装のHTTP/3 WebTransportは接続時とheartbeat時にセッションを再検証し、失効を検知したら接続を閉じる。現行のRESTにはtransport接続状態はない。
+- HTTP/3 WebTransportは接続時・各state-changing frame・15秒heartbeatでセッション、token世代、accepted match、blockを再検証し、失効を検知したら接続を閉じる。RESTは履歴・送信・既読の同期経路として残る。
 - PostgreSQL の複数 API インスタンスで即時通知が必要になった場合は、PostgreSQL の `LISTEN / NOTIFY` を利用する。
 
 ## 8. クライアント所有暗号鍵（v2）

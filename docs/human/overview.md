@@ -25,7 +25,8 @@ flowchart LR
 - Go/PostgreSQL側の認証、プロフィール取得・更新、募集カード、検索、応募、承認/辞退、通知一覧・未読管理は実装済みです。
 - 外国人/日本人の募集・検索・応募導線、募集管理・応募履歴・応募取り下げ、通知遷移は正式`frontend/`からAPIへ接続されています。日時入力の初期パース問題はISO/JST化と自動テストで解消済みですが、iOS実機での一連の動作は未確認です。
 - 通知はアプリ内のREST一覧・既読管理です。OSのプッシュ通知はまだ実装していません。
-- チャットはバックエンドの暗号化REST APIと短命Chat Tokenまでです。QUIC（HTTP/3 WebTransportを含む）のリアルタイム配送とフロント画面は未実装です。WebSocketは標準経路にせず、QUICが技術的に成立しない場合だけチーム合意で例外採用を決定します。
+- チャット画面はバックエンドの暗号化REST APIへ接続済みで、本文・位置情報・画像添付、既読、編集・削除、チャットDEK復旧、翻訳を扱います。バックエンドのリアルタイム配送は条件付きのHTTP/3 WebTransportで、Expo GoではREST同期を使います。native WebTransport bridgeと実機2端末E2Eは未完了で、旧WebSocket endpointは再導入しません。
+- チャット送信前Moderationは暗号化前の平文例外です。通常はOpenAIを使い、未設定・障害時はfail-closedで送信を止めます。`CHAT_MODERATION_DEV_FREE_MODE=true`を明示した一時確認では、起動警告付きでローカル保守的判定を使えますが、OpenAIの代替ではなく実データを使いません。
 - 募集の日付・時刻入力とサーバー解釈は`Asia/Tokyo`固定です。絶対時刻の保存・返却はUTC RFC3339です。
 
 接続先、Expo Goの制約、既知の検証停止点は [フロントエンド接続](frontend-connection.md) と [安全性と今後の実装順](security-and-roadmap.md) を確認してください。

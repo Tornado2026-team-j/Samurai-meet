@@ -41,7 +41,8 @@ type ModerationProvider interface {
 // explicit temporary free-mode switch wins so a stale inherited API key cannot
 // silently keep a test process on the unavailable OpenAI path. Without that
 // switch, a configured OpenAI provider is used and every environment remains
-// fail-closed when OpenAI is unavailable.
+// fail-closed when OpenAI is unavailable. The caller logs a startup warning
+// because free mode is a testing exception, not equivalent production safety.
 func NewModerationProvider(apiKey string, allowDevelopmentFreeMode bool) ModerationProvider {
 	if allowDevelopmentFreeMode {
 		return NewDevelopmentModerationProvider()
@@ -126,9 +127,9 @@ func (p *OpenAIModerationProvider) Moderate(ctx context.Context, plaintext strin
 }
 
 // DevelopmentModerationProvider is a deterministic, local-only safety guard
-// for short-lived development testing when an OpenAI key is intentionally not
-// configured. It is not a replacement for the production provider: it blocks
-// only high-confidence patterns and never sends plaintext over the network.
+// for short-lived testing when an OpenAI key is intentionally not configured.
+// It is not a replacement for the production provider: it blocks only
+// high-confidence patterns and never sends plaintext over the network.
 type DevelopmentModerationProvider struct{}
 
 var developmentModerationBlockPatterns = []*regexp.Regexp{

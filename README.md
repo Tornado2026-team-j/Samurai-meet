@@ -10,7 +10,7 @@
 | 鍵・復旧 | v2 client-owned root key、24語Recovery Phrase、端末proof、端末移行APIを実装。native hardware保護、完全な実機復旧、画像bulk再包みは未完了 |
 | 募集・マッチング | Go API、外国人/日本人の検索・募集・応募・承認/辞退導線を接続。募集管理・応募履歴・応募取り下げも実装。日時入力の初期パース問題はISO/JST化で解消済みだが、iOS実機の全通しE2Eは未完了 |
 | 通知 | 通知の永続化、一覧、未読管理、応募/承認/辞退/暗号化チャット送信イベント、アプリ内通知画面を実装。OSのプッシュ通知は未実装 |
-| チャット | acceptedマッチ向けの暗号化REST送信・履歴・既読・短命Chat Tokenを実装。QUIC/WebTransport/WebSocketのリアルタイム配送とチャット画面は未接続 |
+| チャット | acceptedマッチ向けの暗号化REST送信・履歴・既読・短命Chat Token、チャット画面、本文編集・削除、暗号化添付、AI翻訳を実装。バックエンドはHTTP/3 WebTransportを提供するが、Expo GoはREST同期、native WebTransport moduleと実機E2Eは未完了 |
 | プロフィール | 取得・オンボーディング同期・Go更新APIを実装。プロフィール編集画面の完全同期は未完了 |
 
 未完了項目の正本は [実装状態とバックログ](docs/ai/plans/backlog.md) です。仕様上の目標と現在の実装を混同しないでください。
@@ -22,6 +22,12 @@
 - ローカル開発の標準例: `http://127.0.0.1:8080/api/v1`（同じPCのWeb確認用）。iPhoneからはLAN URLを明示しない限り本番ドメインを使用
 
 API接続先を切り替えるとセッションとDB環境も切り替わるため、その環境で再ログインします。設定の詳細は [フロントエンド開発](frontend/README.md) と [フロントエンド接続](docs/human/frontend-connection.md) を参照してください。
+
+## チャットModerationの一時確認モード
+
+チャット本文の送信前Moderationは、通常はサーバーの`OPENAI_API_KEY`でOpenAIへ同期判定し、未設定・障害時はfail-closedで送信を止めます。実機確認を止めないため、`CHAT_MODERATION_DEV_FREE_MODE=true`を明示した場合だけ、APIキーの有無にかかわらず外部送信をしない保守的なローカル判定へ切り替わります。
+
+このフラグは`APP_ENV=production`でも明示設定すれば起動できますが、OpenAI Moderationの代替ではありません。起動時に警告を出し、実データを使わない一時確認に限定します。通常の本番運用へ戻す前にフラグを`false`へ戻し、`OPENAI_API_KEY`をSecret Manager等から注入してください。
 
 ## 日時の契約
 

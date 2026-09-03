@@ -14,12 +14,12 @@
 
 | 画面 / 処理 | ファイル案 | 言語 |
 | --- | --- | --- |
-| チャット一覧 | `frontend/app/(tabs)/chat.tsx` | TypeScript / TSX |
+| チャット一覧 | `frontend/app/chat/index.tsx` | TypeScript / TSX |
 | 個別チャット | `frontend/app/chat/[id].tsx` | TypeScript / TSX |
 | 吹き出し | `frontend/components/ChatBubble.tsx` | TypeScript / TSX |
-| 接続状態 | `frontend/hooks/useChatTransport.ts` | TypeScript |
+| 接続状態・同期 | `frontend/app/chat/[id].tsx` / `frontend/services/chat.ts` | TypeScript / TSX |
 | WebTransportクライアントbridge | `frontend/services/chat.ts`（native moduleは未同梱） | TypeScript + native module |
-| API・履歴 | `frontend/services/api.ts` | TypeScript |
+| API・履歴 | `frontend/services/chat.ts` / `frontend/services/api-client.ts` | TypeScript |
 | 接続認証・配送・順序確定 | `backend/internal/chat/quic.go` / `backend/internal/chat/quic_server.go` | Go（WebTransport配送 実装済み） |
 | 複数インスタンス配送 | `backend/internal/chat/cluster.go` | Go（PostgreSQL `LISTEN/NOTIFY` fan-out 実装済み） |
 | 旧WebSocket endpoint | `backend/internal/httpapi/chat_ws.go` | Go（410で明示拒否） |
@@ -93,7 +93,7 @@ HTTP/3 WebTransportのリアルタイム配送に、RESTと同じChat Token認�
 - 既存の `chat-mvp-v1` と旧 `chat-keyb-v1` はデータを失わないため読み取り互換だけを残す。新規送信・編集は `chat-dek-v1` のみを使い、旧本文をサーバーで再暗号化したり、Key-Bを共有したりしない。旧方式の本文は旧鍵が利用できる端末でのみ表示される。
 - 端末移行・Recoveryはアカウントroot／Key-Aを新端末へ復旧する経路であり、チャットDEK自体を平文で移行しない。新端末でチャットを開いた際に、保存済みアカウントenvelopeをKey-A由来鍵で復号する。新しい参加端末向けには、登録済みX25519公開鍵へ個別envelopeを追加する。厳密E2EEとして扱うには、実機2端末の送受信・Recovery・端末失効時のQA確認が必要である。
 - 通常のmessage APIへは平文本文ではなく暗号化 payload、nonce、key version を送る。Go API は配送・権限・保存を担当し、暗号鍵を持たない境界を維持する。Moderationと翻訳providerへのrequest-scoped平文転送は、下記に明記した別の例外である。
-- 本文送信前のOpenAI Moderationは例外である。クライアントは暗号化前に本文を`POST /chats/{id}/moderation`へ送り、サーバーは認可済みaccepted参加者の本文だけをOpenAIへ同期転送する。本文とOpenAI生応答はこの処理中だけ参照し、DB、キュー、ログ、監査イベントには保存しない。返すのは`allowed` / `blocked` / `unavailable`だけで、カテゴリやスコアは表示しない。`blocked`、`unavailable`（未設定・timeout・上流障害）、ネットワーク障害、HTTP 4xx/5xxのすべてでfail-closedとし、暗号化・配送を開始せずローカライズ済みの再試行案内を表示する。`CHAT_MODERATION_DEV_FREE_MODE=true`を明示した確認環境では、APIキーが環境に残っていても外部送信をしないローカル保守的判定を優先する。この判定は高信頼の外部連絡先・個人情報等を拒否するがOpenAIの代替ではなく、共有・本番環境では必ず無効化する。
+- 本文送信前のOpenAI Moderationは例外である。クライアントは暗号化前に本文を`POST /chats/{id}/moderation`へ送り、サーバーは認可済みaccepted参加者の本文だけをOpenAIへ同期転送する。本文とOpenAI生応答はこの処理中だけ参照し、DB、キュー、ログ、監査イベントには保存しない。返すのは`allowed` / `blocked` / `unavailable`だけで、カテゴリやスコアは表示しない。`blocked`、`unavailable`（未設定・timeout・上流障害）、ネットワーク障害、HTTP 4xx/5xxのすべてでfail-closedとし、暗号化・配送を開始せずローカライズ済みの再試行案内を表示する。`CHAT_MODERATION_DEV_FREE_MODE=true`を明示した一時確認では、APP_ENVにかかわらずAPIキーの有無に関係なく外部送信をしないローカル保守的判定を優先する。この判定は高信頼の外部連絡先・個人情報等を拒否するがOpenAIの代替ではない。起動時に警告を出し、実データを使わず、通常の本番運用前に無効化する。
 - 自動翻訳は認証済み参加者だけが `POST /chats/{id}/translate` を呼び出し、対象本文をリクエスト処理中だけGeminiへ転送する明示的な平文例外である。新しい`chat-dek-v1` messageでは、クライアントがチャットDEKから導出したrequest-scoped `plaintext_commitment_key`を送り、サーバーはmessageに保存したHMAC-SHA-256本文commitment・salt・現行revisionと`text`を確認する。一致しない申告本文、鍵のないcache miss、bindingのない旧メッセージはGeminiへ渡さない。旧メッセージは既存の暗号化cache hitだけを返し、cache missはbinding unavailableとする。commitment鍵はDB・ログ・レスポンスへ保存しない。Geminiが本文の原言語を判定し、利用者の表示言語へ翻訳する。provider呼び出しはIPではなく認証済みアカウント単位の共有token bucket（既定30回burst／毎分30回）と同時実行数2で制限し、cache hitはprovider枠を消費しない。予約後はmessage行をprovider完了までロックしてrevision・bindingと編集を直列化する。429には`Retry-After`を付け、provider呼び出し中のin-flight markerは短いTTLを更新し続けるため、正常終了・キャンセルでは即時解放され、プロセス異常終了時だけ期限切れで解放される。クライアントは429を自動再試行せず、408/502/503/504だけを限定回数で再試行する。初回結果はクライアントがチャットDEKで暗号化し、メッセージrevision・対象言語とともに`chat_message_translations`へ保存するため、同じrevisionの再表示ではAIを呼び直さない。クライアントは同意済みの場合だけ初期表示の新しい8件を最大2並列で遅延翻訳し、古い本文はタップで翻訳する。サーバーが保持するのは暗号化envelopeだけで、編集・削除・保持期限で関連行も消去する。翻訳結果がある場合は本文下の `Original` タップで原文と切り替え、翻訳失敗時は原文を維持する。
 - この送信前平文判定とAI翻訳が有効なため、現行チャットは**完全E2EEではない**。保存・配送がチャットDEK保護の暗号文であることと、送信前に外部AIへ平文を提示することは別の境界である。Key-B、Key-A、チャットDEK、翻訳平文はログ・DBへ保存しない。
 - HTTP/3 WebTransport / TLS 1.3が通信路の暗号化・完全性を担い、Chat Token（JWS）がチャット単位の認証・認可・接続管理を担う。JWSの署名を通信路暗号化の代わりにしない。
@@ -127,7 +127,7 @@ WebTransport/QUICの理由、JWS claimの検証、heartbeat、失敗時の自動
 
 RESTのメッセージ送信・編集・削除・`transport-token`発行・WebTransport接続は`accepted`マッチの参加者だけが利用できます。`completed`マッチは一覧・履歴・既読・翻訳のみで、送信・編集・削除と接続は`chat_not_available`で拒否されます。本文ではなくBase64URLのAES-256-GCM暗号文を保存します。`client_message_id`で再送を冪等化し、WebTransport未接続・再接続直後は`sequence` cursorで`GET /chats/{id}/messages?after=`を使って補完します。サーバーは本文・翻訳・チャットDEKを復号しません。チャットDEKはKey-A由来アカウントenvelopeまたは対象端末向けX25519 envelopeで復旧し、Key-Bは端末proofに限定します。Moderationと翻訳は暗号化前に外部AIへ平文を渡す明示的な例外です。
 
-写真添付は2段階です。まず`POST /chats/{id}/attachments`へAES-256-GCM暗号文をraw bodyでアップロードし（メタは`X-Chat-Attachment-*`ヘッダ）、次に`POST /chats/{id}/messages`の`attachment_id`で1つのメッセージへ結び付けます。参照できるのは同一チャットで自分がアップロードした未参照の添付だけです。`GET /messages`とWebTransportの`message.created` / `message.ack`は、添付付きメッセージに`attachment`オブジェクトを含めます。サーバーは画像鍵を持たず、`nonce` / `algorithm` / `key_version`を不透明メタデータとして保存するだけで、EXIF除去はクライアントの責務です。暗号文上限は`IMAGE_MAX_UPLOAD_BYTES`（既定20MiB）、許可MIMEは`image/jpeg` / `image/png` / `image/webp` / `application/octet-stream`。メッセージから参照されない添付は約24時間後にスイープで削除します。取得は`accepted`/`completed`マッチの参加者のみ、ブロック時は不可です。なお、添付の鍵生成・相手への共有とクライアントの送受信UIは未実装であり、現行の本文キー導出と組み合わせて厳密E2EEとは扱いません。詳細は [写真仕様](photos.md)。
+写真添付は2段階です。まず`POST /chats/{id}/attachments`へAES-256-GCM暗号文をraw bodyでアップロードし（メタは`X-Chat-Attachment-*`ヘッダ）、次に`POST /chats/{id}/messages`の`attachment_id`で1つのメッセージへ結び付けます。参照できるのは同一チャットで自分がアップロードした未参照の添付だけです。`GET /messages`とWebTransportの`message.created` / `message.ack`は、添付付きメッセージに`attachment`オブジェクトを含めます。サーバーは画像鍵を持たず、`nonce` / `algorithm` / `key_version`を不透明メタデータとして保存するだけで、EXIF除去はクライアントの責務です。暗号文上限は`IMAGE_MAX_UPLOAD_BYTES`（既定20MiB）、許可MIMEは`image/jpeg` / `image/png` / `image/webp` / `application/octet-stream`。メッセージから参照されない添付は約24時間後にスイープで削除します。取得は`accepted`/`completed`マッチの参加者のみ、ブロック時は不可です。現行`frontend/app/chat/[id].tsx`は画像選択、端末内暗号化、添付の送受信・復号表示・失敗時再試行まで接続済みです。厳密E2EEとして扱うには、native端末保護、端末失効・鍵ローテーション、実機2端末E2Eを別途確認します。詳細は [写真仕様](photos.md)。
 
 保持期間（既定180日・`CHAT_MESSAGE_RETENTION_DAYS`）を過ぎたメッセージは6時間ごとのスイープで`deleted_at`を打ち、暗号文・nonceと関連する暗号化翻訳envelopeを消去し、`chat_message_deletions`へ監査行を残します。写真添付が結び付いている場合は同じスイープで添付行も`deleted_at`を打ち（取得エンドポイントは即座に404）、次の添付スイープが暗号文BLOBと行を削除します。以後は履歴・未読数・配送のいずれにも現れません。
 

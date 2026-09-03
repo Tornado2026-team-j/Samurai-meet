@@ -1,6 +1,6 @@
 # バックエンド API 仕様（実装基準）
 
-最終更新: 2026-08-27
+最終更新: 2026-09-03
 
 この文書は、現在のGo実装とExpoテストクライアントの契約です。状態は次の記号で表します。
 
@@ -527,7 +527,7 @@ Recovery Phraseまたは端末移行で新端末にKey-Aを復旧した後は、
 
 `DELETE /api/v1/chats/{id}/messages/{message_id}` は送信者本人のメッセージだけを対象にし、成功時は204を返します。サーバーは`messages.deleted_at`を設定して`ciphertext`と`nonce`を直ちに消去し、履歴・未読・配送から除外したうえで`chat_message_deletions.reason = 'user_request'`を追加します。接続中のクライアントには`message.deleted`（`message_id`、`sequence`）を配送します。
 
-`POST /api/v1/chats/{id}/moderation` は、クライアントが**暗号化前**に本文を`{"text":"..."}`として送る平文経路のひとつです。通常はサーバーが認可済みのacceptedチャット参加者だけを先に確認し、OpenAI Moderations APIへ公式JSON契約`{"model":"omni-moderation-latest","input":"..."}`で同期転送します。本文はこのリクエスト処理中だけ参照し、DB、キュー、ログ、監査イベントへ保存しません。OpenAIの生応答・カテゴリ・スコアも保存・返却しません。成功レスポンスは`{"data":{"decision":"allowed"|"blocked"}}`だけで、`blocked`時クライアントは**暗号化・`/messages`呼出を開始してはなりません**。APIキー未設定、上流タイムアウト、上流障害、契約外応答は通常`200 {"data":{"decision":"unavailable","code":"moderation_unavailable"}}`となり、クライアントはローカライズ済みの再試行案内を表示し、**暗号化・`/messages`呼出を開始してはなりません**。ネットワーク障害・HTTP 4xx/5xxも同じfail-closed契約です。`CHAT_MODERATION_DEV_FREE_MODE=true`を明示した確認環境だけは、APIキーの有無にかかわらず本文を外部送信しないローカル保守的判定を優先します。このモードは高信頼の外部連絡先・個人情報等を拒否しますが、OpenAI Moderationの代替ではなく、共有・本番環境では必ず無効化します。`OPENAI_API_KEY`はサーバー環境変数だけに設定します。
+`POST /api/v1/chats/{id}/moderation` は、クライアントが**暗号化前**に本文を`{"text":"..."}`として送る平文経路のひとつです。通常はサーバーが認可済みのacceptedチャット参加者だけを先に確認し、OpenAI Moderations APIへ公式JSON契約`{"model":"omni-moderation-latest","input":"..."}`で同期転送します。本文はこのリクエスト処理中だけ参照し、DB、キュー、ログ、監査イベントへ保存しません。OpenAIの生応答・カテゴリ・スコアも保存・返却しません。成功レスポンスは`{"data":{"decision":"allowed"|"blocked"}}`だけで、`blocked`時クライアントは**暗号化・`/messages`呼出を開始してはなりません**。APIキー未設定、上流タイムアウト、上流障害、契約外応答は通常`200 {"data":{"decision":"unavailable","code":"moderation_unavailable"}}`となり、クライアントはローカライズ済みの再試行案内を表示し、**暗号化・`/messages`呼出を開始してはなりません**。ネットワーク障害・HTTP 4xx/5xxも同じfail-closed契約です。`CHAT_MODERATION_DEV_FREE_MODE=true`を明示した一時確認では、APP_ENVにかかわらずAPIキーの有無に関係なく本文を外部送信しないローカル保守的判定を優先します。このモードは高信頼の外部連絡先・個人情報等を拒否しますが、OpenAI Moderationの代替ではありません。起動時に警告を出し、実データを使わず、通常の本番運用前に無効化します。`OPENAI_API_KEY`はサーバー環境変数だけに設定します。
 
 この送信前平文判定を有効にするチャットは、厳密な完全E2EEではありません。保存・配送はチャットDEK由来のAES-256-GCM暗号文ですが、送信者端末が送信前に本文をサーバー経由でOpenAIへ提示する明示的な例外があります。
 
@@ -546,7 +546,7 @@ Recovery Phraseまたは端末移行で新端末にKey-Aを復旧した後は、
 `accepted`マッチの参加者は、暗号化した画像をチャットに添付できます。フローは2段階です。
 
 1. `POST /api/v1/chats/{id}/attachments` に**AES-256-GCM暗号文をraw bodyで**送る。メタはヘッダ `X-Chat-Attachment-Content-Type`（`image/jpeg` / `image/png` / `image/webp` / `application/octet-stream`）、`X-Chat-Attachment-Nonce`（12byte b64url）、`X-Chat-Attachment-Algorithm`（`AES-256-GCM`）、`X-Chat-Attachment-Key-Version`。応答は `{ "data": { id, chat_id, content_type, size_bytes, cipher_sha256, nonce, algorithm, key_version, created_at } }`。
-2. `POST /api/v1/chats/{id}/messages` の body に `attachment_id` を入れて送信する。参照できるのは**同一チャットで自分がアップロードした未参照の添付**だけ。以後、そのメッセージは `GET /messages` と WebSocket `message.created` / `message.ack` の各要素に `attachment` オブジェクトを持つ。
+2. `POST /api/v1/chats/{id}/messages` の body に `attachment_id` を入れて送信する。参照できるのは**同一チャットで自分がアップロードした未参照の添付**だけ。以後、そのメッセージは `GET /messages` と WebTransport `message.created` / `message.ack` の各要素に `attachment` オブジェクトを持つ。
 
 `GET /api/v1/chats/{id}/attachments/{attachment_id}` は暗号文を `application/octet-stream` で返す（`accepted`/`completed`マッチの参加者のみ、ブロック時は不可）。サーバーは復号せず、EXIF除去はクライアント側の責務。暗号文の上限は `IMAGE_MAX_UPLOAD_BYTES`（既定20MiB）。メッセージから参照されない添付は約24時間後にスイープで削除される。鍵の生成・共有はクライアント契約で、`key_version = "chat-attachment-mvp-v1"` は「添付ごとのランダム鍵を参照元メッセージの暗号化本文で相手へ渡す」前提。
 
@@ -607,7 +607,7 @@ DBには会合中の参加者ごと・方式ごとに最新1件だけを保持�
 
 ### 6.11 未実装業務API
 
-本人確認（Stripe Identity等）、評価、チャット添付のクライアント送受信UI、通報の運営キューは引き続き予定です。チャットDEK envelope、編集・削除、AI翻訳、Recovery／端末移行後のaccount envelope復旧は実装済みですが、端末失効・鍵ローテーションと実機2端末E2Eは未完了で、厳密E2EEの完成契約ではありません。Stripe Identityを採用する場合も、Stripe Webhookの署名検証・イベント冪等性・対象ユーザー紐付けが成功するまで`identity_status=verified`へ遷移させません。画像平文、Key-A、Key-B、Recovery Key、Refresh TokenをAPIログへ出さない不変条件は全機能に適用します。
+本人確認（Stripe Identity等）、評価、通報の運営キューは引き続き予定です。チャット添付のクライアント送受信UI、チャットDEK envelope、編集・削除、AI翻訳、Recovery／端末移行後のaccount envelope復旧は実装済みですが、native WebTransport module、端末失効・鍵ローテーション、実機2端末E2Eは未完了で、厳密E2EEの完成契約ではありません。Stripe Identityを採用する場合も、Stripe Webhookの署名検証・イベント冪等性・対象ユーザー紐付けが成功するまで`identity_status=verified`へ遷移させません。画像平文、Key-A、Key-B、Recovery Key、Refresh TokenをAPIログへ出さない不変条件は全機能に適用します。
 
 ## 7. クライアント更新手順
 

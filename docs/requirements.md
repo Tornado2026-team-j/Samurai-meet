@@ -13,7 +13,7 @@
 
 > 本書は、提示された機能・認証フロー・DB項目・ファイル構成を実装可能な要件に整理したものです。数値目標や本人確認方式など、確定していない内容は「暫定」または「要確認」と記載しています。
 
-> 注意：本書は目標要件の初版ドラフトであり、現行実装の完了表ではありません。現在の実装範囲は [実装状態の境界](ai/system/current-status.md)、HTTP契約は [backend/API_SPEC.md](../backend/API_SPEC.md)、DBとmigrationは [DB仕様書](database.md) を正とします。特にPostGIS、QUICリアルタイム配送、OSプッシュ通知、評価・本人確認・通報は現行未実装または未確定です。
+> 注意：本書は目標要件の初版ドラフトであり、現行実装の完了表ではありません。現在の実装範囲は [実装状態の境界](ai/system/current-status.md)、HTTP契約は [backend/API_SPEC.md](../backend/API_SPEC.md)、DBとmigrationは [DB仕様書](database.md) を正とします。PostGIS、OSプッシュ通知、評価、本人確認、画像Moderation、運営キューは現行未実装または未確定です。通報・ブロックの基本API、HTTP/3 WebTransportのバックエンド、チャットのREST同期は実装済みですが、native bridgeと実機E2Eは未完了です。
 
 ## 詳細仕様書へのリンク
 
@@ -41,7 +41,7 @@ Samurai Meet は、近くにいる日本人・外国人同士が、時間・場�
 - クライアント：iOS / Android（Expo、React Native、Expo Router）
 - API サーバー：Go
 - DB：PostgreSQL（開発・CI・運用）
-- リアルタイム通信：QUIC（HTTP/3 / WebTransport）を目標とする。現行はRESTチャットのみ
+- リアルタイム通信：QUIC（HTTP/3 / WebTransport）を目標とする。現行はREST同期に加えて、設定時だけバックエンドのWebTransportリアルタイム配送を利用する
 - 認証：Google OAuth2 / OIDC、Passkey
 - 画像保存：自前サーバーまたはプライベートなオブジェクトストレージ
 
@@ -215,7 +215,7 @@ flowchart LR
 - 現在地取得はユーザーの明示的な許可を必要とする。
 - 外国人ユーザーも利用するため、初期 UI は日本語・英語対応を前提とする。
 - DB エンジンは PostgreSQL のみとする。PostGIS は将来の性能改善候補であり、現行の距離判定はGoのHaversineで行う。
-- チャットのリアルタイム配送は将来QUICを標準候補とし、HTTP/3 WebTransportを含むQUIC上の実装で実現する。現行はRESTの履歴・送信・既読とWebSocket配送が実装済みで、QUIC／WebTransportは未実装である。WebSocketのフロントは初回接続経路までで、再接続・token更新は未実装。WebSocketを標準経路として固定する場合は、QUICが技術的に成立しない理由・代替案・運用影響をチームで合意する。
+- チャットのリアルタイム配送はHTTP/3 WebTransportを標準経路とし、RESTの履歴・暗号文送信・既読を同期・復旧経路として残す。バックエンドのlistener、短命token、0-RTT mutation拒否、再検証、PostgreSQL fan-outは実装済みだが、native bridge、公開UDP/TLS経路、実機E2Eは未完了である。旧WebSocket endpointへの自動切替は行わず、WebTransportを利用できない環境ではREST同期を使う。
 - QUICの採用理由、QUIC/TLS 1.3とJWSの役割、リプレイ攻撃対策、packet再送とアプリ再送の境界は [チャット通信仕様](features/chat-transport.md) を正本とする。
 - 画像は DB にバイナリを直接保存せず、ストレージキーとメタデータを DB に保存する。
 - 個人情報の取扱いは、適用される個人情報保護法・GDPR 等を確認して確定する。法的判断は専門家レビューを受ける。
@@ -326,7 +326,7 @@ flowchart LR
 
 - マッチ成立後にのみアクセスできる 1 対 1 チャットとする。
 - テキスト、送信時刻、送信者、既読状態を管理する。
-- 将来QUIC接続を実装した場合は、切断後に再接続し、未送信・未受信メッセージをREST APIで同期する。現行はRESTポーリングである。
+- WebTransport接続が切断した場合は、短命tokenを再発行して再接続し、未送信・未受信メッセージをREST APIで同期する。native bridgeがない環境では現行フロントがREST同期を使う。
 - 通信断・タイムアウト・一時的なサーバーエラーで送信結果が不明な場合は、同じ `client_message_id` を使って期限・回数を制限した自動再送を行う。入力不正、認証失効、認可拒否では再送しない。
 - サーバーはメッセージの順序を `server_message_id` とサーバー時刻で確定する。
 - 削除済みメッセージは相手側で内容を再表示できない状態にする。監査ログの保存方針は要決定。
@@ -499,9 +499,9 @@ flowchart LR
 
 | コンポーネント | 責務 |
 | --- | --- |
-| Expo アプリ | 画面、OS 権限、Secure Storage、Key-A、暗号化、現行RESTクライアント。QUICクライアントは予定 |
+| Expo アプリ | 画面、OS 権限、Secure Storage、Key-A、暗号化、現行RESTクライアント。WebTransport native clientは未実装 |
 | Go API | 認証後のセッション、プロフィール、カード、検索、マッチ、画像認可。評価等は予定 |
-| QUIC（HTTP/3 / WebTransport） | マッチ済みチャットのリアルタイム配送、再接続・認証（予定） |
+| QUIC（HTTP/3 / WebTransport） | バックエンドのリアルタイム配送・再接続・認証は実装済み。native clientと実機公開経路は未完了 |
 | PostgreSQL | ユーザー、プロフィール、カード、マッチ、メッセージ、評価、監査データ |
 | PostGIS | 位置情報の距離検索・公開半径判定（将来候補。現行はGo Haversine） |
 | 画像ストレージ | 暗号化済みまたはアクセス制御済み画像の保存 |
@@ -676,7 +676,7 @@ flowchart LR
 | `POST` | `/v1/recovery/restore` | Recovery Key による復旧 |
 | `DELETE` | `/v1/me` | アカウント削除 |
 
-### 11.2 QUIC（HTTP/3 / WebTransport・予定）
+### 11.2 QUIC（HTTP/3 / WebTransport・バックエンド実装済み、native未完了）
 
 - 接続先：環境ごとに設定する QUIC endpoint（`chat_id` 単位。HTTP/3 WebTransport の場合は HTTPS URL として提供する）
 - 接続時に API セッションを検証する。
@@ -759,11 +759,11 @@ frontend/
 ├── hooks/
 │   ├── useAuth.ts              # 認証状態管理
 │   ├── useMatching.ts          # マッチングロジック
-│   └── useChatTransport.ts     # 将来のQUIC接続管理
+│   └── useChatTransport.ts     # native接続管理（未実装、現行はchat.tsのconnector契約）
 ├── services/
 │   ├── api.ts                  # REST API通信
 │   ├── storage.ts              # Secure Storage・画像ストレージ連携（DBへ直接接続しない）
-│   └── quic.ts                 # 将来のQUICクライアント（未実装）
+│   └── chat.ts                 # チャットREST・暗号化・翻訳・任意のtransport connector
 ├── types/
 │   └── index.ts                # 型定義
 ├── app.json                    # Expo設定
@@ -791,7 +791,8 @@ backend/
 │   │   └── service.go          # マッチングロジック
 │   ├── chat/
 │   │   ├── handler.go          # チャットAPI
-│   │   ├── quic.go             # 将来のQUICハンドリング（未実装）
+│   │   ├── quic.go             # WebTransportのtoken/frame/session契約
+│   │   ├── quic_server.go       # HTTP/3 WebTransport listener
 │   │   └── model.go            # メッセージモデル
 │   ├── image/
 │   │   ├── handler.go          # 画像アップロードAPI
@@ -870,7 +871,7 @@ backend/
 1. 認証、ユーザー、プロフィール、DB migration
 2. 募集カード、現在地、現行Haversine距離検索（PostGIS化は将来）
 3. 関心送信・マッチ状態管理
-4. チャット一覧、RESTメッセージ履歴、将来のQUIC配送
+4. チャット一覧、RESTメッセージ履歴、WebTransport配送（native bridge導入後の実機確認を含む）
 5. 写真アップロード、アクセス制御、EXIF 除去
 6. 本人確認、相互評価、いいね集計
 7. 通報・ブロック・管理者運用

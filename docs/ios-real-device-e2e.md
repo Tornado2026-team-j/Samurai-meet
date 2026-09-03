@@ -1,12 +1,12 @@
 # iPhone実機E2E手順書（現行実装）
 
-最終更新: 2026-09-01
-対象コードコミット: `93d396c1bc38d24537bbce047de8a600682f6438`
+最終更新: 2026-09-03
+対象コードコミット: 実施開始前に記録した現行`HEAD`
 判定: **実機未確認のため未完了**
 
-> この手順書の対象は上記コードコミットです。今回の変更はdocsだけで、アプリやサーバーのソースは変更しません。チャット画像・Key B添付、0040互換/0042前方移行、Expo Go SDK54フォールバック、募集/応募の修正は上記コミット群に含まれています。実機ビルドには、対象コードと同じソース状態のコミットを使い、作業中のbackend/frontend差分を混ぜないでください。
+> この手順書は特定の過去コミットへ固定しません。実機確認の開始時に、実際にビルドするコミット、作業ツリー、API接続先、ビルド種別を記録してください。backend/frontendの未コミット差分や未追跡ファイルを実機ビルドへ混ぜず、コードと設計の境界が確認できる状態だけを受入対象にします。
 
-2026-09-01時点の`HEAD`は上記の固定対象コードコミットと一致しています。このスナップショットには`917854d2`のmigration recovery、`05189109`のExpo Go SDK54 repair、`93d396c1`の募集・応募・通知の本番導線統一を含みます。今後のコードコミットを対象へ自動的に含めません。実機ビルドに使えるのはこの対象自身、または下記2.1で対象からHEADまでのコミット済み差分が`docs/`だけだと確認できる後続HEADだけです。今回の監査で変更するのはこの2つのdocsファイルだけですが、作業ツリーに別作業のbackend/frontend差分がある場合は実機対象から除外します。
+現行コードでは、チャットのREST履歴・暗号文送信・既読・画像・編集・削除・翻訳が接続済みです。バックエンドにはHTTP/3 WebTransportのリアルタイム配送がありますが、native bridgeは現行リポジトリに含まれず、Expo GoではREST同期を使います。WebTransport、Key B、Moderation、画像復号、通知、Recoveryは、実機確認の有無を自動テストや画面表示と混同しないでください。
 
 この手順書は、現行の画面・API・サーバー設定を使って、iPhone実機で次の受入確認を行うためのものです。
 
@@ -19,7 +19,7 @@
 
 ### 自動検証スナップショット
 
-2026-09-01に対象コード`93d396c1bc38d24537bbce047de8a600682f6438`で確認した自動検証は、`frontend`の`bun test` **135 pass / 0 fail / 414 expect calls** と`bun run typecheck`成功です。これはソース・型・自動テストの証跡であり、iPhone実機、OS通知、公開API、本番データ、native WebTransport、端末間画像復号を確認した証拠ではありません。下表と各ケースの実機判定はこの区別を維持します。
+自動検証の結果は、実機確認を開始する時点の`HEAD`で再実行して記録します。`bun test`、`bun run typecheck`、`bun run lint`、バックエンドの`go test -count=1 ./...`、`go vet ./...`は、ソース・型・自動テストの証跡です。iPhone実機、OS通知、公開API、本番データ、native WebTransport、端末間画像復号を確認した証拠ではありません。下表と各ケースの実機判定はこの区別を維持します。
 
 ## 0. 判定ルール
 
@@ -46,26 +46,26 @@
 | チャット画像 | `/chat/[id]`に画像選択、端末内AES-256-GCM暗号化、参加者デバイスごとのopaque envelope、復号表示・失敗再試行UIがある。サーバーは画像平文・画像鍵を扱わない | `GET /api/v1/chats/{id}/attachment-key-recipients`、`POST /api/v1/chats/{id}/attachments`、`PUT /api/v1/chats/{id}/attachments/{attachment_id}/envelopes`、`GET /api/v1/chats/{id}/attachments/{attachment_id}/envelope`、`GET /api/v1/chats/{id}/attachments/{attachment_id}` | 実機未確認 |
 | チャットKey B | Key B端末証明に紐づくX25519合意公開鍵へ、画像のfresh content keyを端末ごとに包む。秘密鍵は端末外へ送らない | 上記recipient/envelope API | 実機未確認。Keychain/Secure Storage・端末移行・相手端末だけの復号は未確認 |
 | HTTP/3 WebTransport | `ENABLE_CHAT_WEBTRANSPORT=true`で有効化するサーバー経路。iOS側は`SamuraiMeetWebTransport` native moduleが必要 | `POST /api/v1/chats/{id}/transport-token`、HTTP/3 `CONNECT /api/v1/wt/chats/{id}` | **BLOCKED（現行リポジトリにnative bridgeなし）** |
-| チャット翻訳 | 現行画面はローカル辞書による限定表示。`gemini-3.1-flash-lite`のチャット翻訳経路なし | — | **NOT RUN（未実装）** |
+| チャット翻訳 | `/chat/[id]`から同意後に`POST /api/v1/chats/{id}/translate`を呼び、サーバーが現行revisionとcommitmentを確認してGeminiへ送る。cache hitはproviderを呼ばない | `POST /api/v1/chats/{id}/translate` | 実機未確認。本文整合性・費用上限・429表示を含めて確認 |
 | 画像Moderation | 画像ModerationのAPI配線なし。暗号化画像をOpenAIへ送る処理もない | — | **BLOCKED（未実装）** |
 
-根拠となる実装位置は、[フロントエンドREADME](../frontend/README.md)、[バックエンドAPI仕様](../backend/API_SPEC.md)、[チャット通信仕様](features/chat-transport.md)、[現行進捗](進捗.md)、および各画面・サービスのソースです。`backend/API_SPEC.md`に過去のWebSocket表現が残る箇所はありますが、実機確認では対象コードのルーティングと`backend/HANDOFF.md`のWebTransport契約を優先します。
+根拠となる実装位置は、[フロントエンドREADME](../frontend/README.md)、[バックエンドAPI仕様](../backend/API_SPEC.md)、[チャット通信仕様](features/chat-transport.md)、[現行進捗](進捗.md)、および各画面・サービスのソースです。過去監査や初版要件の記述は当時の履歴であり、現行のルーティング・サービス・テストと一致しない場合は、現行実装のコードと`backend/API_SPEC.md`を優先します。
 
 ## 2. 前提環境
 
 ### 2.1 実機ビルドの対象固定（必須）
 
-実機確認を始める前に、実際に端末へ入れるソースとAPI接続先を固定します。対象コードコミットから`HEAD`までの**コミット済み差分が`docs/`だけ**であり、さらに対象コードコミットから作業ツリーまでの`backend/`・`frontend/`差分（staged、unstaged、未追跡を含む）が空であることを確認します。これにより、固定対象コードそのものとdocsだけの後続コミットのどちらも許可しつつ、対象コードに含まれない作業中のソース差分は実機対象から除外できます。今回の固定対象は`93d396c1bc38d24537bbce047de8a600682f6438`で、更新時点のHEADと一致しています。別作業のbackend/frontend差分が残るcheckoutはこのゲートを満たさず、実機ビルドに使いません。
+実機確認を始める前に、実際に端末へ入れるソースとAPI接続先を固定します。対象は開始時点の`HEAD`とし、作業ツリーの`backend/`・`frontend/`差分（staged、unstaged、未追跡を含む）が空であることを確認します。docsだけの差分は実機ソースへ混ぜません。backend/frontendに別作業の差分が残るcheckoutはこのゲートを満たさず、実機ビルドに使いません。
 
 ```powershell
-$TargetCommit = '93d396c1bc38d24537bbce047de8a600682f6438'
-$HeadCommit = git rev-parse HEAD
+$TargetCommit = (git rev-parse HEAD).Trim()
+$HeadCommit = (git rev-parse HEAD).Trim()
 git rev-parse --show-toplevel
 git status --short --untracked-files=all
 git merge-base --is-ancestor $TargetCommit $HeadCommit
 if ($LASTEXITCODE -ne 0) { throw 'TargetCommit is not an ancestor of HeadCommit' }
 
-# 対象コードコミットからHEADまでのコミット済み差分。docs/以外があれば不許可。
+# 対象コードコミットからHEADまでのコミット済み差分。TargetCommitを開始時点のHEADにした場合は空。
 $HeadDelta = @(git diff --name-only "${TargetCommit}..${HeadCommit}" -- .)
 $HeadDelta
 $HeadNonDocsDelta = @($HeadDelta | Where-Object { $_ -notlike 'docs/*' })
@@ -87,7 +87,7 @@ if ($SourceDelta.Count -ne 0) { throw 'backend/frontend contains a source delta'
 次を満たさない場合、ケースは`NOT RUN`または`BLOCKED`として記録し、画面が表示できてもPASSにしません。
 
 - `git merge-base --is-ancestor $TargetCommit $HeadCommit`が成功する。
-- `$HeadNonDocsDelta`が空である。`$HeadCommit`は`$TargetCommit`そのもの、または`docs/`だけを含む後続コミットに限る。実機ビルドの証跡には`TargetCommit`と`HeadCommit`の両方を記録する。
+- `$HeadNonDocsDelta`が空である。開始時点の`HEAD`を対象にするため通常は空となり、実機ビルドの証跡には`TargetCommit`と`HeadCommit`の両方を記録する。
 - `$SourceDelta`が空である。これは対象コードからのbackend/frontend差分を、コミット済み、staged、unstaged、未追跡の全てについて確認した結果である。何か1つでも出力された作業ツリーは実機対象にしない。
 - 実機アプリに埋め込んだ`EXPO_PUBLIC_API_BASE_URL`が、証跡へ記録したAPIホストと一致する。
 - 募集詳細のPASSには、対象`GET /api/v1/recruitments/{id}`の成功レスポンスをサーバー側で確認できることを含める。API取得に失敗した場合は、明確なエラー表示と再試行導線になり、モック募集を詳細として表示・応募などの操作対象にしないことを確認する。モックデータが表示されたり、そのデータへ操作できたりした場合はFAILとする。
@@ -139,7 +139,7 @@ curl.exe --fail --silent --show-error http://127.0.0.1:8080/api/v1/readyz
 
 - `GEMINI_API_KEY`: 募集内容の分類に使うサーバー専用キー。
 - `GEMINI_MODEL=gemini-3.1-flash-lite`: 現行の募集分類モデル。
-- `OPENAI_API_KEY`: チャット本文の送信前Moderation用サーバー専用キー。通常は未設定時に`moderation_unavailable`となり、クライアントは送信を止める。ローカル確認で`CHAT_MODERATION_DEV_FREE_MODE=true`を明示した場合だけ、外部送信をしない保守的なローカル判定へ切り替わるため、共有・本番の実機確認ではこのフラグを無効にする。
+- `OPENAI_API_KEY`: チャット本文の送信前Moderation用サーバー専用キー。通常は未設定時に`moderation_unavailable`となり、クライアントは送信を止める。`CHAT_MODERATION_DEV_FREE_MODE=true`を明示した場合はAPP_ENVにかかわらず外部送信をしない保守的なローカル判定へ切り替わり、起動時警告を出す。これは実データを使わない一時確認例外であり、通常の本番運用へ戻す前にフラグを無効化し、キーを設定する。
 - Moderationモデルは現行サーバー実装が`omni-moderation-latest`を使用する。モデル名やキーをクライアントから渡さない。
 - `DB_*`と適用済みmigration: 対象DBへ接続でき、起動時migrationが成功すること。
 - `IMAGE_STORAGE_DIR`、`IMAGE_MAX_UPLOAD_BYTES`: 暗号文画像APIを検証する場合のみ必要。既定の画像暗号文上限は20MiB。

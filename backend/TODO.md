@@ -4,7 +4,7 @@
 
 検証専用の `expo-test` と `dev-client` は廃止しました。新しいクライアント検証は `frontend/` のテストと実機E2Eで行います。
 
-## 今回のバックエンド実装範囲（2026-08-26）
+## 現行バックエンド実装範囲（2026-09-03）
 
 - `GET /api/v1/me` と `PATCH /api/v1/me/profile` を追加した。名前・国コード・自己紹介をDBへ保存し、APIから後日変更できる。プロフィール編集画面はまだこのAPIへ接続しない。
 - マッチングAPIと`0019_profiles_matching.sql`を追加した。募集カード、検索、現在地、関心、応募一覧、詳細、承認、辞退、完了をGo側で認証・認可・期限・重複・ブロック検証する。
@@ -15,6 +15,7 @@
 - 募集画面はAPI接続済みで、日時入力のISO内部値／`Asia/Tokyo`固定と自動テストは完了している。日時選択から公開・応募・通知遷移までのiOS実機全通しE2Eを確認する。
 - 募集日時の壁時計は`Asia/Tokyo`固定、絶対時刻はUTC。通常のネイティブ接続先はproduction domainで、LAN URLは明示設定時だけ使う。通知はアプリ内RESTまでで、OSプッシュは未実装。
 - chat transport tokenはhandler既定値・サービス受理値ともに`webtransport`で一致し、HTTP/3 WebTransportだけに発行する。旧WebSocket endpointは410でありfallbackではない。native Development BuildでのWebTransport module実装、UDP/TLS公開、実機E2Eは残タスク。
+- チャット送信前Moderationは通常OpenAIへ送信し、未設定・障害時はfail-closedとなる。`CHAT_MODERATION_DEV_FREE_MODE=true`を明示した場合はAPP_ENVにかかわらず外部送信をしない保守的なローカル判定へ切り替える一時確認例外で、起動時警告を出し、実データを使わず、通常の本番運用前に無効化・キー設定する。
 
 ## 緊急認証ローテーション（未実装）
 
@@ -42,12 +43,12 @@
 
 3. **残りの業務API・フロント接続**
    - 募集公開、募集検索・詳細、募集管理、関心送信、応募履歴、応募取り下げ、承認・辞退は`frontend/`から接続済み。プロフィール編集画面は引き続きローカル表示のため、`PATCH /api/v1/me/profile`との完全同期を行う。
-	- チャット、会合、距離補助のネイティブ測定を画面へ接続し、送信中・QUIC packet再送・同じ`client_message_id`によるアプリ自動再送・既読・期限切れ状態を扱う。
+	- native WebTransportクライアントと実機UDP経路を追加・検証し、接続断後のREST同期、既読、期限切れ状態を実機で確認する。会合・距離補助のnative測定はmodule導入後に接続する。
 	- 評価とnative WebTransport実機E2Eは未完。通知一覧・未読管理、応募／承認／辞退／チャット送信通知、表示言語に依存しない通知遷移は実装済みだが、iOS実機E2Eを残す。
 
 4. **バックエンドの残課題**
-   - API／アプリ双方のレート制限、PostGIS化、ブロック登録API、評価を追加する。
-	- native WebTransportクライアントと実機UDP経路を追加・検証する。チャット内写真送信と通知連携は実装済み。
+   - PostGIS化、評価、Stripe Identity連携、OSプッシュ通知を追加する。チャット送信・翻訳のサーバー側レート制限とブロック登録APIは実装済みで、実機挙動と公開運用設定を確認する。
+	- native WebTransportクライアントと実機UDP経路を追加・検証する。チャット内写真送信と通知連携は実装済みだが、画像Moderation、既存添付の鍵ローテーション、2端末実機E2Eは残る。
    - Stripe Identity等の本人確認を追加する。サーバーでVerification Sessionを発行し、Stripe Webhookの署名・イベント重複・対象ユーザーの紐付けを検証した後だけ`profiles.identity_status=verified`へ遷移させる。クライアントからの自己申告や戻りURLだけでは認証済みマークを付けない。
    - 本人確認の再確認期限、否認・再申請、参照IDの保持期限、Webhook監査ログ、Stripe障害時の保留状態を決める。本人確認済みでも安全を保証しない表示を行う。
    - PostgreSQL統合テストでプロフィール・募集・関心・承認・期限・ブロック・位置期限を通しで検証する。

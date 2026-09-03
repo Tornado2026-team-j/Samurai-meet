@@ -2,6 +2,8 @@
 
 最終更新: 2026-08-27
 
+最終更新: 2026-09-03
+
 現在のGo実装との厳密な契約は [backend/API_SPEC.md](../backend/API_SPEC.md) を正とする。この文書では、フロントエンドが使う公開APIを、実装済みと予定に分けて一覧化する。
 
 ## 1. 共通
@@ -190,7 +192,7 @@ Refresh request:
 
 応募、承認・辞退、暗号化チャットメッセージ送信時にサーバーで通知を作成します。通知画面の表示文はクライアント側で日本語／英語に変換し、応募・応募結果は表示言語に依存せず構造化IDから対応画面へ遷移します。チャット本文は保存・表示しません。現状はアプリ内REST通知であり、OSプッシュ通知は未実装です。通知遷移のiOS実機E2Eは未確認です。
 
-### チャット・会合（RESTのフロント接続済み。実機E2E・端末失効／鍵ローテーションは未完了）
+### チャット・会合（暗号化RESTのフロント接続済み。WebTransport native実機E2E・端末失効／鍵ローテーションは未完了）
 
 | Method | Path | 用途 |
 | --- | --- | --- |
@@ -214,7 +216,9 @@ Refresh request:
 | GET | `/api/v1/meetings/{id}/proximity` | 直近の距離補助値 |
 | POST | `/api/v1/meetings/{id}/proximity` | Bluetooth／位置推測の補助値送信 |
 
-チャット送信・編集・削除は`accepted`マッチの送信者／参加者境界で行い、平文ではなくBase64URLのAES-256-GCM暗号文だけを保存します。同じ`client_message_id`の再送は冪等です。新規本文はランダムなチャットDEKを使う`chat-dek-v1`で暗号化し、既存`chat-mvp-v1`と旧`chat-keyb-v1`は読み取り互換だけを残します。チャットDEKはKey-A／`data_salt`から導出したaccount envelopeと、参加端末のX25519公開鍵で包んだdevice envelopeに保存し、Key-Bは端末proofにだけ使います。Recovery／端末移行後はKey-Aを復旧してaccount envelopeから同じDEKを取り出せます。翻訳はAIが原言語判定を含めて行い、初回結果をクライアントがチャットDEKで暗号化してメッセージrevisionと一緒に保存します。同じrevision・対象言語なら保存済み暗号文を再利用し、編集・削除・保持期限で関連行も消去します。自動翻訳は同意済みの場合だけ初期表示範囲を遅延実行し、同時実行数を2件に制限します。リアルタイム配送はTLS 1.3/UDPのHTTP/3 WebTransportをnative経路の候補とし、Expo GoではREST同期を使います。距離補助値はクライアント推定であり、本人確認や安全判定には使いません。
+チャット送信・編集・削除は`accepted`マッチの送信者／参加者境界で行い、平文ではなくBase64URLのAES-256-GCM暗号文だけを保存します。同じ`client_message_id`の再送は冪等です。新規本文はランダムなチャットDEKを使う`chat-dek-v1`で暗号化し、既存`chat-mvp-v1`と旧`chat-keyb-v1`は読み取り互換だけを残します。チャットDEKはKey-A／`data_salt`から導出したaccount envelopeと、参加端末のX25519公開鍵で包んだdevice envelopeに保存し、Key-Bは端末proofにだけ使います。Recovery／端末移行後はKey-Aを復旧してaccount envelopeから同じDEKを取り出せます。翻訳はAIが原言語判定を含めて行い、初回結果をクライアントがチャットDEKで暗号化してメッセージrevisionと一緒に保存します。同じrevision・対象言語なら保存済み暗号文を再利用し、編集・削除・保持期限で関連行も消去します。自動翻訳は同意済みの場合だけ初期表示範囲を遅延実行し、同時実行数を2件に制限します。リアルタイム配送はTLS 1.3/UDPのHTTP/3 WebTransportをバックエンド実装済みの経路とし、`ENABLE_CHAT_WEBTRANSPORT=true`とUDP/TLS設定が必要です。native bridgeがないExpo GoではREST同期を使い、旧WebSocket endpointは410で自動fallbackしません。距離補助値はクライアント推定であり、本人確認や安全判定には使いません。
+
+本文送信前のModerationは暗号化前の平文例外です。通常は`OPENAI_API_KEY`でOpenAIへ送り、未設定・障害時は`unavailable`として暗号化・メッセージ送信を止めます。`CHAT_MODERATION_DEV_FREE_MODE=true`を明示した一時確認では、APP_ENVにかかわらず外部送信をしないローカル保守的判定へ切り替えます。このモードは起動時警告付きで、OpenAIの代替ではなく、実データを使わず、通常の本番運用前に無効化します。
 
 ### 画像・鍵（実装済み）
 

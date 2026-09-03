@@ -112,7 +112,8 @@ type SendMessageInput struct {
 	ContentType string `json:"content_type"`
 	ExpiresAt   string `json:"expires_at,omitempty"`
 	// AttachmentID optionally references a chat photo the caller already
-	// uploaded to this chat. REST only; WebSocket message.send ignores it.
+	// uploaded to this chat. REST only; WebTransport message.send does not
+	// include attachment_id.
 	AttachmentID string `json:"attachment_id"`
 	// PlaintextCommitment and PlaintextCommitmentSalt bind a client-decrypted
 	// plaintext to this message without sending or storing the plaintext.

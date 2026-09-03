@@ -1,6 +1,6 @@
 # 実装状態の境界
 
-最終確認: 2026-08-30
+最終確認: 2026-09-03
 
 この文書は現行コードを正とする。仕様書に「予定」と書かれたものは、コードとテストで確認できるまで実装済みとして扱わない。詳細なHTTP契約は [backend/API_SPEC.md](../../../backend/API_SPEC.md) を参照する。
 
@@ -13,12 +13,13 @@
 - 通知は現時点でアプリ内REST通知であり、`expo-notifications`等によるOSプッシュ通知は未実装。
 - チャットは暗号文のREST送信・履歴取得・既読更新・短命transport token発行に加え、HTTP/3 WebTransportによるリアルタイム配送（マルチデバイス整合、送信レート制限、heartbeat失効、複数インスタンス向け`LISTEN/NOTIFY` fan-out）と、保持期間スイープ（既定180日・`deleted_at`実配線・暗号文消去・`chat_message_deletions`監査）、チャット写真の暗号文BLOB添付をバックエンド実装済み。メッセージ編集・削除（`PATCH/DELETE /api/v1/chats/{id}/messages/{message_id}`）と、AIによる原言語判定を含む表示言語翻訳（`POST /api/v1/chats/{id}/translate`）も実装済み。新規本文はランダムなチャットDEKの`chat-dek-v1`で暗号化し、DEKはKey-A由来のaccount envelopeまたは端末X25519 device envelopeから復旧する。翻訳結果はクライアントがチャットDEKで暗号化してメッセージrevisionごとに保存し、同じ条件では再利用し、編集・削除・保持期限で消去する。Key-Bは端末proofに限定し、既存`chat-mvp-v1`／旧`chat-keyb-v1`は読み取り互換だけを残す。Recovery／端末移行後のaccount envelope復旧は実装済みだが、実機2端末E2E・端末失効・鍵ローテーションは未確認である。Moderationと翻訳は暗号化前に外部AIへ平文を同期転送する明示的な例外で、平文・生応答は永続化しない。既読の `last_message_sequence` はハイウォーターマーク方式（最新liveへクランプ・前進のみ）。transport tokenが発行する`transport`は`webtransport`のみで、WebTransport listenerが無効な環境ではREST同期を使う。チャット画面のREST同期、チャットDEK復号、翻訳の`Original`切替、本文編集・削除UIは接続済みだが、native WebTransport実機E2Eは未確認。保持日数の最終確定は運用・法務判断。
 - 募集の利用日・壁時計は現在 `Asia/Tokyo` 固定で正規化する方針。DB/APIの絶対時刻はUTCとして扱う。
+- チャット送信前Moderationは、通常は`OPENAI_API_KEY`を使い、未設定・timeout・上流障害時はfail-closedで送信を停止する。`CHAT_MODERATION_DEV_FREE_MODE=true`を明示した一時確認では、APIキーが残っていても外部送信をしないローカル保守的判定を使う。このフラグはproductionでも起動できるが、起動時警告を出し、OpenAIの代替ではないため実データを使わない。
 
 ## 未完了・本番承認不可
 
 - iOS募集画面の初期日時パース問題はISO内部値／JST固定化で修正し、自動テストを完了した。日時picker、過去時刻、日跨ぎ、公開・応募・通知遷移の実機E2Eは完了していない。
 - native Passkey、Secure Enclave／Android Keystore、画像画面統合、削除reconciler、legacy画像移行、プロフィール編集UIとの完全同期、会合画面を完了していない。チャットのaccount／device envelope、Recovery／端末移行経路は接続済みだが、実機2端末E2E、端末失効・鍵ローテーションは未完了である。
-- WebTransport配送・heartbeat失効・0-RTT mutation拒否はバックエンド実装済み・単体テスト済み。native WebTransportクライアントの実機接続、UDP公開、実機での再接続・負荷試験は手順書（`docs/features/chat-load-test.md`）に沿った確認が未実施である。
+- WebTransport配送・heartbeat失効・0-RTT mutation拒否はバックエンド実装済み・単体テスト済み。native WebTransportクライアントの実機接続、UDP公開、実機での再接続・負荷試験は手順書（`docs/features/chat-load-test.md`）に沿った確認が未実施である。RESTはWebTransportが使えない環境の同期・復旧経路であり、WebSocket fallbackではない。
 - OSプッシュ通知、本人確認、評価、監査ログ、PostGIS化は未実装または未確定である。通報登録・ブロックAPIは実装済みで、通報対象のオブジェクト認可も対象種別ごとに検証する（運営キューは未）。レート制限はIPベースHTTPとチャット送信のユーザー単位を実装済み。
 
 ## 既知の実装不整合

@@ -1,6 +1,6 @@
 # 技術選定・実装分担
 
-本表は、現行実装と将来の採用候補を分けて読む。現行のチャット配送はRESTであり、QUIC／WebTransportは未実装の計画である。募集日時は`Asia/Tokyo`固定の壁時計、絶対時刻はUTCとする。
+本表は、現行実装と将来の採用候補を分けて読む。現行のチャットは暗号化RESTを同期経路、HTTP/3 WebTransportを条件付きのリアルタイム経路として使う。native WebTransport clientは未同梱で、Expo GoではREST同期を使う。募集日時は`Asia/Tokyo`固定の壁時計、絶対時刻はUTCとする。
 
 ## 1. 結論
 
@@ -10,13 +10,13 @@ Samurai Meet は、次の分担で実装します。
 | --- | --- | --- | --- |
 | モバイル UI | 画面、フォーム、ナビゲーション | TypeScript / TSX | Expo、React Native、Expo Router、`frontend/app` |
 | クライアント状態管理 | 認証状態、検索条件、チャット状態 | TypeScript | React Hooks、`frontend/hooks` |
-| クライアント通信 | REST、認証セッション。QUIC／WebTransportは予定 | TypeScript | `frontend/services/api.ts`。`quic.ts`は未実装 |
+| クライアント通信 | REST、認証セッション、WebTransport connector契約 | TypeScript | `frontend/services/api.ts`、`frontend/services/chat.ts`。native bridgeは未同梱 |
 | クライアント暗号化 | Key-A、Recovery Key、HKDF、AES-GCM | TypeScript + OS の暗号 API | Secure Storage、必要に応じて Expo Native Module |
 | Google 認証クライアント | OAuth2 / OIDC の開始、コールバック | TypeScript | Expo Auth Session 等 |
 | Passkey クライアント | Passkey の登録・認証 UI | TypeScript + OS API | WebAuthn / Passkey 対応ライブラリ |
 | REST API | 認証後の業務 API、プロフィール、カード、評価 | Go | `backend/internal/*/handler.go` |
 | 業務ロジック | マッチング、公開半径、状態遷移 | Go | `backend/internal/*/service.go` |
-| QUIC / HTTP/3 チャット通信（予定） | チャット接続、短命 token、低遅延配送、再接続制御 | Go + TypeScript / native module | 現在はRESTのチャット部品のみ。QUIC／HTTP/3 serverとモバイルnative transportはPoC後に実装。WebSocketの例外採用はチーム合意が必要 |
+| QUIC / HTTP/3 チャット通信 | チャット接続、短命 token、低遅延配送、失効再検証、複数インスタンスfan-out | Go + native module契約 | GoのWebTransport serverは実装済み。`ENABLE_CHAT_WEBTRANSPORT`とUDP/TLS設定が必要で、native transportと実機E2Eは未完了。WebSocketへfallbackしない |
 | OAuth / Passkey 検証 | Google ID Token、WebAuthn assertion 検証 | Go | `backend/internal/auth` |
 | 画像 API | アップロード、認可、メタデータ、削除 | Go | `backend/internal/image` |
 | 画像変換・検査 | リサイズ、サムネイル、EXIF 除去、形式検査 | Go | 画像処理ライブラリを採用。運用要件により専用 worker 化 |
@@ -39,8 +39,8 @@ Samurai Meet は、次の分担で実装します。
 | キーワード検索 | TypeScript で検索条件とカード表示 | Go で条件検証・距離検索・並び替え | `recruitment_cards`、PostgreSQL / PostGIS |
 | 募集カード | TypeScript で作成・編集 UI | Go で状態遷移・期限切れ処理 | `recruitment_cards` |
 | マッチング | TypeScript で関心・承認状態表示 | Go で重複防止・相互承認・認可 | `matches` |
-| チャット | TypeScriptでREST履歴・送信・既読を接続（未接続） | Goで暗号文保存・認可・冪等処理 | `messages` |
-| チャット通信認証（予定） | QUIC接続時のChat Token更新・切替 | Goで`aud`、`chat_id`、`sid`、`token_seq`を検証 | `sessions`、`matches` |
+| チャット | TypeScriptでREST履歴・送信・既読、暗号化添付、編集・削除、翻訳を接続 | Goで暗号文保存・認可・冪等処理 | `messages`、`chat_attachments`、`chat_message_translations` |
+| チャット通信認証 | WebTransport接続時のChat Token、再検証、再接続契約 | Goで`aud`、`chat_id`、`sid`、`token_seq`を検証 | `sessions`、`matches`、PostgreSQL fan-out |
 | 通知 | TypeScriptで一覧・既読・未読表示 | Goでイベント生成・保存・認可 | `notifications` |
 | 写真 | TypeScript で選択・暗号化・送信 | Go で MIME/サイズ/権限/ストレージ処理 | `photos`、非公開ストレージ |
 | 相互評価 | TypeScript で評価フォーム | Go で一回限り制約・集計 | `reviews`, `profile_likes` |
@@ -53,10 +53,10 @@ Samurai Meet は、次の分担で実装します。
 
 - 画面の描画と入力状態の管理
 - OS 権限の取得（位置情報、写真、通知）
-- REST APIクライアント。QUIC／WebTransportクライアントは予定
+- REST APIクライアントと、native WebTransport bridgeへ接続するconnector契約
 - クライアントに保持する認証状態
 - Key-A の生成、Secure Storage への保存、暗号化対象データのクライアント処理
-- オフライン時のUI状態とREST再試行。QUIC再接続は予定
+- オフライン時のUI状態とREST同期。WebTransportの再接続時は`sequence` cursorで補完
 
 ### 3.2 Go で行う処理
 
@@ -64,8 +64,8 @@ Samurai Meet は、次の分担で実装します。
 - セッション、認可、ユーザー状態の管理
 - プロフィール、募集カード、マッチ、チャット、評価の業務処理
 - 公開半径、期限、ブロック状態などのサーバー側判定
-- （予定）QUIC接続、メッセージ順序、再送・重複排除
-- Chat Tokenの発行・短期期限・対象chat束縛は部品あり。順次切り替え、QUIC／HTTP/3接続認証は予定
+- HTTP/3 WebTransport接続、メッセージ順序、再送・重複排除、heartbeat失効を実装
+- Chat Tokenの発行・短期期限・対象chat束縛、CONNECT認証、0-RTT拒否、複数インスタンスfan-outを実装。native clientの接続は未確認
 - 画像アップロードの認証、検査、ストレージ連携
 - （予定）管理者操作と監査ログ
 
