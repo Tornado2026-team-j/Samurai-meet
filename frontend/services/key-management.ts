@@ -574,14 +574,22 @@ export async function loadStoredDeviceKeyB(userID: string): Promise<DeviceKeyMat
 	}
 }
 
-async function createDeviceKeyMaterial(userID: string): Promise<DeviceKeyMaterial> {
+async function persistDeviceKeyMaterial(userID: string, material: DeviceKeyMaterial): Promise<void> {
+	if (material.deviceID.length === 0 || material.keyVersion !== 'v1' || material.keyB.length !== 32) {
+		throw new Error('Invalid device key material');
+	}
+	await Promise.all([
+		setDeviceStoredItem(deviceIDStorageKey(userID), material.deviceID),
+		setDeviceStoredItem(deviceKeyBStorageKey(userID), toBase64URL(material.keyB)),
+	]);
+}
+
+async function createDeviceKeyMaterial(userID: string, persist = true): Promise<DeviceKeyMaterial> {
 	const deviceID = toBase64URL(await randomBytes(16));
 	const keyB = await randomBytes(32);
-	await Promise.all([
-		setDeviceStoredItem(deviceIDStorageKey(userID), deviceID),
-		setDeviceStoredItem(deviceKeyBStorageKey(userID), toBase64URL(keyB)),
-	]);
-	return { deviceID, keyVersion: 'v1', keyB };
+	const material = { deviceID, keyVersion: 'v1', keyB };
+	if (persist) await persistDeviceKeyMaterial(userID, material);
+	return material;
 }
 
 async function registerDeviceMaterial(
@@ -612,19 +620,29 @@ async function registerDeviceMaterial(
 
 export async function ensureDeviceKeyB(session: Session): Promise<DeviceKeyMaterial> {
 	let material = await loadStoredDeviceKeyB(session.user_id);
-	if (!material) material = await createDeviceKeyMaterial(session.user_id);
+	if (material) {
+		// Device registration is a recent-Passkey-gated operation. Replaying it
+		// during ordinary startup made an otherwise usable device unable to open
+		// chat after a restart. The device proof on the actual protected request
+		// remains the server-side authority; repair/rotation is only needed when
+		// a device is genuinely new or an explicit key-management flow detects a
+		// mismatch.
+		return material;
+	}
+
+	material = await createDeviceKeyMaterial(session.user_id, false);
 	try {
 		await registerDeviceMaterial(session, material);
-		return material;
 	} catch (reason) {
 		if (!(reason instanceof Error) || reason.message !== '409: device_key_mismatch') throw reason;
 		// A Secure Storage restore can leave an old device ID beside a newly
 		// generated key. Rotate the device identifier instead of replacing a
 		// server registration with a different public key.
-		material = await createDeviceKeyMaterial(session.user_id);
+		material = await createDeviceKeyMaterial(session.user_id, false);
 		await registerDeviceMaterial(session, material);
-		return material;
 	}
+	await persistDeviceKeyMaterial(session.user_id, material);
+	return material;
 }
 
 export async function listRegisteredDevices(session: Session): Promise<RegisteredDevice[]> {
@@ -666,23 +684,40 @@ async function saveDeviceAgreementKey(userID: string, material: DeviceAgreementK
 
 /** Ensures the signing Key-B and the separate X25519 transfer key are both registered. */
 export async function ensureDeviceAgreementKey(session: Session): Promise<DeviceKeyBundle> {
-  let device = await ensureDeviceKeyB(session);
-  let agreement = await loadStoredDeviceAgreementKey(session.user_id);
-  if (!agreement) {
-    agreement = await createDeviceAgreementKeyMaterial();
-    await saveDeviceAgreementKey(session.user_id, agreement);
-  }
+	let device = await loadStoredDeviceKeyB(session.user_id);
+	let agreement = await loadStoredDeviceAgreementKey(session.user_id);
+	if (device && agreement) return { device, agreement };
+	const deviceWasStored = device !== null;
+
+	// Missing either half means this is a new device or an interrupted
+	// registration. Creating/registering the pair is intentionally kept behind
+	// the existing recent-Passkey boundary. Do not silently replace a stored
+	// device identity during ordinary chat reads.
+	if (!device) {
+		// The agreement public key is registered together with the device
+		// identity. If the signing key was lost, never pair the old agreement
+		// private key with a newly generated device identity.
+		device = await createDeviceKeyMaterial(session.user_id, false);
+		agreement = await createDeviceAgreementKeyMaterial();
+	} else if (!agreement) {
+		agreement = await createDeviceAgreementKeyMaterial();
+	}
   try {
     await registerDeviceMaterial(session, device, agreement);
+		if (!deviceWasStored) {
+			await persistDeviceKeyMaterial(session.user_id, device);
+		}
+		await saveDeviceAgreementKey(session.user_id, agreement);
     return { device, agreement };
   } catch (reason) {
     if (!(reason instanceof Error) || reason.message !== '409: device_agreement_key_mismatch') throw reason;
     // The private agreement key was lost or restored from another install.
     // Never replace the public key in place: create a new device identity.
-    device = await createDeviceKeyMaterial(session.user_id);
+    device = await createDeviceKeyMaterial(session.user_id, false);
     agreement = await createDeviceAgreementKeyMaterial();
-    await saveDeviceAgreementKey(session.user_id, agreement);
     await registerDeviceMaterial(session, device, agreement);
+    await persistDeviceKeyMaterial(session.user_id, device);
+    await saveDeviceAgreementKey(session.user_id, agreement);
     return { device, agreement };
   }
 }

@@ -218,6 +218,8 @@ Refresh request:
 
 チャット送信・編集・削除は`accepted`マッチの送信者／参加者境界で行い、平文ではなくBase64URLのAES-256-GCM暗号文だけを保存します。同じ`client_message_id`の再送は冪等です。新規本文はランダムなチャットDEKを使う`chat-dek-v1`で暗号化し、既存`chat-mvp-v1`と旧`chat-keyb-v1`は読み取り互換だけを残します。チャットDEKはKey-A／`data_salt`から導出したaccount envelopeと、参加端末のX25519公開鍵で包んだdevice envelopeに保存し、Key-Bは端末proofにだけ使います。Recovery／端末移行後はKey-Aを復旧してaccount envelopeから同じDEKを取り出せます。翻訳はAIが原言語判定を含めて行い、初回結果をクライアントがチャットDEKで暗号化してメッセージrevisionと一緒に保存します。同じrevision・対象言語なら保存済み暗号文を再利用し、編集・削除・保持期限で関連行も消去します。自動翻訳は同意済みの場合だけ初期表示範囲を遅延実行し、同時実行数を2件に制限します。リアルタイム配送はTLS 1.3/UDPのHTTP/3 WebTransportをバックエンド実装済みの経路とし、`ENABLE_CHAT_WEBTRANSPORT=true`とUDP/TLS設定が必要です。native bridgeがないExpo GoではREST同期を使い、旧WebSocket endpointは410で自動fallbackしません。距離補助値はクライアント推定であり、本人確認や安全判定には使いません。
 
+チャット初期表示の鍵復旧は、通常の端末登録を再実行せず、保存済みKey-Bによるdevice proofと既存のaccount/device envelopeを使います。保存済みKey-Bがない初期表示では新しい端末proofやDEKを作らず、明示的な端末移行・鍵復旧の状態として扱います。現行暗号文の鍵を取得できない場合も履歴取得自体は失敗扱いにせず、暗号化表示と手動再確認へ分けます。旧形式だけのチャットは、既存envelopeの有無を確認してから、必要な場合だけowner権限の移行をバックグラウンドで行います。画面終了・通信断・プロセス終了後も、次回の読み込みでmanifest/envelopeの不変状態を再確認するため、途中まで成功した処理を別DEKで続行しません。
+
 本文送信前のModerationは暗号化前の平文例外です。通常は`OPENAI_API_KEY`でOpenAIへ送り、未設定・障害時は`unavailable`として暗号化・メッセージ送信を止めます。`CHAT_MODERATION_DEV_FREE_MODE=true`を明示した一時確認では、APP_ENVにかかわらず外部送信をしないローカル保守的判定へ切り替えます。このモードは起動時警告付きで、OpenAIの代替ではなく、実データを使わず、通常の本番運用前に無効化します。
 
 ### 画像・鍵（実装済み）

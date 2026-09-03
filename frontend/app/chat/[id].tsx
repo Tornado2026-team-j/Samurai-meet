@@ -87,6 +87,7 @@ type SafetyModal =
   | { kind: "menu" }
   | { kind: "confirm"; action: ConfirmAction; target: ReportTarget | null }
   | { kind: "report"; target: ReportTarget };
+type ChatMigrationState = "not_needed" | "pending" | "retry_required" | "owner_required";
 type MaterialIconName = ComponentProps<typeof MaterialIcons>["name"];
 
 const CATEGORY_ICONS: Record<MatchCategory, MaterialIconName> = {
@@ -156,6 +157,12 @@ const COPY = {
     draftEmpty: "メッセージを入力してください。",
     draftTooLong: "メッセージは2000文字以内で入力してください。",
     sendFailed: "メッセージを送信できませんでした。時間をおいて再試行してください。",
+    chatKeyUnavailable: "暗号鍵を復旧できないため、本文は暗号化された状態で表示しています。通信状態とPasskey再認証を確認して再試行してください。",
+    legacyChatKeyUnavailable: "旧形式の暗号鍵を端末で確認できないため、一部の過去メッセージを表示できません。鍵を復旧して再試行してください。",
+    chatKeyRetry: "暗号鍵を再確認",
+    chatMigrationInProgress: "暗号鍵を移行中です。画面を閉じても、次回起動時に続きから再試行します。",
+    chatMigrationRetry: "暗号鍵の移行が完了していません。通信状態とPasskey再認証を確認して再試行してください。",
+    refreshFailed: "最新のチャット状態を取得できませんでした。表示中の履歴を維持しています。",
     chatKeyMigrationPending: "このチャットの暗号鍵を移行中です。案内の所有者が一度チャットを開いた後、再試行してください。",
     photo: "画像",
     sendPhoto: "画像を送信",
@@ -267,6 +274,12 @@ const COPY = {
     draftEmpty: "Enter a message.",
     draftTooLong: "Messages must be 2000 characters or fewer.",
     sendFailed: "Message could not be sent. Please try again later.",
+    chatKeyUnavailable: "The encryption key could not be recovered, so messages are shown as encrypted. Check your connection and recent Passkey authentication, then try again.",
+    legacyChatKeyUnavailable: "The legacy encryption key is not available on this device, so some older messages cannot be displayed. Restore the key and try again.",
+    chatKeyRetry: "Check encryption key",
+    chatMigrationInProgress: "This chat's encryption key is migrating. You can close the screen; the next launch will retry from the last safe step.",
+    chatMigrationRetry: "Encryption-key migration is not complete. Check your connection and recent Passkey authentication, then try again.",
+    refreshFailed: "The latest chat state could not be loaded. The messages already displayed were kept.",
     chatKeyMigrationPending: "This chat's encryption key is waiting to be migrated. Ask the guide owner to open the chat once, then try again.",
     photo: "Photo",
     sendPhoto: "Send photo",
@@ -450,6 +463,9 @@ export default function ChatDetailScreen() {
   const [sendingPhoto, setSendingPhoto] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);
+  const [chatKeyUnavailable, setChatKeyUnavailable] = useState(false);
+  const [legacyChatKeyUnavailable, setLegacyChatKeyUnavailable] = useState(false);
+  const [migrationState, setMigrationState] = useState<ChatMigrationState>("not_needed");
   const [attachmentSources, setAttachmentSources] = useState<Record<string, string>>({});
   const [attachmentLoading, setAttachmentLoading] = useState<Record<string, boolean>>({});
   const [attachmentErrors, setAttachmentErrors] = useState<Record<string, boolean>>({});
@@ -473,13 +489,17 @@ export default function ChatDetailScreen() {
   const attachmentControllersRef = useRef(new Map<string, AbortController>());
   const translationAttemptsRef = useRef(new Set<string>());
   const translationControllersRef = useRef(new Map<string, AbortController>());
+  const migrationControllerRef = useRef<AbortController | null>(null);
+  const loadControllerRef = useRef<AbortController | null>(null);
+  const loadGenerationRef = useRef(0);
+  const loadedDataRef = useRef(false);
   const editingMessageIDRef = useRef<string | null>(null);
   editingMessageIDRef.current = editingMessageID;
   const copy = COPY[language ?? "ja"];
   const displayMessages = useMemo(() => deduplicateChatMessages(messages), [messages]);
   const validation = validateChatDraft(draft);
   const readOnly = chat?.status === "completed" || locallyClosed !== null;
-  const canSend = safetyModal === null && !readOnly && !sending && !deletingMessageID && !sharingLocation && !sendingPhoto && !validation;
+  const canSend = safetyModal === null && !readOnly && !chatKeyUnavailable && !sending && !deletingMessageID && !sharingLocation && !sendingPhoto && !validation;
 
   const cancelTranslationsForMessage = useCallback((messageID: string) => {
     for (const [key, controller] of translationControllersRef.current) {
@@ -498,14 +518,26 @@ export default function ChatDetailScreen() {
     });
   }, []);
 
-  const ensureChatMessageKey = useCallback(async (activeSession: NonNullable<typeof session>): Promise<Uint8Array> => {
+  const ensureChatMessageKey = useCallback(async (
+    activeSession: NonNullable<typeof session>,
+    signal?: AbortSignal,
+    allowCreate = true,
+  ): Promise<Uint8Array> => {
     if (chatMessageKeyRef.current) return chatMessageKeyRef.current;
     if (!chatMessageKeyPromiseRef.current) {
       if (!chatID) throw new Error("chat_key_unavailable");
-      chatMessageKeyPromiseRef.current = loadChatContentKey(chatID, activeSession).then((key) => {
-        if (!mountedRef.current) {
+      chatMessageKeyPromiseRef.current = loadChatContentKey(
+        chatID,
+        activeSession,
+        signal,
+        undefined,
+        { allowCreate },
+      ).then((key) => {
+        if (!mountedRef.current || signal?.aborted) {
           key.fill(0);
-          throw new Error("chat_screen_unmounted");
+          const error = new Error(signal?.aborted ? "chat_key_load_aborted" : "chat_screen_unmounted");
+          if (signal?.aborted) error.name = "AbortError";
+          throw error;
         }
         chatMessageKeyRef.current = key;
         return key;
@@ -610,6 +642,10 @@ export default function ChatDetailScreen() {
     const translationControllers = translationControllersRef.current;
     return () => {
       mountedRef.current = false;
+      loadControllerRef.current?.abort();
+      loadControllerRef.current = null;
+      migrationControllerRef.current?.abort();
+      migrationControllerRef.current = null;
       for (const controller of attachmentControllers.values()) controller.abort();
       attachmentControllers.clear();
       loadingAttachmentIDs.clear();
@@ -625,16 +661,26 @@ export default function ChatDetailScreen() {
 
   const load = useCallback((mode: "initial" | "refresh" = "refresh") => {
     const controller = new AbortController();
+    const generation = loadGenerationRef.current + 1;
+    loadGenerationRef.current = generation;
+    loadControllerRef.current?.abort();
+    loadControllerRef.current = controller;
     let cancelled = false;
+    const isCurrentLoad = () => !cancelled
+      && loadGenerationRef.current === generation
+      && loadControllerRef.current === controller;
 
     const run = async () => {
       if (!chatID) {
-        setLoadError(copy.loadError);
-        setLoading(false);
+        if (isCurrentLoad()) {
+          setLoadError(copy.loadError);
+          setLoading(false);
+          setRefreshing(false);
+        }
         return;
       }
-      if (mode === "initial") setLoading(true);
-      else setRefreshing(true);
+      if (!loadedDataRef.current) setLoading(true);
+      else if (mode === "refresh") setRefreshing(true);
       setLoadError(null);
       try {
         const result = await runWithSession(async (activeSession, signal) => {
@@ -642,34 +688,92 @@ export default function ChatDetailScreen() {
             listChats(activeSession, signal),
             listChatMessages(chatID, activeSession, { limit: 100 }, signal),
           ]);
+          const currentChat = summaries.find((item) => item.id === chatID) ?? null;
           const hasCurrentChatKeyMessage = page.items.some((message) => message.key_version === "chat-dek-v1");
           const hasLegacyChatMessage = page.items.some((message) => message.key_version === "chat-mvp-v1" || message.key_version === "chat-keyb-v1");
-          const messageKey = hasCurrentChatKeyMessage
-            ? await ensureChatMessageKey(activeSession)
-            : null;
-          const legacyKey = page.items.some((message) => message.key_version === "chat-keyb-v1"
-            || message.translations?.some((translation) => translation.key_version === "chat-translation-keyb-v1"))
-            ? await ensureLegacyChatMessageKey(activeSession)
-            : null;
-          const currentChat = summaries.find((item) => item.id === chatID) ?? null;
+          const hasLegacyDeviceKeyMessage = page.items.some((message) => message.key_version === "chat-keyb-v1"
+            || message.translations?.some((translation) => translation.key_version === "chat-translation-keyb-v1"));
+          let messageKey: Uint8Array | null = null;
+          let legacyKey: Uint8Array | null = null;
+          let currentKeyLoadFailed = false;
+          let legacyKeyLoadFailed = false;
+          let migrationKeyLoadFailed = false;
+          if (hasCurrentChatKeyMessage || hasLegacyChatMessage) {
+            try {
+              // Read the existing DEK envelope even for a legacy-only chat.
+              // This lets us distinguish an already completed key migration
+              // from an old chat that still needs the owner to initialize it.
+              // Creation is never allowed in this initial read.
+              messageKey = await ensureChatMessageKey(activeSession, signal, false);
+            } catch (error) {
+              if (error instanceof Error && error.name === "AbortError") throw error;
+              if (hasCurrentChatKeyMessage) currentKeyLoadFailed = true;
+              else migrationKeyLoadFailed = true;
+            }
+          }
+          if (hasLegacyDeviceKeyMessage) {
+            try {
+              legacyKey = await ensureLegacyChatMessageKey(activeSession);
+            } catch (error) {
+              if (error instanceof Error && error.name === "AbortError") throw error;
+              legacyKeyLoadFailed = true;
+            }
+          }
           const currentMatch = currentChat
             ? await getMatch(currentChat.match_id, activeSession, signal).catch(() => null)
             : null;
-          return { currentChat, currentMatch, page, userID: activeSession.user_id, activeSession, messageKey, legacyKey, hasLegacyChatMessage };
+          return {
+            currentChat,
+            currentMatch,
+            page,
+            userID: activeSession.user_id,
+            activeSession,
+            messageKey,
+            legacyKey,
+            hasCurrentChatKeyMessage,
+            hasLegacyChatMessage,
+            currentKeyLoadFailed,
+            legacyKeyLoadFailed,
+            migrationKeyLoadFailed,
+          };
         }, controller.signal);
-        if (!cancelled) {
+        if (isCurrentLoad()) {
           const messageViews = deduplicateChatMessages(
             result.page.items.map((message) => toChatMessageView(chatID, message, result.userID, result.messageKey ?? undefined, result.legacyKey ?? undefined)),
           );
+          loadedDataRef.current = true;
           setChat(result.currentChat);
           setMatch(result.currentMatch);
           setMessages(messageViews);
-          if (!result.messageKey && result.hasLegacyChatMessage && result.currentChat?.status === "accepted") {
-            // Legacy ciphertext remains readable with its legacy key, while
-            // the owner migrates the existing opaque DEK (or initializes a
-            // new one when the old chat has no DEK envelope). Do not block
-            // history rendering or surface a transient migration failure.
-            void ensureChatMessageKey(result.activeSession).catch(() => undefined);
+          setChatKeyUnavailable(result.currentKeyLoadFailed);
+          setLegacyChatKeyUnavailable(result.legacyKeyLoadFailed);
+
+          const shouldMigrate = result.migrationKeyLoadFailed
+            && result.hasLegacyChatMessage
+            && result.currentChat?.status === "accepted";
+          migrationControllerRef.current?.abort();
+          migrationControllerRef.current = null;
+          setMigrationState(shouldMigrate ? "pending" : "not_needed");
+          if (shouldMigrate) {
+            // Migration is deliberately resumable: the server-side envelope
+            // and manifest writes are immutable/idempotent, so a process death
+            // between steps is retried from the state visible on next load.
+            const migrationController = new AbortController();
+            migrationControllerRef.current = migrationController;
+            void ensureChatMessageKey(result.activeSession, migrationController.signal, true)
+              .then(() => {
+                if (!mountedRef.current || migrationControllerRef.current !== migrationController) return;
+                migrationControllerRef.current = null;
+                setMigrationState("not_needed");
+              })
+              .catch((error) => {
+                if (error instanceof Error && error.name === "AbortError") return;
+                if (!mountedRef.current || migrationControllerRef.current !== migrationController) return;
+                migrationControllerRef.current = null;
+                setMigrationState(error instanceof APIError && error.code === "chat_key_envelope_authority_required"
+                  ? "owner_required"
+                  : "retry_required");
+              });
           }
           const sequence = latestSequence(messageViews);
           if (sequence > 0) {
@@ -678,11 +782,16 @@ export default function ChatDetailScreen() {
         }
       } catch (error) {
         if (error instanceof Error && error.name === "AbortError") return;
-        if (!cancelled) {
-          setLoadError(error instanceof Error && error.message === "not_signed_in" ? copy.signInRequired : copy.loadError);
+        if (isCurrentLoad()) {
+          const unauthenticated = error instanceof Error && error.message === "not_signed_in";
+          if (loadedDataRef.current) {
+            setNotice(unauthenticated ? copy.signInRequired : copy.refreshFailed);
+          } else {
+            setLoadError(unauthenticated ? copy.signInRequired : copy.loadError);
+          }
         }
       } finally {
-        if (!cancelled) {
+        if (isCurrentLoad()) {
           setLoading(false);
           setRefreshing(false);
         }
@@ -693,8 +802,17 @@ export default function ChatDetailScreen() {
     return () => {
       cancelled = true;
       controller.abort();
+      if (loadControllerRef.current === controller) loadControllerRef.current = null;
     };
-  }, [chatID, copy.loadError, copy.signInRequired, ensureChatMessageKey, ensureLegacyChatMessageKey, runWithSession]);
+  }, [
+    chatID,
+    copy.loadError,
+    copy.refreshFailed,
+    copy.signInRequired,
+    ensureChatMessageKey,
+    ensureLegacyChatMessageKey,
+    runWithSession,
+  ]);
 
   useEffect(() => {
     let active = true;
@@ -814,7 +932,7 @@ export default function ChatDetailScreen() {
         try {
           const result = await runWithSession(
             async (activeSession, signal) => {
-              const messageKey = await ensureChatMessageKey(activeSession);
+              const messageKey = await ensureChatMessageKey(activeSession, signal, false);
               return translateChatMessage(chatID, message.id, revision, plaintext, language, activeSession, signal, messageKey);
             },
             requestController.signal,
@@ -876,7 +994,7 @@ export default function ChatDetailScreen() {
               if (frame.type === "message.created" || frame.type === "message.ack") {
                 void (async () => {
                   if (frame.message.key_version === "chat-dek-v1" && !chatMessageKeyRef.current) {
-                    await ensureChatMessageKey(activeSession).catch(() => undefined);
+                    await ensureChatMessageKey(activeSession, undefined, false).catch(() => undefined);
                   }
                   if (frame.message.key_version === "chat-keyb-v1" && !legacyChatMessageKeyRef.current) {
                     await ensureLegacyChatMessageKey(activeSession).catch(() => undefined);
@@ -894,7 +1012,7 @@ export default function ChatDetailScreen() {
               } else if (frame.type === "message.updated") {
                 void (async () => {
                   if (frame.message.key_version === "chat-dek-v1" && !chatMessageKeyRef.current) {
-                    await ensureChatMessageKey(activeSession).catch(() => undefined);
+                    await ensureChatMessageKey(activeSession, undefined, false).catch(() => undefined);
                   }
                   if (frame.message.key_version === "chat-keyb-v1" && !legacyChatMessageKeyRef.current) {
                     await ensureLegacyChatMessageKey(activeSession).catch(() => undefined);
@@ -988,7 +1106,7 @@ export default function ChatDetailScreen() {
   }, [displayMessages, hydrateAttachment]);
 
   const submit = async () => {
-    if (!chatID || sending || deletingMessageID) return;
+    if (!chatID || chatKeyUnavailable || sending || deletingMessageID) return;
     setSendError(null);
     if (validation) {
       setSendError(validation === "empty" ? copy.draftEmpty : copy.draftTooLong);
@@ -1107,7 +1225,7 @@ export default function ChatDetailScreen() {
   };
 
   const pickAndSendImage = async () => {
-    if (!chatID || readOnly || sending || sharingLocation || sendingPhoto || safetyModal !== null) return;
+    if (!chatID || chatKeyUnavailable || readOnly || sending || sharingLocation || sendingPhoto || safetyModal !== null) return;
     Keyboard.dismiss();
     setSendError(null);
     setNotice(copy.photoSelecting);
@@ -1256,7 +1374,7 @@ export default function ChatDetailScreen() {
         try {
           return await runWithSession(
             async (activeSession, signal) => {
-              const messageKey = await ensureChatMessageKey(activeSession);
+              const messageKey = await ensureChatMessageKey(activeSession, signal, false);
               return translateChatMessage(chatID, message.id, revision, plaintext, language, activeSession, signal, messageKey);
             },
             controller.signal,
@@ -1382,7 +1500,7 @@ export default function ChatDetailScreen() {
   };
 
   const shareCurrentLocation = async () => {
-    if (!chatID || readOnly || sending || sharingLocation) return;
+    if (!chatID || chatKeyUnavailable || readOnly || sending || sharingLocation) return;
     const approved = await new Promise<boolean>((resolve) => {
       if (Platform.OS === "web") { resolve(globalThis.confirm?.(`${copy.locationConfirmTitle}\n\n${copy.locationConfirm}`) ?? false); return; }
       Alert.alert(copy.locationConfirmTitle, copy.locationConfirm, [
@@ -1656,6 +1774,53 @@ export default function ChatDetailScreen() {
           <Text style={styles.noticeText}>{copy.safetyNotice}</Text>
         </View>
 
+        {chatKeyUnavailable ? (
+          <View accessibilityLiveRegion="polite" style={styles.keyStatePanel}>
+            <MaterialIcons color={DANGER} name="lock-outline" size={20} />
+            <View style={styles.keyStateCopy}>
+              <Text style={styles.keyStateText}>{copy.chatKeyUnavailable}</Text>
+              <Pressable
+                accessibilityRole="button"
+                disabled={refreshing}
+                onPress={() => void load("refresh")}
+                style={({ pressed }) => [styles.stateAction, pressed && styles.pressed]}
+              >
+                <Text style={styles.stateActionText}>{copy.chatKeyRetry}</Text>
+              </Pressable>
+            </View>
+          </View>
+        ) : null}
+
+        {legacyChatKeyUnavailable ? (
+          <View accessibilityLiveRegion="polite" style={styles.keyStatePanel}>
+            <MaterialIcons color={YELLOW} name="history" size={20} />
+            <Text style={styles.keyStateText}>{copy.legacyChatKeyUnavailable}</Text>
+          </View>
+        ) : null}
+
+        {migrationState !== "not_needed" ? (
+          <View accessibilityLiveRegion="polite" style={styles.migrationPanel}>
+            {migrationState === "pending" ? <ActivityIndicator color={YELLOW} size="small" /> : <MaterialIcons color={YELLOW} name="sync-problem" size={20} />}
+            <View style={styles.keyStateCopy}>
+              <Text style={styles.keyStateText}>
+                {migrationState === "pending"
+                  ? copy.chatMigrationInProgress
+                  : migrationState === "owner_required" ? copy.chatKeyMigrationPending : copy.chatMigrationRetry}
+              </Text>
+              {migrationState !== "pending" ? (
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={refreshing}
+                  onPress={() => void load("refresh")}
+                  style={({ pressed }) => [styles.stateAction, pressed && styles.pressed]}
+                >
+                  <Text style={styles.stateActionText}>{copy.chatKeyRetry}</Text>
+                </Pressable>
+              ) : null}
+            </View>
+          </View>
+        ) : null}
+
         {realtimeMode === "rest_sync" ? (
           <Text accessibilityLiveRegion="polite" style={styles.syncNotice}>{copy.restSyncOnly}</Text>
         ) : null}
@@ -1750,11 +1915,11 @@ export default function ChatDetailScreen() {
               <Pressable
                 key={reply}
                 accessibilityRole="button"
-                disabled={readOnly || safetyModal !== null}
+                disabled={readOnly || chatKeyUnavailable || safetyModal !== null}
                 onPress={() => setDraft(reply)}
-                style={({ pressed }) => [styles.quickReply, readOnly && styles.disabledPill, pressed && styles.pressed]}
+                style={({ pressed }) => [styles.quickReply, (readOnly || chatKeyUnavailable) && styles.disabledPill, pressed && styles.pressed]}
               >
-                <Text numberOfLines={1} style={[styles.quickReplyText, readOnly && styles.disabledPillText]}>{reply}</Text>
+                <Text numberOfLines={1} style={[styles.quickReplyText, (readOnly || chatKeyUnavailable) && styles.disabledPillText]}>{reply}</Text>
               </Pressable>
             ))}
           </View>
@@ -1779,29 +1944,29 @@ export default function ChatDetailScreen() {
           <Pressable
             accessibilityLabel={copy.sendPhoto}
             accessibilityRole="button"
-            disabled={readOnly || !!editingMessageID || sending || sharingLocation || sendingPhoto || safetyModal !== null}
+            disabled={readOnly || chatKeyUnavailable || !!editingMessageID || sending || sharingLocation || sendingPhoto || safetyModal !== null}
             onPress={() => void pickAndSendImage()}
-            style={({ pressed }) => [styles.locationButton, (readOnly || !!editingMessageID || sending || sharingLocation || sendingPhoto) && styles.sendButtonDisabled, pressed && styles.pressed]}
+            style={({ pressed }) => [styles.locationButton, (readOnly || chatKeyUnavailable || !!editingMessageID || sending || sharingLocation || sendingPhoto) && styles.sendButtonDisabled, pressed && styles.pressed]}
           >
             {sendingPhoto ? <ActivityIndicator color="#ffffff" size="small" /> : <MaterialIcons color="#ffffff" name="photo-library" size={22} />}
           </Pressable>
           <Pressable
             accessibilityLabel={copy.shareLocation}
             accessibilityRole="button"
-            disabled={readOnly || !!editingMessageID || sending || sharingLocation || sendingPhoto || safetyModal !== null}
+            disabled={readOnly || chatKeyUnavailable || !!editingMessageID || sending || sharingLocation || sendingPhoto || safetyModal !== null}
             onPress={() => void shareCurrentLocation()}
-            style={({ pressed }) => [styles.locationButton, (readOnly || !!editingMessageID || sending || sharingLocation || sendingPhoto) && styles.sendButtonDisabled, pressed && styles.pressed]}
+            style={({ pressed }) => [styles.locationButton, (readOnly || chatKeyUnavailable || !!editingMessageID || sending || sharingLocation || sendingPhoto) && styles.sendButtonDisabled, pressed && styles.pressed]}
           >
             {sharingLocation ? <ActivityIndicator color="#ffffff" size="small" /> : <MaterialIcons color="#ffffff" name="location-on" size={22} />}
           </Pressable>
           <TextInput
             accessibilityLabel={copy.input}
-            editable={!readOnly && !sending && !sendingPhoto && !deletingMessageID && safetyModal === null}
+            editable={!readOnly && !chatKeyUnavailable && !sending && !sendingPhoto && !deletingMessageID && safetyModal === null}
             multiline
             onChangeText={setDraft}
             placeholder={copy.input}
             placeholderTextColor={MUTED_GRAY}
-            style={[styles.input, readOnly && styles.inputDisabled]}
+            style={[styles.input, (readOnly || chatKeyUnavailable) && styles.inputDisabled]}
             value={draft}
           />
           <Pressable
@@ -2117,6 +2282,64 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     letterSpacing: 0,
     lineHeight: 17,
+  },
+  keyStatePanel: {
+    width: "100%",
+    maxWidth: 348,
+    minHeight: 48,
+    flexDirection: "row",
+    alignItems: "flex-start",
+    alignSelf: "center",
+    gap: 10,
+    marginTop: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: "#f7dfaa",
+    borderRadius: 10,
+    backgroundColor: "#fff8e8",
+  },
+  keyStateCopy: {
+    flex: 1,
+  },
+  keyStateText: {
+    flex: 1,
+    color: TEXT_GRAY,
+    fontSize: 12,
+    fontWeight: "800",
+    letterSpacing: 0,
+    lineHeight: 18,
+  },
+  stateAction: {
+    alignSelf: "flex-start",
+    marginTop: 7,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: YELLOW,
+  },
+  stateActionText: {
+    color: "#ffffff",
+    fontSize: 11,
+    fontWeight: "900",
+    letterSpacing: 0,
+    lineHeight: 15,
+  },
+  migrationPanel: {
+    width: "100%",
+    maxWidth: 348,
+    minHeight: 48,
+    flexDirection: "row",
+    alignItems: "flex-start",
+    alignSelf: "center",
+    gap: 10,
+    marginTop: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: "#caeafd",
+    borderRadius: 10,
+    backgroundColor: SOFT_BLUE,
   },
   localNotice: {
     width: "100%",
