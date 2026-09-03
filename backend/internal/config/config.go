@@ -31,14 +31,16 @@ type Config struct {
 }
 
 // ChatConfig tunes chat message send rate limiting, translation provider
-// budgets, and retention. Translation limits are account-scoped because the
-// provider cost follows the authenticated account rather than its IP address.
+// budgets, moderation fallback, and retention. Translation limits are
+// account-scoped because the provider cost follows the authenticated account
+// rather than its IP address.
 type ChatConfig struct {
 	SendBurst                         int
 	SendRefillPerMinute               int
 	TranslationAccountBurst           int
 	TranslationAccountRefillPerMinute int
 	TranslationMaxInFlight            int
+	DevelopmentModerationFreeMode     bool
 	MessageRetentionDays              int
 }
 
@@ -198,6 +200,7 @@ func Load() Config {
 			TranslationAccountBurst:           intValueOrDefault("CHAT_TRANSLATION_ACCOUNT_BURST", 30),
 			TranslationAccountRefillPerMinute: intValueOrDefault("CHAT_TRANSLATION_ACCOUNT_REFILL_PER_MINUTE", 30),
 			TranslationMaxInFlight:            intValueOrDefault("CHAT_TRANSLATION_MAX_IN_FLIGHT", 2),
+			DevelopmentModerationFreeMode:     boolValueOrDefault("CHAT_MODERATION_DEV_FREE_MODE", false),
 			MessageRetentionDays:              intValueOrDefault("CHAT_MESSAGE_RETENTION_DAYS", 180),
 		},
 	}

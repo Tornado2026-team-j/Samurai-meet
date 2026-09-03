@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
+	"time"
 )
 
 func TestChatKeyEnvelopesAreOpaqueAndBoundToCurrentDevices(t *testing.T) {
@@ -130,6 +131,54 @@ func TestChatKeyEnvelopeRejectsParticipantDevicePreemption(t *testing.T) {
 	}
 	if status := f.saveChatKeyEnvelopes(t, f.requesterTok, participantPayload); status != http.StatusNoContent {
 		t.Fatalf("participant own-device provisioning status = %d, want 204", status)
+	}
+}
+
+func TestChatKeyEnvelopeLegacyRowsCanBeMigratedByOwner(t *testing.T) {
+	f := newChatAttachmentFixture(t)
+	accountEnvelope := encode(bytes.Repeat([]byte{0x81}, 64))
+	ownerDeviceEnvelope := encode(bytes.Repeat([]byte{0x82}, 64))
+	keyCommitment := encode(bytes.Repeat([]byte{0x83}, 32))
+	stamp := f.now.UTC().Format(time.RFC3339Nano)
+
+	// Simulate a database that has only migration 0046: the opaque rows exist,
+	// but the 0047 manifest has not been created yet.
+	if _, err := f.database.ExecContext(f.ctx, `
+		INSERT INTO chat_key_envelopes
+			(chat_id,user_id,scope,device_id,key_version,target_public_key,wrapping_algorithm,envelope,created_at,updated_at)
+		VALUES ($1,$2,'account','',$3,'',$4,$5,$11,$11),
+		       ($1,$2,'device',$6,$7,$8,$9,$10,$11,$11)`,
+		f.chatID, f.ownerID, "chat-account-v1", "AES-256-GCM", accountEnvelope,
+		f.ownerDeviceID, "x25519-v1", f.ownerAgreement, "X25519-HKDF-SHA256-AES-256-GCM", ownerDeviceEnvelope, stamp); err != nil {
+		t.Fatal(err)
+	}
+
+	payload := map[string]any{
+		"envelopes": []map[string]any{
+			{
+				"scope": "account", "user_id": f.ownerID, "device_id": "",
+				"key_version": "chat-account-v1", "public_key": "",
+				"algorithm": "AES-256-GCM", "envelope": accountEnvelope, "key_commitment": keyCommitment,
+			},
+			{
+				"scope": "device", "user_id": f.ownerID, "device_id": f.ownerDeviceID,
+				"key_version": "x25519-v1", "public_key": f.ownerAgreement,
+				"algorithm": "X25519-HKDF-SHA256-AES-256-GCM", "envelope": ownerDeviceEnvelope, "key_commitment": keyCommitment,
+			},
+		},
+	}
+	if status := f.saveChatKeyEnvelopes(t, f.ownerToken, payload); status != http.StatusNoContent {
+		t.Fatalf("legacy key envelope migration status = %d, want 204", status)
+	}
+
+	var authority, storedCommitment string
+	if err := f.database.QueryRowContext(f.ctx, `
+		SELECT authority_user_id,key_commitment FROM chat_key_manifests WHERE chat_id=$1`, f.chatID).
+		Scan(&authority, &storedCommitment); err != nil {
+		t.Fatal(err)
+	}
+	if authority != f.ownerID || storedCommitment != keyCommitment {
+		t.Fatalf("migrated manifest = authority %q commitment %q", authority, storedCommitment)
 	}
 }
 

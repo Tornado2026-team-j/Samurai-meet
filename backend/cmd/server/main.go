@@ -123,7 +123,11 @@ func main() {
 	chatService.ConfigureTranslationRateLimit(cfg.Chat.TranslationAccountBurst, float64(cfg.Chat.TranslationAccountRefillPerMinute)/60.0, cfg.Chat.TranslationMaxInFlight)
 	chatService.ConfigureMessageRetention(cfg.Chat.MessageRetentionDays)
 	chatService.SetClusterLogger(log.Printf)
-	chatModeration := chat.NewOpenAIModerationProvider(os.Getenv("OPENAI_API_KEY"), nil)
+	chatModerationKey := strings.TrimSpace(os.Getenv("OPENAI_API_KEY"))
+	chatModeration := chat.NewModerationProvider(chatModerationKey, cfg.Chat.DevelopmentModerationFreeMode)
+	if cfg.Chat.DevelopmentModerationFreeMode {
+		log.Print("WARNING: chat moderation is using the explicitly enabled local free provider; configure OPENAI_API_KEY and disable CHAT_MODERATION_DEV_FREE_MODE before shared or production use")
+	}
 	chatTranslation := translation.NewGemini(cfg.Gemini.APIKey, cfg.Gemini.Model)
 	webTransport, err := chat.StartWebTransport(context.Background(), chatService, chat.WebTransportConfig{Enabled: strings.EqualFold(strings.TrimSpace(os.Getenv("ENABLE_CHAT_WEBTRANSPORT")), "true"), UDPAddr: strings.TrimSpace(os.Getenv("CHAT_WEBTRANSPORT_UDP_ADDR")), CertFile: strings.TrimSpace(os.Getenv("CHAT_WEBTRANSPORT_TLS_CERT_FILE")), KeyFile: strings.TrimSpace(os.Getenv("CHAT_WEBTRANSPORT_TLS_KEY_FILE")), AllowedOrigins: []string{cfg.ClientOrigin, cfg.DevClientOrigin}, Logf: log.Printf})
 	if err != nil {

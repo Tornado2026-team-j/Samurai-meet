@@ -139,7 +139,7 @@ curl.exe --fail --silent --show-error http://127.0.0.1:8080/api/v1/readyz
 
 - `GEMINI_API_KEY`: 募集内容の分類に使うサーバー専用キー。
 - `GEMINI_MODEL=gemini-3.1-flash-lite`: 現行の募集分類モデル。
-- `OPENAI_API_KEY`: チャット本文の送信前Moderation用サーバー専用キー。未設定時は`moderation_unavailable`となり、クライアントは送信を止める。
+- `OPENAI_API_KEY`: チャット本文の送信前Moderation用サーバー専用キー。通常は未設定時に`moderation_unavailable`となり、クライアントは送信を止める。ローカル確認で`CHAT_MODERATION_DEV_FREE_MODE=true`を明示した場合だけ、外部送信をしない保守的なローカル判定へ切り替わるため、共有・本番の実機確認ではこのフラグを無効にする。
 - Moderationモデルは現行サーバー実装が`omni-moderation-latest`を使用する。モデル名やキーをクライアントから渡さない。
 - `DB_*`と適用済みmigration: 対象DBへ接続でき、起動時migrationが成功すること。
 - `IMAGE_STORAGE_DIR`、`IMAGE_MAX_UPLOAD_BYTES`: 暗号文画像APIを検証する場合のみ必要。既定の画像暗号文上限は20MiB。

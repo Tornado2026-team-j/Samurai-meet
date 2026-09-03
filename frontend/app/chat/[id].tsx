@@ -38,6 +38,7 @@ import {
 	markChatRead,
 	moderateChatMessage,
 	moderateAndSendChatMessage,
+	ModeratedChatMessageSendError,
 	downloadAndDecryptChatAttachment,
 	deleteChatMessage,
 	decryptChatTranslation,
@@ -155,6 +156,7 @@ const COPY = {
     draftEmpty: "メッセージを入力してください。",
     draftTooLong: "メッセージは2000文字以内で入力してください。",
     sendFailed: "メッセージを送信できませんでした。時間をおいて再試行してください。",
+    chatKeyMigrationPending: "このチャットの暗号鍵を移行中です。案内の所有者が一度チャットを開いた後、再試行してください。",
     photo: "画像",
     sendPhoto: "画像を送信",
     photoSelecting: "画像を選択中…",
@@ -265,6 +267,7 @@ const COPY = {
     draftEmpty: "Enter a message.",
     draftTooLong: "Messages must be 2000 characters or fewer.",
     sendFailed: "Message could not be sent. Please try again later.",
+    chatKeyMigrationPending: "This chat's encryption key is waiting to be migrated. Ask the guide owner to open the chat once, then try again.",
     photo: "Photo",
     sendPhoto: "Send photo",
     photoSelecting: "Selecting photo…",
@@ -539,7 +542,9 @@ export default function ChatDetailScreen() {
     try {
       return await action(activeSession, signal);
     } catch (error) {
-      if (!(error instanceof APIError) || error.status !== 401) throw error;
+      const requiresSessionRefresh = error instanceof APIError && error.status === 401
+        || error instanceof ModeratedChatMessageSendError && error.requiresSessionRefresh;
+      if (!requiresSessionRefresh) throw error;
       await refresh();
       const refreshedSession = getCurrentSession();
       if (!refreshedSession) throw error;
@@ -637,7 +642,9 @@ export default function ChatDetailScreen() {
             listChats(activeSession, signal),
             listChatMessages(chatID, activeSession, { limit: 100 }, signal),
           ]);
-          const messageKey = page.items.some((message) => message.key_version === "chat-dek-v1")
+          const hasCurrentChatKeyMessage = page.items.some((message) => message.key_version === "chat-dek-v1");
+          const hasLegacyChatMessage = page.items.some((message) => message.key_version === "chat-mvp-v1" || message.key_version === "chat-keyb-v1");
+          const messageKey = hasCurrentChatKeyMessage
             ? await ensureChatMessageKey(activeSession)
             : null;
           const legacyKey = page.items.some((message) => message.key_version === "chat-keyb-v1"
@@ -648,7 +655,7 @@ export default function ChatDetailScreen() {
           const currentMatch = currentChat
             ? await getMatch(currentChat.match_id, activeSession, signal).catch(() => null)
             : null;
-          return { currentChat, currentMatch, page, userID: activeSession.user_id, messageKey, legacyKey };
+          return { currentChat, currentMatch, page, userID: activeSession.user_id, activeSession, messageKey, legacyKey, hasLegacyChatMessage };
         }, controller.signal);
         if (!cancelled) {
           const messageViews = deduplicateChatMessages(
@@ -657,6 +664,13 @@ export default function ChatDetailScreen() {
           setChat(result.currentChat);
           setMatch(result.currentMatch);
           setMessages(messageViews);
+          if (!result.messageKey && result.hasLegacyChatMessage && result.currentChat?.status === "accepted") {
+            // Legacy ciphertext remains readable with its legacy key, while
+            // the owner migrates the existing opaque DEK (or initializes a
+            // new one when the old chat has no DEK envelope). Do not block
+            // history rendering or surface a transient migration failure.
+            void ensureChatMessageKey(result.activeSession).catch(() => undefined);
+          }
           const sequence = latestSequence(messageViews);
           if (sequence > 0) {
             void runWithSession((activeSession, signal) => markChatRead(chatID, sequence, activeSession, signal), controller.signal).catch(() => undefined);
@@ -1068,10 +1082,13 @@ export default function ChatDetailScreen() {
           return;
         }
         sent = result.message;
-      } catch {
-        // Any moderation transport or API failure is fail-closed. Do not
-        // encrypt or call /messages when the plaintext was not evaluated.
-        setSendError(copy.moderationUnavailable);
+      } catch (error) {
+        // A moderation transport failure remains fail-closed. Once moderation
+        // allowed the text, report a send/key failure instead of mislabeling
+        // it as an unavailable safety provider.
+        setSendError(error instanceof ModeratedChatMessageSendError
+          ? error.code === "chat_key_envelope_authority_required" ? copy.chatKeyMigrationPending : copy.sendFailed
+          : copy.moderationUnavailable);
         return;
       }
       if (!sent) throw new Error("chat_message_missing_after_moderation");
@@ -2345,7 +2362,11 @@ const styles = StyleSheet.create({
   locationAction: { minHeight: 32, justifyContent: "center", paddingHorizontal: 10, borderWidth: 1, borderColor: BLUE, borderRadius: 16, backgroundColor: "#ffffff" },
   locationActionText: { color: BLUE, fontSize: 11, fontWeight: "900" },
   modalScrim: {
-    ...StyleSheet.absoluteFillObject,
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
     zIndex: 1001,
     elevation: 1,
     backgroundColor: "rgba(8, 15, 28, 0.68)",

@@ -1841,6 +1841,24 @@ export type ModeratedChatMessageSend = {
   message?: EncryptedChatMessage;
 };
 
+/**
+ * Marks a failure after the moderation decision was already allowed. Keep the
+ * underlying error out of the UI so API responses and cryptographic details
+ * are not exposed, while preserving the phase for safe, accurate messaging.
+ */
+export class ModeratedChatMessageSendError extends Error {
+  readonly phase = "send" as const;
+  readonly code?: string;
+  readonly requiresSessionRefresh: boolean;
+
+  constructor(error: unknown) {
+    super("chat_message_send_failed");
+    this.name = "ModeratedChatMessageSendError";
+    this.code = error instanceof APIError ? error.code : undefined;
+    this.requiresSessionRefresh = error instanceof APIError && error.status === 401;
+  }
+}
+
 // Keep the moderation gate beside encryption so a future caller cannot encrypt
 // or call /messages after a blocked or unavailable moderation result.
 export async function moderateAndSendChatMessage(
@@ -1853,10 +1871,14 @@ export async function moderateAndSendChatMessage(
 ): Promise<ModeratedChatMessageSend> {
   const decision = await moderateChatMessage(chatID, plaintext, session, signal);
   if (decision !== "allowed") return { decision };
-  return {
-    decision,
-    message: await sendChatMessage(chatID, plaintext, session, clientMessageID, signal, random),
-  };
+  try {
+    return {
+      decision,
+      message: await sendChatMessage(chatID, plaintext, session, clientMessageID, signal, random),
+    };
+  } catch (error) {
+    throw new ModeratedChatMessageSendError(error);
+  }
 }
 
 export function toChatMessageView(
