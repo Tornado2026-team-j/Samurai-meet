@@ -239,6 +239,13 @@ func TestChatPathPartsAllowsMessageTranslationEndpoint(t *testing.T) {
 	}
 }
 
+func TestChatPathPartsAllowsChatSummaryEndpoint(t *testing.T) {
+	chatID, rest, ok := chatPathParts(APIV1Prefix + "/chats/chat-1")
+	if !ok || chatID != "chat-1" || len(rest) != 0 {
+		t.Fatalf("chat summary path = chatID=%q rest=%v ok=%v", chatID, rest, ok)
+	}
+}
+
 func TestChatTranslationRejectsInvalidInputBeforeProvider(t *testing.T) {
 	req, sessions := authenticatedChatTranslationRequest(t, `{"message_id":"message-1","text":"hello","target_language":"fr"}`)
 	provider := &chatTranslationProviderStub{available: true}

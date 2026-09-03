@@ -76,6 +76,7 @@ export type ChatSummary = {
   other_user_id: string;
   other_user_name: string;
   last_message_at?: string;
+  last_message_sequence?: number;
   unread_count: number;
   updated_at: string;
 };
@@ -124,6 +125,7 @@ export type EncryptedChatTranslation = {
 export type ChatMessagePage = {
   items: EncryptedChatMessage[];
   next_after?: number;
+  next_before?: number;
   has_more: boolean;
 };
 
@@ -416,9 +418,10 @@ export async function connectChatWebTransport(
   return { connection, expiresAt: token.expires_at };
 }
 
-function chatQuery(after?: number, limit?: number): string {
+function chatQuery(after?: number, limit?: number, before?: number): string {
   const query = new URLSearchParams();
   if (after !== undefined) query.set("after", String(after));
+  if (before !== undefined) query.set("before", String(before));
   if (limit !== undefined) query.set("limit", String(limit));
   const suffix = query.toString();
   return suffix ? `?${suffix}` : "";
@@ -890,14 +893,30 @@ export async function listChats(
   return requireArrayData(response, "chats");
 }
 
+export async function getChat(
+  chatID: string,
+  session: Session,
+  signal?: AbortSignal,
+): Promise<ChatSummary> {
+  const response = await requestAPI<DataResponse<ChatSummary>>(
+    `/chats/${encodeURIComponent(chatID)}`,
+    session,
+    { method: "GET", signal },
+  );
+  if (!response.data || typeof response.data.id !== "string") {
+    throw new Error("chat summary response is invalid");
+  }
+  return response.data;
+}
+
 export async function listChatMessages(
   chatID: string,
   session: Session,
-  options: { after?: number; limit?: number } = {},
+  options: { after?: number; before?: number; limit?: number } = {},
   signal?: AbortSignal,
 ): Promise<ChatMessagePage> {
   const response = await requestAPI<DataResponse<ChatMessagePage>>(
-    `/chats/${encodeURIComponent(chatID)}/messages${chatQuery(options.after, options.limit)}`,
+    `/chats/${encodeURIComponent(chatID)}/messages${chatQuery(options.after, options.limit, options.before)}`,
     session,
     { method: "GET", signal },
   );
@@ -905,6 +924,114 @@ export async function listChatMessages(
     throw new Error("chat messages response is invalid");
   }
   return response.data;
+}
+
+export const CHAT_MESSAGE_PAGE_SIZE = 100;
+export const CHAT_MESSAGE_WINDOW_LIMIT = 500;
+
+export type ChatMessageWindow = {
+  items: EncryptedChatMessage[];
+  hasMoreOlder: boolean;
+  truncated: boolean;
+};
+
+/**
+ * Loads the newest bounded window by walking the before cursor backwards.
+ * Pages are returned in display order and never exceed the client window cap.
+ */
+export async function listLatestChatMessages(
+  chatID: string,
+  session: Session,
+  latestSequence: number,
+  maxMessages = CHAT_MESSAGE_WINDOW_LIMIT,
+  signal?: AbortSignal,
+): Promise<ChatMessageWindow> {
+  const boundedMax = Math.max(1, Math.min(Math.floor(maxMessages), CHAT_MESSAGE_WINDOW_LIMIT));
+  if (!Number.isSafeInteger(latestSequence) || latestSequence < 0) {
+    throw new Error("chat latest sequence is invalid");
+  }
+
+  // Older deployments did not expose last_message_sequence. Keep a safe
+  // forward-cursor fallback so the client remains compatible during rollout.
+  if (latestSequence === 0) {
+    let after = 0;
+    const items: EncryptedChatMessage[] = [];
+    let hasMoreOlder = false;
+    let truncated = false;
+    while (items.length < boundedMax) {
+      const page = await listChatMessages(
+        chatID,
+        session,
+        { after, limit: Math.min(CHAT_MESSAGE_PAGE_SIZE, boundedMax - items.length) },
+        signal,
+      );
+      items.push(...page.items);
+      if (!page.has_more || page.items.length === 0) break;
+      hasMoreOlder = true;
+      const nextAfter = page.next_after ?? page.items[page.items.length - 1]?.sequence;
+      if (!nextAfter || nextAfter <= after) break;
+      after = nextAfter;
+      truncated = true;
+    }
+    return { items, hasMoreOlder, truncated };
+  }
+
+  let before = latestSequence + 1;
+  const pages: EncryptedChatMessage[][] = [];
+  let hasMoreOlder = false;
+  let truncated = false;
+  let collected = 0;
+  while (collected < boundedMax) {
+    const page = await listChatMessages(
+      chatID,
+      session,
+      { before, limit: Math.min(CHAT_MESSAGE_PAGE_SIZE, boundedMax - collected) },
+      signal,
+    );
+    if (page.items.length === 0) break;
+    pages.unshift(page.items);
+    collected += page.items.length;
+    if (!page.has_more) {
+      hasMoreOlder = false;
+      break;
+    }
+    hasMoreOlder = true;
+    truncated = collected >= boundedMax;
+    const nextBefore = page.next_before ?? page.items[0]?.sequence;
+    if (!nextBefore || nextBefore >= before) break;
+    before = nextBefore;
+  }
+  return { items: pages.flat(), hasMoreOlder, truncated };
+}
+
+/** Loads a bounded forward delta from a known sequence cursor. */
+export async function listChatMessageDelta(
+  chatID: string,
+  session: Session,
+  after: number,
+  maxMessages = CHAT_MESSAGE_WINDOW_LIMIT,
+  signal?: AbortSignal,
+): Promise<ChatMessageWindow> {
+  if (!Number.isSafeInteger(after) || after < 0) throw new Error("chat message cursor is invalid");
+  const boundedMax = Math.max(1, Math.min(Math.floor(maxMessages), CHAT_MESSAGE_WINDOW_LIMIT));
+  let cursor = after;
+  const items: EncryptedChatMessage[] = [];
+  let truncated = false;
+  while (items.length < boundedMax) {
+    const page = await listChatMessages(
+      chatID,
+      session,
+      { after: cursor, limit: Math.min(CHAT_MESSAGE_PAGE_SIZE, boundedMax - items.length) },
+      signal,
+    );
+    items.push(...page.items);
+    if (!page.has_more || page.items.length === 0) break;
+    const nextAfter = page.next_after ?? page.items[page.items.length - 1]?.sequence;
+    if (!nextAfter || nextAfter <= cursor) break;
+    cursor = nextAfter;
+    truncated = items.length >= boundedMax;
+  }
+  return { items, hasMoreOlder: false, truncated };
 }
 
 function signedChatAPIPath(path: string): string {
