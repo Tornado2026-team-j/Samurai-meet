@@ -486,9 +486,9 @@ Request body:
 | GET | `/api/v1/chats` | Access Token | 自分のaccepted/completedチャット一覧 |
 | GET | `/api/v1/chats/{id}/messages?after=0&limit=50` | Access Token | 暗号化メッセージ履歴。最大100件 |
 | POST | `/api/v1/chats/{id}/moderation` | Access Token | 暗号化前本文の送信前安全判定。acceptedマッチの参加者だけ |
-| POST | `/api/v1/chats/{id}/messages` | Access Token | 暗号化メッセージ送信 |
-| POST | `/api/v1/chats/{id}/read` | Access Token | `last_message_sequence`まで既読（クライアントが見た最大`sequence`。最新messageへクランプし前進のみ） |
-| POST | `/api/v1/chats/{id}/transport-token` | Access Token | WebTransport用短命Chat Token発行（省略時・明示ともに`webtransport`のみ） |
+| POST | `/api/v1/chats/{id}/messages` | Access Token | 暗号化メッセージ送信（募集予定終了+猶予超過／`completed`は`409 chat_not_available`） |
+| POST | `/api/v1/chats/{id}/read` | Access Token | `last_message_sequence`まで既読（クライアントが見た最大`sequence`。最新messageへクランプし前進のみ）。閲覧専用チャットでも可 |
+| POST | `/api/v1/chats/{id}/transport-token` | Access Token | WebTransport用短命Chat Token発行（省略時・明示ともに`webtransport`のみ。閲覧専用チャットは`409 chat_not_available`） |
 | CONNECT | `https://{CHAT_WEBTRANSPORT_UDP_ADDR}/api/v1/wt/chats/{id}` | Chat Token（`Authorization: Bearer`） | TLS 1.3/UDP上のHTTP/3 WebTransport。URL query・cookieのtokenは拒否 |
 | POST | `/api/v1/chats/{id}/attachments` | Access Token | チャット写真（暗号文BLOB）のアップロード |
 | GET | `/api/v1/chats/{id}/attachments/{attachment_id}` | Access Token | チャット写真の暗号文取得 |
@@ -515,6 +515,8 @@ Request body:
 `POST /read` の `last_message_sequence` は「クライアントが受信した最大`sequence`」を渡すハイウォーターマークで、message行との厳密一致は不要です（`sequence`は全チャット横断の`BIGSERIAL`で1チャット内は歯抜け）。サーバーはその値をそのチャットの最新live messageへクランプし、保存マーカーは前進のみ（`GREATEST`）。`message.read`レシートはクランプ後の実効値を通知します。1未満は`invalid_chat_request`、messageが無いチャットは`chat_not_found`。
 
 メッセージは作成から `CHAT_MESSAGE_RETENTION_DAYS`（既定180日）を過ぎると、6時間ごとのスイープで `deleted_at` を打たれ、暗号文・nonce が消去され、`chat_message_deletions` に監査行が残ります。以後は履歴・未読数・WebTransport配送のいずれにも現れません。
+
+`accepted` マッチのチャットでも、募集の予定終了時刻（`recruitment_cards.expires_at` = 利用日 + `end_time` を JST 解釈した絶対時刻）に `CHAT_READONLY_GRACE_HOURS`（既定48時間）を足した時刻を過ぎると閲覧専用になります。`POST /api/v1/chats/{id}/messages`・`POST /api/v1/chats/{id}/transport-token`・添付アップロード・WebTransport の `message.send` は `409 chat_not_available` で拒否され、接続中の WebTransport セッションも watchdog の次の巡回でクローズされます。`GET /api/v1/chats`（当該チャットは `status: "completed"` として返る）・`GET /api/v1/chats/{id}/messages`・`POST /api/v1/chats/{id}/read`・添付ダウンロードは引き続き可能です。ステータス判定は読み取り時に時刻から導出し、`matches.status` は書き換えません。`matches.status = 'completed'`（当事者による完了操作）は同じく即時閲覧専用です。
 
 メッセージ送信はユーザー単位のトークンバケットでレート制限します（`CHAT_SEND_BURST` 既定15、`CHAT_SEND_REFILL_PER_MINUTE` 既定60）。REST/WebTransport で共通の予算を消費します。WebTransportは各state-changing frameでsession・accepted matchを再検証し、0-RTT dataの状態変更を拒否します。同じ`client_message_id`はservice層で冪等です。
 

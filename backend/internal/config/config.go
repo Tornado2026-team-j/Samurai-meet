@@ -30,15 +30,19 @@ type Config struct {
 	Chat                ChatConfig
 }
 
-// ChatConfig tunes chat message send rate limiting and retention. SendBurst is
-// the per-user token-bucket capacity (absorbs a legitimate burst);
-// SendRefillPerMinute is the sustained per-user send rate the bucket refills
-// at. MessageRetentionDays is the age after which a message's ciphertext is
-// tombstoned by the retention sweep.
+// ChatConfig tunes chat message send rate limiting, retention, and the
+// post-recruitment read-only window. SendBurst is the per-user token-bucket
+// capacity (absorbs a legitimate burst); SendRefillPerMinute is the sustained
+// per-user send rate the bucket refills at. MessageRetentionDays is the age
+// after which a message's ciphertext is tombstoned by the retention sweep.
+// ReadOnlyGraceHours is how long after a recruitment's scheduled end
+// (recruitment_cards.expires_at) an accepted chat still accepts new messages
+// and realtime connections; past it the chat is history/read-only.
 type ChatConfig struct {
 	SendBurst            int
 	SendRefillPerMinute  int
 	MessageRetentionDays int
+	ReadOnlyGraceHours   int
 }
 
 type GoogleOIDCConfig struct{ ClientID, ClientSecret, RedirectURI string }
@@ -195,6 +199,7 @@ func Load() Config {
 			SendBurst:            intValueOrDefault("CHAT_SEND_BURST", 15),
 			SendRefillPerMinute:  intValueOrDefault("CHAT_SEND_REFILL_PER_MINUTE", 60),
 			MessageRetentionDays: intValueOrDefault("CHAT_MESSAGE_RETENTION_DAYS", 180),
+			ReadOnlyGraceHours:   intValueOrDefault("CHAT_READONLY_GRACE_HOURS", 48),
 		},
 	}
 }

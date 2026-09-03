@@ -132,12 +132,9 @@ func (s *Service) UploadAttachment(ctx context.Context, userID, chatID string, i
 	if err := validateAttachmentInput(input); err != nil {
 		return Attachment{}, err
 	}
-	access, err := s.loadChat(ctx, userID, chatID, false)
+	access, err := s.loadChat(ctx, userID, chatID, false, now)
 	if err != nil {
 		return Attachment{}, err
-	}
-	if access.MatchStatus != "accepted" {
-		return Attachment{}, ErrChatNotAvailable
 	}
 
 	var pending int
@@ -237,7 +234,7 @@ func (s *Service) loadAttachmentForDevice(ctx context.Context, userID, chatID, a
 	if strings.TrimSpace(attachmentID) == "" || strings.TrimSpace(deviceID) == "" {
 		return Attachment{}, "", "", ErrChatAttachmentNotFound
 	}
-	access, err := s.loadChat(ctx, userID, chatID, true)
+	access, err := s.loadChat(ctx, userID, chatID, true, time.Now())
 	if err != nil {
 		return Attachment{}, "", "", err
 	}
@@ -281,12 +278,9 @@ func (s *Service) ListAttachmentKeyRecipients(ctx context.Context, userID, chatI
 	if s == nil || s.db == nil {
 		return nil, ErrChatNotFound
 	}
-	access, err := s.loadChat(ctx, userID, chatID, false)
+	access, err := s.loadChat(ctx, userID, chatID, false, time.Now())
 	if err != nil {
 		return nil, err
-	}
-	if access.MatchStatus != "accepted" {
-		return nil, ErrChatNotAvailable
 	}
 	return attachmentKeyRecipients(ctx, s.db, access)
 }
@@ -301,12 +295,9 @@ func (s *Service) SaveAttachmentKeyEnvelopes(ctx context.Context, userID, chatID
 	if len(inputs) == 0 || len(inputs) > maxAttachmentRecipients {
 		return ErrChatAttachmentKeysMissing
 	}
-	access, err := s.loadChat(ctx, userID, chatID, false)
+	access, err := s.loadChat(ctx, userID, chatID, false, now)
 	if err != nil {
 		return err
-	}
-	if access.MatchStatus != "accepted" {
-		return ErrChatNotAvailable
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)

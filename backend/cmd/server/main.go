@@ -120,6 +120,7 @@ func main() {
 		WithAttachments(store, int64(cfg.ImageStorage.MaxUploadBytes))
 	chatService.ConfigureSendRateLimit(cfg.Chat.SendBurst, float64(cfg.Chat.SendRefillPerMinute)/60.0)
 	chatService.ConfigureMessageRetention(cfg.Chat.MessageRetentionDays)
+	chatService.ConfigureReadOnlyGrace(cfg.Chat.ReadOnlyGraceHours)
 	chatService.SetClusterLogger(log.Printf)
 	chatModeration := chat.NewOpenAIModerationProvider(os.Getenv("OPENAI_API_KEY"), nil)
 	webTransport, err := chat.StartWebTransport(context.Background(), chatService, chat.WebTransportConfig{Enabled: strings.EqualFold(strings.TrimSpace(os.Getenv("ENABLE_CHAT_WEBTRANSPORT")), "true"), UDPAddr: strings.TrimSpace(os.Getenv("CHAT_WEBTRANSPORT_UDP_ADDR")), CertFile: strings.TrimSpace(os.Getenv("CHAT_WEBTRANSPORT_TLS_CERT_FILE")), KeyFile: strings.TrimSpace(os.Getenv("CHAT_WEBTRANSPORT_TLS_KEY_FILE")), AllowedOrigins: []string{cfg.ClientOrigin, cfg.DevClientOrigin}, Logf: log.Printf})

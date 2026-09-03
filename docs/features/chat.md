@@ -28,12 +28,11 @@
 
 ## 3. 利用条件
 
-- 送信・リアルタイム接続は `matches.status = accepted` の参加者だけが利用できる。
-- **`matches.status = completed`（マッチ完了後）は REST の履歴閲覧・既読更新のみ**。
-  `POST /chats/{id}/messages`、`POST /chats/{id}/transport-token`、WebSocket 接続
-  （`GET /ws/chats/{id}`）はいずれも `chat_not_available`（HTTP 409、WS は
-  `chat_not_available` エラーフレーム後に切断）で拒否される。`GET /chats`、
-  `GET /chats/{id}/messages`、`POST /chats/{id}/read` は引き続き可能。
+- 送信・リアルタイム接続は `matches.status = accepted` の参加者で、かつチャットが「書き込み可能」な間だけ利用できる。
+- チャットは次のいずれかで**閲覧専用**になる。判定は読み取り時に時刻から導出し、`matches.status` は書き換えない。
+  - `matches.status = completed`（当事者による完了操作）。
+  - `matches.status = accepted` で、**募集の予定終了時刻**（`recruitment_cards.expires_at` = 利用日 + `end_time` を JST 解釈した絶対時刻）に `CHAT_READONLY_GRACE_HOURS`（既定 48 時間）を足した時刻を過ぎた。
+- **閲覧専用時**：`POST /chats/{id}/messages`、`POST /chats/{id}/transport-token`、添付アップロード、WebTransport の `message.send` はいずれも `chat_not_available`（HTTP 409、WebTransport は `chat_not_available` エラーフレーム）で拒否される。接続中の WebTransport セッションも watchdog の次の巡回（15秒間隔）でクローズされる。`GET /chats`（当該チャットは `status = "completed"`）、`GET /chats/{id}/messages`、`POST /chats/{id}/read`、添付ダウンロードは引き続き可能。
 - ブロックまたは運営停止された場合は送受信を停止する。
 - マッチ成立前の自由チャットは提供しない。
 - メッセージ送信はユーザー単位のトークンバケットでレート制限する（REST/WebSocket 共通、`chat.Service` 層で実施）。既定は容量15・補充60/分（`CHAT_SEND_BURST` / `CHAT_SEND_REFILL_PER_MINUTE`）。超過時は REST が `429 chat_rate_limited` ＋ `Retry-After`、WebSocket が `{"type":"error","code":"rate_limited","retry_after_seconds":N}`（接続は維持し、`closing` は送らない）。
@@ -105,19 +104,19 @@ QUICの理由、JWS claimの検証、heartbeat、失敗時の自動再送、WebS
 
 - `GET /chats`（`accepted` / `completed`）
 - `GET /chats/{id}/messages`（`accepted` / `completed`）
-- `POST /chats/{id}/messages`（`accepted` のみ。任意で `attachment_id` を含む）
-- `POST /chats/{id}/moderation`（`accepted` のみ。暗号化前本文の送信前安全判定。本文・生応答は永続化しない）
-- `POST /chats/{id}/read`（`accepted` / `completed`）
-- `POST /chats/{id}/transport-token`（`accepted` のみ）
-- `GET /ws/chats/{id}`（`accepted` のみ）
-- `POST /chats/{id}/attachments`（チャット写真の暗号文アップロード。`accepted` のみ）
+- `POST /chats/{id}/messages`（書き込み可能なチャットのみ。任意で `attachment_id` を含む）
+- `POST /chats/{id}/moderation`（書き込み可能なチャットのみ。暗号化前本文の送信前安全判定。本文・生応答は永続化しない）
+- `POST /chats/{id}/read`（`accepted` / `completed` / 閲覧専用）
+- `POST /chats/{id}/transport-token`（書き込み可能なチャットのみ。`webtransport` のみ発行）
+- `CONNECT https://{CHAT_WEBTRANSPORT_UDP_ADDR}/api/v1/wt/chats/{id}`（書き込み可能なチャットのみ。旧 `GET /ws/chats/{id}` は `410 websocket_transport_removed`）
+- `POST /chats/{id}/attachments`（チャット写真の暗号文アップロード。書き込み可能なチャットのみ）
 - `GET /chats/{id}/attachments/{attachment_id}`（チャット写真の暗号文取得。`accepted` / `completed`）
 - `POST /matches/{id}/meeting`
 - `GET|POST /meetings/{id}/proximity`
 - QUIC endpoint：将来、環境ごとに設定する（`chat_id`単位。HTTP/3 WebTransportの場合はHTTPS URLとして提供）
 - テーブル：`matches`、`chat_threads`、`messages`、`chat_read_states`、`chat_token_sequences`、`chat_message_deletions`、`chat_attachments`、`photos`
 
-RESTのメッセージ送信・`transport-token`発行・WebSocket接続は`accepted`マッチの参加者だけが利用できます。`completed`マッチは一覧・履歴・既読のみで、送信と接続は`chat_not_available`で拒否されます。本文ではなくBase64URLのAES-256-GCM暗号文を保存します。`client_message_id`で再送を冪等化し、WebSocket未接続・再接続直後は`sequence` cursorで`GET /chats/{id}/messages?after=`を使って補完します。サーバーは暗号文を復号しませんが、現行キー導出は厳密E2EEを満たさないため、この点を安全性の根拠にしてはなりません。
+RESTのメッセージ送信・`transport-token`発行・WebTransport接続は、`accepted`マッチの参加者で、かつチャットが書き込み可能な間だけ利用できます。`completed`マッチ、および募集の予定終了時刻（`recruitment_cards.expires_at`）に`CHAT_READONLY_GRACE_HOURS`（既定48時間）を足した時刻を過ぎた`accepted`マッチは、一覧（`status = "completed"`として返る）・履歴・既読・添付ダウンロードのみで、送信と接続は`chat_not_available`（HTTP 409）で拒否されます。この判定は読み取り時に時刻から導出し、`matches.status`は書き換えません。本文ではなくBase64URLのAES-256-GCM暗号文を保存します。`client_message_id`で再送を冪等化し、未接続・再接続直後は`sequence` cursorで`GET /chats/{id}/messages?after=`を使って補完します。サーバーは暗号文を復号しませんが、現行キー導出は厳密E2EEを満たさないため、この点を安全性の根拠にしてはなりません。
 
 写真添付は2段階です。まず`POST /chats/{id}/attachments`へAES-256-GCM暗号文をraw bodyでアップロードし（メタは`X-Chat-Attachment-*`ヘッダ）、次に`POST /chats/{id}/messages`の`attachment_id`で1つのメッセージへ結び付けます。参照できるのは同一チャットで自分がアップロードした未参照の添付だけです。`GET /messages`とWebSocketの`message.created` / `message.ack`は、添付付きメッセージに`attachment`オブジェクトを含めます。サーバーは画像鍵を持たず、`nonce` / `algorithm` / `key_version`を不透明メタデータとして保存するだけで、EXIF除去はクライアントの責務です。暗号文上限は`IMAGE_MAX_UPLOAD_BYTES`（既定20MiB）、許可MIMEは`image/jpeg` / `image/png` / `image/webp` / `application/octet-stream`。メッセージから参照されない添付は約24時間後にスイープで削除します。取得は`accepted`/`completed`マッチの参加者のみ、ブロック時は不可です。なお、添付の鍵生成・相手への共有とクライアントの送受信UIは未実装であり、現行の本文キー導出と組み合わせて厳密E2EEとは扱いません。詳細は [写真仕様](photos.md)。
 
@@ -128,7 +127,7 @@ WebSocketの配送はプロセス内ハブ（`hub.go`）で行い、複数イン
 ## 8. 受け入れ条件
 
 - マッチ成立後だけチャット画面へ入れる。
-- `completed` マッチではチャット画面は履歴閲覧・既読のみ（入力欄を無効化し、WebSocket 接続と `transport-token` 取得を行わない）。
+- 閲覧専用のチャット（`completed` マッチ、または募集予定終了 + `CHAT_READONLY_GRACE_HOURS` 超過の `accepted` マッチ）ではチャット画面は履歴閲覧・既読のみ（`GET /chats` が `status = "completed"` を返すため入力欄を無効化し、realtime 接続と `transport-token` 取得を行わない）。送信・`transport-token` は `chat_not_available` で拒否される（統合テスト `TestChatReadOnlyAfterRecruitmentGrace`）。接続中の realtime セッションは watchdog の次の巡回で閉じる（統合テスト `TestChatReadOnlyClosesLiveWebTransport`）。
 - WebSocket接続中の相手へメッセージがリアルタイム配送される（バックエンド実装済み・統合テスト済み。フロントは初回接続経路のみで、再接続・token更新は未実装）。
 - WebSocket切断後に再接続すると未同期メッセージを `sequence` cursor で取得できる（フロント側の受入条件）。
 - 同じ送信操作を再試行しても二重メッセージにならない。

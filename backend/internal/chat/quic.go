@@ -75,12 +75,9 @@ func (e *QUICEndpoint) Authenticate(ctx context.Context, chatID, token string, n
 	if _, err := e.service.sessionActive(ctx, claims.Subject, claims.SessionID, now); err != nil {
 		return QUICConnection{}, err
 	}
-	access, err := e.service.loadChat(ctx, claims.Subject, chatID, false)
+	access, err := e.service.loadChat(ctx, claims.Subject, chatID, false, now)
 	if err != nil {
 		return QUICConnection{}, err
-	}
-	if access.MatchStatus != "accepted" {
-		return QUICConnection{}, ErrChatNotAvailable
 	}
 	return QUICConnection{ChatID: access.ChatID, UserID: claims.Subject, SessionID: claims.SessionID, TokenSeq: claims.TokenSeq, ExpiresAt: time.Unix(claims.ExpiresAt, 0)}, nil
 }
@@ -110,10 +107,8 @@ func (e *QUICEndpoint) HandleFrame(ctx context.Context, connection QUICConnectio
 	if _, err := e.service.sessionActive(ctx, connection.UserID, connection.SessionID, now); err != nil {
 		return Message{}, false, err
 	}
-	if access, err := e.service.loadChat(ctx, connection.UserID, connection.ChatID, false); err != nil {
+	if _, err := e.service.loadChat(ctx, connection.UserID, connection.ChatID, false, now); err != nil {
 		return Message{}, false, err
-	} else if access.MatchStatus != "accepted" {
-		return Message{}, false, ErrChatNotAvailable
 	}
 	switch frame.Type {
 	case clientFrameMessageSend:
@@ -144,8 +139,11 @@ func (e *QUICEndpoint) HandleFrame(ctx context.Context, connection QUICConnectio
 // RevalidateConnection is used by the long-lived WebTransport session watchdog.
 // A transport token is only valid while it has not expired, its issuing session
 // remains active, it is still the current per-chat token generation, and the
-// accepted match still permits chat. The WebTransport server closes rather than
-// silently retaining a connection when any of these conditions changes.
+// chat is still writable (accepted match, not blocked, and within the
+// recruitment's scheduled end plus the read-only grace window). The
+// WebTransport server closes rather than silently retaining a connection when
+// any of these conditions changes, so an open connection stops accepting sends
+// within one watchdog interval of the read-only window elapsing.
 func (e *QUICEndpoint) RevalidateConnection(ctx context.Context, connection QUICConnection, now time.Time) error {
 	if e == nil || !e.enabled || e.service == nil {
 		return ErrQUICDisabled
@@ -159,12 +157,8 @@ func (e *QUICEndpoint) RevalidateConnection(ctx context.Context, connection QUIC
 	if err := e.service.transportTokenCurrent(ctx, connection.SessionID, connection.ChatID, connection.TokenSeq); err != nil {
 		return err
 	}
-	access, err := e.service.loadChat(ctx, connection.UserID, connection.ChatID, false)
-	if err != nil {
+	if _, err := e.service.loadChat(ctx, connection.UserID, connection.ChatID, false, now); err != nil {
 		return err
-	}
-	if access.MatchStatus != "accepted" {
-		return ErrChatNotAvailable
 	}
 	return nil
 }

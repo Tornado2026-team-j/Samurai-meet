@@ -25,6 +25,8 @@ type chatFixture struct {
 	ownerSession     auth.SessionTokens
 	requesterSession auth.SessionTokens
 	chatID           string
+	cardID           string
+	matchID          string
 }
 
 func seedAcceptedChat(t *testing.T, ctx context.Context, now time.Time) *chatFixture {
@@ -37,12 +39,12 @@ func seedAcceptedChat(t *testing.T, ctx context.Context, now time.Time) *chatFix
 			t.Fatal(err)
 		}
 	}
-	cardID := randomID(t)
-	if _, err := database.ExecContext(ctx, `INSERT INTO recruitment_cards (id,owner_user_id,category,available_date,start_time,end_time,timezone,visibility_radius_km,status,expires_at,created_at,updated_at) VALUES ($1,$2,'Food','2026-08-27','18:00','20:00','Asia/Tokyo',3,'matched',$3,$4,$4)`, cardID, f.ownerID, now.Add(24*time.Hour).Format(time.RFC3339Nano), stamp); err != nil {
+	f.cardID = randomID(t)
+	if _, err := database.ExecContext(ctx, `INSERT INTO recruitment_cards (id,owner_user_id,category,available_date,start_time,end_time,timezone,visibility_radius_km,status,expires_at,created_at,updated_at) VALUES ($1,$2,'Food','2026-08-27','18:00','20:00','Asia/Tokyo',3,'matched',$3,$4,$4)`, f.cardID, f.ownerID, now.Add(24*time.Hour).Format(time.RFC3339Nano), stamp); err != nil {
 		t.Fatal(err)
 	}
-	matchID := randomID(t)
-	if _, err := database.ExecContext(ctx, `INSERT INTO matches (id,card_id,requester_user_id,owner_user_id,status,matched_at,created_at,updated_at) VALUES ($1,$2,$3,$4,'accepted',$5,$5,$5)`, matchID, cardID, f.requesterID, f.ownerID, stamp); err != nil {
+	f.matchID = randomID(t)
+	if _, err := database.ExecContext(ctx, `INSERT INTO matches (id,card_id,requester_user_id,owner_user_id,status,matched_at,created_at,updated_at) VALUES ($1,$2,$3,$4,'accepted',$5,$5,$5)`, f.matchID, f.cardID, f.requesterID, f.ownerID, stamp); err != nil {
 		t.Fatal(err)
 	}
 	signer, err := auth.NewSigner(base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x53}, 32)), "chat-fixture-issuer", "chat-fixture-audience")

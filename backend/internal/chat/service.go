@@ -51,6 +51,7 @@ type Service struct {
 	clusterLogf    func(string, ...any)
 
 	retentionDays int
+	readOnlyGrace time.Duration
 }
 
 type ChatSummary struct {
@@ -114,6 +115,11 @@ type chatAccess struct {
 	OwnerUserID string
 	RequesterID string
 	OtherUserID string
+	// ReadOnly is true when the chat still exists for history/read but no
+	// longer accepts new messages or realtime connections: either the match
+	// is 'completed', or it is 'accepted' and the recruitment's scheduled end
+	// plus the read-only grace window has passed.
+	ReadOnly bool
 }
 
 func NewService(database *sql.DB, signer *auth.Signer, notificationServices ...*notification.Service) *Service {
@@ -121,7 +127,7 @@ func NewService(database *sql.DB, signer *auth.Signer, notificationServices ...*
 	if len(notificationServices) > 0 {
 		notifications = notificationServices[0]
 	}
-	return &Service{db: database, signer: signer, notifications: notifications, wtHub: newWebTransportHub(), sendLimiter: newSendRateLimiter(), instanceID: newInstanceID(), retentionDays: defaultMessageRetentionDays, maxAttachmentBytes: defaultMaxAttachmentBytes}
+	return &Service{db: database, signer: signer, notifications: notifications, wtHub: newWebTransportHub(), sendLimiter: newSendRateLimiter(), instanceID: newInstanceID(), retentionDays: defaultMessageRetentionDays, readOnlyGrace: defaultReadOnlyGraceHours * time.Hour, maxAttachmentBytes: defaultMaxAttachmentBytes}
 }
 
 // WithAttachments enables chat photo attachments backed by blobs. maxBytes <= 0
@@ -214,7 +220,7 @@ func (s *Service) List(ctx context.Context, userID string, now time.Time) ([]Cha
 		if err != nil {
 			return nil, err
 		}
-		summary, err := s.summary(ctx, userID, access)
+		summary, err := s.summary(ctx, userID, access, now)
 		if err != nil {
 			return nil, err
 		}
@@ -228,7 +234,7 @@ func (s *Service) ListMessages(ctx context.Context, userID, chatID string, after
 		return MessagePage{}, ErrChatInvalidInput
 	}
 	limit = normalizeLimit(limit)
-	access, err := s.loadChat(ctx, userID, chatID, true)
+	access, err := s.loadChat(ctx, userID, chatID, true, now)
 	if err != nil {
 		return MessagePage{}, err
 	}
@@ -291,12 +297,12 @@ func (s *Service) SendMessage(ctx context.Context, userID, chatID string, input 
 	return s.sendMessage(ctx, userID, chatID, input, now)
 }
 
-// AuthorizeMessageSend verifies the same accepted-match participant and block
+// AuthorizeMessageSend verifies the same writable-chat participant and block
 // boundary as SendMessage without writing a message. It is used before a
 // plaintext-only moderation request so unauthorized callers never send chat
 // text to an external provider.
 func (s *Service) AuthorizeMessageSend(ctx context.Context, userID, chatID string) error {
-	_, err := s.loadChat(ctx, userID, chatID, false)
+	_, err := s.loadChat(ctx, userID, chatID, false, time.Now())
 	return err
 }
 
@@ -315,12 +321,9 @@ func (s *Service) sendMessage(ctx context.Context, userID, chatID string, input 
 			return Message{}, false, &RateLimitError{RetryAfter: retryAfter}
 		}
 	}
-	access, err := s.loadChat(ctx, userID, chatID, false)
+	access, err := s.loadChat(ctx, userID, chatID, false, now)
 	if err != nil {
 		return Message{}, false, err
-	}
-	if access.MatchStatus != "accepted" {
-		return Message{}, false, ErrChatNotAvailable
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -430,7 +433,7 @@ func (s *Service) markRead(ctx context.Context, userID, chatID string, sequence 
 	if sequence <= 0 {
 		return ErrChatInvalidInput
 	}
-	access, err := s.loadChat(ctx, userID, chatID, true)
+	access, err := s.loadChat(ctx, userID, chatID, true, now)
 	if err != nil {
 		return err
 	}
@@ -489,12 +492,9 @@ func (s *Service) IssueTransportToken(ctx context.Context, userID, sessionID, ch
 	if transport != QUICTransport {
 		return TransportToken{}, ErrChatInvalidInput
 	}
-	access, err := s.loadChat(ctx, userID, chatID, false)
+	access, err := s.loadChat(ctx, userID, chatID, false, now)
 	if err != nil {
 		return TransportToken{}, err
-	}
-	if access.MatchStatus != "accepted" {
-		return TransportToken{}, ErrChatNotAvailable
 	}
 	seq, err := s.nextTokenSeq(ctx, sessionID, access.ChatID, now)
 	if err != nil {
@@ -594,16 +594,24 @@ func (s *Service) ensureChat(ctx context.Context, userID, matchID string, now ti
 	return access, nil
 }
 
-func (s *Service) loadChat(ctx context.Context, userID, chatID string, allowCompleted bool) (chatAccess, error) {
+// loadChat resolves a chat thread for a participant and decides whether the
+// chat is writable. allowReadOnly=false rejects a chat that is history-only
+// (match 'completed', or 'accepted' past the recruitment's scheduled end plus
+// the read-only grace); allowReadOnly=true returns it with access.ReadOnly set
+// so history, read receipts, and attachment downloads keep working.
+func (s *Service) loadChat(ctx context.Context, userID, chatID string, allowReadOnly bool, now time.Time) (chatAccess, error) {
 	if s == nil || s.db == nil || strings.TrimSpace(userID) == "" || strings.TrimSpace(chatID) == "" {
 		return chatAccess{}, ErrChatNotFound
 	}
 	var access chatAccess
+	var cardExpiresAt string
 	if err := s.db.QueryRowContext(ctx, `
-		SELECT c.id,c.match_id,m.status,m.owner_user_id,m.requester_user_id
-		FROM chat_threads c JOIN matches m ON m.id=c.match_id
+		SELECT c.id,c.match_id,m.status,m.owner_user_id,m.requester_user_id,rc.expires_at
+		FROM chat_threads c
+		JOIN matches m ON m.id=c.match_id
+		JOIN recruitment_cards rc ON rc.id=m.card_id
 		WHERE c.id=$1`, chatID).Scan(
-		&access.ChatID, &access.MatchID, &access.MatchStatus, &access.OwnerUserID, &access.RequesterID); errors.Is(err, sql.ErrNoRows) {
+		&access.ChatID, &access.MatchID, &access.MatchStatus, &access.OwnerUserID, &access.RequesterID, &cardExpiresAt); errors.Is(err, sql.ErrNoRows) {
 		return chatAccess{}, ErrChatNotFound
 	} else if err != nil {
 		return chatAccess{}, err
@@ -611,7 +619,12 @@ func (s *Service) loadChat(ctx context.Context, userID, chatID string, allowComp
 	if userID != access.OwnerUserID && userID != access.RequesterID {
 		return chatAccess{}, ErrChatForbidden
 	}
-	if access.MatchStatus != "accepted" && (!allowCompleted || access.MatchStatus != "completed") {
+	if access.MatchStatus != "accepted" && access.MatchStatus != "completed" {
+		return chatAccess{}, ErrChatNotAvailable
+	}
+	access.ReadOnly = access.MatchStatus == "completed" ||
+		chatWriteClosed(cardExpiresAt, s.readOnlyGrace, now)
+	if access.ReadOnly && !allowReadOnly {
 		return chatAccess{}, ErrChatNotAvailable
 	}
 	blocked, err := s.blocked(ctx, access.OwnerUserID, access.RequesterID)
@@ -629,15 +642,26 @@ func (s *Service) loadChat(ctx context.Context, userID, chatID string, allowComp
 	return access, nil
 }
 
-func (s *Service) summary(ctx context.Context, userID string, access chatAccess) (ChatSummary, error) {
+func (s *Service) summary(ctx context.Context, userID string, access chatAccess, now time.Time) (ChatSummary, error) {
 	var result ChatSummary
-	result.ID, result.MatchID, result.Status, result.OtherUserID = access.ChatID, access.MatchID, access.MatchStatus, access.OtherUserID
+	result.ID, result.MatchID, result.OtherUserID = access.ChatID, access.MatchID, access.OtherUserID
+	var cardExpiresAt string
 	if err := s.db.QueryRowContext(ctx, `
-		SELECT COALESCE(NULLIF(p.name,''),u.display_name,''),c.updated_at
-		FROM chat_threads c JOIN users u ON u.id=$2
+		SELECT COALESCE(NULLIF(p.name,''),u.display_name,''),c.updated_at,rc.expires_at
+		FROM chat_threads c
+		JOIN matches m ON m.id=c.match_id
+		JOIN recruitment_cards rc ON rc.id=m.card_id
+		JOIN users u ON u.id=$2
 		LEFT JOIN profiles p ON p.user_id=u.id
-		WHERE c.id=$1`, access.ChatID, access.OtherUserID).Scan(&result.OtherUserName, &result.UpdatedAt); err != nil {
+		WHERE c.id=$1`, access.ChatID, access.OtherUserID).Scan(&result.OtherUserName, &result.UpdatedAt, &cardExpiresAt); err != nil {
 		return ChatSummary{}, err
+	}
+	// A chat past its writable window reports as 'completed' so the existing
+	// two-state client UI (active / read-only) needs no change.
+	if access.MatchStatus == "completed" || chatWriteClosed(cardExpiresAt, s.readOnlyGrace, now) {
+		result.Status = "completed"
+	} else {
+		result.Status = access.MatchStatus
 	}
 	var lastAt sql.NullString
 	if err := s.db.QueryRowContext(ctx, `SELECT MAX(created_at) FROM messages WHERE chat_id=$1 AND deleted_at IS NULL`, access.ChatID).Scan(&lastAt); err != nil {

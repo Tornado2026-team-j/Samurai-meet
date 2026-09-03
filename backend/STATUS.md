@@ -2,7 +2,7 @@
 
 - 実装済み: Google OAuth、pre-auth、Passkey、session/refresh、v2 client root-key envelope、端末固有Key-Bの公開鍵登録・proof、暗号文画像API、退会API。
 - 実装済み: プロフィール取得・自己紹介を含む更新API、募集カードの作成・検索・更新・終了、関心・承認・完了、最新位置保存、通報登録（`reports`）とブロックの作成・一覧・解除。
-- 実装済み: acceptedマッチ向けチャット（REST + WebSocketリアルタイム配送。暗号文のみ、既読、冪等再送、短命Chat Token、接続中のセッション/ブロック/マッチheartbeat。単一APIインスタンス前提のプロセス内ハブ）、会合セッション、短期のBluetooth／位置推測補助値API。
+- 実装済み: acceptedマッチ向けチャット（REST + HTTP/3 WebTransportリアルタイム配送。暗号文のみ、既読、冪等再送、短命Chat Token、15秒間隔watchdogによるセッション/ブロック/マッチ/閲覧専用検知、`LISTEN/NOTIFY`複数インスタンスfan-out）、会合セッション、短期のBluetooth／位置推測補助値API。募集の予定終了時刻 + `CHAT_READONLY_GRACE_HOURS`（既定48h）経過、またはマッチ完了で送信・realtime接続を停止し履歴/既読のみ可（読み取り時に時刻から導出）。
 - 実装済み: 通知の永続化・一覧・未読管理、応募／承認／辞退／暗号化チャット送信からの通知生成、通知画面のAPI接続。
 - 未完了: Web Passkeyの実機E2E、端末画像の画面統合、削除reconciler、legacy画像移行、native Passkey実機、プロフィール編集・チャットのフロント接続、チャット配送の複数インスタンス対応（`LISTEN/NOTIFY`）とChat Token接続中ローテーション、ネイティブBluetooth測定、評価、Stripe Identity連携。募集公開・検索・応募・承認／辞退のフロント接続は完了。
 
