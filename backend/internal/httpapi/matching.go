@@ -195,6 +195,10 @@ func matchAction(service *matching.Service, sessions *auth.SessionService, meeti
 			return
 		}
 		parts := strings.Split(strings.Trim(strings.TrimPrefix(r.URL.Path, APIV1Prefix+"/matches/"), "/"), "/")
+		var meetingService *meeting.Service
+		if len(meetingServices) > 0 {
+			meetingService = meetingServices[0]
+		}
 		if len(parts) == 1 && parts[0] != "" && r.Method == http.MethodGet {
 			if service == nil {
 				writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "matching_unavailable"})
@@ -213,6 +217,24 @@ func matchAction(service *matching.Service, sessions *auth.SessionService, meeti
 			writeJSON(w, http.StatusOK, map[string]any{"data": result})
 			return
 		}
+		if len(parts) == 2 && parts[0] != "" && parts[1] == "meeting" && r.Method == http.MethodGet {
+			if meetingService == nil {
+				writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "meeting_unavailable"})
+				return
+			}
+			matchID, err := url.PathUnescape(parts[0])
+			if err != nil || matchID == "" {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_match_id"})
+				return
+			}
+			result, getErr := meetingService.GetForMatch(r.Context(), claims.Subject, matchID)
+			if getErr != nil {
+				writeMeetingError(w, getErr)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"data": result})
+			return
+		}
 		if len(parts) != 2 || parts[0] == "" || r.Method != http.MethodPost {
 			w.Header().Set("Allow", "GET, POST")
 			w.WriteHeader(http.StatusMethodNotAllowed)
@@ -222,10 +244,6 @@ func matchAction(service *matching.Service, sessions *auth.SessionService, meeti
 		if err != nil || matchID == "" {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_match_id"})
 			return
-		}
-		var meetingService *meeting.Service
-		if len(meetingServices) > 0 {
-			meetingService = meetingServices[0]
 		}
 		if parts[1] == "meeting" {
 			if meetingService == nil {

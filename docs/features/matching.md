@@ -81,7 +81,10 @@ match: pending -> accepted -> completed
 - `POST /api/v1/matches/{id}/reject`
 - `POST /api/v1/matches/{id}/withdraw`
 - `POST /api/v1/matches/{id}/complete`
+- `GET /api/v1/matches/{id}/meeting`
 - `POST /api/v1/matches/{id}/meeting`
+- `GET /api/v1/meetings/{id}`
+- `POST /api/v1/meetings/{id}/start|end|cancel|resume`
 - テーブル：`recruitment_cards`、`matches`、`blocks`
 
 募集カードの公開には名前・国コードが揃ったプロフィールが必要です。作成・更新の成功レスポンスは `{ "data": { ...card } }`、検索は `{ "data": [ ...card ] }` です。カードのレスポンスには正確な緯度・経度を含めず、現在地を使った場合だけ `distance_band`（`within_1_km` / `within_3_km` / `within_5_km`）を返します。
@@ -94,7 +97,9 @@ match: pending -> accepted -> completed
 
 `timezone`を省略または空にした募集入力は`Asia/Tokyo`へ正規化し、他のtimezoneは拒否します。`created_at`や`expires_at`などの絶対時刻はUTCで扱います。ISO内部値、JST固定の日時正規化、期限境界は自動テストで確認済みですが、過去時刻・日跨ぎ・端末日時pickerの実機確認は未完了です。
 
-応募者は`pending`中に関心を取り下げられ、matchの状態は`cancelled`になります。取り下げ後の行は履歴と通知の冪等性のため保持します。
+応募者は`pending`中に関心を取り下げられ、matchの状態は`cancelled`になります。取り下げ後の行は履歴と通知の冪等性のため保持します。ブロック関係がある2ユーザーのmatchは、`GET /matches`と`GET /matches/{id}`の結果から除外します。ブロック解除後の明示的な再読み込みで再び取得できます。会合APIでも操作直前に同じ双方向ブロック判定を行うため、一覧の古い表示だけで会合を開始することはできません。
+
+会合セッションは`planned -> active -> completed`、または安全のため`planned|active -> cancelled`へ遷移します。`cancelled`を再開する場合は、片側の`resume`だけでは状態を戻さず、参加者双方が明示的に同意したときだけ`planned`へ戻します。再開後は開始時刻・近接状態・以前の開始同意をクリアし、双方が改めて`start`する必要があります。`completed`は再開できません。これにより、一方の参加者が開始・中止を繰り返して相手の同意を操作することを防ぎます。
 
 ## 7. 受け入れ条件
 
@@ -104,7 +109,7 @@ match: pending -> accepted -> completed
 - 同じユーザーが同じカードへ重複して関心を送れない。
 - 相互承認前にチャットが開かない。承認後のチャットは`chat_threads`を遅延作成する。
 - 期限切れカードへ新たな関心を送れない。
-- ブロック関係があるユーザーへカードが表示されない。
+- ブロック関係があるユーザーへカードが表示されず、既存matchも一覧・詳細から表示されない。
 - 同じカードへの関心はユーザーごとに一度だけで、重複時は `409 interest_already_sent`。
 - カード所有者以外の承認・更新・削除は拒否する。
 - 所有者または参加者に限定される状態変更は、別ユーザーが同じ募集ID・match IDを渡しても拒否し、募集・match・会合セッション・通知に副作用を残さない。URLのIDだけでなく、今後追加する関連ID入力も同じ認可境界で検証する。

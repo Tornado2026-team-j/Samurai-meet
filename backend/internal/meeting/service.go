@@ -41,6 +41,7 @@ type Meeting struct {
 	ExpiresAt          string `json:"expires_at,omitempty"`
 	OwnerStartedAt     string `json:"owner_started_at,omitempty"`
 	RequesterStartedAt string `json:"requester_started_at,omitempty"`
+	ResumeRequested    bool   `json:"resume_requested"`
 	CreatedAt          string `json:"created_at"`
 	UpdatedAt          string `json:"updated_at"`
 }
@@ -170,6 +171,40 @@ func (s *Service) Get(ctx context.Context, userID, meetingID string) (Meeting, e
 	return access.meeting, nil
 }
 
+// GetForMatch returns the existing meeting session for a match without
+// creating one. This lets clients render states such as cancelled after a
+// screen reload instead of attempting an invalid restart.
+func (s *Service) GetForMatch(ctx context.Context, userID, matchID string) (Meeting, error) {
+	if s == nil || s.db == nil || strings.TrimSpace(userID) == "" || strings.TrimSpace(matchID) == "" {
+		return Meeting{}, ErrMeetingNotFound
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Meeting{}, err
+	}
+	defer tx.Rollback()
+	var meetingID string
+	if err = tx.QueryRowContext(ctx, `SELECT id FROM meeting_sessions WHERE match_id=$1`, matchID).Scan(&meetingID); errors.Is(err, sql.ErrNoRows) {
+		return Meeting{}, ErrMeetingNotFound
+	} else if err != nil {
+		return Meeting{}, err
+	}
+	access, err := s.loadTx(ctx, tx, userID, meetingID, true)
+	if err != nil {
+		return Meeting{}, err
+	}
+	if expireMeetingTx(ctx, tx, &access.meeting, time.Now()) {
+		if err := tx.Commit(); err != nil {
+			return Meeting{}, err
+		}
+		return access.meeting, nil
+	}
+	if err := tx.Commit(); err != nil {
+		return Meeting{}, err
+	}
+	return access.meeting, nil
+}
+
 func (s *Service) Start(ctx context.Context, userID, meetingID string, now time.Time) (Meeting, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -260,13 +295,80 @@ func (s *Service) Cancel(ctx context.Context, userID, meetingID string, now time
 		return Meeting{}, ErrMeetingInvalidState
 	}
 	updated := now.UTC().Format(time.RFC3339Nano)
-	if _, err = tx.ExecContext(ctx, "UPDATE meeting_sessions SET status='cancelled',cancelled_at=$1,updated_at=$1 WHERE id=$2", updated, meetingID); err != nil {
+	if _, err = tx.ExecContext(ctx, "UPDATE meeting_sessions SET status='cancelled',cancelled_at=$1,owner_resume_requested_at=NULL,requester_resume_requested_at=NULL,updated_at=$1 WHERE id=$2", updated, meetingID); err != nil {
 		return Meeting{}, err
 	}
 	if _, err = tx.ExecContext(ctx, "DELETE FROM meeting_proximity_latest WHERE meeting_id=$1", meetingID); err != nil {
 		return Meeting{}, err
 	}
 	access.meeting.Status, access.meeting.EndedAt, access.meeting.UpdatedAt = "cancelled", updated, updated
+	if err = tx.Commit(); err != nil {
+		return Meeting{}, err
+	}
+	return access.meeting, nil
+}
+
+// Resume records one participant's explicit consent to resume a cancelled
+// meeting. The session returns to planned only after both participants have
+// consented; a fresh Start call from each participant is still required.
+func (s *Service) Resume(ctx context.Context, userID, meetingID string, now time.Time) (Meeting, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Meeting{}, err
+	}
+	defer tx.Rollback()
+	access, err := s.loadTx(ctx, tx, userID, meetingID, false)
+	if err != nil {
+		return Meeting{}, err
+	}
+	if access.meeting.Status == "planned" {
+		if err = tx.Commit(); err != nil {
+			return Meeting{}, err
+		}
+		return access.meeting, nil
+	}
+	if access.meeting.Status != "cancelled" {
+		return Meeting{}, ErrMeetingInvalidState
+	}
+	if access.meeting.ExpiresAt != "" {
+		expires, parseErr := time.Parse(time.RFC3339Nano, access.meeting.ExpiresAt)
+		if parseErr != nil || !expires.After(now) {
+			return Meeting{}, ErrMeetingUnavailable
+		}
+	}
+	updated := now.UTC().Format(time.RFC3339Nano)
+	column := "owner_resume_requested_at"
+	if userID != access.ownerID {
+		column = "requester_resume_requested_at"
+	}
+	if _, err = tx.ExecContext(ctx, "UPDATE meeting_sessions SET "+column+"=COALESCE("+column+",$1),updated_at=$1 WHERE id=$2 AND status='cancelled'", updated, meetingID); err != nil {
+		return Meeting{}, err
+	}
+	var ownerRequested, requesterRequested bool
+	if err = tx.QueryRowContext(ctx, `
+		SELECT owner_resume_requested_at IS NOT NULL,requester_resume_requested_at IS NOT NULL
+		FROM meeting_sessions WHERE id=$1 FOR UPDATE`, meetingID).Scan(&ownerRequested, &requesterRequested); err != nil {
+		return Meeting{}, err
+	}
+	if ownerRequested && requesterRequested {
+		if _, err = tx.ExecContext(ctx, `
+			UPDATE meeting_sessions
+			SET status='planned',started_at=NULL,ended_at=NULL,cancelled_at=NULL,
+			    owner_started_at=NULL,requester_started_at=NULL,
+			    owner_resume_requested_at=NULL,requester_resume_requested_at=NULL,
+			    updated_at=$1 WHERE id=$2 AND status='cancelled'`, updated, meetingID); err != nil {
+			return Meeting{}, err
+		}
+		access.meeting.Status = "planned"
+		access.meeting.StartedAt = ""
+		access.meeting.EndedAt = ""
+		access.meeting.OwnerStartedAt = ""
+		access.meeting.RequesterStartedAt = ""
+		access.meeting.ResumeRequested = false
+	} else {
+		access.meeting.ResumeRequested = true
+	}
+	access.meeting.UpdatedAt = updated
 	if err = tx.Commit(); err != nil {
 		return Meeting{}, err
 	}
@@ -421,12 +523,13 @@ func (s *Service) loadWithQuery(ctx context.Context, queryer rowQuerier, userID,
 	var access meetingAccess
 	var ownerID, requesterID, matchStatus string
 	var scheduledAt, startedAt, endedAt, expiresAt, ownerStartedAt, requesterStartedAt sql.NullString
+	var ownerResumeRequestedAt, requesterResumeRequestedAt sql.NullString
 	query := `
-		SELECT ms.id,ms.match_id,ms.status,ms.scheduled_at,ms.started_at,ms.ended_at,ms.expires_at,ms.owner_started_at,ms.requester_started_at,ms.created_at,ms.updated_at,
+		SELECT ms.id,ms.match_id,ms.status,ms.scheduled_at,ms.started_at,ms.ended_at,ms.expires_at,ms.owner_started_at,ms.requester_started_at,ms.owner_resume_requested_at,ms.requester_resume_requested_at,ms.created_at,ms.updated_at,
 		       m.owner_user_id,m.requester_user_id,m.status
 		FROM meeting_sessions ms JOIN matches m ON m.id=ms.match_id
 		WHERE ms.id=$1`
-	err := queryer.QueryRowContext(ctx, query, meetingID).Scan(&access.meeting.ID, &access.meeting.MatchID, &access.meeting.Status, &scheduledAt, &startedAt, &endedAt, &expiresAt, &ownerStartedAt, &requesterStartedAt,
+	err := queryer.QueryRowContext(ctx, query, meetingID).Scan(&access.meeting.ID, &access.meeting.MatchID, &access.meeting.Status, &scheduledAt, &startedAt, &endedAt, &expiresAt, &ownerStartedAt, &requesterStartedAt, &ownerResumeRequestedAt, &requesterResumeRequestedAt,
 		&access.meeting.CreatedAt, &access.meeting.UpdatedAt, &ownerID, &requesterID, &matchStatus)
 	if errors.Is(err, sql.ErrNoRows) {
 		return meetingAccess{}, ErrMeetingNotFound
@@ -442,6 +545,7 @@ func (s *Service) loadWithQuery(ctx context.Context, queryer rowQuerier, userID,
 	}
 	access.ownerID = ownerID
 	populateMeetingTimes(&access.meeting, scheduledAt, startedAt, endedAt, expiresAt, ownerStartedAt, requesterStartedAt)
+	access.meeting.ResumeRequested = userID == ownerID && ownerResumeRequestedAt.Valid || userID == requesterID && requesterResumeRequestedAt.Valid
 	var blocked bool
 	if err := queryer.QueryRowContext(ctx, `
 		SELECT EXISTS(SELECT 1 FROM blocks WHERE (blocker_user_id=$1 AND blocked_user_id=$2) OR (blocker_user_id=$2 AND blocked_user_id=$1))`, ownerID, requesterID).Scan(&blocked); err != nil {

@@ -55,14 +55,15 @@ type Service struct {
 }
 
 type ChatSummary struct {
-	ID            string `json:"id"`
-	MatchID       string `json:"match_id"`
-	Status        string `json:"status"`
-	OtherUserID   string `json:"other_user_id"`
-	OtherUserName string `json:"other_user_name"`
-	LastMessageAt string `json:"last_message_at,omitempty"`
-	UnreadCount   int    `json:"unread_count"`
-	UpdatedAt     string `json:"updated_at"`
+	ID                  string `json:"id"`
+	MatchID             string `json:"match_id"`
+	Status              string `json:"status"`
+	OtherUserID         string `json:"other_user_id"`
+	OtherUserName       string `json:"other_user_name"`
+	LastMessageAt       string `json:"last_message_at,omitempty"`
+	LastMessageSequence int64  `json:"last_message_sequence"`
+	UnreadCount         int    `json:"unread_count"`
+	UpdatedAt           string `json:"updated_at"`
 }
 
 // EncryptedMessageTranslation is a cached translation bound to one message
@@ -96,9 +97,10 @@ type Message struct {
 }
 
 type MessagePage struct {
-	Items     []Message `json:"items"`
-	NextAfter int64     `json:"next_after,omitempty"`
-	HasMore   bool      `json:"has_more"`
+	Items      []Message `json:"items"`
+	NextAfter  int64     `json:"next_after,omitempty"`
+	NextBefore int64     `json:"next_before,omitempty"`
+	HasMore    bool      `json:"has_more"`
 }
 
 type SendMessageInput struct {
@@ -265,23 +267,59 @@ func (s *Service) List(ctx context.Context, userID string, now time.Time) ([]Cha
 	return result, nil
 }
 
+// Get returns one authorized chat summary without enumerating every chat for
+// the account. The detail screen uses this fast path before loading the
+// bounded message window.
+func (s *Service) Get(ctx context.Context, userID, chatID string, now time.Time) (ChatSummary, error) {
+	if s == nil || s.db == nil || strings.TrimSpace(userID) == "" || strings.TrimSpace(chatID) == "" {
+		return ChatSummary{}, ErrChatNotFound
+	}
+	access, err := s.loadChat(ctx, userID, chatID, true)
+	if err != nil {
+		return ChatSummary{}, err
+	}
+	return s.summary(ctx, userID, access)
+}
+
 func (s *Service) ListMessages(ctx context.Context, userID, chatID string, after int64, limit int, now time.Time) (MessagePage, error) {
 	if after < 0 {
 		return MessagePage{}, ErrChatInvalidInput
 	}
+	return s.listMessages(ctx, userID, chatID, after, nil, limit, now)
+}
+
+// ListMessagesBefore returns one bounded page immediately before before. The
+// result is still ordered oldest-to-newest so the client can prepend it to an
+// existing local window. It is used for tail-first history loading and for
+// explicit loading of older messages; the existing after cursor remains
+// available for realtime gap recovery.
+func (s *Service) ListMessagesBefore(ctx context.Context, userID, chatID string, before int64, limit int, now time.Time) (MessagePage, error) {
+	if before < 0 {
+		return MessagePage{}, ErrChatInvalidInput
+	}
+	return s.listMessages(ctx, userID, chatID, 0, &before, limit, now)
+}
+
+func (s *Service) listMessages(ctx context.Context, userID, chatID string, after int64, before *int64, limit int, now time.Time) (MessagePage, error) {
 	limit = normalizeLimit(limit)
 	access, err := s.loadChat(ctx, userID, chatID, true)
 	if err != nil {
 		return MessagePage{}, err
 	}
-	rows, err := s.db.QueryContext(ctx, `
+	query := `
 		SELECT m.id,m.chat_id,m.sender_user_id,m.client_message_id,m.sequence,m.ciphertext,m.nonce,m.algorithm,m.key_version,m.content_type,COALESCE(m.expires_at,''),COALESCE(m.edited_at,''),m.created_at,
 		       a.id,a.content_type,a.size_bytes,a.cipher_sha256,a.nonce,a.algorithm,a.key_version,a.created_at
 		FROM messages m
 		LEFT JOIN chat_attachments a ON a.message_id=m.id AND a.deleted_at IS NULL
-		WHERE m.chat_id=$1 AND m.sequence>$2 AND m.deleted_at IS NULL
-		ORDER BY m.sequence ASC
-		LIMIT $3`, access.ChatID, after, limit+1)
+		WHERE m.chat_id=$1 AND m.deleted_at IS NULL AND `
+	var rows *sql.Rows
+	if before == nil {
+		query += `m.sequence>$2 ORDER BY m.sequence ASC LIMIT $3`
+		rows, err = s.db.QueryContext(ctx, query, access.ChatID, after, limit+1)
+	} else {
+		query += `m.sequence<$2 ORDER BY m.sequence DESC LIMIT $3`
+		rows, err = s.db.QueryContext(ctx, query, access.ChatID, *before, limit+1)
+	}
 	if err != nil {
 		return MessagePage{}, err
 	}
@@ -313,13 +351,24 @@ func (s *Service) ListMessages(ctx context.Context, userID, chatID string, after
 	if err := rows.Err(); err != nil {
 		return MessagePage{}, err
 	}
+	if before != nil {
+		for left, right := 0, len(items)-1; left < right; left, right = left+1, right-1 {
+			items[left], items[right] = items[right], items[left]
+		}
+	}
 	page := MessagePage{Items: items}
 	if len(items) > limit {
 		page.HasMore = true
-		page.Items = items[:limit]
+		if before == nil {
+			page.Items = items[:limit]
+		} else {
+			page.Items = items[len(items)-limit:]
+		}
 	}
-	if len(page.Items) > 0 {
+	if before == nil && len(page.Items) > 0 {
 		page.NextAfter = page.Items[len(page.Items)-1].Sequence
+	} else if before != nil && len(page.Items) > 0 {
+		page.NextBefore = page.Items[0].Sequence
 	}
 	if err := s.loadMessageTranslations(ctx, page.Items); err != nil {
 		return MessagePage{}, err
@@ -865,10 +914,11 @@ func (s *Service) summary(ctx context.Context, userID string, access chatAccess)
 	var result ChatSummary
 	result.ID, result.MatchID, result.Status, result.OtherUserID = access.ChatID, access.MatchID, access.MatchStatus, access.OtherUserID
 	if err := s.db.QueryRowContext(ctx, `
-		SELECT COALESCE(NULLIF(p.name,''),u.display_name,''),c.updated_at
+		SELECT COALESCE(NULLIF(p.name,''),u.display_name,''),c.updated_at,
+		       COALESCE((SELECT MAX(sequence) FROM messages WHERE chat_id=c.id AND deleted_at IS NULL),0)
 		FROM chat_threads c JOIN users u ON u.id=$2
 		LEFT JOIN profiles p ON p.user_id=u.id
-		WHERE c.id=$1`, access.ChatID, access.OtherUserID).Scan(&result.OtherUserName, &result.UpdatedAt); err != nil {
+		WHERE c.id=$1`, access.ChatID, access.OtherUserID).Scan(&result.OtherUserName, &result.UpdatedAt, &result.LastMessageSequence); err != nil {
 		return ChatSummary{}, err
 	}
 	var lastAt sql.NullString

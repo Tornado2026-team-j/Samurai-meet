@@ -6,6 +6,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -137,6 +138,49 @@ func TestChatMessageEditAndDelete(t *testing.T) {
 	}
 	if err := f.chatService.DeleteMessage(ctx, f.requesterID, f.chatID, message.ID, now.Add(4*time.Second)); err != chat.ErrMessageNotFound {
 		t.Fatalf("repeated delete error = %v, want %v", err, chat.ErrMessageNotFound)
+	}
+}
+
+func TestChatMessageTailAndBeforeCursor(t *testing.T) {
+	ctx := context.Background()
+	now := time.Now().UTC()
+	f := seedAcceptedChat(t, ctx, now)
+	for index := 1; index <= 3; index++ {
+		if _, _, err := f.chatService.SendMessage(ctx, f.requesterID, f.chatID, chat.SendMessageInput{
+			ClientMessageID: fmt.Sprintf("tail-%d", index),
+			Ciphertext:      chatCiphertext,
+			Nonce:           chatNonce,
+			Algorithm:       "AES-256-GCM",
+			KeyVersion:      "chat-keyb-v1",
+		}, now.Add(time.Duration(index)*time.Second)); err != nil {
+			t.Fatalf("SendMessage(%d): %v", index, err)
+		}
+	}
+
+	summaries, err := f.chatService.List(ctx, f.requesterID, now)
+	if err != nil || len(summaries) != 1 {
+		t.Fatalf("List() = %v, %v", summaries, err)
+	}
+	latest := summaries[0].LastMessageSequence
+	if latest <= 0 {
+		t.Fatalf("LastMessageSequence = %d, want a positive high-water mark", latest)
+	}
+	detail, err := f.chatService.Get(ctx, f.requesterID, f.chatID, now)
+	if err != nil || detail.ID != f.chatID || detail.LastMessageSequence != latest {
+		t.Fatalf("Get() = %+v, err=%v, want the same chat summary without listing all chats", detail, err)
+	}
+
+	tail, err := f.chatService.ListMessagesBefore(ctx, f.requesterID, f.chatID, latest+1, 2, now)
+	if err != nil || len(tail.Items) != 2 || !tail.HasMore || tail.NextBefore <= 0 {
+		t.Fatalf("tail page = %+v, err=%v, want two newest messages and an older cursor", tail, err)
+	}
+	if tail.Items[0].ClientMessageID != "tail-2" || tail.Items[1].ClientMessageID != "tail-3" {
+		t.Fatalf("tail order = %q, %q, want tail-2, tail-3", tail.Items[0].ClientMessageID, tail.Items[1].ClientMessageID)
+	}
+
+	older, err := f.chatService.ListMessagesBefore(ctx, f.requesterID, f.chatID, tail.NextBefore, 2, now)
+	if err != nil || len(older.Items) != 1 || older.Items[0].ClientMessageID != "tail-1" || older.HasMore {
+		t.Fatalf("older page = %+v, err=%v, want only tail-1", older, err)
 	}
 }
 

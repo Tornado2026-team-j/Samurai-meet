@@ -19,19 +19,22 @@ import {
   View,
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import ChatBubble from "../../components/ChatBubble";
 import { useAuth } from "../../hooks/useAuth";
 import { APIError } from "../../services/api-client";
 import {
 	blockUser,
-	chatMessageRevision,
+  chatMessageRevision,
 	chatRealtimeMode,
   connectChatWebTransport,
   createSafetyReport,
-	listChatMessages,
+  listChatMessages,
+  listLatestChatMessages,
+	getChat,
 	listChats,
+	CHAT_MESSAGE_WINDOW_LIMIT,
 	installNativeChatWebTransportBridge,
 	loadChatContentKey,
 	loadChatMessageKey,
@@ -49,9 +52,16 @@ import {
 	updateChatMessage,
   validateChatDraft,
   type ChatMessageView,
+  type EncryptedChatMessage,
   type ChatReportReason,
   type ChatSummary,
 } from "../../services/chat";
+import {
+  clearChatMessageCache,
+  loadChatMessageCache,
+  saveChatMessageCache,
+  type ChatMessageCache,
+} from "../../services/chat-cache";
 import {
   CHAT_ATTACHMENT_MAX_BYTES,
   ensureChatAttachmentEncryptionAvailable,
@@ -80,6 +90,7 @@ const MUTED_GRAY = "#949494";
 const BORDER_GRAY = "#e4e4e4";
 const SOFT_BLUE = "#eff8ff";
 const DANGER = "#b42318";
+const MAX_RENDERED_MESSAGES = CHAT_MESSAGE_WINDOW_LIMIT;
 
 type ReportTarget = { kind: "account" } | { kind: "message"; messageID: string };
 type ConfirmAction = "decline" | "block" | "account_report" | "message_report";
@@ -163,6 +174,12 @@ const COPY = {
     chatMigrationInProgress: "暗号鍵を移行中です。画面を閉じても、次回起動時に続きから再試行します。",
     chatMigrationRetry: "暗号鍵の移行が完了していません。通信状態とPasskey再認証を確認して再試行してください。",
     refreshFailed: "最新のチャット状態を取得できませんでした。表示中の履歴を維持しています。",
+    cacheLoading: "保存済みの履歴を表示中です。最新の状態を確認しています…",
+    cacheReset: "この端末のチャットキャッシュを削除",
+    cacheResetDone: "このチャットの端末キャッシュを削除しました。最新の履歴を取得しています。",
+    cacheResetFailed: "端末キャッシュを削除できませんでした。",
+    loadOlder: "過去のメッセージを読み込む",
+    loadingOlder: "過去のメッセージを読み込み中…",
     chatKeyMigrationPending: "このチャットの暗号鍵を移行中です。案内の所有者が一度チャットを開いた後、再試行してください。",
     photo: "画像",
     sendPhoto: "画像を送信",
@@ -280,6 +297,12 @@ const COPY = {
     chatMigrationInProgress: "This chat's encryption key is migrating. You can close the screen; the next launch will retry from the last safe step.",
     chatMigrationRetry: "Encryption-key migration is not complete. Check your connection and recent Passkey authentication, then try again.",
     refreshFailed: "The latest chat state could not be loaded. The messages already displayed were kept.",
+    cacheLoading: "Showing saved messages while checking for the latest state…",
+    cacheReset: "Delete this chat's device cache",
+    cacheResetDone: "This chat's device cache was deleted. Loading the latest history.",
+    cacheResetFailed: "The device cache could not be deleted.",
+    loadOlder: "Load older messages",
+    loadingOlder: "Loading older messages…",
     chatKeyMigrationPending: "This chat's encryption key is waiting to be migrated. Ask the guide owner to open the chat once, then try again.",
     photo: "Photo",
     sendPhoto: "Send photo",
@@ -417,7 +440,7 @@ function mergeChatMessage(
   current: ChatMessageView[],
   incoming: ChatMessageView,
 ): ChatMessageView[] {
-  return deduplicateChatMessages([...current, incoming]);
+  return deduplicateChatMessages([...current, incoming]).slice(-MAX_RENDERED_MESSAGES);
 }
 
 function waitForTranslationRetry(milliseconds: number, signal: AbortSignal): Promise<void> {
@@ -457,6 +480,7 @@ export default function ChatDetailScreen() {
   const [editingMessageID, setEditingMessageID] = useState<string | null>(null);
   const [deletingMessageID, setDeletingMessageID] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [chatKeyLoading, setChatKeyLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [sending, setSending] = useState(false);
   const [sharingLocation, setSharingLocation] = useState(false);
@@ -474,6 +498,8 @@ export default function ChatDetailScreen() {
   const [originalMessages, setOriginalMessages] = useState<Record<string, boolean>>({});
   const [remoteTyping, setRemoteTyping] = useState(false);
   const [remoteReadSequence, setRemoteReadSequence] = useState(0);
+  const [hasMoreOlderMessages, setHasMoreOlderMessages] = useState(false);
+  const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
   const [safetyModal, setSafetyModal] = useState<SafetyModal | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [locallyClosed, setLocallyClosed] = useState<"declined" | "blocked" | null>(null);
@@ -493,13 +519,17 @@ export default function ChatDetailScreen() {
   const loadControllerRef = useRef<AbortController | null>(null);
   const loadGenerationRef = useRef(0);
   const loadedDataRef = useRef(false);
+  const cachedChatRef = useRef<ChatMessageCache | null>(null);
+  const cacheResetRef = useRef(false);
+  const cacheWriteAllowedRef = useRef(false);
   const editingMessageIDRef = useRef<string | null>(null);
   editingMessageIDRef.current = editingMessageID;
   const copy = COPY[language ?? "ja"];
   const displayMessages = useMemo(() => deduplicateChatMessages(messages), [messages]);
   const validation = validateChatDraft(draft);
+  const chatUpdatedAt = chat?.updated_at;
   const readOnly = chat?.status === "completed" || locallyClosed !== null;
-  const canSend = safetyModal === null && !readOnly && !chatKeyUnavailable && !sending && !deletingMessageID && !sharingLocation && !sendingPhoto && !validation;
+  const canSend = safetyModal === null && !readOnly && !chatKeyLoading && !chatKeyUnavailable && !sending && !deletingMessageID && !sharingLocation && !sendingPhoto && !validation;
 
   const cancelTranslationsForMessage = useCallback((messageID: string) => {
     for (const [key, controller] of translationControllersRef.current) {
@@ -676,22 +706,70 @@ export default function ChatDetailScreen() {
           setLoadError(copy.loadError);
           setLoading(false);
           setRefreshing(false);
+          setChatKeyLoading(false);
         }
         return;
       }
       if (!loadedDataRef.current) setLoading(true);
       else if (mode === "refresh") setRefreshing(true);
       setLoadError(null);
+      setChatKeyLoading(true);
       try {
+        let cache = cachedChatRef.current;
+        if (mode === "initial" && !loadedDataRef.current) {
+          const localSession = getCurrentSession() ?? session;
+          cache = localSession ? await loadChatMessageCache(chatID, localSession.user_id) : null;
+          if (!isCurrentLoad()) return;
+          cachedChatRef.current = cache;
+          if (cache) {
+            loadedDataRef.current = true;
+            setMessages(cache.messages);
+            setHasMoreOlderMessages(cache.hasMoreOlder);
+            setLoading(false);
+            setNotice(copy.cacheLoading);
+          }
+        }
+        if (!isCurrentLoad()) return;
         const result = await runWithSession(async (activeSession, signal) => {
-          const [summaries, page] = await Promise.all([
-            listChats(activeSession, signal),
-            listChatMessages(chatID, activeSession, { limit: 100 }, signal),
-          ]);
-          const currentChat = summaries.find((item) => item.id === chatID) ?? null;
-          const hasCurrentChatKeyMessage = page.items.some((message) => message.key_version === "chat-dek-v1");
-          const hasLegacyChatMessage = page.items.some((message) => message.key_version === "chat-mvp-v1" || message.key_version === "chat-keyb-v1");
-          const hasLegacyDeviceKeyMessage = page.items.some((message) => message.key_version === "chat-keyb-v1"
+          let currentChat: ChatSummary | null;
+          try {
+            currentChat = await getChat(chatID, activeSession, signal);
+          } catch (error) {
+            // Keep compatibility with an older backend during rolling
+            // deployment. The detail endpoint is the normal fast path; the
+            // account-wide list is only a temporary fallback.
+            if (!(error instanceof APIError) || error.status !== 404) throw error;
+            const summaries = await listChats(activeSession, signal);
+            currentChat = summaries.find((item) => item.id === chatID) ?? null;
+          }
+          const cachedForSession = !cacheResetRef.current && cachedChatRef.current?.userID === activeSession.user_id
+            ? cachedChatRef.current
+            : null;
+          let serverMessages: EncryptedChatMessage[] | null = null;
+          let hasMoreOlder = false;
+          const latestSequence = currentChat?.last_message_sequence ?? 0;
+          const cacheIsCurrent = cachedForSession !== null
+            && currentChat !== null
+            && cachedForSession.chatUpdatedAt === currentChat.updated_at;
+
+          if (cacheIsCurrent) {
+            hasMoreOlder = cachedForSession.hasMoreOlder;
+          } else {
+            // chat_threads.updated_at also advances for edit/delete. A
+            // sequence-only delta would leave an edited old message or a
+            // deleted cached message visible, so an invalidated cache is
+            // replaced with the bounded server tail.
+            const latest = await listLatestChatMessages(chatID, activeSession, latestSequence, MAX_RENDERED_MESSAGES, signal);
+            serverMessages = latest.items;
+            hasMoreOlder = latest.hasMoreOlder;
+          }
+
+          const keyMessages = serverMessages === null
+            ? cachedForSession?.messages ?? []
+            : serverMessages;
+          const hasCurrentChatKeyMessage = keyMessages.some((message) => message.key_version === "chat-dek-v1");
+          const hasLegacyChatMessage = keyMessages.some((message) => message.key_version === "chat-mvp-v1" || message.key_version === "chat-keyb-v1");
+          const hasLegacyDeviceKeyMessage = keyMessages.some((message) => message.key_version === "chat-keyb-v1"
             || message.translations?.some((translation) => translation.key_version === "chat-translation-keyb-v1"));
           let messageKey: Uint8Array | null = null;
           let legacyKey: Uint8Array | null = null;
@@ -725,7 +803,9 @@ export default function ChatDetailScreen() {
           return {
             currentChat,
             currentMatch,
-            page,
+            serverMessages,
+            cachedMessages: cachedForSession?.messages ?? [],
+            hasMoreOlder,
             userID: activeSession.user_id,
             activeSession,
             messageKey,
@@ -738,15 +818,42 @@ export default function ChatDetailScreen() {
           };
         }, controller.signal);
         if (isCurrentLoad()) {
-          const messageViews = deduplicateChatMessages(
-            result.page.items.map((message) => toChatMessageView(chatID, message, result.userID, result.messageKey ?? undefined, result.legacyKey ?? undefined)),
-          );
+          const networkViews = result.serverMessages?.map((message) => toChatMessageView(
+            chatID,
+            message,
+            result.userID,
+            result.messageKey ?? undefined,
+            result.legacyKey ?? undefined,
+          )) ?? [];
+          const messageViews = result.serverMessages === null
+            ? result.cachedMessages
+            : deduplicateChatMessages(networkViews).slice(-MAX_RENDERED_MESSAGES);
           loadedDataRef.current = true;
           setChat(result.currentChat);
           setMatch(result.currentMatch);
           setMessages(messageViews);
+          setHasMoreOlderMessages(result.hasMoreOlder);
           setChatKeyUnavailable(result.currentKeyLoadFailed);
           setLegacyChatKeyUnavailable(result.legacyKeyLoadFailed);
+          setChatKeyLoading(false);
+          cacheWriteAllowedRef.current = !result.currentKeyLoadFailed && !result.legacyKeyLoadFailed;
+          if (result.currentChat) {
+            cachedChatRef.current = {
+              chatID,
+              userID: result.userID,
+              chatUpdatedAt: result.currentChat.updated_at,
+              savedAt: Date.now(),
+              messages: messageViews,
+              hasMoreOlder: result.hasMoreOlder,
+            };
+            cacheResetRef.current = false;
+            setLocallyClosed(null);
+          }
+          setNotice((current) => current === copy.cacheLoading
+            || current === copy.blockedLocal
+            || current === copy.declinedLocal
+              ? null
+              : current);
 
           const shouldMigrate = result.migrationKeyLoadFailed
             && result.hasLegacyChatMessage
@@ -786,8 +893,10 @@ export default function ChatDetailScreen() {
           const unauthenticated = error instanceof Error && error.message === "not_signed_in";
           if (loadedDataRef.current) {
             setNotice(unauthenticated ? copy.signInRequired : copy.refreshFailed);
+            if (chatMessageKeyRef.current) setChatKeyLoading(false);
           } else {
             setLoadError(unauthenticated ? copy.signInRequired : copy.loadError);
+            setChatKeyLoading(false);
           }
         }
       } finally {
@@ -806,13 +915,97 @@ export default function ChatDetailScreen() {
     };
   }, [
     chatID,
+    copy.blockedLocal,
     copy.loadError,
+    copy.cacheLoading,
+    copy.declinedLocal,
     copy.refreshFailed,
     copy.signInRequired,
     ensureChatMessageKey,
     ensureLegacyChatMessageKey,
+    getCurrentSession,
     runWithSession,
+    session,
   ]);
+
+  const loadOlderMessages = useCallback(async () => {
+    if (!chatID || loadingOlderMessages || !hasMoreOlderMessages) return;
+    if (displayMessages.length >= MAX_RENDERED_MESSAGES) {
+      setHasMoreOlderMessages(false);
+      return;
+    }
+    const activeSession = getCurrentSession() ?? session;
+    if (!activeSession) return;
+    const oldestSequence = Math.min(...displayMessages.map((message) => message.sequence));
+    if (!Number.isSafeInteger(oldestSequence) || oldestSequence <= 0) {
+      setHasMoreOlderMessages(false);
+      return;
+    }
+    setLoadingOlderMessages(true);
+    try {
+      const page = await listChatMessages(
+        chatID,
+        activeSession,
+        { before: oldestSequence, limit: Math.min(100, MAX_RENDERED_MESSAGES - displayMessages.length) },
+      );
+      const views = page.items.map((message) => toChatMessageView(
+        chatID,
+        message,
+        activeSession.user_id,
+        chatMessageKeyRef.current ?? undefined,
+        legacyChatMessageKeyRef.current ?? undefined,
+      ));
+      const nextMessages = deduplicateChatMessages([...views, ...displayMessages]).slice(-MAX_RENDERED_MESSAGES);
+      setMessages(nextMessages);
+      setHasMoreOlderMessages(page.has_more && nextMessages.length < MAX_RENDERED_MESSAGES);
+      if (chatUpdatedAt && cacheWriteAllowedRef.current && !cacheResetRef.current) {
+        cachedChatRef.current = {
+          chatID,
+          userID: activeSession.user_id,
+          chatUpdatedAt,
+          savedAt: Date.now(),
+          messages: nextMessages,
+          hasMoreOlder: page.has_more && nextMessages.length < MAX_RENDERED_MESSAGES,
+        };
+      }
+    } catch {
+      setNotice(copy.refreshFailed);
+    } finally {
+      if (mountedRef.current) setLoadingOlderMessages(false);
+    }
+  }, [chatID, chatUpdatedAt, copy.refreshFailed, displayMessages, getCurrentSession, hasMoreOlderMessages, loadingOlderMessages, session]);
+
+  const resetChatCache = useCallback(async () => {
+    const activeSession = getCurrentSession() ?? session;
+    if (!chatID || !activeSession) {
+      setNotice(copy.cacheResetFailed);
+      return;
+    }
+    cacheResetRef.current = true;
+    cacheWriteAllowedRef.current = false;
+    cachedChatRef.current = null;
+    setHasMoreOlderMessages(false);
+    setSafetyModal(null);
+    try {
+      await clearChatMessageCache(chatID, activeSession.user_id);
+      setNotice(copy.cacheResetDone);
+      void load("refresh");
+    } catch {
+      setNotice(copy.cacheResetFailed);
+    }
+  }, [chatID, copy.cacheResetDone, copy.cacheResetFailed, getCurrentSession, load, session]);
+
+  useEffect(() => {
+    const activeSession = getCurrentSession() ?? session;
+    if (!chatID || !chatUpdatedAt || !activeSession || !cacheWriteAllowedRef.current || cacheResetRef.current) return;
+    void saveChatMessageCache(
+      chatID,
+      activeSession.user_id,
+      chatUpdatedAt,
+      displayMessages,
+      hasMoreOlderMessages,
+    ).catch(() => undefined);
+  }, [chatUpdatedAt, chatID, displayMessages, getCurrentSession, hasMoreOlderMessages, session]);
 
   useEffect(() => {
     let active = true;
@@ -971,7 +1164,9 @@ export default function ChatDetailScreen() {
     };
   }, [chatID, displayMessages, ensureChatMessageKey, language, runWithSession, translationConsent]);
 
-  useEffect(() => load("initial"), [load]);
+  useFocusEffect(
+    useCallback(() => load(loadedDataRef.current ? "refresh" : "initial"), [load]),
+  );
 
   useEffect(() => {
     if (!chatID || chat?.status !== "accepted" || locallyClosed || realtimeMode !== "webtransport") {
@@ -1835,6 +2030,18 @@ export default function ChatDetailScreen() {
           <Text style={styles.translationNotice}>{copy.translationNotice}</Text>
         ) : null}
 
+        {hasMoreOlderMessages && displayMessages.length < MAX_RENDERED_MESSAGES ? (
+          <Pressable
+            accessibilityRole="button"
+            disabled={loadingOlderMessages}
+            onPress={() => void loadOlderMessages()}
+            style={({ pressed }) => [styles.loadOlderButton, pressed && styles.pressed]}
+          >
+            {loadingOlderMessages ? <ActivityIndicator color={BLUE} size="small" /> : null}
+            <Text style={styles.loadOlderText}>{loadingOlderMessages ? copy.loadingOlder : copy.loadOlder}</Text>
+          </Pressable>
+        ) : null}
+
         {remoteTyping ? <Text accessibilityLiveRegion="polite" style={styles.syncNotice}>{copy.remoteTyping}</Text> : null}
 
         {displayMessages.length === 0 ? (
@@ -1915,11 +2122,11 @@ export default function ChatDetailScreen() {
               <Pressable
                 key={reply}
                 accessibilityRole="button"
-                disabled={readOnly || chatKeyUnavailable || safetyModal !== null}
+                disabled={readOnly || chatKeyLoading || chatKeyUnavailable || safetyModal !== null}
                 onPress={() => setDraft(reply)}
-                style={({ pressed }) => [styles.quickReply, (readOnly || chatKeyUnavailable) && styles.disabledPill, pressed && styles.pressed]}
+                style={({ pressed }) => [styles.quickReply, (readOnly || chatKeyLoading || chatKeyUnavailable) && styles.disabledPill, pressed && styles.pressed]}
               >
-                <Text numberOfLines={1} style={[styles.quickReplyText, (readOnly || chatKeyUnavailable) && styles.disabledPillText]}>{reply}</Text>
+                <Text numberOfLines={1} style={[styles.quickReplyText, (readOnly || chatKeyLoading || chatKeyUnavailable) && styles.disabledPillText]}>{reply}</Text>
               </Pressable>
             ))}
           </View>
@@ -1944,29 +2151,29 @@ export default function ChatDetailScreen() {
           <Pressable
             accessibilityLabel={copy.sendPhoto}
             accessibilityRole="button"
-            disabled={readOnly || chatKeyUnavailable || !!editingMessageID || sending || sharingLocation || sendingPhoto || safetyModal !== null}
+            disabled={readOnly || chatKeyLoading || chatKeyUnavailable || !!editingMessageID || sending || sharingLocation || sendingPhoto || safetyModal !== null}
             onPress={() => void pickAndSendImage()}
-            style={({ pressed }) => [styles.locationButton, (readOnly || chatKeyUnavailable || !!editingMessageID || sending || sharingLocation || sendingPhoto) && styles.sendButtonDisabled, pressed && styles.pressed]}
+            style={({ pressed }) => [styles.locationButton, (readOnly || chatKeyLoading || chatKeyUnavailable || !!editingMessageID || sending || sharingLocation || sendingPhoto) && styles.sendButtonDisabled, pressed && styles.pressed]}
           >
             {sendingPhoto ? <ActivityIndicator color="#ffffff" size="small" /> : <MaterialIcons color="#ffffff" name="photo-library" size={22} />}
           </Pressable>
           <Pressable
             accessibilityLabel={copy.shareLocation}
             accessibilityRole="button"
-            disabled={readOnly || chatKeyUnavailable || !!editingMessageID || sending || sharingLocation || sendingPhoto || safetyModal !== null}
+            disabled={readOnly || chatKeyLoading || chatKeyUnavailable || !!editingMessageID || sending || sharingLocation || sendingPhoto || safetyModal !== null}
             onPress={() => void shareCurrentLocation()}
-            style={({ pressed }) => [styles.locationButton, (readOnly || chatKeyUnavailable || !!editingMessageID || sending || sharingLocation || sendingPhoto) && styles.sendButtonDisabled, pressed && styles.pressed]}
+            style={({ pressed }) => [styles.locationButton, (readOnly || chatKeyLoading || chatKeyUnavailable || !!editingMessageID || sending || sharingLocation || sendingPhoto) && styles.sendButtonDisabled, pressed && styles.pressed]}
           >
             {sharingLocation ? <ActivityIndicator color="#ffffff" size="small" /> : <MaterialIcons color="#ffffff" name="location-on" size={22} />}
           </Pressable>
           <TextInput
             accessibilityLabel={copy.input}
-            editable={!readOnly && !chatKeyUnavailable && !sending && !sendingPhoto && !deletingMessageID && safetyModal === null}
+            editable={!readOnly && !chatKeyLoading && !chatKeyUnavailable && !sending && !sendingPhoto && !deletingMessageID && safetyModal === null}
             multiline
             onChangeText={setDraft}
             placeholder={copy.input}
             placeholderTextColor={MUTED_GRAY}
-            style={[styles.input, (readOnly || chatKeyUnavailable) && styles.inputDisabled]}
+            style={[styles.input, (readOnly || chatKeyLoading || chatKeyUnavailable) && styles.inputDisabled]}
             value={draft}
           />
           <Pressable
@@ -2026,6 +2233,15 @@ export default function ChatDetailScreen() {
                       name={translationConsent === "granted" ? "toggle-on" : "toggle-off"}
                       size={30}
                     />
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    disabled={safetySubmitting}
+                    onPress={() => void resetChatCache()}
+                    style={({ pressed }) => [styles.sheetAction, pressed && styles.pressed]}
+                  >
+                    <MaterialIcons color={BLUE} name="delete-sweep" size={23} />
+                    <Text style={styles.sheetActionText}>{copy.cacheReset}</Text>
                   </Pressable>
                   <Pressable
                     accessibilityRole="button"
@@ -2368,6 +2584,26 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     lineHeight: 16,
     textAlign: "center",
+  },
+  loadOlderButton: {
+    minHeight: 38,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    alignSelf: "center",
+    gap: 8,
+    marginTop: 12,
+    paddingHorizontal: 14,
+    borderWidth: 1,
+    borderColor: "#caeafd",
+    borderRadius: 19,
+    backgroundColor: "#ffffff",
+  },
+  loadOlderText: {
+    color: BLUE,
+    fontSize: 12,
+    fontWeight: "900",
+    lineHeight: 16,
   },
   emptyPanel: {
     minHeight: 190,

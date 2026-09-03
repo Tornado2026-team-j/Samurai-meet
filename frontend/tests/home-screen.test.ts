@@ -46,6 +46,20 @@ describe("ホーム画面の更新契約", () => {
     expect(source).toContain("<RefreshControl");
   });
 
+  it("日本語ホームはカード検索を優先し、位置保存と応募履歴を待たない", async () => {
+    const source = await readScreen("../app/japanese/index.tsx");
+
+    expect(source).toContain("SEARCH_LOCATION_CACHE_TTL_MS");
+    expect(source).toContain("void updateCurrentLocation");
+    expect(source).not.toContain("await updateCurrentLocation");
+    expect(source).toContain("setRecruitments(result);");
+    expect(source).toContain("hydrated independently below");
+    expect(source).toContain("activeSearchRequestRef");
+    expect(source).toContain("previousRequest.controller.abort()");
+    expect(source).not.toContain("loadInFlight.current");
+    expect(source).toContain('availableFrom: "",');
+  });
+
   it("外国人ホームは復帰フォーカスではなく初回取得とPull-to-Refreshだけを使う", async () => {
     const source = await readScreen("../app/foreigner/index.tsx");
 

@@ -15,6 +15,7 @@ import {
   issueChatTransportToken,
   registerChatWebTransportAdapter,
   listChatMessages,
+  listLatestChatMessages,
   listChats,
   markChatRead,
   moderateAndSendChatMessage,
@@ -87,6 +88,44 @@ describe("チャットAPIクライアント", () => {
     expect(requests[1]).toContain("/chats/chat-1/messages");
     expect(requests[1]).toContain("after=3");
     expect(requests[1]).toContain("limit=50");
+  });
+
+  it("最新メッセージをbeforeカーソルのチャンクで取得し、表示順に戻す", async () => {
+    const requests: string[] = [];
+    const message = (sequence: number) => ({
+      id: `message-${sequence}`,
+      chat_id: "chat-1",
+      sender_user_id: "user-1",
+      client_message_id: `client-${sequence}`,
+      sequence,
+      ciphertext: "ciphertext",
+      nonce: "nonce",
+      algorithm: "AES-256-GCM",
+      key_version: "chat-dek-v1",
+      content_type: "text",
+      created_at: `2026-08-30T00:00:0${sequence}Z`,
+    });
+    globalThis.fetch = (async (input) => {
+      const url = String(input);
+      requests.push(url);
+      const before = new URL(url).searchParams.get("before");
+      const data = before === "4"
+        ? { items: [message(2), message(3)], next_before: 2, has_more: true }
+        : { items: [message(1)], has_more: false };
+      return new Response(JSON.stringify({ data }), { status: 200 });
+    }) as typeof fetch;
+
+    await expect(listLatestChatMessages("chat-1", session, 3, 3)).resolves.toMatchObject({
+      items: [
+        { sequence: 1 },
+        { sequence: 2 },
+        { sequence: 3 },
+      ],
+      hasMoreOlder: false,
+      truncated: false,
+    });
+    expect(requests[0]).toContain("before=4");
+    expect(requests[1]).toContain("before=2");
   });
 
   it("チャット一覧の絞り込みはAPIのstatusだけを根拠にする", () => {

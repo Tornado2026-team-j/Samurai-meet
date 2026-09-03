@@ -55,8 +55,22 @@ func chatItem(service *chat.Service, moderation chat.ModerationProvider, transla
 			return
 		}
 		chatID, rest, ok := chatPathParts(r.URL.Path)
-		if !ok || len(rest) == 0 {
+		if !ok {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "chat_not_found"})
+			return
+		}
+		if len(rest) == 0 {
+			if r.Method != http.MethodGet {
+				w.Header().Set("Allow", http.MethodGet)
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				return
+			}
+			summary, err := service.Get(r.Context(), claims.Subject, chatID, time.Now())
+			if err != nil {
+				writeChatError(w, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"data": summary})
 			return
 		}
 		switch {
@@ -99,12 +113,17 @@ func chatItem(service *chat.Service, moderation chat.ModerationProvider, transla
 func chatMessages(w http.ResponseWriter, r *http.Request, service *chat.Service, userID, chatID string) {
 	switch r.Method {
 	case http.MethodGet:
-		after, limit, err := chatQuery(r)
+		after, before, limit, err := chatQuery(r)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_chat_request"})
 			return
 		}
-		page, err := service.ListMessages(r.Context(), userID, chatID, after, limit, time.Now())
+		var page chat.MessagePage
+		if before != nil {
+			page, err = service.ListMessagesBefore(r.Context(), userID, chatID, *before, limit, time.Now())
+		} else {
+			page, err = service.ListMessages(r.Context(), userID, chatID, after, limit, time.Now())
+		}
 		if err != nil {
 			writeChatError(w, err)
 			return
@@ -201,24 +220,44 @@ func chatTransportToken(w http.ResponseWriter, r *http.Request, service *chat.Se
 	writeJSON(w, http.StatusOK, map[string]any{"data": token})
 }
 
-func chatQuery(r *http.Request) (int64, int, error) {
+func chatQuery(r *http.Request) (int64, *int64, int, error) {
 	after := int64(0)
 	if value := strings.TrimSpace(r.URL.Query().Get("after")); value != "" {
 		parsed, err := strconv.ParseInt(value, 10, 64)
-		if err != nil || parsed < 0 {
-			return 0, 0, err
+		if err != nil {
+			return 0, nil, 0, err
+		}
+		if parsed < 0 {
+			return 0, nil, 0, errors.New("after must not be negative")
 		}
 		after = parsed
+	}
+	var before *int64
+	if value := strings.TrimSpace(r.URL.Query().Get("before")); value != "" {
+		parsed, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			return 0, nil, 0, err
+		}
+		if parsed < 0 {
+			return 0, nil, 0, errors.New("before must not be negative")
+		}
+		if strings.TrimSpace(r.URL.Query().Get("after")) != "" {
+			return 0, nil, 0, errors.New("after and before cannot be combined")
+		}
+		before = &parsed
 	}
 	limit := 0
 	if value := strings.TrimSpace(r.URL.Query().Get("limit")); value != "" {
 		parsed, err := strconv.Atoi(value)
-		if err != nil || parsed < 1 || parsed > 100 {
-			return 0, 0, err
+		if err != nil {
+			return 0, nil, 0, err
+		}
+		if parsed < 1 || parsed > 100 {
+			return 0, nil, 0, errors.New("limit must be between 1 and 100")
 		}
 		limit = parsed
 	}
-	return after, limit, nil
+	return after, before, limit, nil
 }
 
 func chatPathParts(path string) (string, []string, bool) {
@@ -227,7 +266,7 @@ func chatPathParts(path string) (string, []string, bool) {
 		return "", nil, false
 	}
 	parts := strings.Split(trimmed, "/")
-	if len(parts) < 2 || len(parts) > 5 {
+	if len(parts) > 5 {
 		return "", nil, false
 	}
 	for _, part := range parts {
