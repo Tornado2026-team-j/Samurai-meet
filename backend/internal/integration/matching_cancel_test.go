@@ -47,7 +47,7 @@ func TestCancelAcceptedMatch(t *testing.T) {
 	service := matching.NewService(database, notifications)
 
 	card, err := service.CreateRecruitment(ctx, travelerID, matching.RecruitmentInput{
-		Category:           "Heritage",
+		Category:           "Places",
 		AvailableDate:      availableDate,
 		StartTime:          "18:00",
 		EndTime:            "20:00",
