@@ -90,6 +90,18 @@ describe("ホーム画面の更新契約", () => {
     expect(source).toContain('event.type === "dismissed"');
   });
 
+  it("条件変更時だけ表示するリセットは金色にせず高コントラストで表示する", async () => {
+    const source = await readScreen("../app/japanese/filters.tsx");
+
+    expect(source).toContain("right={hasActiveFilters ? (");
+    expect(source).toContain("hasActiveFilters && styles.resetButtonActive");
+    expect(source).toContain("resetButtonActive: { backgroundColor: colors.surface.default }");
+    expect(source).toContain("hasActiveFilters ? colors.text.primary");
+    expect(source).toContain("resetTextActive: { color: colors.text.primary");
+    expect(source).not.toContain("hasActiveFilters ? colors.brand.gold");
+    expect(source).not.toContain("resetTextActive: { color: colors.brand.gold");
+  });
+
   it("予定終了後の評価は日付ではなく終了時刻を基準にする", async () => {
     const source = await readScreen("../app/plans.tsx");
     const chatSource = await readScreen("../app/chat/[id].tsx");
