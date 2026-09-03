@@ -76,7 +76,8 @@ const TEXT_GRAY = "#535353";
 const PLACEHOLDER_GRAY = "#949494";
 const BORDER_GRAY = "#d4d4d4";
 const COLLAPSED_HEADER_HEIGHT = 156;
-const EXPANDED_HEADER_HEIGHT = 724;
+const EXPANDED_HEADER_HEIGHT = 760;
+const HOME_PEEK_HEIGHT = 96;
 const EXPANSION_DURATION = 360;
 const RECRUITMENT_CATEGORIES = MATCH_CATEGORIES;
 const MIN_DURATION_HOURS = 0.5;
@@ -627,9 +628,10 @@ export default function SearchPreferencesScreen() {
   }, [minimumDate]);
   const copy = RECRUITMENT_COPY[language];
   const pickerLocale = language === "ja" ? "ja-JP" : "en-US";
+  const homePeekHeight = Math.max(HOME_PEEK_HEIGHT, insets.bottom + 72);
   const expandedPanelHeight = Math.min(
     EXPANDED_HEADER_HEIGHT,
-    Math.max(COLLAPSED_HEADER_HEIGHT, windowHeight),
+    Math.max(COLLAPSED_HEADER_HEIGHT, windowHeight - homePeekHeight),
   );
   const viewportConfirmationHeight = Math.max(
     COLLAPSED_HEADER_HEIGHT,
@@ -2435,7 +2437,7 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     zIndex: 1,
-    backgroundColor: colors.brand.sky,
+    backgroundColor: "transparent",
   },
   panel: {
     width: "100%",
