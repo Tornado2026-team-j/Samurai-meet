@@ -19,6 +19,7 @@ export type Meeting = {
   expires_at?: string;
   owner_started_at?: string;
   requester_started_at?: string;
+  resume_requested?: boolean;
   created_at: string;
   updated_at: string;
 };
@@ -44,6 +45,18 @@ export async function createMeeting(
   return requireMeeting(response);
 }
 
+export async function getMeetingForMatch(
+  matchId: string,
+  session: Session,
+  signal?: AbortSignal,
+): Promise<Meeting> {
+  return requireMeeting(await requestAPI<DataResponse<Meeting>>(
+    `/matches/${encodeURIComponent(matchId)}/meeting`,
+    session,
+    { method: "GET", signal },
+  ));
+}
+
 export async function getMeeting(
   meetingId: string,
   session: Session,
@@ -58,7 +71,7 @@ export async function getMeeting(
 
 async function transitionMeeting(
   meetingId: string,
-  action: "start" | "end" | "cancel",
+  action: "start" | "end" | "cancel" | "resume",
   session: Session,
   signal?: AbortSignal,
 ): Promise<Meeting> {
@@ -79,4 +92,8 @@ export function endMeeting(meetingId: string, session: Session, signal?: AbortSi
 
 export function cancelMeeting(meetingId: string, session: Session, signal?: AbortSignal) {
   return transitionMeeting(meetingId, "cancel", session, signal);
+}
+
+export function resumeMeeting(meetingId: string, session: Session, signal?: AbortSignal) {
+  return transitionMeeting(meetingId, "resume", session, signal);
 }

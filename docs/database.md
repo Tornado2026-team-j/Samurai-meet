@@ -60,6 +60,7 @@
 | `0049_chat_translation_account_limits.sql` | アカウント単位の翻訳provider token bucketとin-flight状態を共有保存する |
 | `0050_chat_translation_inflight_expiry_type.sql` | in-flight期限をPostgreSQL timestamp型へ移行する |
 | `0051_chat_key_manifest_commitment_format.sql` | chat DEK commitmentをraw Base64URL（パディングなし）43文字に制限する |
+| `0052_meeting_resume_consent.sql` | 中止済み会合の再開に参加者双方の明示同意を要求する時刻列を追加する |
 
 注意: 現行のmigration runnerはSQLファイルを順番に正規化して実行し、`schema_migrations`へファイル名と正規化SQLのSHA-256 checksum、適用時刻を記録する。同じchecksumの適用済みmigrationはスキップし、PostgreSQL advisory lockで同時起動を直列化する。適用済みファイルの内容が変わった場合はchecksum mismatchで起動を停止する。適用済みmigrationを編集・置換してはいけない。DDL変更は新しい番号のSQLを追加する。
 
@@ -229,7 +230,7 @@ Recovery Phraseで復号したMaster Keyの所有証明を一時的に受け付�
 - `chat_key_envelopes` / `chat_key_manifests`: チャットDEKを利用者のKey-A／`data_salt`から導出したaccount envelope、または対象端末のX25519公開鍵で包んだdevice envelopeとして保存し、全行に同一DEKの`key_commitment`を紐付ける。manifestのauthorityはmatch ownerで、owner以外のdevice envelope登録は自分のアカウントに属する端末だけに限定する。サーバーはenvelopeを復号せず、Key-B・Key-A・チャットDEKは保存しない。既存行は置換せず、Recovery／端末移行後は新端末側でaccount envelopeを復号する。旧チャットを開いたクライアントは履歴表示を止めずに旧envelopeのcommitment移行を試み、owner端末でのみmanifest作成と不足端末への追加登録を完了する。owner以外で自端末向けenvelopeがない場合は、DoS防止のため移行を保留する。
 - `chat_translation_rate_limits` / `chat_translation_inflight`: 認証済みアカウント単位のprovider token bucket、同時実行枠、短命の重複抑止キーだけを保存する。本文・翻訳結果・provider応答は保存しない。
 - `chat_read_states`: ユーザーごとの最後の既読`sequence`。
-- `meeting_sessions`: acceptedマッチのplanned/active/completed/cancelled会合状態。
+- `meeting_sessions`: acceptedマッチのplanned/active/completed/cancelled会合状態。cancelledからplannedへ戻すには、owner/requester双方の再開同意を記録したうえで新しい相互startを必要とする。
 - `meeting_proximity_latest`: 会合中の参加者ごと・方式ごとの最新1件。Bluetooth MAC、RSSI生値、ビーコンID、緯度経度は保存せず、会合終了時に削除する。
 
 現行のDBイメージはPostGISなしのため、距離判定はGoのHaversineで行う。正確な位置は検索レスポンスに含めない。
