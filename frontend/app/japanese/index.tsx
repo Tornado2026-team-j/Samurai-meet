@@ -21,7 +21,7 @@ import { useDelayedLoading } from "../../hooks/useDelayedLoading";
 import { useNavigationGuard } from "../../hooks/useNavigationGuard";
 import { useUnreadNotifications } from "../../hooks/useUnreadNotifications";
 import { APIError } from "../../services/api-client";
-import { getCurrentCoordinates } from "../../services/location";
+import { getCurrentCoordinatesResult } from "../../services/location";
 import {
   type Coordinates,
   type Recruitment,
@@ -66,6 +66,8 @@ const COPY = {
     profile: "プロフィール",
     filters: "検索条件",
     resetSearch: "検索条件をリセット",
+    locationRequired: "近くの募集を表示するには現在地の取得を許可してください。",
+    allowLocation: "現在地の取得を許可する",
     today: "今日",
     weekdays: ["日", "月", "火", "水", "木", "金", "土"],
     date: (label: string, weekday: string) => `${label} ${weekday}`,
@@ -84,6 +86,8 @@ const COPY = {
     profile: "Profile",
     filters: "Filters",
     resetSearch: "Reset search filters",
+    locationRequired: "Allow location access to show nearby recruitments.",
+    allowLocation: "Allow location access",
     today: "Today",
     weekdays: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
     date: (label: string, weekday: string) => `${label} ${weekday}`,
@@ -175,6 +179,7 @@ export default function JapaneseHomeScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [locationUnavailable, setLocationUnavailable] = useState(false);
   const initialLoadStarted = useRef(false);
   const searchRequestIDRef = useRef(0);
   const activeSearchRequestRef = useRef<{
@@ -300,6 +305,7 @@ export default function JapaneseHomeScreen() {
     setLoading(true);
     setRefreshing(mode !== "initial");
     setLoadError(null);
+    setLocationUnavailable(false);
 
     const run = async () => {
       const activeSession = getCurrentSession() ?? session;
@@ -318,16 +324,27 @@ export default function JapaneseHomeScreen() {
 
       try {
         const cachedLocation = locationCacheRef.current;
-        const coordinates = cachedLocation?.coordinates ?? null;
         const locationIsFresh = Boolean(
           cachedLocation && Date.now() - cachedLocation.cachedAt < SEARCH_LOCATION_CACHE_TTL_MS,
         );
-        // Android emulators can take a long time to produce a GPS fix. Start
-        // that lookup in parallel and let the recruitment request use the
-        // cached/server-side location (or no location) immediately.
-        const locationRefresh = locationIsFresh
-          ? null
-          : getCurrentCoordinates().catch(() => null);
+        let coordinates = locationIsFresh ? cachedLocation?.coordinates ?? null : null;
+        if (!coordinates) {
+          const currentLocation = await getCurrentCoordinatesResult();
+          if (!currentLocation.available) {
+            if (isCurrentRequest()) {
+              setRecruitments([]);
+              setApplicationStatuses({});
+              setTodayPlanCount(0);
+              setLocationUnavailable(true);
+              setLoading(false);
+              setRefreshing(false);
+            }
+            releaseRequest();
+            return;
+          }
+          coordinates = currentLocation.value;
+          locationCacheRef.current = { coordinates, cachedAt: Date.now() };
+        }
 
         const searchParams = {
           keywords: submittedQuery ? [submittedQuery] : [],
@@ -357,37 +374,13 @@ export default function JapaneseHomeScreen() {
         }
         if (!isCurrentRequest()) return;
 
-        // Recruitment cards are the critical path. Show them as soon as the
-        // search response arrives; application badges and today's count are
-        // hydrated independently below.
+        void updateCurrentLocation(coordinates, searchSession, controller.signal).catch(() => undefined);
+
         setRecruitments(result);
         setApplicationStatuses({});
         setTodayPlanCount(0);
         setLoading(false);
         setRefreshing(false);
-
-        if (locationRefresh) {
-          void locationRefresh.then(async (freshCoordinates) => {
-            if (!freshCoordinates || !isCurrentRequest()) return;
-
-            locationCacheRef.current = { coordinates: freshCoordinates, cachedAt: Date.now() };
-            // The first search already returned cards. Persisting the location
-            // and refining the radius in the background must not delay them.
-            void updateCurrentLocation(freshCoordinates, searchSession, controller.signal).catch(() => undefined);
-            try {
-              const refinedResult = await searchRecruitments(
-                searchSession,
-                { ...searchParams, latitude: freshCoordinates.latitude, longitude: freshCoordinates.longitude },
-                controller.signal,
-              );
-              if (!isCurrentRequest()) return;
-              setRecruitments(refinedResult);
-            } catch {
-              // Keep the already visible result when the optional refinement
-              // fails; the next refresh can retry it.
-            }
-          });
-        }
 
         void (async () => {
           let applicationResult;
@@ -559,6 +552,17 @@ export default function JapaneseHomeScreen() {
               <Text style={styles.stateText}>{copy.loading}</Text>
             </View>
           ) : null
+        ) : locationUnavailable && matches.length === 0 ? (
+          <View style={styles.statePanel}>
+            <Text accessibilityRole="alert" style={styles.stateText}>{copy.locationRequired}</Text>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => loadRecruitments("initial")}
+              style={({ pressed }) => [styles.retryButton, pressed && styles.pressed]}
+            >
+              <Text style={styles.retryButtonText}>{copy.allowLocation}</Text>
+            </Pressable>
+          </View>
         ) : loadError && matches.length === 0 ? (
           <View style={styles.statePanel}>
             <Text accessibilityRole="alert" style={styles.stateText}>{loadError}</Text>
@@ -590,7 +594,7 @@ export default function JapaneseHomeScreen() {
           </>
         )}
 
-        {!loading && !loadError && filteredMatches.length === 0 && (
+        {!loading && !loadError && !locationUnavailable && filteredMatches.length === 0 && (
           <Text style={styles.emptyText}>{copy.noRecruitments}</Text>
         )}
       </ScrollView>

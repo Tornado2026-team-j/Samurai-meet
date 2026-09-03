@@ -16,6 +16,7 @@ import (
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/matching"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/meeting"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/notification"
+	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/places"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/push"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/safety"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/translation"
@@ -119,6 +120,7 @@ func main() {
 	profiles := user.NewService(database)
 	notifications := notification.NewService(database)
 	matchingService := matching.NewService(database, notifications)
+	placesService := places.NewService(cfg.GooglePlaces.APIKey)
 	recruitmentClassifier := classification.NewGemini(cfg.Gemini.APIKey, cfg.Gemini.Model)
 	chatService := chat.NewService(database, signer, notifications).
 		WithAttachments(store, int64(cfg.ImageStorage.MaxUploadBytes))
@@ -159,7 +161,7 @@ func main() {
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       60 * time.Second,
 		MaxHeaderBytes:    32 * 1024,
-		Handler:           httpapi.NewRouterWithOptions(httpapi.RouterOptions{Environment: cfg.Environment, AllowExpoGoRedirect: cfg.AllowExpoGoRedirect, DevClientOrigin: cfg.DevClientOrigin, ClientOrigin: cfg.ClientOrigin, OAuthLogin: oauthLogin, PreAuth: preauth, Sessions: sessions, SessionHandoffs: handoffs, PasskeyBootstraps: bootstraps, Recovery: recovery, Passkeys: passkeys, KeyEnvelopes: envelopes, Devices: devices, DeviceTransfers: deviceTransfers, Images: images, Accounts: accounts, Profiles: profiles, Matching: matchingService, RecruitmentClassifier: recruitmentClassifier, Chats: chatService, ChatModeration: chatModeration, ChatTranslation: chatTranslation, Meetings: meetingService, Notifications: notifications, Safety: safetyService, Identity: identityService, Push: pushService}),
+		Handler:           httpapi.NewRouterWithOptions(httpapi.RouterOptions{Environment: cfg.Environment, AllowExpoGoRedirect: cfg.AllowExpoGoRedirect, DevClientOrigin: cfg.DevClientOrigin, ClientOrigin: cfg.ClientOrigin, OAuthLogin: oauthLogin, PreAuth: preauth, Sessions: sessions, SessionHandoffs: handoffs, PasskeyBootstraps: bootstraps, Recovery: recovery, Passkeys: passkeys, KeyEnvelopes: envelopes, Devices: devices, DeviceTransfers: deviceTransfers, Images: images, Accounts: accounts, Profiles: profiles, Matching: matchingService, RecruitmentClassifier: recruitmentClassifier, Chats: chatService, ChatModeration: chatModeration, ChatTranslation: chatTranslation, Meetings: meetingService, Notifications: notifications, Places: placesService, Safety: safetyService, Identity: identityService, Push: pushService}),
 	}
 	log.Printf("chat message retention window: %d days", chatService.RetentionDays())
 	log.Printf("backend server listening on %s (environment=%s)", cfg.HTTPAddr, cfg.Environment)

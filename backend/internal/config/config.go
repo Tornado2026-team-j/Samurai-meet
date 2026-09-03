@@ -24,6 +24,7 @@ type Config struct {
 	ImageStorage        ImageStorageConfig
 	GoogleOIDC          GoogleOIDCConfig
 	Gemini              GeminiConfig
+	GooglePlaces        GooglePlacesConfig
 	Stripe              StripeConfig
 	WebAuthn            WebAuthnConfig
 	JWS                 JWSConfig
@@ -46,6 +47,7 @@ type ChatConfig struct {
 
 type GoogleOIDCConfig struct{ ClientID, ClientSecret, RedirectURI string }
 type GeminiConfig struct{ APIKey, Model string }
+type GooglePlacesConfig struct{ APIKey string }
 type StripeConfig struct{ SecretKey, IdentityWebhookSecret, IdentityReturnURL string }
 type WebAuthnConfig struct{ RPID, RPOrigin, RPDisplayName string }
 type JWSConfig struct{ SigningKey, KeyID, VerifyKeys, Issuer, Audience string }
@@ -106,6 +108,9 @@ func (c Config) ValidateForEnvironment() error {
 	}
 	if strings.TrimSpace(c.GoogleOIDC.ClientID) == "" || strings.TrimSpace(c.GoogleOIDC.ClientSecret) == "" || !validSecureURL(c.GoogleOIDC.RedirectURI) {
 		missing = append(missing, "GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET/GOOGLE_REDIRECT_URI")
+	}
+	if strings.TrimSpace(c.GooglePlaces.APIKey) == "" {
+		missing = append(missing, "GOOGLE_PLACES_API_KEY")
 	}
 	if strings.TrimSpace(c.ImageStorage.ProfileWrappingPrivateKeyPEM) == "" {
 		missing = append(missing, "PROFILE_WRAPPING_PRIVATE_KEY_PEM")
@@ -189,11 +194,12 @@ func Load() Config {
 			CiphertextCacheTTLSeconds:    intValueOrDefault("IMAGE_CIPHERTEXT_CACHE_TTL_SECONDS", 300),
 			MaxUploadBytes:               intValueOrDefault("IMAGE_MAX_UPLOAD_BYTES", 20*1024*1024),
 		},
-		GoogleOIDC: GoogleOIDCConfig{os.Getenv("GOOGLE_CLIENT_ID"), os.Getenv("GOOGLE_CLIENT_SECRET"), os.Getenv("GOOGLE_REDIRECT_URI")},
-		Gemini:     GeminiConfig{os.Getenv("GEMINI_API_KEY"), valueOrDefault("GEMINI_MODEL", "gemini-3.1-flash-lite")},
-		Stripe:     StripeConfig{os.Getenv("STRIPE_SECRET_KEY"), os.Getenv("STRIPE_IDENTITY_WEBHOOK_SECRET"), os.Getenv("STRIPE_IDENTITY_RETURN_URL")},
-		WebAuthn:   WebAuthnConfig{valueOrDefault("WEBAUTHN_RP_ID", "localhost"), valueOrDefault("WEBAUTHN_RP_ORIGIN", "http://localhost:8081"), valueOrDefault("WEBAUTHN_RP_DISPLAY_NAME", "Samurai Meet")},
-		JWS:        JWSConfig{os.Getenv("JWS_SIGNING_KEY"), valueOrDefault("JWS_KEY_ID", "v1"), os.Getenv("JWS_VERIFY_KEYS"), valueOrDefault("JWS_ISSUER", "samurai-meet-api"), valueOrDefault("JWS_AUDIENCE", "samurai-meet-mobile")},
+		GoogleOIDC:   GoogleOIDCConfig{os.Getenv("GOOGLE_CLIENT_ID"), os.Getenv("GOOGLE_CLIENT_SECRET"), os.Getenv("GOOGLE_REDIRECT_URI")},
+		Gemini:       GeminiConfig{os.Getenv("GEMINI_API_KEY"), valueOrDefault("GEMINI_MODEL", "gemini-3.1-flash-lite")},
+		GooglePlaces: GooglePlacesConfig{os.Getenv("GOOGLE_PLACES_API_KEY")},
+		Stripe:       StripeConfig{os.Getenv("STRIPE_SECRET_KEY"), os.Getenv("STRIPE_IDENTITY_WEBHOOK_SECRET"), os.Getenv("STRIPE_IDENTITY_RETURN_URL")},
+		WebAuthn:     WebAuthnConfig{valueOrDefault("WEBAUTHN_RP_ID", "localhost"), valueOrDefault("WEBAUTHN_RP_ORIGIN", "http://localhost:8081"), valueOrDefault("WEBAUTHN_RP_DISPLAY_NAME", "Samurai Meet")},
+		JWS:          JWSConfig{os.Getenv("JWS_SIGNING_KEY"), valueOrDefault("JWS_KEY_ID", "v1"), os.Getenv("JWS_VERIFY_KEYS"), valueOrDefault("JWS_ISSUER", "samurai-meet-api"), valueOrDefault("JWS_AUDIENCE", "samurai-meet-mobile")},
 		Chat: ChatConfig{
 			SendBurst:                         intValueOrDefault("CHAT_SEND_BURST", 15),
 			SendRefillPerMinute:               intValueOrDefault("CHAT_SEND_REFILL_PER_MINUTE", 60),

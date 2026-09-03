@@ -1,5 +1,7 @@
 import type { Platform } from "react-native";
 import type * as Location from "expo-location";
+import type { Session } from "./auth-contract";
+import { requestAPI } from "./api-client";
 import type { Coordinates } from "./matching";
 
 type LocationModule = typeof import("expo-location");
@@ -10,7 +12,8 @@ export type LocationUnavailableReason =
   | "permission_denied"
   | "position_unavailable"
   | "invalid_coordinates"
-  | "geocoding_unavailable";
+  | "geocoding_unavailable"
+  | "places_unavailable";
 
 export type LocationResult<T> =
   | { available: true; value: T }
@@ -39,10 +42,76 @@ async function loadLocationModule(): Promise<LocationModule | null> {
 
 export type LocationSearchSuggestion = {
   id: string;
+  placeId?: string;
   label: string;
   subtitle: string;
+  provider?: "google_maps";
   coordinates: Coordinates;
 };
+
+type PlacesSearchResponse = {
+  data?: unknown;
+};
+
+function devPlacesMockEnabled(): boolean {
+  return process.env.EXPO_PUBLIC_DEV_PLACES_MOCK === "true";
+}
+
+function makeMockSuggestion(
+  id: string,
+  label: string,
+  subtitle: string,
+  latitude: number,
+  longitude: number,
+): LocationSearchSuggestion {
+  return {
+    id,
+    placeId: id,
+    label,
+    subtitle,
+    provider: "google_maps",
+    coordinates: {
+      latitude,
+      longitude,
+      accuracy_m: 0,
+      captured_at: new Date().toISOString(),
+    },
+  };
+}
+
+function mockLocationSuggestions(query: string): LocationSearchSuggestion[] {
+  const normalized = query.trim().toLocaleLowerCase();
+  const osakaStation = makeMockSuggestion("mock-osaka-station", "大阪駅", "大阪府大阪市北区梅田3丁目1-1", 34.7024854, 135.4959506);
+  const osakaCastleHall = makeMockSuggestion("mock-osaka-castle-hall", "大阪城ホール", "大阪府大阪市中央区大阪城3-1", 34.689556, 135.530102);
+  const umedaSky = makeMockSuggestion("mock-umeda-sky", "梅田スカイビル", "大阪府大阪市北区大淀中1丁目1-88", 34.705287, 135.489606);
+  const dotonbori = makeMockSuggestion("mock-dotonbori", "道頓堀", "大阪府大阪市中央区道頓堀", 34.668723, 135.501339);
+  const himejiCastle = makeMockSuggestion("mock-himeji-castle", "姫路城", "兵庫県姫路市本町68", 34.839449, 134.6939047);
+  const candidates = [osakaStation, osakaCastleHall, umedaSky, dotonbori, himejiCastle];
+  if (normalized.includes("姫路")) {
+    return [
+      himejiCastle,
+      makeMockSuggestion("mock-himeji-station", "姫路駅", "兵庫県姫路市駅前町188", 34.827686, 134.690769),
+    ];
+  }
+  if (normalized.includes("大阪") || normalized.includes("osaka")) {
+    return candidates.slice(0, 4);
+  }
+  if (normalized.includes("梅田") || normalized.includes("umeda")) {
+    return [osakaStation, umedaSky];
+  }
+  return candidates.slice(0, 5);
+}
+
+function mockNearbyPlaces(coordinates: Coordinates): LocationSearchSuggestion[] {
+  const { latitude, longitude } = coordinates;
+  return [
+    makeMockSuggestion("mock-nearby-station", "近くの駅", "開発用モック", latitude + 0.0018, longitude + 0.0012),
+    makeMockSuggestion("mock-nearby-cafe", "近くのカフェ", "開発用モック", latitude - 0.0014, longitude + 0.001),
+    makeMockSuggestion("mock-nearby-park", "近くの公園", "開発用モック", latitude + 0.0011, longitude - 0.0015),
+    makeMockSuggestion("mock-nearby-restaurant", "近くのレストラン", "開発用モック", latitude - 0.0017, longitude - 0.0011),
+    makeMockSuggestion("mock-nearby-museum", "近くの施設", "開発用モック", latitude + 0.0005, longitude + 0.002),
+  ];
+}
 
 export async function getCurrentCoordinatesResult(): Promise<LocationResult<Coordinates>> {
   if (runtimePlatform() !== "ios" && runtimePlatform() !== "android") {
@@ -176,66 +245,164 @@ export async function resolveCurrentLocationDisplay(): Promise<{
 
 export async function searchLocationSuggestionsResult(
   query: string,
+  session?: Session | null,
+  options: {
+    language?: "ja" | "en";
+    latitude?: number;
+    longitude?: number;
+    signal?: AbortSignal;
+  } = {},
 ): Promise<LocationResult<LocationSearchSuggestion[]>> {
   const normalized = query.trim();
   if (normalized.length < 2) return { available: true, value: [] };
-  if (runtimePlatform() !== "ios" && runtimePlatform() !== "android") {
-    return { available: false, reason: "unsupported_platform" };
+  if (devPlacesMockEnabled()) {
+    return { available: true, value: mockLocationSuggestions(normalized) };
   }
-
-  const location = await loadLocationModule();
-  if (!location || typeof location.geocodeAsync !== "function") {
-    return { available: false, reason: "native_module_unavailable" };
-  }
+  if (!session) return { available: false, reason: "places_unavailable" };
 
   try {
-    const results = await location.geocodeAsync(normalized);
-    const validResults = results
-      .filter((result) => Number.isFinite(result.latitude) && Number.isFinite(result.longitude))
-      .slice(0, 5);
-    const suggestions = await Promise.all(validResults.map(async (result, index) => {
-      let label = normalized;
-      let subtitle = index === 0 ? "Best match" : `Candidate ${index + 1}`;
-
-      if (typeof location.reverseGeocodeAsync === "function") {
-        try {
-          const [address] = await location.reverseGeocodeAsync({
-            latitude: result.latitude,
-            longitude: result.longitude,
-          });
-          if (address) {
-            label = currentLocationDisplayName(address) ?? normalized;
-            subtitle = locationSubtitle(address) ?? subtitle;
-          }
-        } catch {
-          // Keep the original query as the visible place label if reverse lookup fails.
-        }
-      }
-
-      return {
-        id: `${result.latitude}:${result.longitude}:${index}`,
-        label,
-        subtitle,
-        coordinates: {
-          latitude: result.latitude,
-          longitude: result.longitude,
-          accuracy_m: Number.isFinite(result.accuracy) && result.accuracy !== undefined
-            ? Math.max(0, result.accuracy)
-            : 0,
-          captured_at: new Date().toISOString(),
-        },
-      };
-    }));
-
+    const response = await requestAPI<PlacesSearchResponse>(
+      `/places/search${placesSearchQuery(normalized, options)}`,
+      session,
+      { method: "GET", signal: options.signal },
+    );
+    const suggestions = normalizePlacesSuggestions(response.data);
     return { available: true, value: suggestions };
   } catch {
-    return { available: false, reason: "geocoding_unavailable" };
+    return { available: false, reason: "places_unavailable" };
   }
 }
 
 export async function searchLocationSuggestions(
   query: string,
+  session?: Session | null,
+  options: {
+    language?: "ja" | "en";
+    latitude?: number;
+    longitude?: number;
+    signal?: AbortSignal;
+  } = {},
 ): Promise<LocationSearchSuggestion[]> {
-  const result = await searchLocationSuggestionsResult(query);
+  const result = await searchLocationSuggestionsResult(query, session, options);
   return result.available ? result.value : [];
+}
+
+export async function searchNearbyPlacesResult(
+  coordinates: Coordinates,
+  session?: Session | null,
+  options: {
+    language?: "ja" | "en";
+    signal?: AbortSignal;
+  } = {},
+): Promise<LocationResult<LocationSearchSuggestion[]>> {
+  if (!Number.isFinite(coordinates.latitude) || !Number.isFinite(coordinates.longitude)) {
+    return { available: false, reason: "invalid_coordinates" };
+  }
+  if (devPlacesMockEnabled()) {
+    return { available: true, value: mockNearbyPlaces(coordinates) };
+  }
+  if (!session) return { available: false, reason: "places_unavailable" };
+
+  try {
+    const response = await requestAPI<PlacesSearchResponse>(
+      `/places/nearby${nearbyPlacesQuery(coordinates, options)}`,
+      session,
+      { method: "GET", signal: options.signal },
+    );
+    const suggestions = normalizePlacesSuggestions(response.data);
+    return { available: true, value: suggestions };
+  } catch {
+    return { available: false, reason: "places_unavailable" };
+  }
+}
+
+export async function searchNearbyPlaces(
+  coordinates: Coordinates,
+  session?: Session | null,
+  options: {
+    language?: "ja" | "en";
+    signal?: AbortSignal;
+  } = {},
+): Promise<LocationSearchSuggestion[]> {
+  const result = await searchNearbyPlacesResult(coordinates, session, options);
+  return result.available ? result.value : [];
+}
+
+function placesSearchQuery(
+  query: string,
+  options: {
+    language?: "ja" | "en";
+    latitude?: number;
+    longitude?: number;
+  },
+): string {
+  const parts = [`query=${encodeURIComponent(query)}`, "limit=5"];
+  if (options.language) parts.push(`language=${encodeURIComponent(options.language)}`);
+  if (Number.isFinite(options.latitude) && Number.isFinite(options.longitude)) {
+    parts.push(`latitude=${encodeURIComponent(String(options.latitude))}`);
+    parts.push(`longitude=${encodeURIComponent(String(options.longitude))}`);
+  }
+  return `?${parts.join("&")}`;
+}
+
+function nearbyPlacesQuery(
+  coordinates: Coordinates,
+  options: {
+    language?: "ja" | "en";
+  },
+): string {
+  const parts = [
+    `latitude=${encodeURIComponent(String(coordinates.latitude))}`,
+    `longitude=${encodeURIComponent(String(coordinates.longitude))}`,
+    "limit=5",
+  ];
+  if (options.language) parts.push(`language=${encodeURIComponent(options.language)}`);
+  return `?${parts.join("&")}`;
+}
+
+function normalizePlacesSuggestions(value: unknown): LocationSearchSuggestion[] {
+  if (!Array.isArray(value)) return [];
+  const suggestions: LocationSearchSuggestion[] = [];
+  const seen = new Set<string>();
+
+  for (const item of value) {
+    if (!item || typeof item !== "object") continue;
+    const candidate = item as Record<string, unknown>;
+    const coordinates = candidate.coordinates;
+    if (!coordinates || typeof coordinates !== "object") continue;
+    const coordinateValues = coordinates as Record<string, unknown>;
+    const latitude = coordinateValues.latitude;
+    const longitude = coordinateValues.longitude;
+    const label = candidate.label;
+    if (typeof label !== "string" || !label.trim()) continue;
+    if (typeof latitude !== "number" || typeof longitude !== "number") continue;
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) continue;
+
+    const id = typeof candidate.id === "string" && candidate.id.trim()
+      ? candidate.id.trim()
+      : `${latitude}:${longitude}:${suggestions.length}`;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const subtitle = typeof candidate.subtitle === "string" && candidate.subtitle.trim()
+      ? candidate.subtitle.trim()
+      : "Google Maps";
+    suggestions.push({
+      id,
+      placeId: typeof candidate.place_id === "string" ? candidate.place_id : undefined,
+      label: label.trim(),
+      subtitle,
+      provider: candidate.provider === "google_maps" ? "google_maps" : undefined,
+      coordinates: {
+        latitude,
+        longitude,
+        accuracy_m: typeof coordinateValues.accuracy_m === "number" && Number.isFinite(coordinateValues.accuracy_m)
+          ? Math.max(0, coordinateValues.accuracy_m)
+          : 0,
+        captured_at: new Date().toISOString(),
+      },
+    });
+    if (suggestions.length >= 5) break;
+  }
+
+  return suggestions;
 }

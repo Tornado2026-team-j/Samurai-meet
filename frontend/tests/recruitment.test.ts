@@ -216,6 +216,35 @@ describe("募集プレビュー", () => {
     });
   });
 
+  it("選択したWhere候補のピン座標と公開距離を公開API入力へ反映する", () => {
+    const himejiDraft = {
+      ...draft,
+      activity: "姫路城を一緒に見学して、歴史の話を聞きたい",
+      location: "姫路城",
+      date: "2026-08-27",
+      distanceKm: 3 as const,
+    };
+    const preview = buildRecruitmentPreviewModel(himejiDraft, "Places");
+
+    const request = buildRecruitmentCreateRequest(
+      himejiDraft,
+      preview,
+      new Date("2026-08-26T00:00:00.000Z"),
+      undefined,
+      { latitude: 34.839449, longitude: 134.6939047, accuracy_m: 0 },
+    );
+
+    expect(request).toMatchObject({
+      category: "Places",
+      location_name: "姫路城",
+      visibility_radius_km: 3,
+      latitude: 34.839449,
+      longitude: 134.6939047,
+      location_accuracy_m: 0,
+      status: "open",
+    });
+  });
+
   it("確認画面で選択したカテゴリとキーワードを公開API入力に反映する", () => {
 	const preview = buildRecruitmentPreviewModel(
       { ...draft, date: "2026-08-27" },

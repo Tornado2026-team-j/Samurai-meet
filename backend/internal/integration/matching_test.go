@@ -21,10 +21,14 @@ func TestSearchRecruitmentsAppliesFiltersBeforePageLimit(t *testing.T) {
 	availableDate := now.In(jst).AddDate(0, 0, 2).Format("2006-01-02")
 	searcherID := randomID(t)
 	ownerID := randomID(t)
-	insertMatchingTestUser(t, database, now, searcherID, "Search user", "US")
-	insertMatchingTestUser(t, database, now, ownerID, "Recruitment owner", "JP")
+	nonLocalSearcherID := randomID(t)
+	insertMatchingTestUser(t, database, now, searcherID, "Search user", "JP")
+	insertMatchingTestUser(t, database, now, nonLocalSearcherID, "Non-local search user", "US")
+	insertMatchingTestUser(t, database, now, ownerID, "Recruitment owner", "US")
 
 	service := matching.NewService(database)
+	cardLatitude, cardLongitude := 35.681236, 139.767125
+	searchLatitude, searchLongitude := 35.6812, 139.7672
 	valid, err := service.CreateRecruitment(ctx, ownerID, matching.RecruitmentInput{
 		Category:           "Food",
 		AvailableDate:      availableDate,
@@ -34,6 +38,8 @@ func TestSearchRecruitmentsAppliesFiltersBeforePageLimit(t *testing.T) {
 		Keywords:           []string{"target"},
 		Description:        "The matching result is older than the non-matching cards.",
 		VisibilityRadiusKM: 1,
+		Latitude:           &cardLatitude,
+		Longitude:          &cardLongitude,
 		Status:             "open",
 	}, now)
 	if err != nil {
@@ -53,6 +59,8 @@ func TestSearchRecruitmentsAppliesFiltersBeforePageLimit(t *testing.T) {
 			Keywords:           []string{"noise"},
 			Description:        "This card must be filtered out before pagination.",
 			VisibilityRadiusKM: 1,
+			Latitude:           &cardLatitude,
+			Longitude:          &cardLongitude,
 			Status:             "open",
 		}, now.Add(time.Duration(i+1)*time.Second))
 		if err != nil {
@@ -64,6 +72,8 @@ func TestSearchRecruitmentsAppliesFiltersBeforePageLimit(t *testing.T) {
 		Category:      "Food",
 		Keywords:      []string{"target"},
 		AvailableDate: availableDate,
+		Latitude:      &searchLatitude,
+		Longitude:     &searchLongitude,
 		Limit:         1,
 	}, now)
 	if err != nil {
@@ -71,6 +81,120 @@ func TestSearchRecruitmentsAppliesFiltersBeforePageLimit(t *testing.T) {
 	}
 	if len(found) != 1 || found[0].ID != valid.ID {
 		t.Fatalf("filtered search result = %+v, want only %s", found, valid.ID)
+	}
+
+	nonLocalFound, err := service.SearchRecruitments(ctx, nonLocalSearcherID, matching.SearchParams{
+		Category:      "Food",
+		Keywords:      []string{"target"},
+		AvailableDate: availableDate,
+		Latitude:      &searchLatitude,
+		Longitude:     &searchLongitude,
+		Limit:         1,
+	}, now)
+	if err != nil {
+		t.Fatalf("SearchRecruitments() non-local error = %v", err)
+	}
+	if len(nonLocalFound) != 0 {
+		t.Fatalf("non-local search result = %+v, want no public recruitments", nonLocalFound)
+	}
+
+	withoutLocation, err := service.SearchRecruitments(ctx, searcherID, matching.SearchParams{
+		Category:      "Food",
+		Keywords:      []string{"target"},
+		AvailableDate: availableDate,
+		Limit:         1,
+	}, now)
+	if err != nil {
+		t.Fatalf("SearchRecruitments() without location error = %v", err)
+	}
+	if len(withoutLocation) != 0 {
+		t.Fatalf("search without current location = %+v, want no public recruitments", withoutLocation)
+	}
+}
+
+func TestSearchRecruitmentsUsesSelectedPlacePinVisibilityRadius(t *testing.T) {
+	database := openIsolatedDatabase(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+	jst := time.FixedZone("Asia/Tokyo", 9*60*60)
+	availableDate := now.In(jst).AddDate(0, 0, 2).Format("2006-01-02")
+	ownerID := randomID(t)
+	localSearcherID := randomID(t)
+	nonLocalSearcherID := randomID(t)
+	insertMatchingTestUser(t, database, now, ownerID, "Traveler owner", "US")
+	insertMatchingTestUser(t, database, now, localSearcherID, "Local guide", "JP")
+	insertMatchingTestUser(t, database, now, nonLocalSearcherID, "Traveler searcher", "US")
+
+	service := matching.NewService(database)
+	himejiCastleLatitude, himejiCastleLongitude := 34.839449, 134.6939047
+	card, err := service.CreateRecruitment(ctx, ownerID, matching.RecruitmentInput{
+		Category:           "Places",
+		AvailableDate:      availableDate,
+		StartTime:          "10:00",
+		EndTime:            "12:00",
+		Timezone:           "Asia/Tokyo",
+		Keywords:           []string{"himeji", "castle"},
+		Description:        "Please show me Himeji Castle.",
+		LocationName:       "姫路城",
+		VisibilityRadiusKM: 3,
+		Latitude:           &himejiCastleLatitude,
+		Longitude:          &himejiCastleLongitude,
+		Status:             "open",
+	}, now)
+	if err != nil {
+		t.Fatalf("CreateRecruitment() error = %v", err)
+	}
+
+	himejiStationLatitude, himejiStationLongitude := 34.82776, 134.69095
+	nearby, err := service.SearchRecruitments(ctx, localSearcherID, matching.SearchParams{
+		Keywords:  []string{"castle"},
+		Latitude:  &himejiStationLatitude,
+		Longitude: &himejiStationLongitude,
+		Limit:     10,
+	}, now)
+	if err != nil {
+		t.Fatalf("nearby SearchRecruitments() error = %v", err)
+	}
+	if len(nearby) != 1 || nearby[0].ID != card.ID || nearby[0].DistanceBand == "" {
+		t.Fatalf("nearby result = %+v, want Himeji Castle card with distance band", nearby)
+	}
+
+	kobeLatitude, kobeLongitude := 34.69008, 135.19563
+	farAway, err := service.SearchRecruitments(ctx, localSearcherID, matching.SearchParams{
+		Keywords:  []string{"castle"},
+		Latitude:  &kobeLatitude,
+		Longitude: &kobeLongitude,
+		Limit:     10,
+	}, now)
+	if err != nil {
+		t.Fatalf("far SearchRecruitments() error = %v", err)
+	}
+	if len(farAway) != 0 {
+		t.Fatalf("far result = %+v, want hidden outside 3km radius", farAway)
+	}
+
+	nonLocal, err := service.SearchRecruitments(ctx, nonLocalSearcherID, matching.SearchParams{
+		Keywords:  []string{"castle"},
+		Latitude:  &himejiStationLatitude,
+		Longitude: &himejiStationLongitude,
+		Limit:     10,
+	}, now)
+	if err != nil {
+		t.Fatalf("non-local SearchRecruitments() error = %v", err)
+	}
+	if len(nonLocal) != 0 {
+		t.Fatalf("non-local result = %+v, want hidden from non-JP users", nonLocal)
+	}
+
+	withoutLocation, err := service.SearchRecruitments(ctx, localSearcherID, matching.SearchParams{
+		Keywords: []string{"castle"},
+		Limit:    10,
+	}, now)
+	if err != nil {
+		t.Fatalf("without-location SearchRecruitments() error = %v", err)
+	}
+	if len(withoutLocation) != 0 {
+		t.Fatalf("without-location result = %+v, want hidden without current location", withoutLocation)
 	}
 }
 
@@ -82,24 +206,27 @@ func TestSearchRecruitmentsComparesSecondPrecisionExpiryAsTimestamp(t *testing.T
 	searcherID := randomID(t)
 	ownerID := randomID(t)
 	cardID := randomID(t)
-	insertMatchingTestUser(t, database, now, searcherID, "Search user", "US")
-	insertMatchingTestUser(t, database, now, ownerID, "Recruitment owner", "JP")
+	insertMatchingTestUser(t, database, now, searcherID, "Search user", "JP")
+	insertMatchingTestUser(t, database, now, ownerID, "Recruitment owner", "US")
+	cardLatitude, cardLongitude := 35.681236, 139.767125
 
 	if _, err := database.ExecContext(ctx, `
 		INSERT INTO recruitment_cards (
 			id, owner_user_id, category, available_date, start_time, end_time,
 			timezone, keywords_json, description, visibility_radius_km, status,
-			expires_at, created_at, updated_at
+			latitude, longitude, expires_at, created_at, updated_at
 		)
 		VALUES ($1,$2,'Food','2026-08-27','18:00','20:00','Asia/Tokyo','["target"]',
-			'This card expired half a second ago.',1,'open','2026-08-26T09:00:00Z',$3,$3)`,
-		cardID, ownerID, createdAt); err != nil {
+			'This card expired half a second ago.',1,'open',$3,$4,'2026-08-26T09:00:00Z',$5,$5)`,
+		cardID, ownerID, cardLatitude, cardLongitude, createdAt); err != nil {
 		t.Fatalf("insert second precision expired recruitment error = %v", err)
 	}
 
 	found, err := matching.NewService(database).SearchRecruitments(ctx, searcherID, matching.SearchParams{
 		AvailableDate: "2026-08-27",
 		Keywords:      []string{"target"},
+		Latitude:      &cardLatitude,
+		Longitude:     &cardLongitude,
 		Limit:         1,
 	}, now)
 	if err != nil {
@@ -205,6 +332,7 @@ func TestAcceptMatchHonorsParticipantLimitConcurrently(t *testing.T) {
 	insertMatchingTestUser(t, database, now, secondRequesterID, "Second requester", "CA")
 
 	service := matching.NewService(database)
+	cardLatitude, cardLongitude := 35.681236, 139.767125
 	card, err := service.CreateRecruitment(ctx, ownerID, matching.RecruitmentInput{
 		Category:           "Places",
 		AvailableDate:      availableDate,
@@ -215,6 +343,8 @@ func TestAcceptMatchHonorsParticipantLimitConcurrently(t *testing.T) {
 		Description:        "A recruitment with one available participant slot.",
 		ParticipantLimit:   1,
 		VisibilityRadiusKM: 1,
+		Latitude:           &cardLatitude,
+		Longitude:          &cardLongitude,
 		Status:             "open",
 	}, now)
 	if err != nil {
@@ -510,6 +640,8 @@ func TestRecruitmentMatchingLifecycle(t *testing.T) {
 		Keywords:           []string{"food"},
 		Description:        "Lunch together.",
 		VisibilityRadiusKM: 1,
+		Latitude:           &cardLatitude,
+		Longitude:          &cardLongitude,
 		Status:             "open",
 	}, now)
 	if err != nil {
@@ -583,6 +715,8 @@ func TestRecruitmentMatchingLifecycle(t *testing.T) {
 		Keywords:           []string{"walk"},
 		Description:        "A short walk.",
 		VisibilityRadiusKM: 1,
+		Latitude:           &cardLatitude,
+		Longitude:          &cardLongitude,
 		Status:             "open",
 	}, now)
 	if err != nil {
