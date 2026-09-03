@@ -540,10 +540,7 @@ export default function ChatDetailScreen() {
           throw error;
         }
         chatMessageKeyRef.current = key;
-      }).catch((error) => {
-        chatMessageKeyPromiseRef.current = null;
-        throw error;
-      });
+        return key;
       }).finally(() => {
         chatMessageKeyPromiseRef.current = null;
       });
