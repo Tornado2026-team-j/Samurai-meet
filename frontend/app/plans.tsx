@@ -1,6 +1,6 @@
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useRouter } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import {
   ActivityIndicator,
   Pressable,
@@ -15,7 +15,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Header, colors, radius, shadows, typography } from "../components/ui";
 import { useAuth } from "../hooks/useAuth";
 import { APIError } from "../services/api-client";
-import { cancelMeeting, createMeeting, endMeeting, meetingProximityCapability, startMeeting, type Meeting } from "../services/meeting";
+import { cancelMeeting, createMeeting, endMeeting, getMeetingForMatch, meetingProximityCapability, resumeMeeting, startMeeting, type Meeting } from "../services/meeting";
 import { completeMatch, listMatches, type MatchView } from "../services/matching";
 import { loadLanguage, subscribeLanguage, type AppLanguage } from "../services/onboarding";
 import { formatTimeRange } from "../utils/time";
@@ -36,9 +36,16 @@ const COPY = {
     end: "案内を終了",
     waiting: "相手の開始を待っています",
     cancel: "会合支援を中止",
+    meetingCompleted: "この会合は終了済みです。",
+    resume: "会合を再開する",
+    resumeWaiting: "相手の再開同意を待っています",
     proximityUnavailable: "近接補助は現在利用できません。Expo Goでは現在地・Bluetoothを測定も共有もせず、開発ビルドでもOSの許可と監査済みアダプタが必要です。",
     processing: "更新中...",
     actionError: "予定を更新できませんでした。通信状況を確認してください。",
+    meetingUnavailable: "この予定は現在利用できません。最新の予定を読み込んでください。",
+    meetingStateChanged: "会合の状態が変わりました。最新の予定を読み込んでください。",
+    meetingNotAvailable: "この会合は現在開始できません。マッチの状態を確認してください。",
+    meetingForbidden: "この会合を操作する権限がありません。",
     people: (count: number) => `募集 ${count}人`,
   },
   en: {
@@ -54,12 +61,37 @@ const COPY = {
     end: "End guide",
     waiting: "Waiting for the other person to start",
     cancel: "Cancel meeting assistance",
+    meetingCompleted: "This meeting has already ended.",
+    resume: "Resume meeting assistance",
+    resumeWaiting: "Waiting for the other participant to consent to resume",
     proximityUnavailable: "Nearby assistance is unavailable. Expo Go never measures or shares location or Bluetooth; a development build also needs OS permission and an audited adapter.",
     processing: "Updating...",
     actionError: "The plan could not be updated. Check your connection.",
+    meetingUnavailable: "This plan is no longer available. Reload the latest plans.",
+    meetingStateChanged: "The meeting state changed. Reload the latest plans.",
+    meetingNotAvailable: "This meeting cannot be started now. Check the match status.",
+    meetingForbidden: "You are not allowed to operate this meeting.",
     people: (count: number) => `${count} people needed`,
   },
 } as const;
+
+type PlanCopy = (typeof COPY)[AppLanguage];
+
+function meetingActionError(error: unknown, copy: PlanCopy): string {
+  if (!(error instanceof APIError)) return copy.actionError;
+  switch (error.code) {
+    case "meeting_not_found":
+      return copy.meetingUnavailable;
+    case "invalid_meeting_state":
+      return copy.meetingStateChanged;
+    case "meeting_not_available":
+      return copy.meetingNotAvailable;
+    case "meeting_forbidden":
+      return copy.meetingForbidden;
+    default:
+      return copy.actionError;
+  }
+}
 
 function jstDateKey(date = new Date()): string {
   return new Intl.DateTimeFormat("en-CA", {
@@ -132,6 +164,7 @@ export default function PlansScreen() {
         result = await listMatches(nextSession, { role: "all", limit: 50 });
       }
       setPlans(result.filter((item) => item.status === "accepted" || item.status === "completed"));
+      setActionError(null);
     } catch {
       setError(COPY[language].loadError);
     } finally {
@@ -140,9 +173,44 @@ export default function PlansScreen() {
     }
   }, [getCurrentSession, language, refresh, session, status]);
 
+  useFocusEffect(
+    useCallback(() => {
+      if (status === "loading") return undefined;
+      void load();
+      return undefined;
+    }, [load, status]),
+  );
+
   useEffect(() => {
-    if (status !== "loading") void load();
-  }, [load, status]);
+    const activeSession = getCurrentSession() ?? session;
+    const today = jstDateKey();
+    const candidates = plans.filter((plan) => plan.status === "accepted" && plan.recruitment.available_date === today);
+    if (!activeSession || candidates.length === 0) return undefined;
+    const controller = new AbortController();
+    let active = true;
+    void Promise.all(candidates.map(async (plan) => {
+      try {
+        return [plan.id, await getMeetingForMatch(plan.id, activeSession, controller.signal)] as const;
+      } catch {
+        // A 404 means that the lazy meeting session has not been created yet.
+        // Other failures leave the action available and are reported on tap.
+        return null;
+      }
+    })).then((entries) => {
+      if (!active) return;
+      setMeetings((current) => {
+        const next = { ...current };
+        for (const entry of entries) {
+          if (entry) next[entry[0]] = entry[1];
+        }
+        return next;
+      });
+    });
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [getCurrentSession, plans, session]);
 
   const visiblePlans = useMemo(() => {
     const today = jstDateKey();
@@ -169,8 +237,23 @@ export default function PlansScreen() {
     setActionError(null);
     try {
       const scheduledAt = `${plan.recruitment.available_date}T${plan.recruitment.start_time}:00+09:00`;
-      const current = meetings[plan.id] ?? await createMeeting(plan.id, scheduledAt, activeSession);
-      const next = current.status === "active"
+      let current = meetings[plan.id];
+      if (!current) {
+        try {
+          current = await getMeetingForMatch(plan.id, activeSession);
+        } catch (error) {
+          if (!(error instanceof APIError) || (error.status !== 404 && error.status !== 405)) throw error;
+          current = await createMeeting(plan.id, scheduledAt, activeSession);
+        }
+      }
+      if (current.status === "completed") {
+        setMeetings((items) => ({ ...items, [plan.id]: current }));
+        setActionError(copy.meetingCompleted);
+        return;
+      }
+      const next = current.status === "cancelled"
+        ? await resumeMeeting(current.id, activeSession)
+        : current.status === "active"
         ? await endMeeting(current.id, activeSession)
         : await startMeeting(current.id, activeSession);
       setMeetings((items) => ({ ...items, [plan.id]: next }));
@@ -178,8 +261,11 @@ export default function PlansScreen() {
         await completeMatch(plan.id, activeSession).catch(() => undefined);
         setPlans((items) => items.map((item) => item.id === plan.id ? { ...item, status: "completed" } : item));
       }
-    } catch {
-      setActionError(copy.actionError);
+    } catch (error) {
+      setActionError(meetingActionError(error, copy));
+      if (error instanceof APIError && (error.status === 404 || error.status === 409)) {
+        await load(true);
+      }
     } finally {
       setBusyMatchId(null);
     }
@@ -253,12 +339,14 @@ export default function PlansScreen() {
               </View>
               {activeTab === "today" && plan.status === "accepted" ? (
                 <>
-                  <Pressable disabled={busy} onPress={() => void updateMeeting(plan)} style={[styles.primaryAction, busy && styles.disabled]}>
-                    <MaterialIcons color={colors.text.inverse} name={meeting?.status === "active" ? "stop-circle" : "play-circle-filled"} size={21} />
-                    <Text style={styles.primaryActionText}>{busy ? copy.processing : meeting?.status === "active" ? copy.end : meeting?.owner_started_at || meeting?.requester_started_at ? copy.waiting : copy.start}</Text>
-                  </Pressable>
-                  {meeting?.status === "active" && !proximityCapability.enabled ? <Text accessibilityLiveRegion="polite" accessibilityRole="text" style={styles.proximityNotice}>{copy.proximityUnavailable}</Text> : null}
-                  {meeting?.status === "planned" && (meeting.owner_started_at || meeting.requester_started_at) ? <Pressable disabled={busy} onPress={() => { const activeSession = getCurrentSession() ?? session; if (!activeSession) return; setBusyMatchId(plan.id); void cancelMeeting(meeting.id, activeSession).then((next) => setMeetings((items) => ({ ...items, [plan.id]: next }))).catch(() => setActionError(copy.actionError)).finally(() => setBusyMatchId(null)); }} style={styles.secondaryAction}><Text style={styles.secondaryActionText}>{copy.cancel}</Text></Pressable> : null}
+                  {meeting?.status === "completed" ? <Text style={styles.meetingStatus}>{copy.meetingCompleted}</Text> : meeting?.status === "cancelled" && meeting.resume_requested ? <Text style={styles.meetingStatus}>{copy.resumeWaiting}</Text> : <>
+                    <Pressable disabled={busy} onPress={() => void updateMeeting(plan)} style={[styles.primaryAction, busy && styles.disabled]}>
+                      <MaterialIcons color={colors.text.inverse} name={meeting?.status === "active" ? "stop-circle" : "play-circle-filled"} size={21} />
+                      <Text style={styles.primaryActionText}>{busy ? copy.processing : meeting?.status === "cancelled" ? copy.resume : meeting?.status === "active" ? copy.end : meeting?.owner_started_at || meeting?.requester_started_at ? copy.waiting : copy.start}</Text>
+                    </Pressable>
+                    {meeting?.status === "active" && !proximityCapability.enabled ? <Text accessibilityLiveRegion="polite" accessibilityRole="text" style={styles.proximityNotice}>{copy.proximityUnavailable}</Text> : null}
+                    {meeting?.status === "planned" && (meeting.owner_started_at || meeting.requester_started_at) ? <Pressable disabled={busy} onPress={() => { const activeSession = getCurrentSession() ?? session; if (!activeSession) return; setBusyMatchId(plan.id); void cancelMeeting(meeting.id, activeSession).then((next) => setMeetings((items) => ({ ...items, [plan.id]: next }))).catch((error) => setActionError(meetingActionError(error, copy))).finally(() => setBusyMatchId(null)); }} style={styles.secondaryAction}><Text style={styles.secondaryActionText}>{copy.cancel}</Text></Pressable> : null}
+                  </>}
                 </>
               ) : null}
             </View>
@@ -312,6 +400,7 @@ const styles = StyleSheet.create({
   secondaryActionText: { color: colors.text.secondary, fontSize: 12, fontWeight: "700" },
   primaryAction: { minHeight: 46, marginTop: 9, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7, borderRadius: radius.md, backgroundColor: colors.brand.sky },
   primaryActionText: { color: colors.text.inverse, fontSize: 14, fontWeight: "800" },
+  meetingStatus: { marginTop: 10, color: colors.text.subtle, fontSize: 13, fontWeight: "700", textAlign: "center" },
   disabled: { opacity: 0.55 },
   error: { color: colors.state.danger, fontSize: 13, fontWeight: "700", textAlign: "center" },
   proximityNotice: { marginTop: 8, color: colors.text.subtle, fontSize: 12, lineHeight: 18, textAlign: "center" },

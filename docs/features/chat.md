@@ -2,7 +2,7 @@
 
 ## 現在の実装状態
 
-現行のバックエンドはRESTのチャット一覧・`chat-dek-v1`暗号文メッセージ送信・履歴・既読・本文編集・削除・AI翻訳、短命transport token、および**HTTP/3 WebTransportによるリアルタイム配送**（`backend/internal/chat/quic_server.go`）を持つ。`/api/v1/ws/chats/{id}` は410を返し、WebSocketへfallbackしない。複数APIインスタンス構成は PostgreSQL `LISTEN/NOTIFY` fan-out（`backend/internal/chat/cluster.go`）で対応済み。チャット画面はREST同期、チャットDEK復号、翻訳の`Original`切替、本文編集・削除まで接続済みである。Key-Bは端末proofに限定し、チャットDEKはKey-A由来のアカウントenvelopeまたは端末X25519 envelopeで復旧する。端末移行・Recovery後の再利用はコード接続済みだが、native WebTransportを含む実機2端末E2Eは未確認である。
+現行のバックエンドはRESTのチャット一覧・個別概要・`chat-dek-v1`暗号文メッセージ送信・履歴・既読・本文編集・削除・AI翻訳、短命transport token、および**HTTP/3 WebTransportによるリアルタイム配送**（`backend/internal/chat/quic_server.go`）を持つ。履歴は`before`／`after` cursorで最大100件ずつ取得し、個別画面はネイティブ端末の暗号化キャッシュから直近表示を先に復元する。`/api/v1/ws/chats/{id}` は410を返し、WebSocketへfallbackしない。複数APIインスタンス構成は PostgreSQL `LISTEN/NOTIFY` fan-out（`backend/internal/chat/cluster.go`）で対応済み。チャット画面はREST同期、チャットDEK復号、翻訳の`Original`切替、本文編集・削除まで接続済みである。Key-Bは端末proofに限定し、チャットDEKはKey-A由来のアカウントenvelopeまたは端末X25519 envelopeで復旧する。端末移行・Recovery後の再利用はコード接続済みだが、native WebTransportを含む実機2端末E2Eは未確認である。
 
 ## 1. 対象
 
@@ -86,6 +86,16 @@ HTTP/3 WebTransportのリアルタイム配送に、RESTと同じChat Token認�
 6. 4xx・入力不正・認証失効・認可拒否では自動再送せず、ユーザーへ再ログイン・再入力などの対応を促す。
 7. 同じ `client_message_id` はサーバーで冪等に処理する（`(chat_id, sender_user_id, client_message_id)` 一意制約。再送は最初のメッセージ／ack を返す）。`client_message_id` は1論理送信につき1回だけ生成し（UUIDv4 推奨）、最大128文字・制御/空白文字なし。
 
+## 5.1 履歴同期と端末キャッシュ
+
+個別チャットの初期表示は、まずネイティブ端末の表示用キャッシュを復号して描画し、サーバーを正本としてバックグラウンド同期する。キャッシュ実装は`frontend/services/chat-cache.ts`で、Webでは無効にする。保存先は`Paths.cache`、キャッシュ鍵は端末固有のSecureStore（`WHEN_UNLOCKED_THIS_DEVICE_ONLY`）とし、AES-256-GCMと`chat_id`／`user_id`を含むAADで暗号化する。キャッシュは認可、既読、送信、鍵復旧の根拠にはならず、通信失敗時に表示を継続するためだけの破棄可能なデータである。
+
+保存上限は直近200メッセージ・約2MB、TTLは7日、画面表示上限は500メッセージとする。本文、復号済み位置情報、暗号化された翻訳envelope、添付メタデータはキャッシュ対象だが、復号済み画像本体や画像data URIは保存しない。期限切れ位置情報はキャッシュ読込時にも再評価して表示不可にする。安全メニューのキャッシュ削除は、対象チャットのキャッシュファイルと端末固有鍵を削除する。壊れたキャッシュは削除してREST同期へ戻し、キャッシュ書込みは一時ファイルから置換して途中書込みを次回起動へ残さない。
+
+サーバーの`GET /chats/{id}`はチャット概要と`last_message_sequence`を返す。`updated_at`がキャッシュ保存時と一致する場合だけメッセージ履歴取得を省略する。一致しない場合は、編集・削除をsequence差分だけで取りこぼさないよう、`before=last_message_sequence+1`から最大500件の最新窓を取得してキャッシュ表示を置き換える。`GET /chats/{id}/messages?before={sequence}&limit={n}`は直前の最大100件を古い順で返し、`next_before`と`has_more`で過去分を明示的に追加できる。更新のない表示済みキャッシュにはこの取得を行わない。
+
+`after`カーソルは従来どおりWebTransportの再接続・通知取りこぼし回収に使う。`last_message_sequence`を返さない旧バックエンドへの移行期間だけ、クライアントは安全な`after=0`の前方ページ取得へフォールバックする。サーバーが正本であるため、キャッシュが表示されてもサーバー同期が完了するまで新規のstate mutationを自動実行しない。
+
 ## 6. 暗号化
 
 - 新規の本文・位置情報・画像マーカーは `frontend/services/chat.ts` の `chat-dek-v1` で、クライアント生成のランダムなチャットDEKを使って暗号化する。textの新規送信・編集だけはチャットDEK由来のクライアント保持鍵によるHMAC-SHA-256本文commitmentと16byte random saltを付け、location/imageはcommitmentフィールドを送らない。commitment鍵は送信・編集APIへ送らず、翻訳provider経路だけrequest-scopedで送る。チャットIDは公開コンテキストとしてAADに含め、Key-B・Key-A・チャットDEKはAPIへ送信しない。Key-Bは端末proofと端末登録に使うだけで、本文鍵の秘密入力ではない。
@@ -106,6 +116,7 @@ WebTransport/QUICの理由、JWS claimの検証、heartbeat、失敗時の自動
 ## 7. API / DB
 
 - `GET /chats`（`accepted` / `completed`）
+- `GET /chats/{id}`（`accepted` / `completed`。チャット概要と`last_message_sequence`）
 - `GET /chats/{id}/messages`（`accepted` / `completed`）
 - `POST /chats/{id}/messages`（`accepted` のみ。任意で `attachment_id` を含む）
 - `PATCH /chats/{id}/messages/{message_id}`（`accepted` のみ。送信者自身のtext本文を暗号文ごと置換）
@@ -140,6 +151,7 @@ WebTransportの配送はプロセス内registry（`quic_server.go`）で行い�
 - `completed` マッチではチャット画面は履歴閲覧・既読・翻訳のみ（入力欄を無効化し、WebTransport 接続と `transport-token` 取得を行わない）。
 - WebTransport接続中の相手へメッセージがリアルタイム配送される（バックエンド実装済み・統合テスト済み。native clientの実機接続は未確認）。
 - WebTransport切断後に再接続すると未同期メッセージを `sequence` cursor で取得できる（REST同期経路と画面の再接続処理を含む。native実機受入は未確認）。
+- ネイティブ端末では暗号化された直近履歴を先に表示し、サーバーの`updated_at`が変わっていない場合は履歴取得を省略する。更新時は最大500件の最新窓を再同期し、過去分の追加は明示操作に限定する。キャッシュは7日・最大200件で、削除ボタンから端末ファイルと鍵を消去できる。
 - 同じ送信操作を再試行しても二重メッセージにならない。
 - 送信者自身のtext本文を編集でき、`edited_at`と`message.updated`で同じメッセージとして反映される。
 - 送信者自身のメッセージを削除でき、暗号文・nonceが消去され、`message.deleted`と削除監査が残る。

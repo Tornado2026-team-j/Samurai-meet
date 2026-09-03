@@ -114,6 +114,68 @@ func TestSafetyReportAndBlock(t *testing.T) {
 	}
 }
 
+func TestBlockedAcceptedMatchIsHiddenUntilUnblocked(t *testing.T) {
+	database := openIsolatedDatabase(t)
+	ctx := context.Background()
+	now := time.Date(2026, time.August, 27, 9, 0, 0, 0, time.UTC)
+	stamp := now.Format(time.RFC3339Nano)
+
+	ownerID := randomID(t)
+	requesterID := randomID(t)
+	insertMatchingTestUser(t, database, now, ownerID, "Meeting owner", "JP")
+	insertMatchingTestUser(t, database, now, requesterID, "Meeting requester", "US")
+
+	cardID := randomID(t)
+	if _, err := database.ExecContext(ctx, `
+		INSERT INTO recruitment_cards (id,owner_user_id,category,available_date,start_time,end_time,timezone,description,visibility_radius_km,status,expires_at,created_at,updated_at)
+		VALUES ($1,$2,'Food','2026-08-28','18:00','20:00','Asia/Tokyo','An accepted match used for block visibility.',3,'matched',$3,$4,$4)`,
+		cardID, ownerID, now.Add(48*time.Hour).Format(time.RFC3339Nano), stamp); err != nil {
+		t.Fatal(err)
+	}
+	matchID := randomID(t)
+	if _, err := database.ExecContext(ctx, `
+		INSERT INTO matches (id,card_id,requester_user_id,owner_user_id,status,matched_at,created_at,updated_at)
+		VALUES ($1,$2,$3,$4,'accepted',$5,$5,$5)`,
+		matchID, cardID, requesterID, ownerID, stamp); err != nil {
+		t.Fatal(err)
+	}
+
+	matchingSvc := matching.NewService(database)
+	visible, err := matchingSvc.ListMatches(ctx, requesterID, matching.MatchListParams{Role: "all", Status: "accepted"}, now)
+	if err != nil {
+		t.Fatalf("ListMatches() before block error = %v", err)
+	}
+	if len(visible) != 1 || visible[0].ID != matchID {
+		t.Fatalf("visible accepted match before block = %+v", visible)
+	}
+
+	safetySvc := safety.NewService(database)
+	if err := safetySvc.BlockUser(ctx, ownerID, requesterID, now); err != nil {
+		t.Fatalf("BlockUser() error = %v", err)
+	}
+	visible, err = matchingSvc.ListMatches(ctx, requesterID, matching.MatchListParams{Role: "all", Status: "accepted"}, now)
+	if err != nil {
+		t.Fatalf("ListMatches() while blocked error = %v", err)
+	}
+	if len(visible) != 0 {
+		t.Fatalf("blocked accepted match remained visible = %+v", visible)
+	}
+	if _, err := matchingSvc.GetMatch(ctx, requesterID, matchID); !errors.Is(err, matching.ErrMatchNotFound) {
+		t.Fatalf("GetMatch() while blocked error = %v, want matching.ErrMatchNotFound", err)
+	}
+
+	if err := safetySvc.Unblock(ctx, ownerID, requesterID); err != nil {
+		t.Fatalf("Unblock() error = %v", err)
+	}
+	visible, err = matchingSvc.ListMatches(ctx, requesterID, matching.MatchListParams{Role: "all", Status: "accepted"}, now)
+	if err != nil {
+		t.Fatalf("ListMatches() after unblock error = %v", err)
+	}
+	if len(visible) != 1 || visible[0].ID != matchID {
+		t.Fatalf("accepted match was not restored after unblock = %+v", visible)
+	}
+}
+
 func TestSafetyReportTargetAuthorization(t *testing.T) {
 	database := openIsolatedDatabase(t)
 	ctx := context.Background()

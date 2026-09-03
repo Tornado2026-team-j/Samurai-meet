@@ -86,6 +86,17 @@ export async function markNotificationRead(
   );
 }
 
+export async function markAllNotificationsRead(
+  session: Session,
+  signal?: AbortSignal,
+): Promise<void> {
+  await requestAPI<null>(
+    "/notifications/read-all",
+    session,
+    { method: "POST", signal },
+  );
+}
+
 type NotificationCopy = {
   title: string;
   message: (actor: string) => string;

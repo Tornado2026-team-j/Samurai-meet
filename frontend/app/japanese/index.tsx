@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MaterialIcons } from "@expo/vector-icons";
-import { useLocalSearchParams } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import {
   ActivityIndicator,
   Keyboard,
@@ -24,6 +24,7 @@ import { useUnreadNotifications } from "../../hooks/useUnreadNotifications";
 import { APIError } from "../../services/api-client";
 import { getCurrentCoordinates } from "../../services/location";
 import {
+  type Coordinates,
   type Recruitment,
   listMatches,
   recruitmentToMatchCard,
@@ -42,6 +43,7 @@ const SATURDAY_BLUE = "#0b70e0";
 const SUNDAY_RED = "#e11919";
 const DATE_SWIPE_THRESHOLD = 42;
 const DATE_SWIPE_VERTICAL_LIMIT = 28;
+const SEARCH_LOCATION_CACHE_TTL_MS = 60_000;
 
 type SortMode = "near" | "deadline";
 type DateButtonItem = {
@@ -63,6 +65,7 @@ const COPY = {
     notifications: "通知",
     profile: "プロフィール",
     filters: "検索条件",
+    resetSearch: "検索条件をリセット",
     today: "今日",
     weekdays: ["日", "月", "火", "水", "木", "金", "土"],
     date: (label: string, weekday: string) => `${label} ${weekday}`,
@@ -80,6 +83,7 @@ const COPY = {
     notifications: "Notifications",
     profile: "Profile",
     filters: "Filters",
+    resetSearch: "Reset search filters",
     today: "Today",
     weekdays: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
     date: (label: string, weekday: string) => `${label} ${weekday}`,
@@ -157,6 +161,7 @@ function sortRecruitments(recruitments: Recruitment[], mode: SortMode): Recruitm
 }
 
 export default function JapaneseHomeScreen() {
+  const router = useRouter();
   const { push } = useNavigationGuard();
   const params = useLocalSearchParams<{ query?: string; date?: string; sort?: string; category?: string; time?: string; radius?: string; availableFrom?: string; availableTo?: string }>();
   const insets = useSafeAreaInsets();
@@ -165,36 +170,69 @@ export default function JapaneseHomeScreen() {
   const [language, setLanguage] = useState<AppLanguage | null>(null);
   const [query, setQuery] = useState(params.query ?? "");
   const [submittedQuery, setSubmittedQuery] = useState(params.query ?? "");
-  const [matches, setMatches] = useState<MatchCardData[]>([]);
+  const [recruitments, setRecruitments] = useState<Recruitment[]>([]);
+  const [applicationStatuses, setApplicationStatuses] = useState<Record<string, NonNullable<MatchCardData["applicationStatus"]>>>({});
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const initialLoadStarted = useRef(false);
-  const loadInFlight = useRef(false);
+  const searchRequestIDRef = useRef(0);
+  const activeSearchRequestRef = useRef<{
+    id: number;
+    controller: AbortController;
+    cancelled: boolean;
+  } | null>(null);
+  const locationCacheRef = useRef<{ coordinates: Coordinates; cachedAt: number } | null>(null);
   const [selectedDate, setSelectedDate] = useState(params.date ?? todayDateKey);
   const [sortMode, setSortMode] = useState<SortMode>(params.sort === "deadline" ? "deadline" : "near");
   const [todayPlanCount, setTodayPlanCount] = useState(0);
   const selectedCategory = isMatchCategory(params.category) ? params.category : undefined;
   const selectedTime = params.time === "morning" || params.time === "afternoon" || params.time === "evening" ? params.time : undefined;
-  const selectedRadius = params.radius === "1" || params.radius === "5" ? Number(params.radius) as 1 | 5 : 3;
+  const selectedRadius: 1 | 3 | 5 = params.radius === "1" ? 1 : params.radius === "5" ? 5 : 3;
   const verifiedOnly = false;
+  const hasDateRange = Boolean(params.availableFrom || params.availableTo);
+  const hasActiveFilters = Boolean(
+    selectedCategory || selectedTime || params.availableFrom || params.availableTo || selectedRadius !== 3
+  );
+  const hasSearchConditions = Boolean(
+    query.trim() || submittedQuery.trim() || hasActiveFilters || sortMode !== "near" || selectedDate !== todayDateKey()
+  );
+
+  const resetSearchConditions = useCallback(() => {
+    Keyboard.dismiss();
+    const today = todayDateKey();
+    setQuery("");
+    setSubmittedQuery("");
+    setSelectedDate(today);
+    setSortMode("near");
+    router.setParams({
+      query: "",
+      date: today,
+      sort: "near",
+      category: "",
+      time: "",
+      radius: "3",
+      availableFrom: "",
+      availableTo: "",
+    });
+  }, [router]);
+
   const searchSignature = useMemo(() => [
     submittedQuery.trim(),
-    selectedDate,
+    hasDateRange ? "" : selectedDate,
     selectedCategory ?? "",
     selectedTime ?? "",
     selectedRadius,
     params.availableFrom ?? "",
     params.availableTo ?? "",
-    sortMode,
   ].join("\u001f"), [
     params.availableFrom,
     params.availableTo,
+    hasDateRange,
     selectedCategory,
     selectedDate,
     selectedRadius,
     selectedTime,
-    sortMode,
     submittedQuery,
   ]);
   const timeRange = useMemo(() => selectedTime === "morning" ? { startTime: "06:00", endTime: "12:00" }
@@ -202,6 +240,10 @@ export default function JapaneseHomeScreen() {
       : selectedTime === "evening" ? { startTime: "18:00", endTime: "23:59" }
         : {}, [selectedTime]);
   const copy = COPY[language ?? "ja"];
+  const matches = useMemo(() => sortRecruitments(recruitments, sortMode).map((item) => ({
+    ...recruitmentToMatchCard(item),
+    applicationStatus: applicationStatuses[item.id],
+  })), [applicationStatuses, recruitments, sortMode]);
   const showLanguageLoading = useDelayedLoading(!language);
   const showInitialLoading = useDelayedLoading(loading && matches.length === 0);
   const copyRef = useRef(copy);
@@ -229,115 +271,161 @@ export default function JapaneseHomeScreen() {
   }, [matches, submittedQuery]);
   const actionTop = Math.max(insets.top + 8, 45);
   const dateTop = actionTop + 72;
-  const sortTop = dateTop + 76;
-  const headerHeight = Math.max(246, sortTop + 58);
+  const sortTop = dateTop + (hasDateRange ? 0 : 76);
+  const headerHeight = Math.max(hasDateRange ? 184 : 246, sortTop + 58);
 
   const loadRecruitments = useCallback((mode: "initial" | "refresh" = "refresh") => {
-    if (loadInFlight.current) return;
-    loadInFlight.current = true;
+    const previousRequest = activeSearchRequestRef.current;
+    if (previousRequest) {
+      previousRequest.cancelled = true;
+      previousRequest.controller.abort();
+    }
+    const requestId = searchRequestIDRef.current + 1;
+    searchRequestIDRef.current = requestId;
     const controller = new AbortController();
-    let cancelled = false;
+    const request = { id: requestId, controller, cancelled: false };
+    activeSearchRequestRef.current = request;
+    const isCurrentRequest = () =>
+      activeSearchRequestRef.current?.id === requestId && !request.cancelled;
+    const releaseRequest = () => {
+      if (activeSearchRequestRef.current?.id === requestId) {
+        activeSearchRequestRef.current = null;
+      }
+    };
+
+    setRecruitments([]);
+    setApplicationStatuses({});
+    setTodayPlanCount(0);
+    setLoading(true);
+    setRefreshing(mode !== "initial");
+    setLoadError(null);
 
     const run = async () => {
       const activeSession = getCurrentSession() ?? session;
       if (status !== "signed_in" || !activeSession) {
-        if (!cancelled) {
-          setMatches([]);
+        if (isCurrentRequest()) {
+          setRecruitments([]);
+          setApplicationStatuses({});
           setTodayPlanCount(0);
           setLoading(false);
-			setRefreshing(false);
-			setLoadError(copyRef.current.signInRequired);
+          setRefreshing(false);
+          setLoadError(copyRef.current.signInRequired);
         }
-        loadInFlight.current = false;
+        releaseRequest();
         return;
       }
 
-      if (mode === "initial") {
-        setLoading(true);
-      } else {
-        setRefreshing(true);
-      }
-      setLoadError(null);
       try {
-        let coordinates = null;
-        try {
-          coordinates = await getCurrentCoordinates();
-        } catch {
-          coordinates = null;
+        let coordinates: Coordinates | null = null;
+        let locationWasRefreshed = false;
+        const cachedLocation = locationCacheRef.current;
+        if (cachedLocation && Date.now() - cachedLocation.cachedAt < SEARCH_LOCATION_CACHE_TTL_MS) {
+          coordinates = cachedLocation.coordinates;
+        } else {
+          try {
+            coordinates = await getCurrentCoordinates();
+          } catch {
+            coordinates = null;
+          }
+          if (coordinates) {
+            locationCacheRef.current = { coordinates, cachedAt: Date.now() };
+            locationWasRefreshed = true;
+          }
         }
-        if (coordinates) {
-          await updateCurrentLocation(coordinates, activeSession, controller.signal).catch(() => undefined);
+        if (coordinates && locationWasRefreshed) {
+          // Search already carries the fresh coordinates. Persisting them is
+          // useful for later requests, but must not add another RTT to the
+          // visible search flow.
+          void updateCurrentLocation(coordinates, activeSession, controller.signal).catch(() => undefined);
         }
 
-        let result;
-        let applicationResult;
+        const searchParams = {
+          keywords: submittedQuery ? [submittedQuery] : [],
+          category: selectedCategory,
+          availableDate: params.availableFrom || params.availableTo ? undefined : selectedDate,
+          availableFrom: params.availableFrom,
+          availableTo: params.availableTo,
+          ...timeRange,
+          radiusKm: selectedRadius,
+          latitude: coordinates?.latitude,
+          longitude: coordinates?.longitude,
+          limit: 50,
+        };
+        const requestSearch = (currentSession: NonNullable<typeof activeSession>) =>
+          searchRecruitments(currentSession, searchParams, controller.signal);
+        let searchSession = activeSession;
+        let result: Recruitment[];
         try {
-          [result, applicationResult] = await Promise.all([
-            searchRecruitments(activeSession, {
-              keywords: submittedQuery ? [submittedQuery] : [],
-              category: selectedCategory,
-              availableDate: params.availableFrom || params.availableTo ? undefined : selectedDate,
-              availableFrom: params.availableFrom,
-              availableTo: params.availableTo,
-              ...timeRange,
-              radiusKm: selectedRadius,
-              latitude: coordinates?.latitude,
-              longitude: coordinates?.longitude,
-              limit: 50,
-            }, controller.signal),
-            listMatches(activeSession, { role: "requester", limit: 50 }, controller.signal),
-          ]);
+          result = await requestSearch(searchSession);
         } catch (error) {
           if (!(error instanceof APIError) || error.status !== 401) throw error;
           await refresh();
           const refreshedSession = getCurrentSession();
           if (!refreshedSession) throw error;
-          [result, applicationResult] = await Promise.all([
-            searchRecruitments(refreshedSession, {
-              keywords: submittedQuery ? [submittedQuery] : [],
-              category: selectedCategory,
-              availableDate: params.availableFrom || params.availableTo ? undefined : selectedDate,
-              availableFrom: params.availableFrom,
-              availableTo: params.availableTo,
-              ...timeRange,
-              radiusKm: selectedRadius,
-                latitude: coordinates?.latitude,
-              longitude: coordinates?.longitude,
-              limit: 50,
-            }, controller.signal),
-            listMatches(refreshedSession, { role: "requester", limit: 50 }, controller.signal),
-          ]);
+          searchSession = refreshedSession;
+          result = await requestSearch(searchSession);
         }
-        if (!cancelled) {
-          const statusByRecruitment = new Map(applicationResult.map((item) => [item.recruitment.id, item.status]));
-          const apiMatches = sortRecruitments(result, sortMode).map((item) => ({
-            ...recruitmentToMatchCard(item),
-            applicationStatus: statusByRecruitment.get(item.id),
-          }));
+        if (!isCurrentRequest()) return;
+
+        // Recruitment cards are the critical path. Show them as soon as the
+        // search response arrives; application badges and today's count are
+        // hydrated independently below.
+        setRecruitments(result);
+        setApplicationStatuses({});
+        setTodayPlanCount(0);
+        setLoading(false);
+        setRefreshing(false);
+
+        void (async () => {
+          let applicationResult;
+          try {
+            applicationResult = await listMatches(searchSession, { role: "requester", limit: 50 }, controller.signal);
+          } catch (error) {
+            if (!(error instanceof APIError) || error.status !== 401) return;
+            try {
+              await refresh();
+              const refreshedSession = getCurrentSession();
+              if (!refreshedSession) return;
+              applicationResult = await listMatches(refreshedSession, { role: "requester", limit: 50 }, controller.signal);
+            } catch {
+              return;
+            }
+          }
+          if (!isCurrentRequest()) return;
+          const nextStatuses: Record<string, NonNullable<MatchCardData["applicationStatus"]>> = {};
+          for (const item of applicationResult) nextStatuses[item.recruitment.id] = item.status;
+          setApplicationStatuses(nextStatuses);
           setTodayPlanCount(applicationResult.filter((item) => item.status === "accepted" && item.recruitment.available_date === todayDateKey()).length);
-          setMatches(apiMatches);
-        }
+        })();
       } catch (error) {
-        if (error instanceof Error && error.name === "AbortError" && (cancelled || controller.signal.aborted)) return;
-        if (!cancelled) {
+        if (error instanceof Error && error.name === "AbortError" && (request.cancelled || controller.signal.aborted)) return;
+        if (isCurrentRequest()) {
           setLoadError(copyRef.current.loadError);
         }
       } finally {
-        if (!cancelled) {
+        if (isCurrentRequest()) {
           setLoading(false);
           setRefreshing(false);
         }
-        loadInFlight.current = false;
+        releaseRequest();
       }
     };
 
     void run();
     return () => {
-      cancelled = true;
+      request.cancelled = true;
       controller.abort();
-      loadInFlight.current = false;
+      releaseRequest();
     };
-  }, [getCurrentSession, params.availableFrom, params.availableTo, refresh, selectedCategory, selectedDate, selectedRadius, session, sortMode, status, submittedQuery, timeRange]);
+  }, [getCurrentSession, params.availableFrom, params.availableTo, refresh, selectedCategory, selectedDate, selectedRadius, session, status, submittedQuery, timeRange]);
+
+  useEffect(() => () => {
+    const activeRequest = activeSearchRequestRef.current;
+    if (!activeRequest) return;
+    activeRequest.cancelled = true;
+    activeRequest.controller.abort();
+    activeSearchRequestRef.current = null;
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -373,18 +461,19 @@ export default function JapaneseHomeScreen() {
       return loadRecruitmentsRef.current("initial");
     }
 
-    if (previousSearchSignature.current === searchSignature || loadInFlight.current) return;
+    if (previousSearchSignature.current === searchSignature) return;
     previousSearchSignature.current = searchSignature;
     return loadRecruitmentsRef.current("refresh");
-  }, [loading, refreshing, searchSignature, status]);
+  }, [searchSignature, status]);
 
   const moveSelectedDate = useCallback((offset: -1 | 1) => {
+    if (hasDateRange) return;
     const currentIndex = selectedDateIndex < 0 ? 0 : selectedDateIndex;
     const next = dateButtons[currentIndex + offset];
     if (!next) return;
     Keyboard.dismiss();
     setSelectedDate(next.dateKey);
-  }, [dateButtons, selectedDateIndex]);
+  }, [dateButtons, hasDateRange, selectedDateIndex]);
 
   const dateSwipeResponder = useMemo(() => PanResponder.create({
     onMoveShouldSetPanResponder: (_event, gesture) =>
@@ -498,8 +587,8 @@ export default function JapaneseHomeScreen() {
               size={24}
               style={styles.searchIcon}
             />
-            <TextInput
-              accessibilityLabel={copy.search}
+              <TextInput
+                accessibilityLabel={copy.search}
               onChangeText={setQuery}
               onSubmitEditing={() => {
                 Keyboard.dismiss();
@@ -510,8 +599,19 @@ export default function JapaneseHomeScreen() {
               returnKeyType="search"
               style={styles.searchInput}
               value={query}
-            />
-            <Pressable
+              />
+              {hasSearchConditions ? (
+                <Pressable
+                  accessibilityLabel={copy.resetSearch}
+                  accessibilityRole="button"
+                  hitSlop={6}
+                  onPress={resetSearchConditions}
+                  style={({ pressed }) => [styles.resetSearchButton, pressed && styles.pressed]}
+                >
+                  <MaterialIcons color={BLUE} name="refresh" size={20} />
+                </Pressable>
+              ) : null}
+              <Pressable
               accessibilityLabel={copy.filters}
               accessibilityRole="button"
               hitSlop={6}
@@ -530,7 +630,7 @@ export default function JapaneseHomeScreen() {
               })}
               style={styles.filterButton}
             >
-              <MaterialIcons color={selectedCategory || selectedTime ? BLUE : PLACEHOLDER_GRAY} name="tune" size={21} />
+              <MaterialIcons color={hasActiveFilters ? BLUE : PLACEHOLDER_GRAY} name="tune" size={21} />
             </Pressable>
           </View>
 
@@ -564,50 +664,52 @@ export default function JapaneseHomeScreen() {
           </Pressable>
         </View>
 
-        <ScrollView
-          contentContainerStyle={styles.dateContent}
-          horizontal
-          keyboardShouldPersistTaps="handled"
-          nestedScrollEnabled
-          showsHorizontalScrollIndicator={false}
-          style={[styles.dateList, { top: dateTop }]}
-        >
-          {dateButtons.map((item) => {
-            const selected = selectedDate === item.dateKey;
-            const weekendStyle =
-              item.weekdayIndex === 0
-                ? styles.sundayText
-                : item.weekdayIndex === 6
-                  ? styles.saturdayText
-                  : null;
+        {!hasDateRange ? (
+          <ScrollView
+            contentContainerStyle={styles.dateContent}
+            horizontal
+            keyboardShouldPersistTaps="handled"
+            nestedScrollEnabled
+            showsHorizontalScrollIndicator={false}
+            style={[styles.dateList, { top: dateTop }]}
+          >
+            {dateButtons.map((item) => {
+              const selected = selectedDate === item.dateKey;
+              const weekendStyle =
+                item.weekdayIndex === 0
+                  ? styles.sundayText
+                  : item.weekdayIndex === 6
+                    ? styles.saturdayText
+                    : null;
 
-            return (
-              <Pressable
-                key={item.dateKey}
-                accessibilityLabel={copy.date(item.label, item.weekdayLabel)}
-                accessibilityRole="button"
-                accessibilityState={{ selected }}
-                onPress={() => {
-                  Keyboard.dismiss();
-                  setSelectedDate(item.dateKey);
-                }}
-                style={({ pressed }) => [
-                  styles.dateButton,
-                  item.isToday && styles.todayButton,
-                  selected && !item.isToday && styles.dateButtonSelected,
-                  pressed && styles.pressed,
-                ]}
-              >
-                <Text numberOfLines={1} style={styles.dateLabel}>
-                  {item.label}
-                </Text>
-                <Text numberOfLines={1} style={[styles.weekdayLabel, weekendStyle]}>
-                  {item.weekdayLabel}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </ScrollView>
+              return (
+                <Pressable
+                  key={item.dateKey}
+                  accessibilityLabel={copy.date(item.label, item.weekdayLabel)}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected }}
+                  onPress={() => {
+                    Keyboard.dismiss();
+                    setSelectedDate(item.dateKey);
+                  }}
+                  style={({ pressed }) => [
+                    styles.dateButton,
+                    item.isToday && styles.todayButton,
+                    selected && !item.isToday && styles.dateButtonSelected,
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <Text numberOfLines={1} style={styles.dateLabel}>
+                    {item.label}
+                  </Text>
+                  <Text numberOfLines={1} style={[styles.weekdayLabel, weekendStyle]}>
+                    {item.weekdayLabel}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        ) : null}
 
         <Pressable
           accessibilityLabel={sortMode === "near" ? copy.nearest : copy.deadlineSoon}
@@ -697,7 +799,7 @@ const styles = StyleSheet.create({
     width: "100%",
     height: 44,
     paddingTop: 0,
-    paddingRight: 44,
+    paddingRight: 84,
     paddingBottom: 0,
     paddingLeft: 48,
     color: TEXT_GRAY,
@@ -708,6 +810,14 @@ const styles = StyleSheet.create({
   filterButton: {
     position: "absolute",
     right: 5,
+    width: 38,
+    height: 38,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  resetSearchButton: {
+    position: "absolute",
+    right: 43,
     width: 38,
     height: 38,
     alignItems: "center",

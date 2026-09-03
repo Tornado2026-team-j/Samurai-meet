@@ -46,7 +46,7 @@
 
 - 運営用：`GET /admin/reports`、`PATCH /admin/reports/{id}`
 - `audit_logs` テーブルと管理者操作の記録
-- ブロック時に既存のpending match・関心を自動で拒否/非表示にする処理（現状は新規の関心送信だけを`matching`が遮断）
+- ブロック時に既存のpending match・関心を状態変更せずに一覧・詳細から非表示にする処理（`matching`の読み取りで双方向の`blocks`を参照）。解除後は明示的な再読み込みで再表示する。
 
 ## 5. 運営処理
 
@@ -68,7 +68,7 @@
 ## 7. 受け入れ条件
 
 - ユーザー、カード、メッセージ、写真を、対象種別ごとの閲覧権限を満たした場合に通報できる。（API実装済み・`TestSafetyReportAndBlock`、`TestSafetyReportTargetAuthorization`）
-- ブロック後に相手のカードとチャットが表示されない。（`matching` / `chat` の読み取りが`blocks`を参照。新規関心の遮断はテスト済み。既存match/カード非表示のフロント反映は未）
+- ブロック後に相手のカード、既存match、チャットが表示されない。（`matching` / `chat` の読み取りが`blocks`を参照。新規関心と既存matchの非表示はテスト済み）
 - 通報が運営キューへ登録される。（`reports`行として登録。運営キューUIは未）
 - 管理者の処理履歴が改ざん困難な監査ログに残る。（未・`audit_logs`）
 - 停止ユーザーがトークンを使って業務 API を利用できない。（既存のセッション判定で担保）

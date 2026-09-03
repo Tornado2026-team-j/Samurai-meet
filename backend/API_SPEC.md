@@ -484,7 +484,8 @@ Request body:
 | Method | Path | 認証 | 用途 |
 | --- | --- | --- | --- |
 | GET | `/api/v1/chats` | Access Token | 自分のaccepted/completedチャット一覧 |
-| GET | `/api/v1/chats/{id}/messages?after=0&limit=50` | Access Token | 暗号化メッセージ履歴。最大100件 |
+| GET | `/api/v1/chats/{id}` | Access Token | 1件のチャット概要と`last_message_sequence`。最大500件の履歴窓を決めるために使用 |
+| GET | `/api/v1/chats/{id}/messages?after=0&limit=50` | Access Token | 暗号化メッセージ履歴。`after`または`before`の片方、最大100件 |
 | POST | `/api/v1/chats/{id}/moderation` | Access Token | 暗号化前本文の送信前安全判定。acceptedマッチの参加者だけ |
 | POST | `/api/v1/chats/{id}/messages` | Access Token | 暗号化メッセージ送信 |
 | PATCH | `/api/v1/chats/{id}/messages/{message_id}` | Access Token | 送信者自身のtext本文を暗号文ごと編集。acceptedマッチのみ |
@@ -521,7 +522,7 @@ Request body:
 
 Recovery Phraseまたは端末移行で新端末にKey-Aを復旧した後は、同じ`data_salt`からアカウントデータ鍵を再導出してaccount envelopeを復号できます。別参加者の新規端末は、自端末X25519公開鍵に対するdevice envelopeを復号します。移行中にチャットDEKを平文で転送・保存せず、Key-Bを参加者間で共有しません。
 
-サーバーは`ciphertext`を復号せず、平文本文・検索用プレビュー・暗号鍵を受け付けません。`client_message_id`は送信者とチャット単位で一意で、同じIDの再送は元のメッセージを返します。暗号文は復号前128KiBまでです。履歴は`sequence`をcursorにして再接続時に補完します。
+サーバーは`ciphertext`を復号せず、平文本文・検索用プレビュー・暗号鍵を受け付けません。`client_message_id`は送信者とチャット単位で一意で、同じIDの再送は元のメッセージを返します。暗号文は復号前128KiBまでです。`GET /chats/{id}`の`last_message_sequence`は履歴の最新位置を示します。履歴取得は`after`または`before`の片方だけを指定し、`limit`は最大100です。`after`は指定sequenceより新しい順、`before`は指定sequenceより古い直近ページを古い順で返し、ページには対応する`next_after`または`next_before`と`has_more`を含めます。`before=last_message_sequence+1`から最新窓を取得でき、`after`は再接続時の欠落イベント回収に使います。
 
 `PATCH /api/v1/chats/{id}/messages/{message_id}` のbodyは`ciphertext`、`nonce`、`algorithm`、`key_version`と、`chat-dek-v1`では新しい本文の`plaintext_commitment`／`plaintext_commitment_salt`です。送信者本人のtextメッセージだけを更新し、メッセージの`id`、`sequence`、`client_message_id`、`created_at`は維持し、`edited_at`を現在時刻へ更新します。`completed`、相手のメッセージ、location/imageメッセージ、削除済みメッセージは拒否します。
 
@@ -589,8 +590,9 @@ DBには会合中の参加者ごと・方式ごとに最新1件だけを保持�
 | --- | --- | --- | --- |
 | GET | `/api/v1/notifications?unread_only=false&limit=50` | Access Token | 直近7日間の通知一覧 |
 | POST | `/api/v1/notifications/{id}/read` | Access Token | 自分の通知を既読にする（冪等） |
+| POST | `/api/v1/notifications/read-all` | Access Token | 自分の保持中の未読通知をすべて既読にする（冪等） |
 
-通知は応募、承認・辞退、暗号化チャットメッセージの作成と同じDBトランザクションで保存します。`event_key`で冪等化し、一覧はユーザー本人の通知だけを返します。通知本文はクライアントが言語別に生成し、チャットの平文・暗号文・鍵は通知へ保存しません。現在のクライアントはExpo画面からこの一覧と既読APIを利用します。これはアプリ内通知であり、`expo-notifications`等によるOSプッシュ通知は未実装です。
+通知は応募、承認・辞退、暗号化チャットメッセージの作成と同じDBトランザクションで保存します。`event_key`で冪等化し、一覧と一括既読はユーザー本人の行だけを対象にします。通知本文はクライアントが言語別に生成し、チャットの平文・暗号文・鍵は通知へ保存しません。現在のクライアントはExpo画面から一覧、個別既読、一括既読APIを利用します。これはアプリ内通知であり、`expo-notifications`等によるOSプッシュ通知は未実装です。
 
 ### 6.10 通報・ブロック（実装済み）
 

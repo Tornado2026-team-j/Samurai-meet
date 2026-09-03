@@ -1,0 +1,97 @@
+name: Nana Apply
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: nana-apply-${{ github.repository }}-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    if: >-
+      github.event.issue.pull_request &&
+      github.event.comment.user.type != 'Bot' &&
+      contains(github.event.comment.body, '@nana apply') &&
+      (
+        github.event.comment.author_association == 'OWNER' ||
+        github.event.comment.author_association == 'MEMBER' ||
+        github.event.comment.author_association == 'COLLABORATOR'
+      )
+    runs-on: ubuntu-latest
+
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPOSITORY: ${{ github.repository }}
+      GH_EVENT_NAME: ${{ github.event_name }}
+      NANA_PLAN_SECRET: ${{ secrets.NANA_PLAN_SECRET }}
+      # さらに絞りたい場合: "user1,user2"
+      NANA_APPLY_ACTORS: ${{ vars.NANA_APPLY_ACTORS }}
+
+    steps:
+      # 1) まずdefault branchから信頼済みExecutorだけを取得する。
+      - name: Checkout trusted Nana executor
+        uses: actions/checkout@v6
+
+      - name: Preserve trusted executor
+        run: |
+          cp .github/scripts/nana_common.py /tmp/nana_common.py
+          cp .github/scripts/nana_apply.py /tmp/nana_apply.py
+
+      - name: Prepare and verify signed plan
+        id: plan
+        env:
+          PYTHONPATH: /tmp
+        run: python /tmp/nana_apply.py prepare
+
+      # 2) ここで初めてPR headをcheckoutする。ただしPR内コードは一切実行しない。
+      - name: Checkout PR head without executing it
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.plan.outputs.head_ref }}
+          fetch-depth: 0
+          persist-credentials: true
+          submodules: false
+
+      - name: Re-check exact HEAD
+        env:
+          EXPECTED_HEAD: ${{ steps.plan.outputs.head_sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+
+      - name: Apply patch safely
+        run: |
+          git apply --check /tmp/nana.patch
+          git apply /tmp/nana.patch
+          git diff --check
+
+      - name: Verify only planned paths changed
+        env:
+          PYTHONPATH: /tmp
+        run: python /tmp/nana_apply.py verify
+
+      - name: Stage only planned paths
+        env:
+          PYTHONPATH: /tmp
+        run: python /tmp/nana_apply.py stage
+
+      - name: Commit and push to PR branch
+        env:
+          NANA_HEAD_REF: ${{ steps.plan.outputs.head_ref }}
+          NANA_PLAN_ID: ${{ steps.plan.outputs.plan_id }}
+        run: |
+          git config user.name "Nana"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Apply Nana fix plan ${NANA_PLAN_ID}"
+          git push origin "HEAD:refs/heads/${NANA_HEAD_REF}"
+
+      - name: Comment completion
+        env:
+          PYTHONPATH: /tmp
+        run: python /tmp/nana_apply.py complete

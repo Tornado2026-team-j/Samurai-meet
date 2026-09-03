@@ -11,6 +11,14 @@ RESTの履歴取得、暗号文送信、既読更新は削除しません。こ�
 ない場合の同期・明示的復旧経路であり、WebSocketへの自動fallbackではありません。
 クライアントは `sequence` cursor によって欠落イベントを同期します。
 
+個別チャットの初期表示では、ネイティブ端末の暗号化表示キャッシュを先に描画し、
+`GET /chats/{id}` の `updated_at` と `last_message_sequence` を確認します。更新がない
+場合は履歴取得を省略し、更新がある場合は `GET /chats/{id}/messages?before=...` で
+最大500件の最新窓を再取得します。`updated_at` は本文の編集・削除でも更新されるため、
+編集・削除を新着sequenceだけで推測して古いキャッシュを残すことはしません。過去分は
+利用者の明示操作で同じ`before` cursorを進めます。`after` cursorはWebTransport再接続時の
+欠落イベント回収に引き続き使います。
+
 ## 接続契約
 
 1. `POST /api/v1/chats/{id}/transport-token` は `transport=webtransport` だけを発行する。

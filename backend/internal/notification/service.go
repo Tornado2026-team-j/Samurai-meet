@@ -173,6 +173,20 @@ func (s *Service) MarkRead(ctx context.Context, userID, notificationID string, n
 	return nil
 }
 
+// MarkAllRead marks every unread notification retained for the authenticated
+// user as read. It deliberately does not accept a notification list or user
+// supplied scope, so callers cannot affect another account's notifications.
+func (s *Service) MarkAllRead(ctx context.Context, userID string, now time.Time) error {
+	if s == nil || s.db == nil || strings.TrimSpace(userID) == "" {
+		return ErrInvalidInput
+	}
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE notifications SET read_at=$1
+		WHERE user_id=$2 AND read_at IS NULL`,
+		now.UTC().Format(time.RFC3339Nano), strings.TrimSpace(userID))
+	return err
+}
+
 func validInput(input CreateInput) bool {
 	return strings.TrimSpace(input.UserID) != "" &&
 		strings.TrimSpace(input.EventKey) != "" &&
