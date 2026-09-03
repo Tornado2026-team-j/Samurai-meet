@@ -73,7 +73,7 @@ export default function UserProfileScreen() {
       <StatusBar style="light" />
       <Header iconName="person-outline" onBack={() => router.back()} title="プロフィール" variant="hero" />
       <ScrollView contentContainerStyle={styles.content}>
-        {loading ? <LoadingSpinner color={colors.brand.sky} size={24} speedMs={680} /> : null}
+        {loading ? <LoadingSpinner color={colors.brand.sky} size={24} /> : null}
         {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
         {profile ? (
           <>

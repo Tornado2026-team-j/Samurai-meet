@@ -98,7 +98,7 @@ export default function BlockedUsersScreen() {
       <StatusBar style="light" />
       <Header iconName="block" onBack={() => router.back()} title={copy.title} variant="hero" />
       <ScrollView contentContainerStyle={styles.content}>
-        {loading ? <LoadingSpinner color={colors.brand.sky} size={24} speedMs={680} /> : null}
+        {loading ? <LoadingSpinner color={colors.brand.sky} size={24} /> : null}
         {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
         {!loading && items.length === 0 ? <Text style={styles.empty}>{copy.empty}</Text> : null}
         {items.map((item) => (

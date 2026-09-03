@@ -38,7 +38,7 @@ export default function OAuthCompleteScreen() {
   return (
     <View accessibilityLabel="Google認証を完了しています" style={styles.screen}>
       <View style={styles.iconCircle}>
-        <LoadingSpinner color="#e7b454" size={28} speedMs={640} />
+        <LoadingSpinner color="#e7b454" size={28} />
       </View>
       <Text accessibilityRole="header" style={styles.title}>Google認証を確認中</Text>
       <Text style={styles.message}>安全なログイン処理を完了しています。</Text>

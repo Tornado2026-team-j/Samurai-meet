@@ -1487,7 +1487,6 @@ export default function SearchPreferencesScreen() {
                   <LoadingSpinner
                     color={colors.brand.gold}
                     size={18}
-                    speedMs={640}
                     style={styles.locationStatusIcon}
                   />
                 ) : null}
@@ -1753,7 +1752,7 @@ export default function SearchPreferencesScreen() {
               <Card style={styles.summaryCard}>
                 {previewStatus === "loading" && (
                   <View style={styles.previewState}>
-                    <LoadingSpinner color={BLUE} size={18} speedMs={640} />
+                    <LoadingSpinner color={BLUE} size={18} />
                   </View>
                 )}
 

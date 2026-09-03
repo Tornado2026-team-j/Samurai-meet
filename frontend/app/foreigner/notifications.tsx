@@ -11,7 +11,7 @@ import {
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { LoadingSpinner } from "../../components/ui";
+import { LoadingScreen, RefreshLoadingIndicator } from "../../components/ui";
 import { useAuth } from "../../hooks/useAuth";
 import { APIError } from "../../services/api-client";
 import {
@@ -401,7 +401,11 @@ export default function ForeignerNotificationsScreen() {
   };
 
   if (!language) {
-    return <View style={styles.loadingScreen}><StatusBar style="dark" /><LoadingSpinner color={BLUE} size={28} speedMs={640} /></View>;
+    return <LoadingScreen />;
+  }
+
+  if (loading && notificationRecords.length === 0 && !loadError) {
+    return <LoadingScreen />;
   }
 
   return (
@@ -431,11 +435,13 @@ export default function ForeignerNotificationsScreen() {
         contentContainerStyle={styles.content}
         refreshControl={
           <RefreshControl
+            colors={["transparent"]}
             onRefresh={() => {
               void loadNotifications("refresh");
             }}
+            progressBackgroundColor="transparent"
             refreshing={refreshing}
-            tintColor={BLUE}
+            tintColor="transparent"
           />
         }
         showsVerticalScrollIndicator={false}
@@ -495,12 +501,7 @@ export default function ForeignerNotificationsScreen() {
           ) : null}
         </View>
 
-        {loading && notificationRecords.length === 0 ? (
-          <View style={styles.emptyState}>
-            <LoadingSpinner color={BLUE} size={24} speedMs={680} />
-            <Text style={styles.emptyTitle}>{copy.loading}</Text>
-          </View>
-        ) : loadError && notificationRecords.length === 0 ? (
+        {loading && notificationRecords.length === 0 ? null : loadError && notificationRecords.length === 0 ? (
           <View style={styles.emptyState}>
             <Text accessibilityRole="alert" style={styles.emptyTitle}>{loadError}</Text>
             <Pressable
@@ -537,6 +538,7 @@ export default function ForeignerNotificationsScreen() {
           </View>
         )}
       </ScrollView>
+      {refreshing ? <RefreshLoadingIndicator color={BLUE} top={248} /> : null}
     </View>
   );
 }

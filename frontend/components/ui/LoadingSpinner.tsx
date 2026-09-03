@@ -9,12 +9,14 @@ type LoadingSpinnerProps = {
   style?: StyleProp<ViewStyle>;
 };
 
+export const LOADING_SPINNER_SPEED_MS = 500;
+
 /** A small, native-driven spinner that starts smoothly and feels responsive. */
 export default function LoadingSpinner({
   color,
   trackColor = "rgba(31, 45, 61, 0.12)",
   size = 24,
-  speedMs = 720,
+  speedMs = LOADING_SPINNER_SPEED_MS,
   style,
 }: LoadingSpinnerProps) {
   const rotation = useRef(new Animated.Value(0)).current;
@@ -23,16 +25,21 @@ export default function LoadingSpinner({
   useEffect(() => {
     rotation.setValue(0);
     opacity.setValue(0);
+    const duration = Math.max(360, speedMs);
     const loop = Animated.loop(
-      Animated.timing(rotation, {
-        duration: Math.max(360, speedMs),
-        easing: Easing.linear,
-        toValue: 1,
-        useNativeDriver: true,
-      }),
+      Animated.sequence([
+        Animated.timing(rotation, {
+          duration,
+          easing: Easing.inOut(Easing.cubic),
+          toValue: 1,
+          useNativeDriver: true,
+        }),
+        Animated.delay(Math.min(45, Math.max(24, Math.round(duration * 0.08)))),
+      ]),
+      { resetBeforeIteration: true },
     );
     const entrance = Animated.timing(opacity, {
-      duration: 160,
+      duration: 120,
       easing: Easing.out(Easing.quad),
       toValue: 1,
       useNativeDriver: true,
@@ -48,6 +55,7 @@ export default function LoadingSpinner({
   return (
     <Animated.View
       accessibilityLabel="Loading"
+      accessibilityRole="progressbar"
       style={[
         styles.spinner,
         {

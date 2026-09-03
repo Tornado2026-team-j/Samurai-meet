@@ -4,7 +4,7 @@ import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "r
 import { StatusBar } from "expo-status-bar";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { Header, LoadingSpinner } from "../../components/ui";
+import { Header, LoadingScreen, RefreshLoadingIndicator } from "../../components/ui";
 import { useAuth } from "../../hooks/useAuth";
 import { APIError } from "../../services/api-client";
 import {
@@ -200,12 +200,11 @@ export default function ChatListScreen() {
   }, [chats, loadError, loading, router, targetMatchID]);
 
   if (!language) {
-    return (
-      <View style={styles.loadingScreen}>
-        <StatusBar style="dark" />
-        <LoadingSpinner color={BLUE} size={28} speedMs={640} />
-      </View>
-    );
+    return <LoadingScreen />;
+  }
+
+  if (loading && chats.length === 0 && !loadError) {
+    return <LoadingScreen />;
   }
 
   return (
@@ -225,7 +224,13 @@ export default function ChatListScreen() {
           { paddingBottom: getTabBarContentBottomPadding(insets.bottom) },
         ]}
         refreshControl={
-          <RefreshControl onRefresh={() => void load("refresh")} refreshing={refreshing} tintColor={BLUE} />
+          <RefreshControl
+            colors={["transparent"]}
+            onRefresh={() => void load("refresh")}
+            progressBackgroundColor="transparent"
+            refreshing={refreshing}
+            tintColor="transparent"
+          />
         }
         showsVerticalScrollIndicator={false}
       >
@@ -257,12 +262,7 @@ export default function ChatListScreen() {
             </View>
           </View>
         ) : null}
-        {loading && chats.length === 0 ? (
-          <View style={styles.statePanel}>
-            <LoadingSpinner color={BLUE} size={24} speedMs={680} />
-            <Text style={styles.stateText}>{copy.loading}</Text>
-          </View>
-        ) : loadError && chats.length === 0 ? (
+        {loading && chats.length === 0 ? null : loadError && chats.length === 0 ? (
           <View style={styles.statePanel}>
             <Text accessibilityRole="alert" style={styles.stateText}>{loadError}</Text>
             <Pressable
@@ -350,6 +350,7 @@ export default function ChatListScreen() {
           </View>
         )}
       </ScrollView>
+      {refreshing ? <RefreshLoadingIndicator color={BLUE} top={188} /> : null}
     </View>
   );
 }

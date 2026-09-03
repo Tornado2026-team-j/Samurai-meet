@@ -18,7 +18,9 @@ mock.module("react-native", () => ({
 }));
 mock.module("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ bottom: 0, left: 0, right: 0, top: 0 }) }));
 mock.module(join(testDir, "../components/ui/index.ts"), () => ({
+  LoadingScreen: noop,
   LoadingSpinner: noop,
+  RefreshLoadingIndicator: noop,
   colors: {
     brand: { sky: "#5ec5f5", gold: "#e7b454" },
     border: { default: "#e4e4e4", subtle: "#e4e4e4" },
@@ -42,7 +44,7 @@ describe("ホーム画面の更新契約", () => {
     expect(source).not.toContain("useFocusEffect");
     expect(source).toContain("const initialLoadStarted = useRef(false);");
     expect(source).toContain('loadRecruitmentsRef.current("initial")');
-    expect(source).toContain('loadRecruitments("refresh")');
+    expect(source).toContain('loadRecruitments("refresh", {');
     expect(source).toContain("<RefreshControl");
     expect(source).toContain("alwaysBounceVertical");
     expect(source).toContain('pointerEvents="box-none"');
@@ -74,7 +76,9 @@ describe("ホーム画面の更新契約", () => {
     expect(source).toContain('loadApplications("refresh")');
     expect(source).toContain("<RefreshControl");
     expect(source).toContain("useDelayedLoading");
-    expect(source).toContain("LoadingSpinner");
+    expect(source).toContain("LoadingScreen");
+    expect(source).toContain("RefreshLoadingIndicator");
+    expect(source).toContain('colors={["transparent"]}');
     expect(source).toContain("getTabBarContentBottomPadding");
   });
 
@@ -125,11 +129,16 @@ describe("ホーム画面の更新契約", () => {
     const chatSource = await readScreen("../app/chat/index.tsx");
     const spinnerSource = await readScreen("../components/ui/LoadingSpinner.tsx");
 
-    expect(rootSource).toContain("LoadingSpinner");
-    expect(guardSource).toContain("LoadingSpinner");
-    expect(chatSource).toContain("LoadingSpinner");
+    expect(rootSource).toContain("LoadingScreen");
+    expect(guardSource).toContain("LoadingScreen");
+    expect(chatSource).toContain("LoadingScreen");
+    expect(chatSource).toContain("RefreshLoadingIndicator");
     expect(spinnerSource).toContain("Animated.timing(opacity");
     expect(spinnerSource).toContain("useNativeDriver: true");
+    expect(spinnerSource).toContain("export const LOADING_SPINNER_SPEED_MS = 500");
+    expect(spinnerSource).toContain("Easing.inOut(Easing.cubic)");
+    expect(spinnerSource).toContain("Animated.delay");
+    expect(spinnerSource).toContain("resetBeforeIteration: true");
     expect(spinnerSource).toContain("trackColor = \"rgba(31, 45, 61, 0.12)\"");
     expect(spinnerSource).toContain("borderWidth: Math.max(1, Math.round(size / 14))");
     expect(spinnerSource).toContain("borderColor: trackColor");

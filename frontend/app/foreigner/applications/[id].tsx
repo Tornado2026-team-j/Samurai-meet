@@ -261,7 +261,7 @@ export default function ForeignerApplicationDetailScreen() {
         ]}
       >
         <StatusBar style="light" />
-        {loadState === "loading" ? <LoadingSpinner color={BLUE} size={26} speedMs={680} /> : null}
+        {loadState === "loading" ? <LoadingSpinner color={BLUE} size={26} /> : null}
         <Text accessibilityRole={loadState === "error" ? "alert" : undefined} style={styles.loadingText}>
           {loadState === "loading" ? copy.loading : loadError ? (loadError === "loginRequired" ? copy.loginRequired : copy.loadError) : null}
         </Text>

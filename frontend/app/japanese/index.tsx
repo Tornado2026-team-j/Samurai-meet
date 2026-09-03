@@ -15,7 +15,7 @@ import {
 import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import MatchCard from "../../components/MatchCard";
-import { colors, LoadingSpinner } from "../../components/ui";
+import { colors, LoadingScreen, RefreshLoadingIndicator } from "../../components/ui";
 import { useAuth } from "../../hooks/useAuth";
 import { useDelayedLoading } from "../../hooks/useDelayedLoading";
 import { useNavigationGuard } from "../../hooks/useNavigationGuard";
@@ -275,7 +275,10 @@ export default function JapaneseHomeScreen() {
   const sortTop = dateTop + (hasDateRange ? 0 : 76);
   const headerHeight = Math.max(hasDateRange ? 184 : 246, sortTop + 58);
 
-  const loadRecruitments = useCallback((mode: "initial" | "refresh" = "refresh") => {
+  const loadRecruitments = useCallback((
+    mode: "initial" | "refresh" = "refresh",
+    options?: { preserveContent?: boolean },
+  ) => {
     const previousRequest = activeSearchRequestRef.current;
     if (previousRequest) {
       previousRequest.cancelled = true;
@@ -294,11 +297,14 @@ export default function JapaneseHomeScreen() {
       }
     };
 
-    setRecruitments([]);
-    setApplicationStatuses({});
-    setTodayPlanCount(0);
-    setLoading(true);
-    setRefreshing(mode !== "initial");
+    const preserveContent = mode === "refresh" && options?.preserveContent === true;
+    if (!preserveContent) {
+      setRecruitments([]);
+      setApplicationStatuses({});
+      setTodayPlanCount(0);
+    }
+    setLoading(mode === "initial" || !preserveContent);
+    setRefreshing(mode === "refresh");
     setLoadError(null);
 
     const run = async () => {
@@ -511,12 +517,11 @@ export default function JapaneseHomeScreen() {
   };
 
   if (!language) {
-    return (
-      <View style={styles.loadingScreen}>
-        <StatusBar style="dark" />
-        {showLanguageLoading ? <LoadingSpinner color={BLUE} size={28} speedMs={680} /> : null}
-      </View>
-    );
+    return showLanguageLoading ? <LoadingScreen /> : <View style={styles.loadingScreen} />;
+  }
+
+  if (showInitialLoading && loading && matches.length === 0 && !loadError) {
+    return <LoadingScreen />;
   }
 
   return (
@@ -535,9 +540,11 @@ export default function JapaneseHomeScreen() {
         ]}
         refreshControl={
           <RefreshControl
-            onRefresh={() => { void loadRecruitments("refresh"); }}
+            colors={["transparent"]}
+            onRefresh={() => { void loadRecruitments("refresh", { preserveContent: true }); }}
+            progressBackgroundColor="transparent"
             refreshing={refreshing}
-            tintColor={BLUE}
+            tintColor="transparent"
           />
         }
         showsVerticalScrollIndicator={false}
@@ -553,12 +560,7 @@ export default function JapaneseHomeScreen() {
           </Pressable>
         ) : null}
         {loading && matches.length === 0 ? (
-          showInitialLoading ? (
-            <View style={styles.statePanel}>
-              <LoadingSpinner color={BLUE} size={24} speedMs={680} />
-              <Text style={styles.stateText}>{copy.loading}</Text>
-            </View>
-          ) : null
+          null
         ) : loadError && matches.length === 0 ? (
           <View style={styles.statePanel}>
             <Text accessibilityRole="alert" style={styles.stateText}>{loadError}</Text>
@@ -577,7 +579,7 @@ export default function JapaneseHomeScreen() {
                 <Text accessibilityRole="alert" style={styles.inlineErrorText}>{loadError}</Text>
                 <Pressable
                   accessibilityRole="button"
-                  onPress={() => loadRecruitments("refresh")}
+                  onPress={() => loadRecruitments("refresh", { preserveContent: true })}
                   style={({ pressed }) => [styles.retryButton, pressed && styles.pressed]}
                 >
                   <Text style={styles.retryButtonText}>{copy.retry}</Text>
@@ -594,6 +596,8 @@ export default function JapaneseHomeScreen() {
           <Text style={styles.emptyText}>{copy.noRecruitments}</Text>
         )}
       </ScrollView>
+
+      {refreshing ? <RefreshLoadingIndicator color={BLUE} top={headerHeight + 10} /> : null}
 
       <View pointerEvents="box-none" style={[styles.header, { height: headerHeight }]}>
         <View pointerEvents="box-none" style={[styles.actionRow, { top: actionTop }]}>

@@ -12,7 +12,7 @@ import {
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { Header, colors, LoadingSpinner, radius, shadows, typography } from "../components/ui";
+import { Header, colors, LoadingScreen, RefreshLoadingIndicator, radius, shadows, typography } from "../components/ui";
 import { useAuth } from "../hooks/useAuth";
 import { APIError } from "../services/api-client";
 import { cancelMeeting, createMeeting, endMeeting, getMeetingForMatch, meetingProximityCapability, resumeMeeting, startMeeting, type Meeting } from "../services/meeting";
@@ -265,6 +265,10 @@ export default function PlansScreen() {
       });
   }, [activeTab, plans]);
 
+  if (loading && plans.length === 0 && !error) {
+    return <LoadingScreen />;
+  }
+
   const updateMeeting = async (plan: MatchView) => {
     if (busyMatchId) return;
     const activeSession = getCurrentSession() ?? session;
@@ -362,12 +366,18 @@ export default function PlansScreen() {
 
       <ScrollView
         contentContainerStyle={[styles.content, { paddingBottom: getTabBarContentBottomPadding(insets.bottom) }]}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void load(true)} tintColor={colors.brand.sky} />}
+        refreshControl={
+          <RefreshControl
+            colors={["transparent"]}
+            onRefresh={() => void load(true)}
+            progressBackgroundColor="transparent"
+            refreshing={refreshing}
+            tintColor="transparent"
+          />
+        }
         showsVerticalScrollIndicator={false}
       >
-        {loading ? (
-          <View style={styles.state}><LoadingSpinner color={colors.brand.sky} size={26} speedMs={680} /><Text style={styles.stateText}>{copy.loading}</Text></View>
-        ) : error ? (
+        {loading && plans.length === 0 ? null : error ? (
           <View style={styles.state}>
             <Text accessibilityRole="alert" style={styles.stateText}>{error}</Text>
             <Pressable onPress={() => void load()} style={styles.retry}><Text style={styles.retryText}>{copy.retry}</Text></Pressable>
@@ -430,6 +440,7 @@ export default function PlansScreen() {
         })}
         {actionError ? <Text accessibilityRole="alert" style={styles.error}>{actionError}</Text> : null}
       </ScrollView>
+      {refreshing ? <RefreshLoadingIndicator color={colors.brand.sky} top={248} /> : null}
       <Modal
         animationType="fade"
         onRequestClose={() => setReviewPlan(null)}

@@ -212,7 +212,7 @@ export default function SecurityScreen() {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void load(true)} tintColor={colors.brand.sky} />}
       >
         <Text style={styles.description}>{copy.description}</Text>
-        {loading ? <View style={styles.state}><LoadingSpinner color={colors.brand.sky} size={24} speedMs={680} /><Text style={styles.stateText}>{copy.loading}</Text></View> : null}
+        {loading ? <View style={styles.state}><LoadingSpinner color={colors.brand.sky} size={24} /><Text style={styles.stateText}>{copy.loading}</Text></View> : null}
         {!loading ? (
           <>
             <SectionTitle icon="devices" title={copy.sessions} />

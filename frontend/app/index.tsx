@@ -17,7 +17,7 @@ import { StatusBar } from "expo-status-bar";
 import IdentityVerificationPrompt from "../components/IdentityVerificationPrompt";
 import ProfileForm from "../components/ProfileForm";
 import { RecoveryAccountDeleteAction, RecoveryCompletion, RecoveryKeyDisplay, RecoveryKeyInput, SupportAccountID } from "../components/RecoveryFlow";
-import { LoadingSpinner } from "../components/ui";
+import { LoadingScreen, LoadingSpinner } from "../components/ui";
 import { useAuth } from "../hooks/useAuth";
 import {
   completeInitialKeySetup,
@@ -1009,48 +1009,44 @@ export default function OnboardingScreen() {
   }, [keySetupAttempt, languageLoaded, session?.session_id, session?.user_id]);
 
   if (!languageLoaded || status === "loading") {
+    if (!authError) return <LoadingScreen />;
+
     return (
       <View style={styles.loadingScreen}>
         <StatusBar style="dark" />
-        {authError ? (
-          <>
-            <MaterialIcons color={YELLOW} name="cloud-off" size={42} />
-            <Text accessibilityRole="alert" style={styles.loadingText}>{authError}</Text>
-            <Text style={styles.loadingHint}>
-              接続を確認してから再試行してください。 / Check the connection and retry.
-            </Text>
-            <Pressable
-              accessibilityRole="button"
-              disabled={restoreRetrying}
-              onPress={() => void retryAuthRestore()}
-              style={({ pressed }) => [
-                styles.restoreRetryButton,
-                restoreRetrying && styles.disabled,
-                pressed && styles.pressed,
-              ]}
-            >
-              {restoreRetrying ? (
-                <ActivityIndicator color="#ffffff" />
-              ) : (
-                <Text style={styles.restoreRetryButtonText}>再試行 / Retry</Text>
-              )}
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              disabled={restoreRetrying}
-              onPress={() => void clearBlockedAuth()}
-              style={({ pressed }) => [
-                styles.restoreSignOutButton,
-                restoreRetrying && styles.disabled,
-                pressed && styles.pressed,
-              ]}
-            >
-              <Text style={styles.restoreSignOutButtonText}>ログアウト / Sign out</Text>
-            </Pressable>
-          </>
-        ) : (
-          <LoadingSpinner color={BLUE} size={28} speedMs={640} />
-        )}
+        <MaterialIcons color={YELLOW} name="cloud-off" size={42} />
+        <Text accessibilityRole="alert" style={styles.loadingText}>{authError}</Text>
+        <Text style={styles.loadingHint}>
+          接続を確認してから再試行してください。 / Check the connection and retry.
+        </Text>
+        <Pressable
+          accessibilityRole="button"
+          disabled={restoreRetrying}
+          onPress={() => void retryAuthRestore()}
+          style={({ pressed }) => [
+            styles.restoreRetryButton,
+            restoreRetrying && styles.disabled,
+            pressed && styles.pressed,
+          ]}
+        >
+          {restoreRetrying ? (
+            <ActivityIndicator color="#ffffff" />
+          ) : (
+            <Text style={styles.restoreRetryButtonText}>再試行 / Retry</Text>
+          )}
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          disabled={restoreRetrying}
+          onPress={() => void clearBlockedAuth()}
+          style={({ pressed }) => [
+            styles.restoreSignOutButton,
+            restoreRetrying && styles.disabled,
+            pressed && styles.pressed,
+          ]}
+        >
+          <Text style={styles.restoreSignOutButtonText}>ログアウト / Sign out</Text>
+        </Pressable>
       </View>
     );
   }
@@ -1101,7 +1097,7 @@ export default function OnboardingScreen() {
     return (
       <View style={styles.loadingScreen}>
         <StatusBar style="dark" />
-        <LoadingSpinner color={BLUE} size={28} speedMs={640} />
+        <LoadingSpinner color={BLUE} size={28} />
         <Text style={styles.loadingText}>
           {loadingText}
         </Text>
@@ -1237,11 +1233,7 @@ export default function OnboardingScreen() {
     profileLoadedFor !== session.user_id ||
     identityVerificationChoiceLoadedFor !== session.user_id
   ) {
-    return (
-      <View style={styles.loadingScreen}>
-        <LoadingSpinner color={BLUE} size={28} speedMs={640} />
-      </View>
-    );
+    return <LoadingScreen />;
   }
 
   if (!profile?.completed && !accountStepCompleted) {

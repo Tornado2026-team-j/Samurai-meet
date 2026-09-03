@@ -211,7 +211,7 @@ export default function JapaneseMatchDetailScreen() {
     return (
       <View style={styles.loadingScreen}>
         <StatusBar style="light" />
-        <LoadingSpinner color={HEADER_BLUE} size={26} speedMs={680} />
+        <LoadingSpinner color={HEADER_BLUE} size={26} />
       </View>
     );
   }
@@ -220,7 +220,7 @@ export default function JapaneseMatchDetailScreen() {
     return (
       <View style={styles.loadingScreen}>
         <StatusBar style="light" />
-        {loadState === "loading" ? <LoadingSpinner color={HEADER_BLUE} size={26} speedMs={680} /> : null}
+        {loadState === "loading" ? <LoadingSpinner color={HEADER_BLUE} size={26} /> : null}
         <Text accessibilityRole={loadState === "error" ? "alert" : undefined} style={styles.loadingText}>
           {loadState === "loading" ? copy.loading : loadError}
         </Text>

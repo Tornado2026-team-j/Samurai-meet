@@ -161,7 +161,7 @@ export default function MonstersScreen() {
       >
         {loading ? (
           <View style={styles.statePanel}>
-            <LoadingSpinner color={BLUE} size={24} speedMs={680} />
+            <LoadingSpinner color={BLUE} size={24} />
             <Text style={styles.stateText}>{copy.loading}</Text>
           </View>
         ) : hasDetails ? (

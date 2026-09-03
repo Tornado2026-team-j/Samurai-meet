@@ -433,7 +433,7 @@ export default function MyRecruitmentsScreen() {
   };
 
   if (!language) {
-    return <View style={styles.screen}><StatusBar style="light" /><View style={styles.statePanel}><LoadingSpinner color={BLUE} size={28} speedMs={640} /></View></View>;
+    return <View style={styles.screen}><StatusBar style="light" /><View style={styles.statePanel}><LoadingSpinner color={BLUE} size={28} /></View></View>;
   }
 
   return (
@@ -499,7 +499,7 @@ export default function MyRecruitmentsScreen() {
 
         {loadState === "loading" ? (
           <View style={styles.statePanel}>
-            <LoadingSpinner color={BLUE} size={24} speedMs={680} />
+            <LoadingSpinner color={BLUE} size={24} />
             <Text style={styles.stateText}>{copy.loading}</Text>
           </View>
         ) : loadState === "error" ? (
