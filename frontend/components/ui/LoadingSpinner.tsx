@@ -3,6 +3,7 @@ import { Animated, Easing, StyleSheet, type StyleProp, type ViewStyle } from "re
 
 type LoadingSpinnerProps = {
   color: string;
+  trackColor?: string;
   size?: number;
   speedMs?: number;
   style?: StyleProp<ViewStyle>;
@@ -11,6 +12,7 @@ type LoadingSpinnerProps = {
 /** A small, native-driven spinner that starts smoothly and feels responsive. */
 export default function LoadingSpinner({
   color,
+  trackColor = "rgba(31, 45, 61, 0.12)",
   size = 24,
   speedMs = 720,
   style,
@@ -52,9 +54,9 @@ export default function LoadingSpinner({
           width: size,
           height: size,
           borderRadius: size / 2,
-          borderWidth: Math.max(2, Math.round(size / 8)),
+          borderWidth: Math.max(1, Math.round(size / 14)),
+          borderColor: trackColor,
           borderTopColor: color,
-          borderRightColor: color,
         },
         {
           opacity,

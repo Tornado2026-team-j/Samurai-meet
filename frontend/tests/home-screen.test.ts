@@ -130,6 +130,11 @@ describe("ホーム画面の更新契約", () => {
     expect(chatSource).toContain("LoadingSpinner");
     expect(spinnerSource).toContain("Animated.timing(opacity");
     expect(spinnerSource).toContain("useNativeDriver: true");
+    expect(spinnerSource).toContain("trackColor = \"rgba(31, 45, 61, 0.12)\"");
+    expect(spinnerSource).toContain("borderWidth: Math.max(1, Math.round(size / 14))");
+    expect(spinnerSource).toContain("borderColor: trackColor");
+    expect(spinnerSource).toContain("borderTopColor: color");
+    expect(spinnerSource).not.toContain("borderRightColor: color");
   });
 
   it("外国人ホームは構造化プロフィールJSONをそのまま描画しない", async () => {
