@@ -744,15 +744,14 @@ func (s *Service) CancelMatch(ctx context.Context, userID, matchID string, now t
 
 	var match Match
 	var ownerID, requesterID, description, cardStatus string
-	var participantLimit int
 	var matchedAt sql.NullString
 	if err = tx.QueryRowContext(ctx, `
 		SELECT m.id,m.card_id,m.owner_user_id,m.requester_user_id,m.status,
-		       m.matched_at,m.created_at,m.updated_at,r.status,r.description,r.participant_limit
+		       m.matched_at,m.created_at,m.updated_at,r.status,r.description
 		FROM matches m JOIN recruitment_cards r ON r.id=m.card_id
 		WHERE m.id=$1 FOR UPDATE`, matchID).Scan(
 		&match.ID, &match.RecruitmentID, &ownerID, &requesterID, &match.Status,
-		&matchedAt, &match.CreatedAt, &match.UpdatedAt, &cardStatus, &description, &participantLimit); errors.Is(err, sql.ErrNoRows) {
+		&matchedAt, &match.CreatedAt, &match.UpdatedAt, &cardStatus, &description); errors.Is(err, sql.ErrNoRows) {
 		return Match{}, ErrMatchNotFound
 	} else if err != nil {
 		return Match{}, err
