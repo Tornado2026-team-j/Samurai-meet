@@ -134,8 +134,8 @@ Demo のユーザーにGoogle subjectやPasskey credentialを後付けするAPI�
 - Access Tokenの認証
 - Refresh Tokenの更新
 - 募集、応募、match、chat、写真、通知の各API
-- WebSocket / Chat Tokenの発行と接続
-- WebTransportを追加する場合の接続認可
+- WebTransport / Chat Tokenの発行と接続
+- WebTransportの接続認可
 
 期限切れのRefresh Tokenから、通常の90日セッションへ延長してはならない。
 期限切れは `401 demo_account_expired` とし、クライアントはDemo入口へ戻す。
@@ -274,7 +274,7 @@ Demoも送信前のモデレーションや翻訳を有効にする場合、そ�
 - 募集作成、応募、応募取り消し
 - match一覧、match詳細、承認、拒否、完了
 - chat threadの作成、一覧、詳細
-- チャット本文、既読、編集、削除、transport token、WebSocket
+- チャット本文、既読、編集、削除、transport token、WebTransport
 - 写真添付、画像鍵受領者一覧、添付取得
 - 通知、通報、ブロックなど、対象ユーザーやmatchを参照する処理
 
@@ -285,7 +285,7 @@ UIのフィルターだけでは不十分なため、次の三層で実装する
 1. **DBクエリ条件**: 所有者と閲覧者のscope一致を `JOIN` / `WHERE` に含める。
 2. **サービス層**: `RequireCompatibleAccountScope(viewer, other, now)` を共通化し、
    mutationの入口で再検査する。
-3. **HTTP / WebSocket層**: claimsのユーザーIDだけを信頼せず、DBでユーザー種別・期限・
+3. **HTTP / WebTransport層**: claimsのユーザーIDだけを信頼せず、DBでユーザー種別・期限・
    match参加者を解決してから処理する。
 
 概念的な条件は次のとおり。
@@ -337,7 +337,7 @@ migration前にcross-scope matchが存在しないことを検査する。存在
 - Demo同士の検索、応募、承認、chatが成功する。
 - Demoから通常募集を検索・取得・応募できない。
 - 通常ユーザーからDemo募集を検索・取得・応募できない。
-- 直接ID指定、chat、WebSocket、添付でもcross-scopeを拒否する。
+- 直接ID指定、chat、WebTransport、添付でもcross-scopeを拒否する。
 - Demo暗号バージョンを通常ユーザーが保存・送信できない。
 - 通常の `chat-keyb-v1` が既存テストどおり動く。
 - 期限切れスイープが通常ユーザーの行を削除しない。

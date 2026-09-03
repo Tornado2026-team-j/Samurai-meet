@@ -13,7 +13,9 @@ bun install --frozen-lockfile
 
 ## Expo Goとの互換性
 
-このフロントエンドは、ストア版Expo Goで開発確認できるよう **Expo SDK 54系** に揃えています。Expo SDKを更新する場合は、先にExpo Goの対応SDKを確認してください。ストア版より新しいSDKを使う場合は、Expo GoではなくDevelopment Buildを用意します。
+このフロントエンドは、Expo Go 57系で開発確認できるよう **Expo SDK 57系** に揃えています。Expo SDKを更新する場合は、先にExpo Goの対応SDKを確認してください。Expo Goに含まれないネイティブモジュールを確認する場合は、Development Buildを用意します。
+
+Expoアカウントなしでローカル確認する場合は、PCと端末を同じLANへ接続し、`bun run start:offline`（`expo start --offline --lan`）を実行してQRコードを読み取ります。これはリモートのテスト配布ではありません。Expo Goの公開URL／EAS Updateはログインが必要なため、ログインなしで配布する場合はAndroid APKまたはiOSのTestFlight／Ad Hocビルドを使います。
 
 Recovery PhraseのArgon2idは、Development Build / ストアビルドでは`react-native-libsodium`のネイティブ実装を使います。Expo GoとWebでは同じ`memory_kib=32768`、`iterations=3`、`parallelism=1`のパラメータでJS実装へフォールバックします。したがって、Expo Go上での速度はネイティブ実機ビルドの速度にはなりません。iOS実機で高速化を確認する場合は、ネイティブモジュールを含むDevelopment Buildを作成してください。
 
@@ -51,6 +53,12 @@ $env:EXPO_PUBLIC_WEB_APP_ORIGIN="http://localhost:8081"
 バックエンドを同じPCで起動する場合は、Go側にも`APP_ENV=development`、`DEV_CLIENT_ORIGIN=http://localhost:8081`、`WEBAUTHN_RP_ID=localhost`、`WEBAUTHN_RP_ORIGIN=http://localhost:8081`、`GOOGLE_REDIRECT_URI=http://localhost:8080/auth/callback`を設定します。Google Cloud Consoleにも同じcallbackを登録してください。`APP_ENV`だけを変更しても、`.env`に残った本番callbackや本番DB接続先は切り替わりません。
 
 iPhoneのExpo GoからローカルGo APIを確認する場合だけ、`EXPO_PUBLIC_API_BASE_URL`へiPhoneから到達できるURL（例: `http://192.168.11.16:8080/api/v1`）を明示してください。通常は本番APIドメインへ接続します。API接続先を切り替えた場合、セッションはサーバー環境ごとに別なので、その環境で再ログインします。Google OAuthをトンネルで完結させる場合は、Go側のcallbackとGoogle Cloud Consoleの登録値も同じ公開Originに揃え、環境変数を変更した後はExpoを再起動してください。
+
+## チャットの現行境界
+
+`app/chat/[id].tsx` は暗号化RESTの履歴・送信・既読、画像添付、本文編集・削除、チャットDEK復号、翻訳と`Original`切替に接続済みです。バックエンドのリアルタイム経路はHTTP/3 WebTransportですが、Expo Goにはnative WebTransport APIがないため、Expo GoではREST同期を使います。native bridgeを含むDevelopment Buildと2端末の実機E2Eは別ゲートです。
+
+本文送信前の安全確認はバックエンドのModeration APIを先に呼び、`allowed`のときだけ暗号化して送信します。OpenAIキー未設定時は通常送信不可です。テスト環境でサーバーの`CHAT_MODERATION_DEV_FREE_MODE=true`を明示した場合だけ、外部送信をしないローカル保守的判定が使われます。アプリ側はこの設定を持たず、実データを使った確認には利用しません。
 
 募集フローは、プロフィール同期後に募集を公開し、別ユーザーが現在地・キーワードで検索して関心を送り、募集者が応募一覧から承認または辞退できます。現在地を使う場合は`expo-location`の前景位置情報許可が必要です。許可しなくてもキーワード検索と募集公開は継続できますが、距離による絞り込みは行われません。
 

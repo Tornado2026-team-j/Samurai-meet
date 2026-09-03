@@ -18,7 +18,7 @@ type RateLimitError struct{ RetryAfter time.Duration }
 func (e *RateLimitError) Error() string { return ErrChatRateLimited.Error() }
 
 // Is lets errors.Is(err, ErrChatRateLimited) match a *RateLimitError so HTTP
-// and WebSocket callers share one classification path.
+// and HTTP/WebTransport callers share one classification path.
 func (e *RateLimitError) Is(target error) bool { return target == ErrChatRateLimited }
 
 const (

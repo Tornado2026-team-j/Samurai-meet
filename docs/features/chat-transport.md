@@ -130,7 +130,10 @@ unidirectional streamごとに一つのJSON frameを送ります。
 複数APIインスタンスではPostgreSQL `LISTEN/NOTIFY` の `chat_events` を介して、別インスタンスの
 WebTransport registryにも再配送します。NOTIFYの取りこぼしはREST cursor同期で回収します。
 
-`message.send` は `(chat_id, sender_user_id, client_message_id)` で冪等です。QUICのpacket再送と
+`message.send` はRESTの暗号化送信bodyと同じ `ciphertext`、`nonce`、`algorithm`、`key_version`、
+`content_type` を持ち、`text` かつ `chat-dek-v1` の場合は
+`plaintext_commitment` と `plaintext_commitment_salt` も必須です。`location` / `image` では両フィールドを
+省略します。frameは `(chat_id, sender_user_id, client_message_id)` で冪等です。QUICのpacket再送と
 アプリ再送を混同せず、アプリ再送は同じ `client_message_id` を使います。送信レート制限はRESTと
 WebTransportで共有します。
 

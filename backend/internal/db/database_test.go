@@ -4,10 +4,13 @@ import (
 	"context"
 	"crypto/rand"
 	"database/sql"
+	"encoding/base64"
 	"encoding/hex"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/config"
 )
@@ -29,7 +32,7 @@ func TestPostgresMigrationCreatesAuthTables(t *testing.T) {
 	if err := ApplyMigrations(context.Background(), database, migrationPath); err != nil {
 		t.Fatalf("second migration application failed: %v", err)
 	}
-	for _, want := range []string{"sessions", "photos", "profiles", "user_locations", "recruitment_cards", "blocks", "matches", "chat_threads", "messages", "chat_read_states", "meeting_sessions", "meeting_proximity_latest"} {
+	for _, want := range []string{"sessions", "photos", "profiles", "user_locations", "recruitment_cards", "blocks", "matches", "chat_threads", "messages", "chat_read_states", "meeting_sessions", "meeting_proximity_latest", "chat_key_manifests", "chat_translation_rate_limits", "chat_translation_inflight"} {
 		var tableName string
 		if err := database.QueryRow("SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = $1", want).Scan(&tableName); err != nil {
 			t.Fatalf("table %q: %v", want, err)
@@ -37,6 +40,77 @@ func TestPostgresMigrationCreatesAuthTables(t *testing.T) {
 		if tableName != want {
 			t.Fatalf("table = %q, want %q", tableName, want)
 		}
+	}
+}
+
+func TestPostgresChatKeyManifestCommitmentFormatConstraint(t *testing.T) {
+	if os.Getenv("TEST_POSTGRES") != "1" {
+		t.Skip("PostgreSQL integration test requires TEST_POSTGRES=1")
+	}
+
+	database := openIsolatedMigrationDatabase(t)
+	ctx := context.Background()
+	migrationPath := filepath.Join("..", "..", "migrations")
+	if err := ApplyMigrations(ctx, database, migrationPath); err != nil {
+		t.Fatalf("migration application failed: %v", err)
+	}
+
+	stamp := time.Now().UTC().Format(time.RFC3339Nano)
+	ownerID := "manifest-constraint-owner"
+	requesterID := "manifest-constraint-requester"
+	for _, user := range []struct {
+		id     string
+		google string
+	}{
+		{ownerID, "manifest-constraint-owner-google"},
+		{requesterID, "manifest-constraint-requester-google"},
+	} {
+		if _, err := database.ExecContext(ctx, `
+			INSERT INTO users (id,google_subject_id,status,created_at,updated_at)
+			VALUES ($1,$2,'active',$3,$3)`, user.id, user.google, stamp); err != nil {
+			t.Fatalf("insert user %q: %v", user.id, err)
+		}
+	}
+	if _, err := database.ExecContext(ctx, `
+		INSERT INTO recruitment_cards (id,owner_user_id,category,available_date,start_time,end_time,timezone,visibility_radius_km,status,expires_at,created_at,updated_at)
+		VALUES ('manifest-constraint-card',$1,'Food','2026-09-03','18:00','20:00','Asia/Tokyo',3,'matched',$2,$3,$3)`, ownerID, stamp, stamp); err != nil {
+		t.Fatalf("insert recruitment card: %v", err)
+	}
+	if _, err := database.ExecContext(ctx, `
+		INSERT INTO matches (id,card_id,requester_user_id,owner_user_id,status,matched_at,created_at,updated_at)
+		VALUES ('manifest-constraint-match','manifest-constraint-card',$1,$2,'accepted',$3,$3,$3)`, requesterID, ownerID, stamp); err != nil {
+		t.Fatalf("insert match: %v", err)
+	}
+	if _, err := database.ExecContext(ctx, `
+		INSERT INTO chat_threads (id,match_id,created_at,updated_at)
+		VALUES ('manifest-constraint-chat','manifest-constraint-match',$1,$1)`, stamp); err != nil {
+		t.Fatalf("insert chat thread: %v", err)
+	}
+
+	valid := base64.RawURLEncoding.EncodeToString(make([]byte, 32))
+	if _, err := database.ExecContext(ctx, `
+		INSERT INTO chat_key_manifests (chat_id,authority_user_id,key_commitment,created_at,updated_at)
+		VALUES ('manifest-constraint-chat',$1,$2,$3,$3)`, ownerID, valid, stamp); err != nil {
+		t.Fatalf("valid raw Base64URL commitment rejected: %v", err)
+	}
+	if _, err := database.ExecContext(ctx, `DELETE FROM chat_key_manifests WHERE chat_id='manifest-constraint-chat'`); err != nil {
+		t.Fatalf("delete valid manifest: %v", err)
+	}
+
+	for _, invalid := range []struct {
+		name  string
+		value string
+	}{
+		{name: "padding", value: strings.Repeat("A", 42) + "="},
+		{name: "non-base64url character", value: strings.Repeat("A", 42) + "/"},
+	} {
+		t.Run(invalid.name, func(t *testing.T) {
+			if _, err := database.ExecContext(ctx, `
+				INSERT INTO chat_key_manifests (chat_id,authority_user_id,key_commitment,created_at,updated_at)
+				VALUES ('manifest-constraint-chat',$1,$2,$3,$3)`, ownerID, invalid.value, stamp); err == nil {
+				t.Fatalf("invalid commitment %q was accepted", invalid.value)
+			}
+		})
 	}
 }
 

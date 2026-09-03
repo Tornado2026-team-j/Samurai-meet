@@ -7,6 +7,7 @@ import {
   createDeviceTransferVerificationCode,
   createKeyMaterial,
   createRecoveryPhraseMaterial,
+  chatKeyCommitment,
   decryptChatAttachmentBytes,
   decryptPhotoBytes,
   deriveAccountDataKey,
@@ -172,6 +173,14 @@ describe('フロント端末所有Master Key envelope', () => {
     expect(() => unwrapChatKeyForAccount(accountEnvelope, accountDataKey, 'user-2', 'chat-1')).toThrow();
     expect(() => unwrapChatKeyForDevice(deviceEnvelope, recipient.privateKey, 'chat-1', 'user-2', 'other-device')).toThrow();
     expect(() => unwrapChatKeyForDevice(deviceEnvelope, new Uint8Array(32).fill(7), 'chat-1', 'user-2', 'device-2')).toThrow();
+  });
+
+  it('チャットDEK commitmentは鍵ごとに異なる固定長値になる', () => {
+    const first = chatKeyCommitment(new Uint8Array(32).fill(0x42));
+    const second = chatKeyCommitment(new Uint8Array(32).fill(0x43));
+    expect(first).toHaveLength(43);
+    expect(second).toHaveLength(43);
+    expect(second).not.toBe(first);
   });
 
   it('画像鍵はアカウント包みと端末包みを分ける', async () => {

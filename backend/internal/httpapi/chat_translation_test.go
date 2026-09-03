@@ -14,13 +14,34 @@ import (
 )
 
 type chatTranslationAuthorizerStub struct {
-	calls int
-	err   error
+	calls          int
+	err            error
+	revision       string
+	limiterCalls   int
+	limiterErr     error
+	releaseCalls   int
+	limiterUserID  string
+	authorizedText string
+	authorizedKey  string
 }
 
-func (s *chatTranslationAuthorizerStub) AuthorizeMessageTranslation(context.Context, string, string) error {
+func (s *chatTranslationAuthorizerStub) AuthorizeMessageTranslation(_ context.Context, _, _, _, text, commitmentKey string) (string, error) {
 	s.calls++
-	return s.err
+	s.authorizedText = text
+	s.authorizedKey = commitmentKey
+	if s.revision == "" {
+		s.revision = "2026-08-30T00:00:00Z"
+	}
+	return s.revision, s.err
+}
+
+func (s *chatTranslationAuthorizerStub) BeginMessageTranslation(_ context.Context, userID, _ string, _ string, _ string, _ string, _ string, _ string, _ time.Time) (func(), error) {
+	s.limiterCalls++
+	s.limiterUserID = userID
+	if s.limiterErr != nil {
+		return nil, s.limiterErr
+	}
+	return func() { s.releaseCalls++ }, nil
 }
 
 type chatTranslationProviderStub struct {
@@ -86,7 +107,7 @@ func TestChatTranslationAuthorizesBeforeForwardingPlaintext(t *testing.T) {
 }
 
 func TestChatTranslationReturnsOnlyTranslatedContract(t *testing.T) {
-	req, sessions := authenticatedChatTranslationRequest(t, `{"message_id":"message-1","text":"Hello from Kyoto","target_language":"ja"}`)
+	req, sessions := authenticatedChatTranslationRequest(t, `{"message_id":"message-1","text":"Hello from Kyoto","plaintext_commitment_key":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","target_language":"ja"}`)
 	authorizer := &chatTranslationAuthorizerStub{}
 	provider := &chatTranslationProviderStub{
 		available: true,
@@ -100,6 +121,9 @@ func TestChatTranslationReturnsOnlyTranslatedContract(t *testing.T) {
 	}
 	if provider.userID != "user-1" || provider.text != "Hello from Kyoto" || provider.target != "ja" {
 		t.Fatalf("provider input = user=%q text=%q target=%q", provider.userID, provider.text, provider.target)
+	}
+	if authorizer.authorizedText != "Hello from Kyoto" || authorizer.authorizedKey != "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" {
+		t.Fatalf("authorization binding = text=%q key=%q", authorizer.authorizedText, authorizer.authorizedKey)
 	}
 	body := res.Body.String()
 	if !strings.Contains(body, `"source_language":"en"`) || !strings.Contains(body, `"translated_text":"京都からこんにちは"`) || strings.Contains(body, "Hello from Kyoto") {
@@ -131,6 +155,63 @@ func TestChatTranslationUsesEncryptedCacheBeforeProvider(t *testing.T) {
 	body := res.Body.String()
 	if !strings.Contains(body, `"cached":true`) || !strings.Contains(body, `"ciphertext":"opaque-ciphertext"`) || strings.Contains(body, "translated_text") || strings.Contains(body, "Hello from Kyoto") {
 		t.Fatalf("cache response leaked or omitted data: %s", body)
+	}
+}
+
+func TestChatTranslationUsesLegacyEncryptedCacheWithoutBinding(t *testing.T) {
+	req, sessions := authenticatedChatTranslationRequest(t, `{"message_id":"message-1","text":"legacy plaintext","target_language":"ja"}`)
+	cache := &chatTranslationCacheStub{
+		found:    true,
+		revision: "2026-08-30T00:00:00Z",
+		cached: chat.EncryptedMessageTranslation{
+			TargetLanguage:  "ja",
+			Ciphertext:      "opaque-ciphertext",
+			Nonce:           "opaque-nonce",
+			Algorithm:       "AES-256-GCM",
+			KeyVersion:      "chat-translation-keyb-v1",
+			MessageRevision: "2026-08-30T00:00:00Z",
+		},
+	}
+	authorizer := &chatTranslationAuthorizerStub{err: chat.ErrTranslationBindingMissing}
+	provider := &chatTranslationProviderStub{available: true}
+	res := httptest.NewRecorder()
+
+	chatTranslation(authorizer, provider, cache, sessions)(res, req)
+	if res.Code != http.StatusOK || cache.lookups != 1 || provider.calls != 0 || authorizer.limiterCalls != 0 {
+		t.Fatalf("status=%d cache lookups=%d provider=%d limiter=%d, want legacy cache hit without provider", res.Code, cache.lookups, provider.calls, authorizer.limiterCalls)
+	}
+}
+
+func TestChatTranslationRejectsRevisionChangedBeforeProvider(t *testing.T) {
+	req, sessions := authenticatedChatTranslationRequest(t, `{"message_id":"message-1","text":"Hello from Kyoto","target_language":"ja"}`)
+	cache := &chatTranslationCacheStub{revision: "2026-08-31T00:00:00Z"}
+	provider := &chatTranslationProviderStub{available: true}
+	authorizer := &chatTranslationAuthorizerStub{revision: "2026-08-30T00:00:00Z"}
+	res := httptest.NewRecorder()
+
+	chatTranslation(authorizer, provider, cache, sessions)(res, req)
+	if res.Code != http.StatusConflict || provider.calls != 0 || authorizer.limiterCalls != 0 {
+		t.Fatalf("status=%d provider=%d limiter=%d, want stale revision rejected before provider", res.Code, provider.calls, authorizer.limiterCalls)
+	}
+	if !strings.Contains(res.Body.String(), `"chat_translation_stale"`) {
+		t.Fatalf("stale revision response = %s", res.Body.String())
+	}
+}
+
+func TestChatTranslationAppliesAccountRateLimitBeforeProvider(t *testing.T) {
+	req, sessions := authenticatedChatTranslationRequest(t, `{"message_id":"message-1","text":"Hello from Kyoto","target_language":"ja"}`)
+	authorizer := &chatTranslationAuthorizerStub{
+		limiterErr: &chat.TranslationRateLimitError{RetryAfter: 7 * time.Second},
+	}
+	provider := &chatTranslationProviderStub{available: true}
+	res := httptest.NewRecorder()
+
+	chatTranslation(authorizer, provider, nil, sessions)(res, req)
+	if res.Code != http.StatusTooManyRequests || provider.calls != 0 || authorizer.limiterCalls != 1 || authorizer.limiterUserID != "user-1" {
+		t.Fatalf("status=%d provider=%d limiter=%d user=%q, want provider blocked by account limiter", res.Code, provider.calls, authorizer.limiterCalls, authorizer.limiterUserID)
+	}
+	if res.Header().Get("Retry-After") != "7" || !strings.Contains(res.Body.String(), `"chat_translation_rate_limited"`) {
+		t.Fatalf("rate-limit response = headers=%v body=%s", res.Header(), res.Body.String())
 	}
 }
 

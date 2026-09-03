@@ -1,5 +1,6 @@
 import { gcm } from "@noble/ciphers/aes.js";
 import { hkdf } from "@noble/hashes/hkdf.js";
+import { hmac } from "@noble/hashes/hmac.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { utf8ToBytes } from "@noble/hashes/utils.js";
 import { API_BASE_URL } from "./api-config";
@@ -17,6 +18,7 @@ import {
   CHAT_DEVICE_KEY_WRAPPING_ALGORITHM,
   CHAT_MESSAGE_ALGORITHM,
   CHAT_MESSAGE_KEY_VERSION,
+  chatKeyCommitment,
   deriveAccountDataKey,
   decryptChatAttachmentBytes,
   encryptChatAttachmentBytes,
@@ -52,6 +54,8 @@ const CHAT_TRANSLATION_AAD_PREFIX = "samurai-meet:chat-translation:dek-v1";
 const LEGACY_CHAT_TRANSLATION_AAD_PREFIX = "samurai-meet:chat-translation:keyb-v1";
 const CHAT_TRANSLATION_KEY_INFO = utf8ToBytes("samurai-meet/chat-translation/dek-v1");
 const LEGACY_CHAT_TRANSLATION_KEY_INFO = utf8ToBytes("samurai-meet/chat-translation/keyb-v1");
+const CHAT_PLAINTEXT_COMMITMENT_DOMAIN = "samurai-meet:chat-message-plaintext-commitment/v2";
+const CHAT_PLAINTEXT_COMMITMENT_KEY_INFO = utf8ToBytes("samurai-meet/chat-message/plaintext-commitment-key/v2");
 const MAX_PLAINTEXT_LENGTH = 2000;
 
 async function loadDeviceKeyManagement() {
@@ -172,6 +176,7 @@ export type ChatKeyEnvelope = {
   public_key: string;
   algorithm: string;
   envelope: string;
+  key_commitment: string;
 };
 
 export type ChatKeyEnvelopeBundle = {
@@ -452,6 +457,17 @@ function legacyDeviceChatKey(chatID: string, keyB: Uint8Array): Uint8Array {
   );
 }
 
+export function chatPlaintextCommitmentKey(chatID: string, contentKey: Uint8Array): Uint8Array {
+  if (contentKey.length !== 32) throw new Error("chat_key_unavailable");
+  return hkdf(
+    sha256,
+    contentKey,
+    utf8ToBytes(`${CHAT_AAD_PREFIX}\n${chatID}`),
+    CHAT_PLAINTEXT_COMMITMENT_KEY_INFO,
+    32,
+  );
+}
+
 function chatTranslationKey(chatID: string, contentKey: Uint8Array): Uint8Array {
   if (contentKey.length !== 32) throw new Error("chat_key_unavailable");
   return hkdf(
@@ -639,6 +655,7 @@ export async function loadChatContentKey(
     }
 
     const stored = await getChatKeyEnvelope(chatID, session, bundle, signal);
+    const storedCommitment = chatKeyEnvelopeCommitment(stored);
     if (stored.account_envelope && accountDataKey) {
       try {
         contentKey = unwrapChatKeyForAccount(
@@ -648,6 +665,10 @@ export async function loadChatContentKey(
           chatID,
         );
       } catch {
+        contentKey = null;
+      }
+      if (contentKey && storedCommitment && chatKeyCommitment(contentKey) !== storedCommitment) {
+        contentKey.fill(0);
         contentKey = null;
       }
     }
@@ -663,8 +684,13 @@ export async function loadChatContentKey(
       } catch {
         contentKey = null;
       }
+      if (contentKey && storedCommitment && chatKeyCommitment(contentKey) !== storedCommitment) {
+        contentKey.fill(0);
+        contentKey = null;
+      }
     }
     if (contentKey) {
+      const commitment = chatKeyCommitment(contentKey);
       if (!stored.account_envelope && accountDataKey) {
         const accountEnvelope = await wrapChatKeyForAccount(
           contentKey,
@@ -673,15 +699,29 @@ export async function loadChatContentKey(
           chatID,
           random,
         );
-        await saveChatKeyEnvelopes(chatID, [{
-          scope: "account",
-          user_id: session.user_id,
-          device_id: "",
-          key_version: CHAT_ACCOUNT_KEY_ENVELOPE_VERSION,
-          public_key: "",
-          algorithm: CHAT_ACCOUNT_KEY_WRAPPING_ALGORITHM,
-          envelope: accountEnvelope,
-        }], session, bundle, signal);
+        try {
+          await saveChatKeyEnvelopes(chatID, [{
+            scope: "account",
+            user_id: session.user_id,
+            device_id: "",
+            key_version: CHAT_ACCOUNT_KEY_ENVELOPE_VERSION,
+            public_key: "",
+            algorithm: CHAT_ACCOUNT_KEY_WRAPPING_ALGORITHM,
+            envelope: accountEnvelope,
+            key_commitment: commitment,
+          }], session, bundle, signal);
+        } catch (error) {
+          if (signal?.aborted) throw error;
+          if (!(error instanceof APIError) || error.code !== "chat_key_envelope_authority_required") throw error;
+        }
+      }
+      if (!storedCommitment) {
+        try {
+          await ensureChatKeyManifest(chatID, contentKey, stored, session, bundle, signal);
+        } catch (error) {
+          if (signal?.aborted) throw error;
+          if (!(error instanceof APIError) || error.code !== "chat_key_envelope_authority_required") throw error;
+        }
       }
       try {
         await provisionMissingChatDeviceEnvelopes(chatID, contentKey, session, bundle, signal, random);
@@ -706,6 +746,7 @@ export async function loadChatContentKey(
       throw new Error("chat_key_randomness_invalid");
     }
     try {
+      const generatedCommitment = chatKeyCommitment(generatedKey);
       const accountEnvelope = await wrapChatKeyForAccount(
         generatedKey,
         accountDataKey,
@@ -721,6 +762,7 @@ export async function loadChatContentKey(
         key_version: CHAT_DEVICE_KEY_ENVELOPE_VERSION,
         public_key: recipient.public_key,
         algorithm: CHAT_DEVICE_KEY_WRAPPING_ALGORITHM,
+        key_commitment: generatedCommitment,
         envelope: await wrapChatKeyForDevice(
           generatedKey,
           recipient.public_key,
@@ -738,6 +780,7 @@ export async function loadChatContentKey(
         public_key: "",
         algorithm: CHAT_ACCOUNT_KEY_WRAPPING_ALGORITHM,
         envelope: accountEnvelope,
+        key_commitment: generatedCommitment,
       }, ...deviceEnvelopes], session, bundle, signal);
       contentKey = generatedKey.slice();
       returned = true;
@@ -746,9 +789,15 @@ export async function loadChatContentKey(
       // Two devices can initialize the same chat concurrently. Re-read the
       // immutable row once and use the winner instead of creating a split key.
       const winner = await getChatKeyEnvelope(chatID, session, bundle, signal).catch(() => null);
+      const winnerCommitment = winner ? chatKeyEnvelopeCommitment(winner) : "";
       if (winner?.account_envelope && accountDataKey) {
         try {
           contentKey = unwrapChatKeyForAccount(winner.account_envelope.envelope, accountDataKey, session.user_id, chatID);
+          if (winnerCommitment && chatKeyCommitment(contentKey) !== winnerCommitment) {
+            contentKey.fill(0);
+            contentKey = null;
+            throw new Error("chat_key_commitment_mismatch");
+          }
           returned = true;
           return contentKey;
         } catch {
@@ -768,6 +817,11 @@ export async function loadChatContentKey(
             session.user_id,
             bundle.device.deviceID,
           );
+          if (winnerCommitment && chatKeyCommitment(contentKey) !== winnerCommitment) {
+            contentKey.fill(0);
+            contentKey = null;
+            throw new Error("chat_key_commitment_mismatch");
+          }
           returned = true;
           return contentKey;
         } catch {
@@ -855,6 +909,7 @@ async function ensureChatDeviceAgreementKey(session: Session): Promise<DeviceKey
 function parseChatKeyEnvelope(value: unknown): ChatKeyEnvelope {
   if (!value || typeof value !== "object") throw new Error("Invalid chat key envelope response");
   const candidate = value as Partial<ChatKeyEnvelope>;
+  const keyCommitment = candidate.key_commitment === undefined ? "" : candidate.key_commitment;
   if ((candidate.scope !== "account" && candidate.scope !== "device")
     || typeof candidate.user_id !== "string" || !candidate.user_id
     || typeof candidate.device_id !== "string"
@@ -862,6 +917,7 @@ function parseChatKeyEnvelope(value: unknown): ChatKeyEnvelope {
     || typeof candidate.public_key !== "string"
     || typeof candidate.algorithm !== "string"
     || typeof candidate.envelope !== "string"
+    || typeof keyCommitment !== "string"
     || candidate.envelope.length === 0 || candidate.envelope.length > 16 * 1024) {
     throw new Error("Invalid chat key envelope response");
   }
@@ -888,7 +944,14 @@ function parseChatKeyEnvelope(value: unknown): ChatKeyEnvelope {
   } catch {
     throw new Error("Invalid chat key envelope response");
   }
-  return candidate as ChatKeyEnvelope;
+  if (keyCommitment !== "") {
+    try {
+      if (fromBase64URL(keyCommitment).length !== 32) throw new Error("Invalid commitment");
+    } catch {
+      throw new Error("Invalid chat key envelope commitment response");
+    }
+  }
+  return { ...candidate, key_commitment: keyCommitment } as ChatKeyEnvelope;
 }
 
 function parseChatKeyEnvelopeBundle(value: unknown): ChatKeyEnvelopeBundle {
@@ -906,6 +969,31 @@ function parseChatKeyEnvelopeBundle(value: unknown): ChatKeyEnvelopeBundle {
     result.device_envelope = envelope;
   }
   return result;
+}
+
+function chatKeyEnvelopeCommitment(bundle: ChatKeyEnvelopeBundle): string {
+  const commitments = [bundle.account_envelope?.key_commitment, bundle.device_envelope?.key_commitment]
+    .filter((value): value is string => Boolean(value));
+  if (commitments.length > 1 && commitments.some((value) => value !== commitments[0])) {
+    throw new Error("chat_key_commitment_mismatch");
+  }
+  return commitments[0] ?? "";
+}
+
+async function ensureChatKeyManifest(
+  chatID: string,
+  contentKey: Uint8Array,
+  stored: ChatKeyEnvelopeBundle,
+  session: Session,
+  deviceBundle: DeviceKeyBundle,
+  signal: AbortSignal | undefined,
+): Promise<void> {
+  const existing = stored.account_envelope ?? stored.device_envelope;
+  if (!existing || existing.key_commitment) return;
+  await saveChatKeyEnvelopes(chatID, [{
+    ...existing,
+    key_commitment: chatKeyCommitment(contentKey),
+  }], session, deviceBundle, signal);
 }
 
 export async function getChatKeyEnvelope(
@@ -974,13 +1062,14 @@ async function provisionMissingChatDeviceEnvelopes(
   const recipients = await getChatKeyRecipients(chatID, session, deviceBundle, signal);
   const missing = recipients.filter((recipient) => !recipient.envelope_present);
   if (missing.length === 0) return;
-  const envelopes = await Promise.all(missing.map(async (recipient) => ({
+  const buildEnvelopes = (targets: ChatKeyRecipient[]) => Promise.all(targets.map(async (recipient) => ({
     scope: "device" as const,
     user_id: recipient.user_id,
     device_id: recipient.device_id,
     key_version: CHAT_DEVICE_KEY_ENVELOPE_VERSION,
     public_key: recipient.public_key,
     algorithm: CHAT_DEVICE_KEY_WRAPPING_ALGORITHM,
+    key_commitment: chatKeyCommitment(contentKey),
     envelope: await wrapChatKeyForDevice(
       contentKey,
       recipient.public_key,
@@ -990,7 +1079,18 @@ async function provisionMissingChatDeviceEnvelopes(
       random,
     ),
   })));
-  await saveChatKeyEnvelopes(chatID, envelopes, session, deviceBundle, signal);
+  const envelopes = await buildEnvelopes(missing);
+  try {
+    await saveChatKeyEnvelopes(chatID, envelopes, session, deviceBundle, signal);
+  } catch (error) {
+    // A non-owner may be racing an owner provisioning another device. Retry
+    // only the caller's own devices; never ask the participant to write the
+    // other participant's immutable envelope row.
+    if (!(error instanceof APIError) || error.code !== "chat_key_envelope_authority_required") throw error;
+    const ownMissing = missing.filter((recipient) => recipient.user_id === session.user_id);
+    if (ownMissing.length === 0) throw error;
+    await saveChatKeyEnvelopes(chatID, await buildEnvelopes(ownMissing), session, deviceBundle, signal);
+  }
 }
 
 function attachmentResponseErrorCode(body: unknown): string {
@@ -1011,7 +1111,12 @@ async function readAttachmentJSON<T>(response: Response): Promise<T> {
     const data = body && typeof body === "object" && "data" in body
       ? (body as { data?: unknown }).data
       : undefined;
-    throw new APIError(response.status, attachmentResponseErrorCode(body), data);
+    const retryAfterHeader = response.headers.get("Retry-After")?.trim() ?? "";
+    const parsedRetryAfter = /^\d+$/u.test(retryAfterHeader) ? Number(retryAfterHeader) : NaN;
+    const retryAfterSeconds = Number.isSafeInteger(parsedRetryAfter) && parsedRetryAfter > 0
+      ? parsedRetryAfter
+      : undefined;
+    throw new APIError(response.status, attachmentResponseErrorCode(body), data, retryAfterSeconds);
   }
   return body as T;
 }
@@ -1188,7 +1293,7 @@ export async function sendChatAttachmentMessage(
   // never placed in this JSON or sent to the message endpoint.
   const resolvedContentKey = contentKey ?? await loadChatContentKey(chatID, session, signal, random);
   try {
-    const encrypted = await encryptChatPlaintext(chatID, JSON.stringify({ type: "image" }), resolvedContentKey, random);
+    const encrypted = await encryptChatPlaintext(chatID, JSON.stringify({ type: "image" }), resolvedContentKey, random, false);
     const response = await requestAPI<DataResponse<EncryptedChatMessage>>(
       `/chats/${encodeURIComponent(chatID)}/messages`,
       session,
@@ -1404,26 +1509,61 @@ export async function encryptChatPlaintext(
   plaintext: string,
   contentKey: Uint8Array,
   random: (length: number) => Promise<Uint8Array> = randomBytes,
+  includePlaintextCommitment = true,
 ): Promise<{
   ciphertext: string;
   nonce: string;
   algorithm: typeof CHAT_ALGORITHM;
   key_version: typeof CHAT_KEY_VERSION;
+  plaintext_commitment?: string;
+  plaintext_commitment_salt?: string;
 }> {
   if (contentKey.length !== 32) throw new Error("chat_key_unavailable");
   const nonce = await random(12);
+  const salt = includePlaintextCommitment ? await random(16) : null;
+  if (nonce.length !== 12 || (salt !== null && salt.length !== 16)) {
+    nonce.fill(0);
+    salt?.fill(0);
+    throw new Error("chat_message_randomness_invalid");
+  }
   const messageKey = chatKey(chatID, contentKey);
+  const commitmentKey = salt === null ? null : chatPlaintextCommitmentKey(chatID, contentKey);
   try {
     const ciphertext = gcm(messageKey, nonce, chatAAD(chatID)).encrypt(utf8ToBytes(plaintext));
-    return {
+    const encrypted: {
+      ciphertext: string;
+      nonce: string;
+      algorithm: typeof CHAT_ALGORITHM;
+      key_version: typeof CHAT_KEY_VERSION;
+    } = {
       ciphertext: toBase64URL(ciphertext),
       nonce: toBase64URL(nonce),
       algorithm: CHAT_ALGORITHM,
       key_version: CHAT_KEY_VERSION,
     };
+    if (salt === null) return encrypted;
+    const plaintextCommitmentSalt = toBase64URL(salt);
+    return {
+      ...encrypted,
+      plaintext_commitment: chatPlaintextCommitment(plaintext, plaintextCommitmentSalt, commitmentKey as Uint8Array),
+      plaintext_commitment_salt: plaintextCommitmentSalt,
+    };
   } finally {
     messageKey.fill(0);
+    commitmentKey?.fill(0);
+    nonce.fill(0);
+    salt?.fill(0);
   }
+}
+
+/** Commits to the client-visible message text with a client-held HMAC key. */
+export function chatPlaintextCommitment(plaintext: string, salt: string, commitmentKey: Uint8Array): string {
+  if (commitmentKey.length !== 32) throw new Error("chat_key_unavailable");
+  return toBase64URL(hmac(
+    sha256,
+    commitmentKey,
+    utf8ToBytes(`${CHAT_PLAINTEXT_COMMITMENT_DOMAIN}\n${salt}\n${plaintext.trim()}`),
+  ));
 }
 
 export function decryptChatMessage(
@@ -1501,12 +1641,28 @@ export async function translateChatMessage(
   contentKey?: Uint8Array,
   random: (length: number) => Promise<Uint8Array> = randomBytes,
 ): Promise<ChatTranslationResult> {
+  const requestBody: {
+    message_id: string;
+    text: string;
+    target_language: ChatLanguage;
+    plaintext_commitment_key?: string;
+  } = { message_id: messageID, text: plaintext, target_language: targetLanguage };
+  if (contentKey) {
+    const commitmentKey = chatPlaintextCommitmentKey(chatID, contentKey);
+    try {
+      // This derived key is sent only for the request-scoped binding check. It
+      // is never persisted with the message or returned by the API.
+      requestBody.plaintext_commitment_key = toBase64URL(commitmentKey);
+    } finally {
+      commitmentKey.fill(0);
+    }
+  }
   const response = await requestAPI<DataResponse<ChatTranslationAPIResponse>>(
     `/chats/${encodeURIComponent(chatID)}/translate`,
     session,
     {
       method: "POST",
-      body: JSON.stringify({ message_id: messageID, text: plaintext, target_language: targetLanguage }),
+      body: JSON.stringify(requestBody),
       signal,
     },
   );
@@ -1652,7 +1808,7 @@ export async function sendChatLocation(
   if (!parseChatLocationPayload(JSON.stringify(payload), expiresAt)) throw new Error("invalid_chat_location");
   const resolvedContentKey = contentKey ?? await loadChatContentKey(chatID, session, signal, random);
   try {
-    const encrypted = await encryptChatPlaintext(chatID, JSON.stringify(payload), resolvedContentKey, random);
+    const encrypted = await encryptChatPlaintext(chatID, JSON.stringify(payload), resolvedContentKey, random, false);
     const response = await requestAPI<DataResponse<EncryptedChatMessage>>(
       `/chats/${encodeURIComponent(chatID)}/messages`, session,
       { method: "POST", body: JSON.stringify({ client_message_id: clientMessageID, ...encrypted, content_type: "location", expires_at: expiresAt }), signal },
@@ -1685,6 +1841,24 @@ export type ModeratedChatMessageSend = {
   message?: EncryptedChatMessage;
 };
 
+/**
+ * Marks a failure after the moderation decision was already allowed. Keep the
+ * underlying error out of the UI so API responses and cryptographic details
+ * are not exposed, while preserving the phase for safe, accurate messaging.
+ */
+export class ModeratedChatMessageSendError extends Error {
+  readonly phase = "send" as const;
+  readonly code?: string;
+  readonly requiresSessionRefresh: boolean;
+
+  constructor(error: unknown) {
+    super("chat_message_send_failed");
+    this.name = "ModeratedChatMessageSendError";
+    this.code = error instanceof APIError ? error.code : undefined;
+    this.requiresSessionRefresh = error instanceof APIError && error.status === 401;
+  }
+}
+
 // Keep the moderation gate beside encryption so a future caller cannot encrypt
 // or call /messages after a blocked or unavailable moderation result.
 export async function moderateAndSendChatMessage(
@@ -1697,10 +1871,14 @@ export async function moderateAndSendChatMessage(
 ): Promise<ModeratedChatMessageSend> {
   const decision = await moderateChatMessage(chatID, plaintext, session, signal);
   if (decision !== "allowed") return { decision };
-  return {
-    decision,
-    message: await sendChatMessage(chatID, plaintext, session, clientMessageID, signal, random),
-  };
+  try {
+    return {
+      decision,
+      message: await sendChatMessage(chatID, plaintext, session, clientMessageID, signal, random),
+    };
+  } catch (error) {
+    throw new ModeratedChatMessageSendError(error);
+  }
 }
 
 export function toChatMessageView(

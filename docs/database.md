@@ -1,6 +1,6 @@
 # DB仕様書（PostgreSQL）
 
-最終更新: 2026-08-27
+最終更新: 2026-09-03
 
 ## 1. 採用方針
 
@@ -45,7 +45,7 @@
 | `0028_chat_token_sequences.sql` | `(session, chat)`単位のChat Token世代カウンタ。発行のたびに+1し、接続維持中のトークンローテーションで巻き戻しを拒否する |
 | `0029_chat_threads_drop_status.sql` | 未使用だった`chat_threads.status` / `closed_at`列を削除（B3のデッドコード整理。スレッドclose flowは製品トリガーがないため実装せず削除を選択） |
 | `0030_chat_message_deletions.sql` | メッセージ削除の追記専用監査`chat_message_deletions`（chat/message/sequence/送信者/元created_at/理由/保持日数/削除時刻）。保持期間スイープが暗号文を消去した記録を残す |
-| `0031_recruitment_details.sql` | 募集カテゴリを`Heritage`へ統一し、募集人数と公開用場所表示名を追加する |
+| `0031_recruitment_details.sql` | 募集人数と公開用場所表示名を追加する（カテゴリは後続の0035で`Places`へ復元） |
 | `0032_identity_verifications.sql` | Stripe IdentityのセッションIDと確認状態を保存する。本人確認書類や住所は保存しない |
 | `0033_push_devices.sql` | Expo Push Tokenと通知種別ごとの端末設定を保存する |
 | `0034_chat_attachments.sql` | チャット暗号文添付のメタデータを追加する |
@@ -55,6 +55,11 @@
 | `0044_chat_message_translations.sql` | メッセージrevisionごとのチャットDEK暗号化翻訳envelopeを保存する |
 | `0045_chat_message_translations_encrypted.sql` | 先行導入版0044の平文翻訳キャッシュを破棄し、暗号化envelopeの列へ前方移行する |
 | `0046_chat_key_envelopes.sql` | チャットDEKのKey-A由来account envelopeと端末X25519 device envelopeを保存する |
+| `0047_chat_key_manifests.sql` | チャットDEK commitmentとdevice envelopeのowner／自己端末登録制限を支えるmanifestを保存する |
+| `0048_chat_message_plaintext_binding.sql` | 翻訳本文をmessageへ結び付けるcommitment・salt列を追加する（現行値はクライアント保持鍵によるHMAC-SHA-256） |
+| `0049_chat_translation_account_limits.sql` | アカウント単位の翻訳provider token bucketとin-flight状態を共有保存する |
+| `0050_chat_translation_inflight_expiry_type.sql` | in-flight期限をPostgreSQL timestamp型へ移行する |
+| `0051_chat_key_manifest_commitment_format.sql` | chat DEK commitmentをraw Base64URL（パディングなし）43文字に制限する |
 
 注意: 現行のmigration runnerはSQLファイルを順番に正規化して実行し、`schema_migrations`へファイル名と正規化SQLのSHA-256 checksum、適用時刻を記録する。同じchecksumの適用済みmigrationはスキップし、PostgreSQL advisory lockで同時起動を直列化する。適用済みファイルの内容が変わった場合はchecksum mismatchで起動を停止する。適用済みmigrationを編集・置換してはいけない。DDL変更は新しい番号のSQLを追加する。
 
@@ -219,9 +224,10 @@ Recovery Phraseで復号したMaster Keyの所有証明を一時的に受け付�
 - `blocks`: ブロックする側・される側の複合主キー。
 - `matches`: 関心、承認、完了の状態。`card_id`と`requester_user_id`を一意にする。
 - `chat_threads`: accepted/completedマッチに遅延作成する1対1チャット。`match_id`を一意にする。利用可否は`matches.status`と`blocks`で判定し、スレッド自体の状態列は持たない（`0029`で`status`/`closed_at`を削除）。
-- `messages`: Base64URLの暗号文、nonce、アルゴリズム、鍵versionだけを保存する。平文本文は列にもログにも存在しない。送信者・チャット・`client_message_id`の組み合わせを一意にして再送を冪等化する。`deleted_at` は保持期間スイープが打ち（§7）、同時に暗号文・nonce を消去する。読み取りは全経路で `deleted_at IS NULL` 済み。
+- `messages`: Base64URLの暗号文、nonce、アルゴリズム、鍵versionと、翻訳時だけ使うHMAC-SHA-256本文commitment・16byte saltを保存する。commitment鍵・平文本文は列にもログにも存在しない。送信者・チャット・`client_message_id`の組み合わせを一意にして再送を冪等化する。`deleted_at` は保持期間スイープが打ち（§7）、同時に暗号文・nonce を消去する。読み取りは全経路で `deleted_at IS NULL` 済み。
 - `chat_message_translations`: メッセージID・対象言語・現行本文revisionをキーに、チャットDEKでクライアント暗号化した翻訳envelopeだけを保存する。翻訳本文・原言語は保存せず、本文編集・削除・保持期限で関連行も消去する。
-- `chat_key_envelopes`: チャットDEKを利用者のKey-A／`data_salt`から導出したaccount envelope、または対象端末のX25519公開鍵で包んだdevice envelopeとして保存する。サーバーはenvelopeを復号せず、Key-B・Key-A・チャットDEKは保存しない。既存行は置換せず、Recovery／端末移行後は新端末側でaccount envelopeを復号する。
+- `chat_key_envelopes` / `chat_key_manifests`: チャットDEKを利用者のKey-A／`data_salt`から導出したaccount envelope、または対象端末のX25519公開鍵で包んだdevice envelopeとして保存し、全行に同一DEKの`key_commitment`を紐付ける。manifestのauthorityはmatch ownerで、owner以外のdevice envelope登録は自分のアカウントに属する端末だけに限定する。サーバーはenvelopeを復号せず、Key-B・Key-A・チャットDEKは保存しない。既存行は置換せず、Recovery／端末移行後は新端末側でaccount envelopeを復号する。旧チャットを開いたクライアントは履歴表示を止めずに旧envelopeのcommitment移行を試み、owner端末でのみmanifest作成と不足端末への追加登録を完了する。owner以外で自端末向けenvelopeがない場合は、DoS防止のため移行を保留する。
+- `chat_translation_rate_limits` / `chat_translation_inflight`: 認証済みアカウント単位のprovider token bucket、同時実行枠、短命の重複抑止キーだけを保存する。本文・翻訳結果・provider応答は保存しない。
 - `chat_read_states`: ユーザーごとの最後の既読`sequence`。
 - `meeting_sessions`: acceptedマッチのplanned/active/completed/cancelled会合状態。
 - `meeting_proximity_latest`: 会合中の参加者ごと・方式ごとの最新1件。Bluetooth MAC、RSSI生値、ビーコンID、緯度経度は保存せず、会合終了時に削除する。

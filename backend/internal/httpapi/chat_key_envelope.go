@@ -69,7 +69,7 @@ func chatKeyEnvelope(w http.ResponseWriter, r *http.Request, service *chat.Servi
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_chat_request"})
 			return
 		}
-		if err := service.SaveChatKeyEnvelopes(r.Context(), claims.Subject, chatID, input.Envelopes, time.Now()); err != nil {
+		if err := service.SaveChatKeyEnvelopes(r.Context(), claims.Subject, deviceID, chatID, input.Envelopes, time.Now()); err != nil {
 			writeChatError(w, err)
 			return
 		}

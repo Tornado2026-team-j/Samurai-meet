@@ -57,7 +57,22 @@ func TestProductionValidationFailsClosed(t *testing.T) {
 }
 
 func TestProductionValidationAcceptsCompleteSecureConfiguration(t *testing.T) {
-	cfg := Config{
+	cfg := completeProductionConfig()
+	if err := cfg.ValidateForEnvironment(); err != nil {
+		t.Fatalf("complete production configuration rejected: %v", err)
+	}
+}
+
+func TestProductionValidationAllowsExplicitModerationFreeModeForTemporaryTesting(t *testing.T) {
+	cfg := completeProductionConfig()
+	cfg.Chat.DevelopmentModerationFreeMode = true
+	if err := cfg.ValidateForEnvironment(); err != nil {
+		t.Fatalf("explicit moderation free mode should remain an acknowledged production exception: %v", err)
+	}
+}
+
+func completeProductionConfig() Config {
+	return Config{
 		Environment:  "production",
 		ClientOrigin: "https://samurai-meet.disnana.com",
 		Database:     DatabaseConfig{Password: "db-password", SSLMode: "verify-full"},
@@ -65,9 +80,6 @@ func TestProductionValidationAcceptsCompleteSecureConfiguration(t *testing.T) {
 		WebAuthn:     WebAuthnConfig{RPID: "samurai-meet.disnana.com", RPOrigin: "https://samurai-meet.disnana.com"},
 		JWS:          JWSConfig{SigningKey: "encoded-key", KeyID: "v1", Issuer: "issuer", Audience: "audience"},
 		ImageStorage: ImageStorageConfig{ProfileWrappingPrivateKeyPEM: "injected-secret"},
-	}
-	if err := cfg.ValidateForEnvironment(); err != nil {
-		t.Fatalf("complete production configuration rejected: %v", err)
 	}
 }
 

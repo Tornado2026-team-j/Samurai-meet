@@ -1,6 +1,6 @@
 # バックエンド API 仕様（実装基準）
 
-最終更新: 2026-08-27
+最終更新: 2026-09-03
 
 この文書は、現在のGo実装とExpoテストクライアントの契約です。状態は次の記号で表します。
 
@@ -509,27 +509,29 @@ Request body:
   "nonce": "12byte AES-GCM nonceのBase64URL",
   "algorithm": "AES-256-GCM",
   "key_version": "chat-dek-v1",
-  "attachment_id": "任意。事前にアップロードしたチャット写真のID"
+  "attachment_id": "任意。事前にアップロードしたチャット写真のID",
+  "plaintext_commitment": "textかつchat-dek-v1の場合のみ必須。チャットDEK由来鍵のHMAC-SHA-256 commitment（raw Base64URL、パディングなし）",
+  "plaintext_commitment_salt": "textかつchat-dek-v1の場合のみ必須。16byte random saltのBase64URL"
 }
 ```
 
-新規クライアントの`chat-dek-v1`は、クライアントが生成した32 byteのランダムなチャットDEKを本文・位置情報・画像マーカーの暗号化に使います。DEKは利用者ごとのKey-A／`data_salt`から導出したアカウントデータ鍵で`chat-account-v1` envelopeへ包み、参加端末ごとにはX25519公開鍵で`x25519-v1` device envelopeへ包みます。`chat_id`、利用者、端末はenvelopeのAADへ束縛します。Key-Bそのもの・Key-A・DEK・導出鍵・平文はAPIへ送信せず、Key-Bは端末proofと端末公開鍵登録にだけ使います。既存の`chat-mvp-v1`と旧`chat-keyb-v1`はデータ保持のためクライアント側の読み取り互換だけを残し、新規送信・編集では使用しません。
+新規クライアントの`chat-dek-v1`は、クライアントが生成した32 byteのランダムなチャットDEKを本文・位置情報・画像マーカーの暗号化に使います。textを新規送信・編集するときだけ、本文をtrimした値に対するHMAC-SHA-256 `plaintext_commitment`と16byte random saltを送ります。HMAC鍵はチャットDEKからHKDFで導出する32 byteのクライアント保持鍵で、送信・編集APIへは送らず、commitmentとsaltだけを保存します。location/imageメッセージでは両フィールドを省略します。サーバーは本文を保存せず、翻訳要求ではクライアントが同じcommitment鍵をrequest-scopedな`plaintext_commitment_key`として送った場合に限り、`text`が保存済みcommitmentと一致することを確認してGeminiへ渡します。この鍵は保存・レスポンス返却せず、DBだけを取得した攻撃者はcommitmentから本文候補を検証できません（チャットDEKまたは端末を取得した攻撃者への耐性を意味しません）。DEKは利用者ごとのKey-A／`data_salt`から導出したアカウントデータ鍵で`chat-account-v1` envelopeへ包み、参加端末ごとにはX25519公開鍵で`x25519-v1` device envelopeへ包みます。`chat_id`、利用者、端末はenvelopeのAADへ束縛します。Key-Bそのもの・Key-A・DEKはAPIへ送信せず、Key-Bは端末proofと端末公開鍵登録にだけ使います。既存の`chat-mvp-v1`と旧`chat-keyb-v1`はデータ保持のためクライアント側の読み取り互換だけを残し、新規送信・編集では使用しません。
 
-`GET /key-recipients`は認可済みチャットの登録済み端末X25519公開鍵だけを返します。`GET /key-envelope`は端末proofを検証した現端末について、本人のaccount envelopeとdevice envelopeだけを返します。`PUT /key-envelopes`はクライアントが生成した暗号化envelopeを追加保存し、既存の`(chat_id,user_id,scope,device_id)`行を別内容へ置換しません。サーバーはenvelopeを復号せず、チャットDEKを知りません。
+`GET /key-recipients`は認可済みチャットの登録済み端末X25519公開鍵だけを返します。`GET /key-envelope`は端末proofを検証した現端末について、本人のaccount envelopeとdevice envelopeだけを返します。`PUT /key-envelopes`はクライアント生成のenvelopeと、同一チャットDEKを示す`key_commitment`を追加保存し、既存の`(chat_id,user_id,scope,device_id)`行を別内容へ置換しません。match ownerは両参加者のdevice envelopeを登録でき、owner以外は自分のアカウントに属するdevice envelopeだけを、認証済み端末proof付きで登録できます。これにより、参加者が相手端末のimmutable rowを先取りできません。サーバーはenvelopeを復号せず、チャットDEKを知りません。クライアントは旧`chat-mvp-v1` / `chat-keyb-v1`メッセージを表示したチャットを開くと、履歴表示を止めずに一度だけDEK移行を試みます。0046だけが適用済みで現端末が既存envelopeを復号できる場合は、ownerなら同じenvelopeをcommitment付きで再送してmanifestを作成し、不足端末のenvelopeも追加します。owner以外で自端末向けenvelopeがない場合は移行保留となり、ownerの操作を待ちます。クライアントは旧メッセージの暗号文をサーバーで再暗号化しません。
 
 Recovery Phraseまたは端末移行で新端末にKey-Aを復旧した後は、同じ`data_salt`からアカウントデータ鍵を再導出してaccount envelopeを復号できます。別参加者の新規端末は、自端末X25519公開鍵に対するdevice envelopeを復号します。移行中にチャットDEKを平文で転送・保存せず、Key-Bを参加者間で共有しません。
 
 サーバーは`ciphertext`を復号せず、平文本文・検索用プレビュー・暗号鍵を受け付けません。`client_message_id`は送信者とチャット単位で一意で、同じIDの再送は元のメッセージを返します。暗号文は復号前128KiBまでです。履歴は`sequence`をcursorにして再接続時に補完します。
 
-`PATCH /api/v1/chats/{id}/messages/{message_id}` のbodyは`ciphertext`、`nonce`、`algorithm`、`key_version`だけです。送信者本人のtextメッセージだけを更新し、メッセージの`id`、`sequence`、`client_message_id`、`created_at`は維持し、`edited_at`を現在時刻へ更新します。`completed`、相手のメッセージ、location/imageメッセージ、削除済みメッセージは拒否します。
+`PATCH /api/v1/chats/{id}/messages/{message_id}` のbodyは`ciphertext`、`nonce`、`algorithm`、`key_version`と、`chat-dek-v1`では新しい本文の`plaintext_commitment`／`plaintext_commitment_salt`です。送信者本人のtextメッセージだけを更新し、メッセージの`id`、`sequence`、`client_message_id`、`created_at`は維持し、`edited_at`を現在時刻へ更新します。`completed`、相手のメッセージ、location/imageメッセージ、削除済みメッセージは拒否します。
 
 `DELETE /api/v1/chats/{id}/messages/{message_id}` は送信者本人のメッセージだけを対象にし、成功時は204を返します。サーバーは`messages.deleted_at`を設定して`ciphertext`と`nonce`を直ちに消去し、履歴・未読・配送から除外したうえで`chat_message_deletions.reason = 'user_request'`を追加します。接続中のクライアントには`message.deleted`（`message_id`、`sequence`）を配送します。
 
-`POST /api/v1/chats/{id}/moderation` は、クライアントが**暗号化前**に本文を`{"text":"..."}`として送る平文経路のひとつです。サーバーは認可済みのacceptedチャット参加者だけを先に確認し、OpenAI Moderations APIへ公式JSON契約`{"model":"omni-moderation-latest","input":"..."}`で同期転送します。本文はこのリクエスト処理中だけ参照し、DB、キュー、ログ、監査イベントへ保存しません。OpenAIの生応答・カテゴリ・スコアも保存・返却しません。成功レスポンスは`{"data":{"decision":"allowed"|"blocked"}}`だけで、`blocked`時クライアントは**暗号化・`/messages`呼出を開始してはなりません**。APIキー未設定、上流タイムアウト、上流障害、契約外応答は`200 {"data":{"decision":"unavailable","code":"moderation_unavailable"}}`となり、クライアントはローカライズ済みの再試行案内を表示し、**暗号化・`/messages`呼出を開始してはなりません**。ネットワーク障害・HTTP 4xx/5xxも同じfail-closed契約です。`OPENAI_API_KEY`はサーバー環境変数だけに設定します。
+`POST /api/v1/chats/{id}/moderation` は、クライアントが**暗号化前**に本文を`{"text":"..."}`として送る平文経路のひとつです。通常はサーバーが認可済みのacceptedチャット参加者だけを先に確認し、OpenAI Moderations APIへ公式JSON契約`{"model":"omni-moderation-latest","input":"..."}`で同期転送します。本文はこのリクエスト処理中だけ参照し、DB、キュー、ログ、監査イベントへ保存しません。OpenAIの生応答・カテゴリ・スコアも保存・返却しません。成功レスポンスは`{"data":{"decision":"allowed"|"blocked"}}`だけで、`blocked`時クライアントは**暗号化・`/messages`呼出を開始してはなりません**。APIキー未設定、上流タイムアウト、上流障害、契約外応答は通常`200 {"data":{"decision":"unavailable","code":"moderation_unavailable"}}`となり、クライアントはローカライズ済みの再試行案内を表示し、**暗号化・`/messages`呼出を開始してはなりません**。ネットワーク障害・HTTP 4xx/5xxも同じfail-closed契約です。`CHAT_MODERATION_DEV_FREE_MODE=true`を明示した一時確認では、APP_ENVにかかわらずAPIキーの有無に関係なく本文を外部送信しないローカル保守的判定を優先します。このモードは高信頼の外部連絡先・個人情報等を拒否しますが、OpenAI Moderationの代替ではありません。起動時に警告を出し、実データを使わず、通常の本番運用前に無効化します。`OPENAI_API_KEY`はサーバー環境変数だけに設定します。
 
 この送信前平文判定を有効にするチャットは、厳密な完全E2EEではありません。保存・配送はチャットDEK由来のAES-256-GCM暗号文ですが、送信者端末が送信前に本文をサーバー経由でOpenAIへ提示する明示的な例外があります。
 
-`POST /api/v1/chats/{id}/translate` は`accepted`または`completed`マッチの参加者だけが利用できます。bodyは`{"message_id":"...","text":"...","target_language":"ja"|"en"}`です。サーバーは認可後にGeminiへ本文と対象言語を同期転送し、Geminiが原言語を判定して翻訳します。保存済みの対象言語・現行`message_revision`がある場合はGeminiを呼ばず、`cached:true`と`ciphertext`、`nonce`、`algorithm`、`key_version`、`message_revision`だけを返します。未保存の場合は`{"data":{"cached":false,"source_language":"en","translated_text":"...","target_language":"ja","message_revision":"..."}}`を返し、クライアントが翻訳結果をチャットDEKで暗号化して次のPUTを行います。クライアントは同意済みの場合だけ表示範囲を遅延翻訳し、保存済みenvelopeを先に利用します。
+`POST /api/v1/chats/{id}/translate` は`accepted`または`completed`マッチの参加者だけが利用できます。bodyは`{"message_id":"...","text":"...","plaintext_commitment_key":"32byte HMAC鍵のBase64URL","target_language":"ja"|"en"}`です。新しい`chat-dek-v1` messageのprovider経路では`plaintext_commitment_key`を必須とし、サーバーはmessageの現行revision、保存済みHMAC-SHA-256 commitment、saltを同一の短い検証処理で確認し、trim後の`text`が一致した場合だけGeminiへ本文と対象言語を同期転送します。鍵がない場合でも既存の暗号化cache hitだけは返せますが、cache missをproviderへ転送しません。一致しない本文、bindingのない旧メッセージ、存在しないmessageはproviderへ転送しません。旧メッセージは現行のbindingを持たないため、既存の暗号化cache hitだけを返し、cache missは`409 chat_translation_binding_unavailable`とします。保存済みの対象言語・現行`message_revision`がある場合はGeminiを呼ばず、`cached:true`と`ciphertext`、`nonce`、`algorithm`、`key_version`、`message_revision`だけを返します。未保存の場合は`{"data":{"cached":false,"source_language":"en","translated_text":"...","target_language":"ja","message_revision":"..."}}`を返し、クライアントが翻訳結果をチャットDEKで暗号化して次のPUTを行います。provider予約は認証済みアカウント単位のPostgreSQL共有token bucket（既定30回burst／毎分30回）と同時実行数（既定2）で制限し、cache hitはprovider枠を消費しません。予約成功後はmessage行をロックし、revisionとHMAC bindingを再確認した状態をprovider呼び出し完了まで保持するため、編集・削除との競合で検証済みとは異なる本文がGeminiへ渡りません。枠超過は`429 chat_translation_rate_limited`と`Retry-After`を返し、in-flight markerはprovider呼び出し中に短いTTLを更新し続け、プロセス異常終了時だけ期限切れで解放されます。クライアントは429を自動再試行せず、408/502/503/504だけを中断可能な限定回数で再試行します。クライアントは同意済みの場合だけ表示範囲を遅延翻訳し、保存済みenvelopeを先に利用します。
 
 `PUT /api/v1/chats/{id}/messages/{message_id}/translations/{target_language}` は、bodyに`target_language`、`ciphertext`、`nonce`、`algorithm`、`key_version`、`message_revision`を受け付けます。サーバーはメッセージの現行revisionをロック確認してから`chat_message_translations`へ暗号文だけをupsertし、revisionが変わっていれば409 `chat_translation_stale`を返します。翻訳本文、原言語、Gemini生応答はDB、キュー、ログ、監査イベントへ保存しません。編集時は対象メッセージの翻訳行を消去し、ユーザー削除・保持期限スイープでも同時に消去します。翻訳自体は暗号化前の平文経路であるため、送信前Moderationと同じく完全E2EEの例外です。provider未設定・障害時は`503 chat_translation_unavailable`、レート制限時は`429 chat_translation_rate_limited`です。
 
@@ -544,7 +546,7 @@ Recovery Phraseまたは端末移行で新端末にKey-Aを復旧した後は、
 `accepted`マッチの参加者は、暗号化した画像をチャットに添付できます。フローは2段階です。
 
 1. `POST /api/v1/chats/{id}/attachments` に**AES-256-GCM暗号文をraw bodyで**送る。メタはヘッダ `X-Chat-Attachment-Content-Type`（`image/jpeg` / `image/png` / `image/webp` / `application/octet-stream`）、`X-Chat-Attachment-Nonce`（12byte b64url）、`X-Chat-Attachment-Algorithm`（`AES-256-GCM`）、`X-Chat-Attachment-Key-Version`。応答は `{ "data": { id, chat_id, content_type, size_bytes, cipher_sha256, nonce, algorithm, key_version, created_at } }`。
-2. `POST /api/v1/chats/{id}/messages` の body に `attachment_id` を入れて送信する。参照できるのは**同一チャットで自分がアップロードした未参照の添付**だけ。以後、そのメッセージは `GET /messages` と WebSocket `message.created` / `message.ack` の各要素に `attachment` オブジェクトを持つ。
+2. `POST /api/v1/chats/{id}/messages` の body に `attachment_id` を入れて送信する。参照できるのは**同一チャットで自分がアップロードした未参照の添付**だけ。以後、そのメッセージは `GET /messages` と WebTransport `message.created` / `message.ack` の各要素に `attachment` オブジェクトを持つ。
 
 `GET /api/v1/chats/{id}/attachments/{attachment_id}` は暗号文を `application/octet-stream` で返す（`accepted`/`completed`マッチの参加者のみ、ブロック時は不可）。サーバーは復号せず、EXIF除去はクライアント側の責務。暗号文の上限は `IMAGE_MAX_UPLOAD_BYTES`（既定20MiB）。メッセージから参照されない添付は約24時間後にスイープで削除される。鍵の生成・共有はクライアント契約で、`key_version = "chat-attachment-mvp-v1"` は「添付ごとのランダム鍵を参照元メッセージの暗号化本文で相手へ渡す」前提。
 
@@ -605,7 +607,7 @@ DBには会合中の参加者ごと・方式ごとに最新1件だけを保持�
 
 ### 6.11 未実装業務API
 
-本人確認（Stripe Identity等）、評価、チャット添付のクライアント送受信UI、通報の運営キューは引き続き予定です。チャットDEK envelope、編集・削除、AI翻訳、Recovery／端末移行後のaccount envelope復旧は実装済みですが、端末失効・鍵ローテーションと実機2端末E2Eは未完了で、厳密E2EEの完成契約ではありません。Stripe Identityを採用する場合も、Stripe Webhookの署名検証・イベント冪等性・対象ユーザー紐付けが成功するまで`identity_status=verified`へ遷移させません。画像平文、Key-A、Key-B、Recovery Key、Refresh TokenをAPIログへ出さない不変条件は全機能に適用します。
+本人確認（Stripe Identity等）、評価、通報の運営キューは引き続き予定です。チャット添付のクライアント送受信UI、チャットDEK envelope、編集・削除、AI翻訳、Recovery／端末移行後のaccount envelope復旧は実装済みですが、native WebTransport module、端末失効・鍵ローテーション、実機2端末E2Eは未完了で、厳密E2EEの完成契約ではありません。Stripe Identityを採用する場合も、Stripe Webhookの署名検証・イベント冪等性・対象ユーザー紐付けが成功するまで`identity_status=verified`へ遷移させません。画像平文、Key-A、Key-B、Recovery Key、Refresh TokenをAPIログへ出さない不変条件は全機能に適用します。
 
 ## 7. クライアント更新手順
 

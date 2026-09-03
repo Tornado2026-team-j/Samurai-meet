@@ -24,4 +24,4 @@ npm run preview
 
 mainブランチへのpushまたはgh-pagesへの直接pushで自動的にGitHub Pagesへデプロイされます。
 
-詳細は [../.github/workflows/deploy-site.yml]('../.github/workflows/deploy-site.yml') を参照してください。
+詳細は [../.github/workflows/deploy-site.yml](../.github/workflows/deploy-site.yml) を参照してください。

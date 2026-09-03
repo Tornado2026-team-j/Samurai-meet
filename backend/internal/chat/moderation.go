@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -34,6 +35,22 @@ var ErrModerationUnavailable = errors.New("chat moderation is unavailable")
 // Implementations must return a decision only and must not retain input.
 type ModerationProvider interface {
 	Moderate(context.Context, string) (ModerationDecision, error)
+}
+
+// NewModerationProvider selects the configured chat moderation boundary. The
+// explicit temporary free-mode switch wins so a stale inherited API key cannot
+// silently keep a test process on the unavailable OpenAI path. Without that
+// switch, a configured OpenAI provider is used and every environment remains
+// fail-closed when OpenAI is unavailable. The caller logs a startup warning
+// because free mode is a testing exception, not equivalent production safety.
+func NewModerationProvider(apiKey string, allowDevelopmentFreeMode bool) ModerationProvider {
+	if allowDevelopmentFreeMode {
+		return NewDevelopmentModerationProvider()
+	}
+	if provider := NewOpenAIModerationProvider(apiKey, nil); provider != nil {
+		return provider
+	}
+	return nil
 }
 
 // OpenAIModerationProvider is a request-scoped proxy for the official OpenAI
@@ -106,5 +123,47 @@ func (p *OpenAIModerationProvider) Moderate(ctx context.Context, plaintext strin
 	if payload.Results[0].Flagged {
 		return ModerationBlocked, nil
 	}
+	return ModerationAllowed, nil
+}
+
+// DevelopmentModerationProvider is a deterministic, local-only safety guard
+// for short-lived testing when an OpenAI key is intentionally not configured.
+// It is not a replacement for the production provider: it blocks only
+// high-confidence patterns and never sends plaintext over the network.
+type DevelopmentModerationProvider struct{}
+
+var developmentModerationBlockPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)(?:\b(?:line|instagram|insta|whatsapp|telegram|signal|tel|phone|paypal|crypto|bitcoin)\b|電話|連絡先|@\w+)`),
+	regexp.MustCompile(`(?:\+?\d[\d\s-]{8,}\d)`),
+	regexp.MustCompile(`(?i)(?:住所|自宅|家に来て|個室|人気のない|暗い場所|パスポート|身分証|カード番号|クレジットカード|\baddress\b|\bpassport\b|\bcredit card\b)`),
+	regexp.MustCompile(`(?i)(?:死ね|ばか|差別|\bhate\b|\bidiot\b|\bstupid\b|\bracist\b|\bsex\b|\bsexual\b|ホテル|\bhotel\b|裸|送金|投資|振込|\bmoney\b|\bcrypto\b|bitcoin|断るな|来ないと困る|絶対来て|\bmust come\b|\bdon't cancel\b|\bdo not cancel\b)`),
+}
+
+func NewDevelopmentModerationProvider() *DevelopmentModerationProvider {
+	return &DevelopmentModerationProvider{}
+}
+
+func (p *DevelopmentModerationProvider) Moderate(ctx context.Context, plaintext string) (ModerationDecision, error) {
+	if p == nil {
+		return ModerationUnavailable, ErrModerationUnavailable
+	}
+	select {
+	case <-ctx.Done():
+		return ModerationUnavailable, ctx.Err()
+	default:
+	}
+	if strings.TrimSpace(plaintext) == "" {
+		return ModerationUnavailable, ErrModerationUnavailable
+	}
+
+	normalized := strings.ToLower(plaintext)
+	plaintext = ""
+	for _, pattern := range developmentModerationBlockPatterns {
+		if pattern.MatchString(normalized) {
+			normalized = ""
+			return ModerationBlocked, nil
+		}
+	}
+	normalized = ""
 	return ModerationAllowed, nil
 }

@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -56,5 +57,50 @@ func TestOpenAIModerationProviderMapsTimeoutToUnavailable(t *testing.T) {
 func TestOpenAIModerationProviderWithoutKeyIsUnavailable(t *testing.T) {
 	if NewOpenAIModerationProvider("", nil) != nil {
 		t.Fatal("provider must not be constructed without an API key")
+	}
+}
+
+func TestNewModerationProviderUsesDevelopmentFreeModeOnlyWhenExplicitlyEnabled(t *testing.T) {
+	if provider := NewModerationProvider("", false); provider != nil {
+		t.Fatal("free mode must require explicit opt-in")
+	}
+	if provider := NewModerationProvider("", true); provider == nil {
+		t.Fatal("explicit free mode should construct a local provider")
+	}
+	if provider := NewModerationProvider("test-key", true); provider == nil {
+		t.Fatal("explicit free mode should construct a local provider even when an inherited key exists")
+	} else if _, ok := provider.(*DevelopmentModerationProvider); !ok {
+		t.Fatalf("free mode provider type = %T, want development provider", provider)
+	}
+	if provider := NewModerationProvider("test-key", false); provider == nil {
+		t.Fatal("configured OpenAI provider should be selected when free mode is disabled")
+	} else if _, ok := provider.(*OpenAIModerationProvider); !ok {
+		t.Fatalf("configured provider type = %T, want OpenAI provider", provider)
+	}
+}
+
+func TestDevelopmentModerationProviderAllowsSafeTextAndBlocksHighConfidencePatterns(t *testing.T) {
+	provider := NewDevelopmentModerationProvider()
+	decision, err := provider.Moderate(context.Background(), "集合場所はどこですか？")
+	if err != nil || decision != ModerationAllowed {
+		t.Fatalf("safe text decision=%q err=%v, want allowed", decision, err)
+	}
+	decision, err = provider.Moderate(context.Background(), "電話番号は090-1234-5678です")
+	if err != nil || decision != ModerationBlocked {
+		t.Fatalf("contact text decision=%q err=%v, want blocked", decision, err)
+	}
+}
+
+func TestDevelopmentModerationProviderHonorsCancellationAndRejectsEmptyText(t *testing.T) {
+	provider := NewDevelopmentModerationProvider()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	decision, err := provider.Moderate(ctx, "message")
+	if decision != ModerationUnavailable || !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled decision=%q err=%v, want unavailable/context canceled", decision, err)
+	}
+	decision, err = provider.Moderate(context.Background(), "   ")
+	if decision != ModerationUnavailable || !errors.Is(err, ErrModerationUnavailable) {
+		t.Fatalf("empty decision=%q err=%v, want unavailable", decision, err)
 	}
 }

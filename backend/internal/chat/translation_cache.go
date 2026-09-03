@@ -2,6 +2,9 @@ package chat
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/base64"
 	"errors"
@@ -15,18 +18,38 @@ const (
 	chatTranslationAlgorithm        = "AES-256-GCM"
 	chatTranslationKeyVersion       = "chat-translation-dek-v1"
 	legacyChatTranslationKeyVersion = "chat-translation-keyb-v1"
+	chatMessageKeyVersion           = "chat-dek-v1"
+	plaintextCommitmentDomain       = "samurai-meet:chat-message-plaintext-commitment/v2"
+	legacyPlaintextCommitmentDomain = "samurai-meet:chat-message-plaintext-commitment/v1"
 	maxMessageRevision              = 128
+	maxTranslationTextRunes         = 2_000
 )
 
-var ErrMessageTranslationStale = errors.New("message changed while translation was in flight")
+var (
+	ErrMessageTranslationStale    = errors.New("message changed while translation was in flight")
+	ErrTranslationBindingMissing  = errors.New("message translation binding is unavailable")
+	ErrTranslationBindingMismatch = errors.New("message translation text does not match message binding")
+)
 
 type translationQueryer interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
 
+type translationExecer interface {
+	translationQueryer
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
 type storedMessageTranslation struct {
 	MessageID string
 	EncryptedMessageTranslation
+}
+
+type messageTranslationMetadata struct {
+	Revision       string
+	KeyVersion     string
+	Commitment     string
+	CommitmentSalt string
 }
 
 // LookupMessageTranslation returns a cached encrypted result only for the
@@ -132,33 +155,124 @@ func (s *Service) messageTranslationRevision(
 	messageID string,
 	lock bool,
 ) (string, error) {
-	if !validIdentifier(messageID, maxClientMessageID) {
+	metadata, err := s.messageTranslationMetadata(ctx, queryer, chatID, messageID, lock)
+	if err != nil {
+		return "", err
+	}
+	return metadata.Revision, nil
+}
+
+func (s *Service) messageTranslationRevisionForText(
+	ctx context.Context,
+	queryer translationQueryer,
+	chatID string,
+	messageID string,
+	text string,
+	commitmentKey string,
+	lock bool,
+	migrateLegacy bool,
+) (string, error) {
+	if strings.TrimSpace(text) == "" || !utf8.ValidString(text) || utf8.RuneCountInString(text) > maxTranslationTextRunes {
 		return "", ErrChatInvalidInput
 	}
+	metadata, err := s.messageTranslationMetadata(ctx, queryer, chatID, messageID, lock)
+	if err != nil {
+		return "", err
+	}
+	if metadata.KeyVersion != chatMessageKeyVersion {
+		return "", ErrTranslationBindingMissing
+	}
+	if !validPlaintextBinding(metadata.Commitment, metadata.CommitmentSalt) {
+		return "", ErrTranslationBindingMissing
+	}
+	if expected, valid := plaintextCommitment(text, metadata.CommitmentSalt, commitmentKey); valid && subtle.ConstantTimeCompare([]byte(expected), []byte(metadata.Commitment)) == 1 {
+		return metadata.Revision, nil
+	}
+	// Messages written before the keyed commitment rollout can be upgraded by
+	// a client that still has the chat DEK. They are never sent to the provider
+	// under the old public-salt-only binding, and a DB-only reader cannot perform
+	// this upgrade because it does not have the client-held commitment key.
+	if subtle.ConstantTimeCompare([]byte(legacyPlaintextCommitment(text, metadata.CommitmentSalt)), []byte(metadata.Commitment)) == 1 {
+		if !migrateLegacy {
+			return "", ErrTranslationBindingMissing
+		}
+		expected, valid := plaintextCommitment(text, metadata.CommitmentSalt, commitmentKey)
+		if !valid {
+			return "", ErrTranslationBindingMissing
+		}
+		execer, ok := queryer.(translationExecer)
+		if !ok {
+			return "", ErrTranslationBindingMissing
+		}
+		if _, err := execer.ExecContext(ctx, `
+			UPDATE messages SET plaintext_commitment=$1
+			WHERE id=$2 AND chat_id=$3 AND deleted_at IS NULL`, expected, messageID, chatID); err != nil {
+			return "", err
+		}
+		return metadata.Revision, nil
+	}
+	return "", ErrTranslationBindingMismatch
+}
+
+func (s *Service) messageTranslationMetadata(
+	ctx context.Context,
+	queryer translationQueryer,
+	chatID string,
+	messageID string,
+	lock bool,
+) (messageTranslationMetadata, error) {
+	if !validIdentifier(messageID, maxClientMessageID) {
+		return messageTranslationMetadata{}, ErrChatInvalidInput
+	}
 	query := `
-		SELECT content_type,COALESCE(edited_at,''),created_at,deleted_at
+		SELECT content_type,key_version,COALESCE(edited_at,''),created_at,deleted_at,
+		       COALESCE(plaintext_commitment,''),COALESCE(plaintext_commitment_salt,'')
 		FROM messages WHERE id=$1 AND chat_id=$2`
 	if lock {
 		query += " FOR UPDATE"
 	}
 	var contentType, editedAt, createdAt string
 	var deletedAt sql.NullString
+	var metadata messageTranslationMetadata
 	if err := queryer.QueryRowContext(ctx, query, messageID, chatID).Scan(
-		&contentType, &editedAt, &createdAt, &deletedAt); errors.Is(err, sql.ErrNoRows) {
-		return "", ErrMessageNotFound
+		&contentType, &metadata.KeyVersion, &editedAt, &createdAt, &deletedAt, &metadata.Commitment, &metadata.CommitmentSalt); errors.Is(err, sql.ErrNoRows) {
+		return messageTranslationMetadata{}, ErrMessageNotFound
 	} else if err != nil {
-		return "", err
+		return messageTranslationMetadata{}, err
 	}
 	if deletedAt.Valid {
-		return "", ErrMessageNotFound
+		return messageTranslationMetadata{}, ErrMessageNotFound
 	}
 	if contentType != "text" {
-		return "", ErrChatInvalidInput
+		return messageTranslationMetadata{}, ErrChatInvalidInput
 	}
 	if editedAt != "" {
-		return editedAt, nil
+		metadata.Revision = editedAt
+	} else {
+		metadata.Revision = createdAt
 	}
-	return createdAt, nil
+	return metadata, nil
+}
+
+func validPlaintextBinding(commitment, salt string) bool {
+	commitmentBytes, commitmentErr := base64.RawURLEncoding.DecodeString(strings.TrimSpace(commitment))
+	saltBytes, saltErr := base64.RawURLEncoding.DecodeString(strings.TrimSpace(salt))
+	return commitmentErr == nil && len(commitmentBytes) == sha256.Size && saltErr == nil && len(saltBytes) == 16
+}
+
+func plaintextCommitment(text, salt, commitmentKey string) (string, bool) {
+	key, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(commitmentKey))
+	if err != nil || len(key) != sha256.Size {
+		return "", false
+	}
+	mac := hmac.New(sha256.New, key)
+	_, _ = mac.Write([]byte(plaintextCommitmentDomain + "\n" + strings.TrimSpace(salt) + "\n" + strings.TrimSpace(text)))
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil)), true
+}
+
+func legacyPlaintextCommitment(text, salt string) string {
+	digest := sha256.Sum256([]byte(legacyPlaintextCommitmentDomain + "\n" + strings.TrimSpace(salt) + "\n" + strings.TrimSpace(text)))
+	return base64.RawURLEncoding.EncodeToString(digest[:])
 }
 
 func (s *Service) loadMessageTranslations(ctx context.Context, messages []Message) error {

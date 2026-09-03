@@ -32,6 +32,9 @@ func main() {
 	if err := cfg.ValidateForEnvironment(); err != nil {
 		log.Fatalf("configuration validation failed: %v", err)
 	}
+	if cfg.Chat.DevelopmentModerationFreeMode {
+		log.Printf("WARNING: CHAT_MODERATION_DEV_FREE_MODE=true is enabled for APP_ENV=%s; chat moderation uses the local conservative provider instead of OpenAI. Do not use real user data; disable this flag and configure OPENAI_API_KEY before normal production operation", cfg.Environment)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	database, err := db.Open(ctx, cfg.Database)
@@ -120,9 +123,11 @@ func main() {
 	chatService := chat.NewService(database, signer, notifications).
 		WithAttachments(store, int64(cfg.ImageStorage.MaxUploadBytes))
 	chatService.ConfigureSendRateLimit(cfg.Chat.SendBurst, float64(cfg.Chat.SendRefillPerMinute)/60.0)
+	chatService.ConfigureTranslationRateLimit(cfg.Chat.TranslationAccountBurst, float64(cfg.Chat.TranslationAccountRefillPerMinute)/60.0, cfg.Chat.TranslationMaxInFlight)
 	chatService.ConfigureMessageRetention(cfg.Chat.MessageRetentionDays)
 	chatService.SetClusterLogger(log.Printf)
-	chatModeration := chat.NewOpenAIModerationProvider(os.Getenv("OPENAI_API_KEY"), nil)
+	chatModerationKey := strings.TrimSpace(os.Getenv("OPENAI_API_KEY"))
+	chatModeration := chat.NewModerationProvider(chatModerationKey, cfg.Chat.DevelopmentModerationFreeMode)
 	chatTranslation := translation.NewGemini(cfg.Gemini.APIKey, cfg.Gemini.Model)
 	webTransport, err := chat.StartWebTransport(context.Background(), chatService, chat.WebTransportConfig{Enabled: strings.EqualFold(strings.TrimSpace(os.Getenv("ENABLE_CHAT_WEBTRANSPORT")), "true"), UDPAddr: strings.TrimSpace(os.Getenv("CHAT_WEBTRANSPORT_UDP_ADDR")), CertFile: strings.TrimSpace(os.Getenv("CHAT_WEBTRANSPORT_TLS_CERT_FILE")), KeyFile: strings.TrimSpace(os.Getenv("CHAT_WEBTRANSPORT_TLS_KEY_FILE")), AllowedOrigins: []string{cfg.ClientOrigin, cfg.DevClientOrigin}, Logf: log.Printf})
 	if err != nil {

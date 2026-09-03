@@ -21,8 +21,8 @@ var (
 )
 
 // QUICEndpoint contains the transport-independent security boundary for the
-// future HTTP/3/WebTransport listener. It has no network listener by itself:
-// wiring a concrete listener requires a WebTransport implementation and a
+// HTTP/3/WebTransport listener. It has no network listener by itself: the
+// concrete listener still requires a WebTransport implementation and a
 // TLS/UDP deployment configuration. Keeping this boundary separate prevents a
 // half-configured listener from accepting tokens or state-changing frames.
 //
@@ -34,8 +34,8 @@ type QUICEndpoint struct {
 	enabled bool
 }
 
-// NewQUICEndpoint constructs the guard used by the eventual WebTransport
-// listener. enabled must remain false until that listener is installed.
+// NewQUICEndpoint constructs the guard used by the WebTransport listener.
+// enabled must remain false until that listener is installed and configured.
 func NewQUICEndpoint(service *Service, enabled bool) *QUICEndpoint {
 	return &QUICEndpoint{service: service, enabled: enabled}
 }
@@ -93,9 +93,9 @@ func validateQUICClaims(claims auth.ChatClaims, chatID string) error {
 }
 
 // HandleFrame performs only state-changing operations supported by the
-// eventual WebTransport stream. Early data is rejected before parsing or
-// delegating, because QUIC 0-RTT data can be replayed. SendMessage preserves
-// the existing (chat, sender, client_message_id) idempotency contract.
+// WebTransport stream. Early data is rejected before parsing or delegating,
+// because QUIC 0-RTT data can be replayed. SendMessage preserves the existing
+// (chat, sender, client_message_id) idempotency contract.
 func (e *QUICEndpoint) HandleFrame(ctx context.Context, connection QUICConnection, earlyData bool, frame inboundFrame, now time.Time) (Message, bool, error) {
 	if earlyData {
 		return Message{}, false, ErrQUICEarlyData
@@ -117,14 +117,7 @@ func (e *QUICEndpoint) HandleFrame(ctx context.Context, connection QUICConnectio
 	}
 	switch frame.Type {
 	case clientFrameMessageSend:
-		return e.service.SendMessage(ctx, connection.UserID, connection.ChatID, SendMessageInput{
-			ClientMessageID: frame.ClientMessageID,
-			Ciphertext:      frame.Ciphertext,
-			Nonce:           frame.Nonce,
-			Algorithm:       frame.Algorithm,
-			KeyVersion:      frame.KeyVersion,
-			ContentType:     frame.ContentType,
-		}, now)
+		return e.service.SendMessage(ctx, connection.UserID, connection.ChatID, sendMessageInputFromFrame(frame), now)
 	case clientFrameMessageRead:
 		if err := e.service.MarkRead(ctx, connection.UserID, connection.ChatID, frame.LastMessageSequence, now); err != nil {
 			return Message{}, false, err
@@ -138,6 +131,19 @@ func (e *QUICEndpoint) HandleFrame(ctx context.Context, connection QUICConnectio
 		return Message{}, false, nil
 	default:
 		return Message{}, false, ErrQUICUnsupportedOp
+	}
+}
+
+func sendMessageInputFromFrame(frame inboundFrame) SendMessageInput {
+	return SendMessageInput{
+		ClientMessageID:         frame.ClientMessageID,
+		Ciphertext:              frame.Ciphertext,
+		Nonce:                   frame.Nonce,
+		Algorithm:               frame.Algorithm,
+		KeyVersion:              frame.KeyVersion,
+		ContentType:             frame.ContentType,
+		PlaintextCommitment:     frame.PlaintextCommitment,
+		PlaintextCommitmentSalt: frame.PlaintextCommitmentSalt,
 	}
 }
 
