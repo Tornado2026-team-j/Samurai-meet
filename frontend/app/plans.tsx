@@ -284,7 +284,15 @@ export default function PlansScreen() {
     setBusyMatchId(plan.id);
     setActionError(null);
     try {
-      await likeMatch(plan.id, activeSession);
+      try {
+        await likeMatch(plan.id, activeSession);
+      } catch (requestError) {
+        if (!(requestError instanceof APIError) || requestError.status !== 401) throw requestError;
+        await refresh();
+        const refreshedSession = getCurrentSession();
+        if (!refreshedSession) throw requestError;
+        await likeMatch(plan.id, refreshedSession);
+      }
       setPlans((items) => items.map((item) => item.id === plan.id ? { ...item, liked_by_me: true } : item));
     } catch {
       setActionError(copy.likeError);
