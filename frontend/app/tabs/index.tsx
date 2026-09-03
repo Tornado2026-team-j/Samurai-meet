@@ -104,7 +104,6 @@ const FORM_TOPS = {
   nextButton: 709,
   formError: 744,
 } as const;
-const DEV_PLACES_MOCK_ENABLED = process.env.EXPO_PUBLIC_DEV_PLACES_MOCK === "true";
 const TIME_PICKER_HOURS = Array.from({ length: 24 }, (_, hourValue) => hourValue);
 const TIME_PICKER_MINUTES = Array.from(
   { length: 12 },
@@ -780,7 +779,7 @@ export default function SearchPreferencesScreen() {
     }
 
     const activeSession = getCurrentSession() ?? session;
-    if (!activeSession && !DEV_PLACES_MOCK_ENABLED) {
+    if (!activeSession) {
       setNearbyPlaces([]);
       setNearbySearchStatus("error");
       return;
@@ -835,7 +834,7 @@ export default function SearchPreferencesScreen() {
     setLocationSearchStatus("loading");
     const timeout = setTimeout(() => {
       const activeSession = getCurrentSession() ?? session;
-      if (!activeSession && !DEV_PLACES_MOCK_ENABLED) {
+      if (!activeSession) {
         setLocationSuggestions([]);
         setLocationSearchStatus("error");
         return;
@@ -1020,7 +1019,7 @@ export default function SearchPreferencesScreen() {
 
       if (location.trim().length < 2) return null;
       const activeSession = getCurrentSession() ?? session;
-      if (!activeSession && !DEV_PLACES_MOCK_ENABLED) return null;
+      if (!activeSession) return null;
       const [suggestion] = await searchLocationSuggestions(location, activeSession, {
         language,
         latitude: currentLocationCoordinates?.latitude,

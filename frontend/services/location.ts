@@ -53,66 +53,6 @@ type PlacesSearchResponse = {
   data?: unknown;
 };
 
-function devPlacesMockEnabled(): boolean {
-  return process.env.EXPO_PUBLIC_DEV_PLACES_MOCK === "true";
-}
-
-function makeMockSuggestion(
-  id: string,
-  label: string,
-  subtitle: string,
-  latitude: number,
-  longitude: number,
-): LocationSearchSuggestion {
-  return {
-    id,
-    placeId: id,
-    label,
-    subtitle,
-    provider: "google_maps",
-    coordinates: {
-      latitude,
-      longitude,
-      accuracy_m: 0,
-      captured_at: new Date().toISOString(),
-    },
-  };
-}
-
-function mockLocationSuggestions(query: string): LocationSearchSuggestion[] {
-  const normalized = query.trim().toLocaleLowerCase();
-  const osakaStation = makeMockSuggestion("mock-osaka-station", "大阪駅", "大阪府大阪市北区梅田3丁目1-1", 34.7024854, 135.4959506);
-  const osakaCastleHall = makeMockSuggestion("mock-osaka-castle-hall", "大阪城ホール", "大阪府大阪市中央区大阪城3-1", 34.689556, 135.530102);
-  const umedaSky = makeMockSuggestion("mock-umeda-sky", "梅田スカイビル", "大阪府大阪市北区大淀中1丁目1-88", 34.705287, 135.489606);
-  const dotonbori = makeMockSuggestion("mock-dotonbori", "道頓堀", "大阪府大阪市中央区道頓堀", 34.668723, 135.501339);
-  const himejiCastle = makeMockSuggestion("mock-himeji-castle", "姫路城", "兵庫県姫路市本町68", 34.839449, 134.6939047);
-  const candidates = [osakaStation, osakaCastleHall, umedaSky, dotonbori, himejiCastle];
-  if (normalized.includes("姫路")) {
-    return [
-      himejiCastle,
-      makeMockSuggestion("mock-himeji-station", "姫路駅", "兵庫県姫路市駅前町188", 34.827686, 134.690769),
-    ];
-  }
-  if (normalized.includes("大阪") || normalized.includes("osaka")) {
-    return candidates.slice(0, 4);
-  }
-  if (normalized.includes("梅田") || normalized.includes("umeda")) {
-    return [osakaStation, umedaSky];
-  }
-  return candidates.slice(0, 5);
-}
-
-function mockNearbyPlaces(coordinates: Coordinates): LocationSearchSuggestion[] {
-  const { latitude, longitude } = coordinates;
-  return [
-    makeMockSuggestion("mock-nearby-station", "近くの駅", "開発用モック", latitude + 0.0018, longitude + 0.0012),
-    makeMockSuggestion("mock-nearby-cafe", "近くのカフェ", "開発用モック", latitude - 0.0014, longitude + 0.001),
-    makeMockSuggestion("mock-nearby-park", "近くの公園", "開発用モック", latitude + 0.0011, longitude - 0.0015),
-    makeMockSuggestion("mock-nearby-restaurant", "近くのレストラン", "開発用モック", latitude - 0.0017, longitude - 0.0011),
-    makeMockSuggestion("mock-nearby-museum", "近くの施設", "開発用モック", latitude + 0.0005, longitude + 0.002),
-  ];
-}
-
 export async function getCurrentCoordinatesResult(): Promise<LocationResult<Coordinates>> {
   if (runtimePlatform() !== "ios" && runtimePlatform() !== "android") {
     return { available: false, reason: "unsupported_platform" };
@@ -255,9 +195,6 @@ export async function searchLocationSuggestionsResult(
 ): Promise<LocationResult<LocationSearchSuggestion[]>> {
   const normalized = query.trim();
   if (normalized.length < 2) return { available: true, value: [] };
-  if (devPlacesMockEnabled()) {
-    return { available: true, value: mockLocationSuggestions(normalized) };
-  }
   if (!session) return { available: false, reason: "places_unavailable" };
 
   try {
@@ -297,9 +234,6 @@ export async function searchNearbyPlacesResult(
 ): Promise<LocationResult<LocationSearchSuggestion[]>> {
   if (!Number.isFinite(coordinates.latitude) || !Number.isFinite(coordinates.longitude)) {
     return { available: false, reason: "invalid_coordinates" };
-  }
-  if (devPlacesMockEnabled()) {
-    return { available: true, value: mockNearbyPlaces(coordinates) };
   }
   if (!session) return { available: false, reason: "places_unavailable" };
 
