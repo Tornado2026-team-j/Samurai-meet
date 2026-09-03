@@ -111,6 +111,8 @@ describe("ホーム画面の更新契約", () => {
     expect(source).not.toContain("borderColor: visual.border");
     expect(source).toContain("LinearGradient");
     expect(source).toContain("styles.contentFade");
+    expect(source).toContain("styles.bottomFade");
+    expect(source).toContain("top: 48");
     expect(source).not.toContain("contentShield");
     expect(source).toContain("router.replace(href)");
   });

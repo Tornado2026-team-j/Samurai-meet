@@ -82,6 +82,7 @@ export default function GlassTabBar({
       muted: "rgba(255, 255, 255, 0.68)",
       text: "rgba(255, 255, 255, 0.9)",
       fade: ["rgba(0, 0, 0, 0.02)", "rgba(0, 0, 0, 0.2)"] as const,
+      bottomFade: ["rgba(0, 0, 0, 0)", "rgba(0, 0, 0, 0.08)", "rgba(0, 0, 0, 0.2)"] as const,
       shadow: "0 8px 22px rgba(0, 0, 0, 0.28)",
     }
     : {
@@ -90,6 +91,7 @@ export default function GlassTabBar({
       muted: "#8A8A8A",
       text: "#535353",
       fade: ["rgba(255, 255, 255, 0.02)", "rgba(31, 45, 61, 0.08)"] as const,
+      bottomFade: ["rgba(31, 45, 61, 0)", "rgba(31, 45, 61, 0.04)", "rgba(31, 45, 61, 0.12)"] as const,
       shadow: "0 8px 22px rgba(31, 45, 61, 0.14)",
     };
 
@@ -142,6 +144,12 @@ export default function GlassTabBar({
 
   return (
     <View pointerEvents="box-none" style={[styles.wrapper, { bottom }]}>
+      <LinearGradient
+        colors={visual.bottomFade}
+        locations={[0, 0.52, 1]}
+        pointerEvents="none"
+        style={styles.bottomFade}
+      />
       <BlurView
         intensity={Platform.OS === "ios" ? 56 : 38}
         tint={isDark ? "dark" : "light"}
@@ -211,6 +219,13 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     borderRadius: 34,
+  },
+  bottomFade: {
+    position: "absolute",
+    top: 48,
+    right: -14,
+    bottom: -18,
+    left: -14,
   },
   tab: {
     minWidth: 56,
