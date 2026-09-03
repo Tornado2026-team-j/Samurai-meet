@@ -14,6 +14,7 @@ import {
   type ChatSummary,
 } from "../../services/chat";
 import { loadLanguage, subscribeLanguage, type AppLanguage } from "../../services/onboarding";
+import { getTabBarContentBottomPadding } from "../../utils/layout";
 
 const BLUE = "#5ec5f5";
 const YELLOW = "#e7b454";
@@ -221,7 +222,7 @@ export default function ChatListScreen() {
       <ScrollView
         contentContainerStyle={[
           styles.content,
-          { paddingBottom: Math.max(insets.bottom + 120, 132) },
+          { paddingBottom: getTabBarContentBottomPadding(insets.bottom) },
         ]}
         refreshControl={
           <RefreshControl onRefresh={() => void load("refresh")} refreshing={refreshing} tintColor={BLUE} />

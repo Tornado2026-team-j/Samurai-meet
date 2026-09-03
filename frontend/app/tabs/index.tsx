@@ -58,6 +58,7 @@ import {
   type RecruitmentSelection,
   type RecruitmentScheduleIssue,
 } from "../../services/recruitment";
+import { RECRUITMENT_PUBLICATION_LEAD_TIME_MS } from "../../services/recruitment-policy";
 import {
   buildManualRecruitmentPreviewModel,
   isManualRecruitmentPreview,
@@ -69,6 +70,7 @@ import type {
 } from "../../types/recruitment";
 import { MATCH_CATEGORIES, type MatchCategory } from "../../types/match";
 import { formatTimeRange } from "../../utils/time";
+import { translateRecruitmentTag } from "../../utils/recruitment-tags";
 
 const BLUE = "#5ec5f5";
 const YELLOW = "#e7b454";
@@ -84,6 +86,11 @@ const MIN_DURATION_HOURS = 0.5;
 const MAX_DURATION_HOURS = 8;
 const DURATION_STEP_HOURS = 0.5;
 const LOCATION_SEARCH_DEBOUNCE_MS = 300;
+const TIME_PICKER_HOURS = Array.from({ length: 24 }, (_, hourValue) => hourValue);
+const TIME_PICKER_MINUTES = Array.from(
+  { length: 12 },
+  (_, index) => index * 5,
+);
 
 const RECRUITMENT_COPY = {
   en: {
@@ -115,7 +122,7 @@ const RECRUITMENT_COPY = {
     distanceLabel: "Distance",
     next: "NEXT",
     confirmationTitle: "Is everything correct?",
-    confirmationExpiry: "Visible until the event ends:",
+    confirmationExpiry: "Visible until the start time:",
     categoryLabel: "Guide category",
     keywordLabel: "Suggested keywords",
     keywordHint: "Tap a keyword to select or remove it.",
@@ -145,12 +152,17 @@ const RECRUITMENT_COPY = {
     noLocationResults: "No places found",
     closeScheduleWarning: "Close schedule warning",
     pastStartTitle: "This start time has passed.",
+    shortNoticeTitle: "The start time is within 6 hours.",
     midnightTitle: "This duration crosses midnight.",
     pastStartQuestion: "Change it to tomorrow?",
+    shortNoticeQuestion:
+      "It may be harder to find participants on short notice. Choose a later time?",
     midnightQuestion: "Change it to tomorrow at 09:00?",
     suggestedSchedule: "Suggested schedule",
     useSuggestion: "YES, USE THIS",
     editSchedule: "NO, EDIT",
+    useLaterSuggestion: "USE A LATER TIME",
+    continueShortNotice: "CONTINUE WITH THIS TIME",
     invalidDate: "Choose a valid recruitment date.",
     invalidTime: "Choose a valid start time.",
     invalidDuration: "Choose a duration from 1 to 8 hours.",
@@ -185,7 +197,7 @@ const RECRUITMENT_COPY = {
     invalidProfile:
       "Your profile could not be synchronized. Check your name and nationality.",
     expiredRecruitment:
-      "The recruitment time has passed. Choose a new date and time.",
+      "This recruitment cannot be published because its start time has passed.",
     invalidMatchingRequest:
       "Review the entire recruitment details and try again.",
     publishFailed:
@@ -224,7 +236,7 @@ const RECRUITMENT_COPY = {
     distanceLabel: "距離",
     next: "次へ",
     confirmationTitle: "この内容でよろしいですか？",
-    confirmationExpiry: "イベント終了まで公開されます：",
+    confirmationExpiry: "開始時刻まで公開されます：",
     categoryLabel: "案内カテゴリー",
     keywordLabel: "キーワード候補",
     keywordHint: "タップしてキーワードを選択・解除できます。",
@@ -254,12 +266,17 @@ const RECRUITMENT_COPY = {
     noLocationResults: "候補が見つかりません",
     closeScheduleWarning: "日時の確認を閉じる",
     pastStartTitle: "開始時刻が過ぎています。",
+    shortNoticeTitle: "開始まで6時間以内です。",
     midnightTitle: "所要時間が日付をまたぎます。",
     pastStartQuestion: "明日に変更しますか？",
+    shortNoticeQuestion:
+      "直前の募集は参加者が集まりにくい可能性があります。もう少し余裕のある日時に変更しますか？",
     midnightQuestion: "明日の09:00に変更しますか？",
     suggestedSchedule: "変更案",
     useSuggestion: "はい、これを使う",
     editSchedule: "いいえ、編集する",
+    useLaterSuggestion: "余裕のある日時に変更",
+    continueShortNotice: "この日時のまま続ける",
     invalidDate: "有効な募集日を選択してください。",
     invalidTime: "有効な開始時刻を選択してください。",
     invalidDuration: "所要時間は1〜8時間から選択してください。",
@@ -292,7 +309,7 @@ const RECRUITMENT_COPY = {
     expiredSession: "セッションの有効期限が切れました。このAPI環境で再度ログインしてください。",
     incompleteProfile: "公開前にプロフィールを完成させてください。",
     invalidProfile: "プロフィールを同期できませんでした。名前と国籍を確認してください。",
-    expiredRecruitment: "募集時刻が過ぎています。新しい日付と時刻を選択してください。",
+    expiredRecruitment: "募集を公開できません。開始時刻が過ぎています。",
     invalidMatchingRequest: "募集内容全体を確認してもう一度お試しください。",
     publishFailed: "募集を公開できませんでした。しばらくしてからもう一度お試しください。",
     signInAgain: "セッションの有効期限が切れました。公開前に再度ログインしてください。",
@@ -425,25 +442,7 @@ function clampDuration(value: number): number {
 }
 
 function translatePreviewTag(tag: string, language: AppLanguage): string {
-  if (language === "en") return tag;
-
-  const translations: Readonly<Record<string, string>> = {
-    activity: "アクティビティ",
-    anime: "アニメ",
-    culture: "文化",
-    experience: "体験",
-    food: "食事",
-    local: "地域",
-    museum: "美術館",
-    nightlife: "夜遊び",
-    other: "その他",
-    places: "観光地",
-    shopping: "買い物",
-    takoyaki: "たこ焼き",
-    walking: "散歩",
-  };
-
-  return translations[tag.trim().toLowerCase()] ?? tag;
+  return translateRecruitmentTag(tag, language);
 }
 
 function formatPreviewExpiry(
@@ -453,83 +452,21 @@ function formatPreviewExpiry(
   if (language === "en") return preview.expiresAt;
 
   try {
-    const [, endTime = preview.conditions.startTime] = formatTimeRange(
+    const startAt = recruitmentDateTimeToInstant(
+      preview.conditions.date,
       preview.conditions.startTime,
-      preview.conditions.durationHours,
-    ).split("~");
-    return `${formatRecruitmentDateForDisplay(preview.conditions.date, language)} ${endTime}`;
-  } catch {
-    return preview.expiresAt;
-  }
-}
-
-function getJSTTimeParts(value: Date): { hour: number; minute: number } {
-  if (Number.isNaN(value.getTime())) {
-    return { hour: 0, minute: 0 };
-  }
-
-  try {
-    const parts = new Intl.DateTimeFormat("en-US", {
+    );
+    const deadline = new Date(startAt.getTime() - RECRUITMENT_PUBLICATION_LEAD_TIME_MS);
+    const time = new Intl.DateTimeFormat("en-US", {
       hour: "2-digit",
       hourCycle: "h23",
       minute: "2-digit",
       timeZone: JST_TIME_ZONE,
-    })
-      .formatToParts(value)
-      .reduce<Record<string, string>>((result, part) => {
-        if (part.type !== "literal") result[part.type] = part.value;
-        return result;
-      }, {});
-    const hour = Number(parts.hour);
-    const minute = Number(parts.minute);
-
-    if (
-      Number.isInteger(hour) &&
-      hour >= 0 &&
-      hour <= 23 &&
-      Number.isInteger(minute) &&
-      minute >= 0 &&
-      minute <= 59
-    ) {
-      return { hour, minute };
-    }
+    }).format(deadline);
+    return `${formatRecruitmentDateForDisplay(formatRecruitmentISODate(deadline), language)} ${time}`;
   } catch {
-    // Keep the picker renderable even if the platform formatter is unavailable.
+    return preview.expiresAt;
   }
-
-  return { hour: 0, minute: 0 };
-}
-
-function makeTimePickerValue(
-  date: string,
-  hour: number,
-  minute: number,
-): Date {
-  const safeHour = Number.isInteger(hour) && hour >= 0 && hour <= 23 ? hour : 0;
-  const safeMinute =
-    Number.isInteger(minute) && minute >= 0 && minute <= 59 ? minute : 0;
-
-  try {
-    return recruitmentDateTimeToInstant(
-      date,
-      `${String(safeHour).padStart(2, "0")}:${String(safeMinute).padStart(2, "0")}`,
-    );
-  } catch {
-    return new Date(0);
-  }
-}
-
-function roundPickerTime(value: Date): { hour: number; minute: number } {
-  const jstTime = getJSTTimeParts(value);
-  let hour = jstTime.hour;
-  let minute = Math.round(jstTime.minute / 5) * 5;
-
-  if (minute === 60) {
-    hour = (hour + 1) % 24;
-    minute = 0;
-  }
-
-  return { hour, minute };
 }
 
 function countryCodeToFlag(countryCode: string): string {
@@ -574,13 +511,8 @@ export default function SearchPreferencesScreen() {
   const [pickerDate, setPickerDate] = useState(() =>
     safeParseRecruitmentDate(suggestedDate, safeCurrentJSTPickerDate()),
   );
-  const [pickerTime, setPickerTime] = useState(() => {
-    return makeTimePickerValue(
-      suggestedDate,
-      Number(suggestedSchedule.startTime.slice(0, 2)),
-      Number(suggestedSchedule.startTime.slice(3, 5)),
-    );
-  });
+  const [draftHour, setDraftHour] = useState(hour);
+  const [draftMinute, setDraftMinute] = useState(minute);
   const [scheduleWarning, setScheduleWarning] = useState<ScheduleWarning | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [isCompactHeaderVisible, setIsCompactHeaderVisible] = useState(true);
@@ -847,11 +779,9 @@ export default function SearchPreferencesScreen() {
     clearScheduleMessages();
   };
 
-  const commitTime = (value: Date) => {
-    const nextTime = roundPickerTime(value);
-    setPickerTime(makeTimePickerValue(date, nextTime.hour, nextTime.minute));
-    setHour(nextTime.hour);
-    setMinute(nextTime.minute);
+  const commitTime = () => {
+    setHour(draftHour);
+    setMinute(draftMinute);
     setTimePickerVisible(false);
     clearScheduleMessages();
   };
@@ -864,7 +794,8 @@ export default function SearchPreferencesScreen() {
 
   const openTimePicker = () => {
     Keyboard.dismiss();
-    setPickerTime(makeTimePickerValue(date, hour, minute));
+    setDraftHour(hour);
+    setDraftMinute(minute);
     setTimePickerVisible(true);
   };
 
@@ -887,20 +818,6 @@ export default function SearchPreferencesScreen() {
       } catch {
         // Ignore an invalid native event and keep the last valid picker value.
       }
-    }
-  };
-
-  const handleTimePickerChange = (event: DateTimePickerEvent, value?: Date) => {
-    if (Platform.OS === "android") {
-      setTimePickerVisible(false);
-      if (event.type === "set" && value) {
-        commitTime(value);
-      }
-      return;
-    }
-
-    if (event.type === "set" && value) {
-      setPickerTime(value);
     }
   };
 
@@ -979,9 +896,17 @@ export default function SearchPreferencesScreen() {
     issue: RecruitmentScheduleIssue,
     fromConfirmation = false,
   ) => {
-    const suggestedDate = shiftRecruitmentDate(draft.date, 1);
+    const suggestion = defaultRecruitmentSchedule();
+    const suggestedDate =
+      issue === "recruitment_short_notice"
+        ? suggestion.date
+        : shiftRecruitmentDate(draft.date, 1);
     const suggestedStartTime =
-      issue === "recruitment_must_end_same_day" ? "09:00" : draft.startTime;
+      issue === "recruitment_must_end_same_day"
+        ? "09:00"
+        : issue === "recruitment_short_notice"
+          ? suggestion.startTime
+          : draft.startTime;
 
     setScheduleWarning({
       issue,
@@ -991,7 +916,10 @@ export default function SearchPreferencesScreen() {
     });
   };
 
-  const showConfirmation = async (draft = createDraft()) => {
+  const showConfirmation = async (
+    draft = createDraft(),
+    skipScheduleWarning = false,
+  ) => {
     if (previewStatus === "loading") {
       return;
     }
@@ -1001,17 +929,19 @@ export default function SearchPreferencesScreen() {
       return;
     }
 
-    try {
-      const issue = getRecruitmentScheduleIssue(draft);
-      if (issue) {
-        openScheduleWarning(draft, issue);
+    if (!skipScheduleWarning) {
+      try {
+        const issue = getRecruitmentScheduleIssue(draft);
+        if (issue) {
+          openScheduleWarning(draft, issue);
+          return;
+        }
+      } catch (error) {
+        setFormError(
+          recruitmentInputMessage(error, language) ?? RECRUITMENT_COPY[language].invalidDetails,
+        );
         return;
       }
-    } catch (error) {
-      setFormError(
-        recruitmentInputMessage(error, language) ?? RECRUITMENT_COPY[language].invalidDetails,
-      );
-      return;
     }
 
     const coordinates = await resolveWhereCoordinates();
@@ -1084,11 +1014,12 @@ export default function SearchPreferencesScreen() {
     setPickerDate(safeParseRecruitmentDate(nextDraft.date, minimumDate));
     setHour(nextHour);
     setMinute(nextMinute);
-    setPickerTime(makeTimePickerValue(nextDraft.date, nextHour, nextMinute));
+    setDraftHour(nextHour);
+    setDraftMinute(nextMinute);
     setFormError(null);
     setPublishError(null);
     setScheduleWarning(null);
-    void showConfirmation(nextDraft);
+    void showConfirmation(nextDraft, true);
   };
 
   const editSchedule = () => {
@@ -1220,7 +1151,7 @@ export default function SearchPreferencesScreen() {
     }
   };
 
-  const publish = async () => {
+  const publish = async (skipScheduleWarning = false) => {
     if (
       publishStatus === "publishing" ||
       draftSaveStatus === "saving" ||
@@ -1236,10 +1167,12 @@ export default function SearchPreferencesScreen() {
     const draft = createDraft();
 
     try {
-      const scheduleIssue = getRecruitmentScheduleIssue(draft);
-      if (scheduleIssue) {
-        openScheduleWarning(draft, scheduleIssue, true);
-        return;
+      if (!skipScheduleWarning) {
+        const scheduleIssue = getRecruitmentScheduleIssue(draft);
+        if (scheduleIssue) {
+          openScheduleWarning(draft, scheduleIssue, true);
+          return;
+        }
       }
 
       if (status !== "signed_in") {
@@ -1318,6 +1251,22 @@ export default function SearchPreferencesScreen() {
     } finally {
       setPublishStatus("idle");
     }
+  };
+
+  const continueScheduleWarning = () => {
+    if (!scheduleWarning) return;
+    if (scheduleWarning.issue !== "recruitment_short_notice") {
+      editSchedule();
+      return;
+    }
+
+    const returnToConfirmation = scheduleWarning.fromConfirmation;
+    setScheduleWarning(null);
+    if (returnToConfirmation) {
+      void publish(true);
+      return;
+    }
+    void showConfirmation(createDraft(), true);
   };
 
   const saveDraft = async () => {
@@ -1859,7 +1808,7 @@ export default function SearchPreferencesScreen() {
                     <View style={styles.summaryTags}>
                       {selectedKeywords.map((tag) => (
                         <Pill key={tag} style={styles.summaryTag} textStyle={styles.summaryTagText} variant="primary">
-                          {translatePreviewTag(tag, language)}
+                          {translateRecruitmentTag(tag, language)}
                         </Pill>
                       ))}
                     </View>
@@ -2140,18 +2089,6 @@ export default function SearchPreferencesScreen() {
         />
       ) : null}
 
-      {Platform.OS !== "ios" && timePickerVisible ? (
-        <DateTimePicker
-          display="default"
-          is24Hour
-          minuteInterval={5}
-          mode="time"
-          onChange={handleTimePickerChange}
-          timeZoneName={JST_TIME_ZONE}
-          value={pickerTime}
-        />
-      ) : null}
-
       {Platform.OS === "ios" ? (
         <Modal
           animationType="slide"
@@ -2206,59 +2143,102 @@ export default function SearchPreferencesScreen() {
         </Modal>
       ) : null}
 
-      {Platform.OS === "ios" ? (
-        <Modal
-          animationType="slide"
-          onRequestClose={() => setTimePickerVisible(false)}
-          transparent
-          visible={timePickerVisible}
-        >
-          <View style={styles.modalBackdrop}>
-            <Pressable
-              accessibilityLabel={copy.closeTimePicker}
-              onPress={() => setTimePickerVisible(false)}
-              style={StyleSheet.absoluteFill}
-            />
-            <View
-              style={[
-                styles.pickerSheet,
-                { paddingBottom: Math.max(insets.bottom, 16) },
-              ]}
-            >
-              <View style={styles.pickerHeader}>
-                <Pressable
-                  accessibilityRole="button"
-                  onPress={() => setTimePickerVisible(false)}
-                  style={styles.pickerHeaderButton}
-                >
-                  <Text style={styles.pickerCancelText}>{copy.pickerCancel}</Text>
-                </Pressable>
-                <Text style={styles.pickerTitle}>{copy.pickerTimeTitle}</Text>
-                <Pressable
-                  accessibilityRole="button"
-                  onPress={() => commitTime(pickerTime)}
-                  style={styles.pickerHeaderButton}
-                >
-                  <Text style={styles.pickerDoneText}>{copy.pickerDone}</Text>
-                </Pressable>
-              </View>
-              <DateTimePicker
-                accentColor={BLUE}
-                display="spinner"
-                is24Hour
-                 locale={pickerLocale}
-                minuteInterval={5}
-                mode="time"
-                onChange={handleTimePickerChange}
-                style={styles.nativePicker}
-                themeVariant="light"
-                timeZoneName={JST_TIME_ZONE}
-                value={pickerTime}
-              />
+      <Modal
+        animationType="slide"
+        onRequestClose={() => setTimePickerVisible(false)}
+        transparent
+        visible={timePickerVisible}
+      >
+        <View style={styles.modalBackdrop}>
+          <Pressable
+            accessibilityLabel={copy.closeTimePicker}
+            onPress={() => setTimePickerVisible(false)}
+            style={StyleSheet.absoluteFill}
+          />
+          <View
+            style={[
+              styles.pickerSheet,
+              styles.timePickerSheet,
+              { paddingBottom: Math.max(insets.bottom, 16) },
+            ]}
+          >
+            <View style={styles.pickerHeader}>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => setTimePickerVisible(false)}
+                style={styles.pickerHeaderButton}
+              >
+                <Text style={styles.pickerCancelText}>{copy.pickerCancel}</Text>
+              </Pressable>
+              <Text style={styles.pickerTitle}>{copy.pickerTimeTitle}</Text>
+              <Pressable
+                accessibilityRole="button"
+                onPress={commitTime}
+                style={styles.pickerHeaderButton}
+              >
+                <Text style={styles.pickerDoneText}>{copy.pickerDone}</Text>
+              </Pressable>
+            </View>
+            <View style={styles.wallClockPicker}>
+              <ScrollView
+                contentContainerStyle={styles.wallClockColumnContent}
+                showsVerticalScrollIndicator={false}
+                style={styles.wallClockColumn}
+              >
+                {TIME_PICKER_HOURS.map((hourValue) => {
+                  const selected = draftHour === hourValue;
+                  return (
+                    <Pressable
+                      key={hourValue}
+                      accessibilityLabel={`${String(hourValue).padStart(2, "0")}:00`}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected }}
+                      onPress={() => setDraftHour(hourValue)}
+                      style={({ pressed }) => [
+                        styles.wallClockOption,
+                        selected && styles.wallClockOptionSelected,
+                        pressed && styles.pressed,
+                      ]}
+                    >
+                      <Text style={[styles.wallClockOptionText, selected && styles.wallClockOptionTextSelected]}>
+                        {String(hourValue).padStart(2, "0")}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+              <Text style={styles.wallClockSeparator}>:</Text>
+              <ScrollView
+                contentContainerStyle={styles.wallClockColumnContent}
+                showsVerticalScrollIndicator={false}
+                style={styles.wallClockColumn}
+              >
+                {TIME_PICKER_MINUTES.map((minuteValue) => {
+                  const selected = draftMinute === minuteValue;
+                  return (
+                    <Pressable
+                      key={minuteValue}
+                      accessibilityLabel={`${minuteValue} minutes`}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected }}
+                      onPress={() => setDraftMinute(minuteValue)}
+                      style={({ pressed }) => [
+                        styles.wallClockOption,
+                        selected && styles.wallClockOptionSelected,
+                        pressed && styles.pressed,
+                      ]}
+                    >
+                      <Text style={[styles.wallClockOptionText, selected && styles.wallClockOptionTextSelected]}>
+                        {String(minuteValue).padStart(2, "0")}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
             </View>
           </View>
-        </Modal>
-      ) : null}
+        </View>
+      </Modal>
 
       <Modal
         animationType="fade"
@@ -2277,12 +2257,16 @@ export default function SearchPreferencesScreen() {
               <Text style={styles.selectionTitle}>
                 {scheduleWarning.issue === "recruitment_date_in_past"
                   ? copy.pastStartTitle
-                  : copy.midnightTitle}
+                  : scheduleWarning.issue === "recruitment_short_notice"
+                    ? copy.shortNoticeTitle
+                    : copy.midnightTitle}
               </Text>
               <Text style={styles.warningMessage}>
                 {scheduleWarning.issue === "recruitment_date_in_past"
                   ? copy.pastStartQuestion
-                  : copy.midnightQuestion}
+                  : scheduleWarning.issue === "recruitment_short_notice"
+                    ? copy.shortNoticeQuestion
+                    : copy.midnightQuestion}
               </Text>
               <View style={styles.warningSuggestion}>
                 <Text style={styles.warningSuggestionLabel}>{copy.suggestedSchedule}</Text>
@@ -2295,14 +2279,22 @@ export default function SearchPreferencesScreen() {
                 onPress={applyScheduleSuggestion}
                 style={({ pressed }) => [styles.warningPrimaryButton, pressed && styles.pressed]}
               >
-                <Text style={styles.warningPrimaryText}>{copy.useSuggestion}</Text>
+                <Text style={styles.warningPrimaryText}>
+                  {scheduleWarning.issue === "recruitment_short_notice"
+                    ? copy.useLaterSuggestion
+                    : copy.useSuggestion}
+                </Text>
               </Pressable>
               <Pressable
                 accessibilityRole="button"
-                onPress={editSchedule}
+                onPress={scheduleWarning.issue === "recruitment_short_notice" ? continueScheduleWarning : editSchedule}
                 style={({ pressed }) => [styles.warningSecondaryButton, pressed && styles.pressed]}
               >
-                <Text style={styles.warningSecondaryText}>{copy.editSchedule}</Text>
+                <Text style={styles.warningSecondaryText}>
+                  {scheduleWarning.issue === "recruitment_short_notice"
+                    ? copy.continueShortNotice
+                    : copy.editSchedule}
+                </Text>
               </Pressable>
             </View>
           ) : null}
@@ -2333,91 +2325,101 @@ const styles = StyleSheet.create({
   categorySelectionLabel: {
     width: "100%",
     maxWidth: 340,
-    marginTop: 20,
-    color: '#1E3A8A',
+    marginTop: 16,
+    marginBottom: 7,
+    color: colors.text.inverse,
     fontSize: 15,
-    fontWeight: '700',
-    marginBottom: 8,
+    fontWeight: "900",
   },
   categorySelectionRow: {
     width: "100%",
     maxWidth: 340,
-    flexDirection: 'row',
-    flexWrap: 'wrap',
+    flexDirection: "row",
+    flexWrap: "wrap",
     gap: 8,
-    marginBottom: 16,
+    marginBottom: 12,
   },
   categorySelectionButton: {
+    minHeight: 32,
     maxWidth: "100%",
     flexShrink: 1,
-    backgroundColor: '#FFF7CC',
-    borderColor: '#F2C94C',
-    borderRadius: 16,
     borderWidth: 1,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    borderColor: colors.border.default,
+    borderRadius: radius.pill,
+    backgroundColor: colors.surface.default,
+    paddingHorizontal: 13,
+    paddingVertical: 6,
+    ...shadows.control,
   },
   categorySelectionButtonSelected: {
-    backgroundColor: '#1E3A8A',
-    borderColor: '#1E3A8A',
+    borderColor: colors.brand.gold,
+    backgroundColor: colors.brand.gold,
+    ...shadows.action,
   },
   categorySelectionText: {
     flexShrink: 1,
-    color: '#1E3A8A',
-    fontSize: 14,
-    fontWeight: '600',
+    color: colors.text.secondary,
+    fontSize: 13,
+    fontWeight: "900",
+    lineHeight: 17,
   },
   categorySelectionTextSelected: {
-    color: '#FFFFFF',
+    color: colors.text.inverse,
   },
   keywordSelectionLabel: {
     width: "100%",
     maxWidth: 340,
-    marginTop: 4,
-    color: '#1E3A8A',
-    fontSize: 15,
-    fontWeight: '700',
+    marginTop: 2,
     marginBottom: 4,
+    color: colors.text.inverse,
+    fontSize: 15,
+    fontWeight: "900",
   },
   keywordSelectionHint: {
     width: "100%",
     maxWidth: 340,
-    color: '#6B7280',
-    fontSize: 13,
-    marginBottom: 8,
+    marginBottom: 7,
+    color: colors.text.inverse,
+    fontSize: 12,
+    fontWeight: "600",
+    lineHeight: 16,
+    opacity: 0.86,
   },
   keywordSelectionRow: {
     width: "100%",
     maxWidth: 340,
-    flexDirection: 'row',
-    flexWrap: 'wrap',
+    flexDirection: "row",
+    flexWrap: "wrap",
     gap: 8,
   },
   keywordSelectionButton: {
+    minHeight: 32,
     maxWidth: "100%",
     flexShrink: 1,
-    backgroundColor: '#FFFFFF',
-    borderColor: '#1E3A8A',
-    borderRadius: 16,
     borderWidth: 1,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    borderColor: colors.border.default,
+    borderRadius: radius.pill,
+    backgroundColor: colors.surface.default,
+    paddingHorizontal: 13,
+    paddingVertical: 6,
   },
   keywordSelectionButtonSelected: {
-    backgroundColor: '#F2C94C',
-    borderColor: '#F2C94C',
+    borderColor: colors.brand.gold,
+    backgroundColor: colors.brand.gold,
+    ...shadows.action,
   },
   keywordSelectionButtonDisabled: {
     opacity: opacity.disabled,
   },
   keywordSelectionText: {
     flexShrink: 1,
-    color: '#1E3A8A',
-    fontSize: 14,
-    fontWeight: '600',
+    color: colors.text.secondary,
+    fontSize: 13,
+    fontWeight: "900",
+    lineHeight: 17,
   },
   keywordSelectionTextSelected: {
-    color: '#1E3A8A',
+    color: colors.text.inverse,
   },
   screen: {
     flex: 1,
@@ -3239,6 +3241,54 @@ const styles = StyleSheet.create({
     alignSelf: "center",
     width: "100%",
     height: 216,
+  },
+  timePickerSheet: {
+    minHeight: 342,
+  },
+  wallClockPicker: {
+    height: 252,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 32,
+    gap: 12,
+  },
+  wallClockColumn: {
+    width: 96,
+    height: 224,
+    borderWidth: 1,
+    borderColor: colors.border.subtle,
+    borderRadius: radius.lg,
+    backgroundColor: colors.surface.blueSoft,
+  },
+  wallClockColumnContent: {
+    paddingVertical: 8,
+    gap: 6,
+  },
+  wallClockOption: {
+    height: 38,
+    alignItems: "center",
+    justifyContent: "center",
+    marginHorizontal: 8,
+    borderRadius: radius.md,
+  },
+  wallClockOptionSelected: {
+    backgroundColor: BLUE,
+  },
+  wallClockOptionText: {
+    color: TEXT_GRAY,
+    fontSize: 18,
+    fontWeight: "800",
+  },
+  wallClockOptionTextSelected: {
+    color: colors.text.inverse,
+  },
+  wallClockSeparator: {
+    width: 16,
+    color: TEXT_GRAY,
+    fontSize: 28,
+    fontWeight: "900",
+    textAlign: "center",
   },
   selectionSheet: {
     width: "100%",

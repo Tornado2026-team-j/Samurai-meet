@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MaterialIcons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import {
-  ActivityIndicator,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -12,13 +11,15 @@ import {
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { colors, spacing } from "../../components/ui";
+import { colors, LoadingSpinner, spacing } from "../../components/ui";
 import { useAuth } from "../../hooks/useAuth";
 import { useUnreadNotifications } from "../../hooks/useUnreadNotifications";
+import { useDelayedLoading } from "../../hooks/useDelayedLoading";
 import { APIError } from "../../services/api-client";
 import { listChats } from "../../services/chat";
 import { listMatches, listMyRecruitments, type MatchView, type Recruitment } from "../../services/matching";
 import { loadLanguage, subscribeLanguage, type AppLanguage } from "../../services/onboarding";
+import { getTabBarContentBottomPadding } from "../../utils/layout";
 
 const BLUE = colors.brand.sky;
 const YELLOW = colors.brand.gold;
@@ -120,6 +121,7 @@ export default function ForeignerHomeScreen() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const initialLoadStarted = useRef(false);
   const loadInFlight = useRef(false);
+  const showInitialLoading = useDelayedLoading(loading && applications.length === 0);
   const copy = COPY[language ?? "en"];
   const copyRef = useRef(copy);
   copyRef.current = copy;
@@ -256,7 +258,7 @@ export default function ForeignerHomeScreen() {
     return (
       <View style={styles.loadingScreen}>
         <StatusBar style="dark" />
-        <ActivityIndicator color={BLUE} size="large" />
+        <LoadingSpinner color={BLUE} size={28} speedMs={680} />
       </View>
     );
   }
@@ -328,13 +330,15 @@ export default function ForeignerHomeScreen() {
 
       <ScrollView
         contentContainerStyle={[
-          styles.content,
-          {
-            paddingBottom: Math.max(insets.bottom + 120, 132),
+        styles.content,
+        {
+            paddingBottom: getTabBarContentBottomPadding(insets.bottom),
             paddingLeft: Math.max(insets.left + 16, 24),
             paddingRight: Math.max(insets.right + 16, 24),
           },
         ]}
+        alwaysBounceVertical
+        bounces
         refreshControl={
           <RefreshControl
             onRefresh={() => {
@@ -344,6 +348,7 @@ export default function ForeignerHomeScreen() {
             tintColor={BLUE}
           />
         }
+        nestedScrollEnabled
         showsVerticalScrollIndicator={false}
       >
         <Pressable onPress={openSearchPreferences} style={({ pressed }) => [styles.createButton, pressed && styles.pressed]}>
@@ -382,9 +387,9 @@ export default function ForeignerHomeScreen() {
           </View>
         </View>
 
-        {loading && applications.length === 0 ? (
+        {loading && applications.length === 0 && showInitialLoading ? (
           <View style={styles.emptyPanel}>
-            <ActivityIndicator color={BLUE} size="small" />
+            <LoadingSpinner color={BLUE} size={24} speedMs={680} />
             <Text style={styles.emptyTitle}>{copy.loading}</Text>
           </View>
         ) : loadError && applications.length === 0 ? (

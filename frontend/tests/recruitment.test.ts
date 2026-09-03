@@ -9,7 +9,9 @@ import {
   defaultRecruitmentDate,
   formatRecruitmentDateInput,
   formatRecruitmentISODate,
+  getRecruitmentJSTTimeParts,
   getRecruitmentScheduleIssue,
+  makeRecruitmentTimePickerValue,
   normalizeRecruitmentDate,
   parseRecruitmentKeywordInput,
   parseRecruitmentDateInput,
@@ -67,7 +69,7 @@ describe("募集プレビュー", () => {
     expect(preview.conditions).toEqual(draft);
     expect(preview.category).toBe("Food");
     expect(preview.tags).toEqual(["Takoyaki", "Local"]);
-    expect(preview.expiresAt).toBe("August 25 at 16:30");
+    expect(preview.expiresAt).toBe("August 25 at 14:30");
   });
 
   it("制作者情報をサービス応答として返す", () => {
@@ -116,22 +118,22 @@ describe("募集プレビュー", () => {
     );
   });
 
-  it("現在時刻の次の30分区切りを当日の初期時刻にする", () => {
+  it("今から6時間後より後の次の30分区切りを初期時刻にする", () => {
     expect(
       defaultRecruitmentSchedule(new Date("2026-08-26T05:31:00.000Z")),
     ).toEqual({
       date: "2026-08-26",
-      startTime: "15:00",
+      startTime: "21:00",
       durationHours: 1,
     });
   });
 
-  it("JSTの深夜を越える次の30分を翌日のISO日付で返す", () => {
+  it("JSTの深夜を越える6時間後の次の30分を翌日のISO日付で返す", () => {
     expect(
       defaultRecruitmentSchedule(new Date("2026-08-26T14:31:00.000Z")),
     ).toMatchObject({
       date: "2026-08-27",
-      startTime: "00:00",
+      startTime: "06:00",
     });
   });
 
@@ -156,10 +158,38 @@ describe("募集プレビュー", () => {
     ).toBe("recruitment_must_end_same_day");
   });
 
+  it("開始まで6時間以内の公開時刻を注意扱いにする", () => {
+    const now = new Date("2026-08-26T05:31:00.000Z");
+    expect(
+      getRecruitmentScheduleIssue(
+        { ...draft, date: "2026-08-26", startTime: "20:30" },
+        now,
+      ),
+    ).toBe("recruitment_short_notice");
+  });
+
   it("JSTの日時をUTCの瞬間へ変換する", () => {
     expect(
       recruitmentDateTimeToInstant("2026-08-27", "14:30").toISOString(),
     ).toBe("2026-08-27T05:30:00.000Z");
+  });
+
+  it("日時ピッカー値は非JST端末でもJSTの壁時計として往復する", () => {
+    const originalTZ = process.env.TZ;
+    process.env.TZ = "America/Los_Angeles";
+    try {
+      const pickerValue = makeRecruitmentTimePickerValue("2026-08-27", 14, 30);
+
+      expect(pickerValue.toISOString()).toBe("2026-08-27T05:30:00.000Z");
+      expect(pickerValue.getHours()).not.toBe(14);
+      expect(getRecruitmentJSTTimeParts(pickerValue)).toEqual({ hour: 14, minute: 30 });
+    } finally {
+      if (originalTZ === undefined) {
+        delete process.env.TZ;
+      } else {
+        process.env.TZ = originalTZ;
+      }
+    }
   });
 
   it("プレビューを公開APIの入力へ変換し、現在地を含める", () => {
@@ -264,6 +294,18 @@ describe("募集プレビュー", () => {
     expect(() => buildRecruitmentCreateRequest(pastDraft, preview, now)).toThrow(
       "recruitment_date_in_past",
     );
+  });
+
+  it("開始まで6時間以内でも公開API入力へ変換できる", () => {
+    const preview = buildRecruitmentPreviewModel({ ...draft, date: "2026-08-27" }, "Food");
+
+    expect(
+      buildRecruitmentCreateRequest(
+        { ...draft, date: "2026-08-27", startTime: "14:30" },
+        preview,
+        new Date("2026-08-26T05:31:00.000Z"),
+      ),
+    ).toMatchObject({ available_date: "2026-08-27", start_time: "14:30" });
   });
 
   it("日付をまたぐ公開時刻を送信前に拒否する", () => {

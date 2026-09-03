@@ -3,9 +3,10 @@ import type {
   RecruitmentPreview,
 } from "../types/recruitment";
 import { isMatchCategory, type MatchCategory } from "../types/match";
-import { calculateFinishTime } from "../utils/time";
+import { RECRUITMENT_PUBLICATION_LEAD_TIME_MS } from "./recruitment-policy";
 
 const JST_TIME_ZONE = "Asia/Tokyo";
+const JST_OFFSET_MINUTES = 9 * 60;
 export const MANUAL_RECRUITMENT_PREVIEW_ID = "manual-recruitment-preview";
 
 const TAG_RULES: ReadonlyArray<{ pattern: RegExp; tag: string }> = [
@@ -38,12 +39,37 @@ function extractPreviewTags(activity: string): string[] {
 
 function formatExpiry(draft: RecruitmentDraft): string {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(draft.date.trim());
-  if (!match) {
-    return "the event end time";
-  }
+  const timeMatch = /^(\d{2}):([0-5]\d)$/.exec(draft.startTime.trim());
+  if (!match || !timeMatch) return "at the start time";
 
+  const hour = Number(timeMatch[1]);
+  if (hour > 23) return "at the start time";
+
+  const startAt = new Date(
+    Date.UTC(
+      Number(match[1]),
+      Number(match[2]) - 1,
+      Number(match[3]),
+      hour,
+      Number(timeMatch[2]),
+    ) -
+      JST_OFFSET_MINUTES * 60 * 1000,
+  );
+  const deadline = new Date(startAt.getTime() - RECRUITMENT_PUBLICATION_LEAD_TIME_MS);
+  if (Number.isNaN(deadline.getTime())) return "at the start time";
+
+  const date = deadline.toLocaleDateString("en-US", {
+    timeZone: JST_TIME_ZONE,
+    month: "long",
+    day: "numeric",
+  });
+  const time = deadline.toLocaleTimeString("en-US", {
+    timeZone: JST_TIME_ZONE,
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  });
   const parsedDate = new Date(0);
-  parsedDate.setUTCHours(12, 0, 0, 0);
   parsedDate.setUTCFullYear(
     Number(match[1]),
     Number(match[2]) - 1,
@@ -54,15 +80,10 @@ function formatExpiry(draft: RecruitmentDraft): string {
     parsedDate.getUTCMonth() !== Number(match[2]) - 1 ||
     parsedDate.getUTCDate() !== Number(match[3])
   ) {
-    return "the event end time";
+    return "at the start time";
   }
 
-  const date = parsedDate.toLocaleDateString("en-US", {
-    timeZone: JST_TIME_ZONE,
-    month: "long",
-    day: "numeric",
-  });
-  return `${date} at ${calculateFinishTime(draft.startTime, draft.durationHours)}`;
+  return `${date} at ${time}`;
 }
 
 /**

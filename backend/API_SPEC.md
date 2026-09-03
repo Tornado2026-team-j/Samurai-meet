@@ -449,7 +449,7 @@ Request body:
 }
 ```
 
-`category`は`Food` / `Places` / `Activity` / `Other`、`status`は`draft` / `open` / `closed`、公開半径は1 / 3 / 5だけを受け付けます。日時は`Asia/Tokyo`固定の壁時計として解釈し、期限は`end_time`から計算します。公開するカードには完成プロフィールが必要です。成功時は201で`{ "data": { ...card } }`を返します。日時入力はISO内部値とJST固定に統一され、自動テストで確認済みです。iOS実機の公開を含む全通しE2Eは未確認です。
+`category`は`Food` / `Places` / `Activity` / `Other`、`status`は`draft` / `open` / `closed`、公開半径は1 / 3 / 5だけを受け付けます。日時は`Asia/Tokyo`固定の壁時計として解釈し、募集期限は`available_date`の`start_time`までとして計算します。開始まで6時間未満でも公開できますが、クライアントは参加者が集まりにくい可能性を注意表示します。公開するカードには完成プロフィールが必要です。成功時は201で`{ "data": { ...card } }`を返します。日時入力はISO内部値とJST固定に統一され、自動テストで確認済みです。iOS実機の公開を含む全通しE2Eは未確認です。
 
 `GET /api/v1/recruitments/{id}`は所有者には自身のカードを返し、他ユーザーには期限内の`open` / `matched`だけを返します。`PATCH`は所有者だけが実行でき、`matched`後の内容変更は拒否します。`DELETE`は物理削除ではなく`closed`へ遷移させ、204を返します。
 

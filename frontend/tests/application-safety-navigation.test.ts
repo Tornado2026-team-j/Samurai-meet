@@ -78,6 +78,19 @@ describe("募集・応募画面の手動更新と操作ガード", () => {
     expect(source).toContain("loadInFlightRef");
     expect(source).toContain("actionInFlightRef");
     expect(source).toContain('router.replace("/foreigner")');
+    expect(source).toContain('name="home"');
+    expect(source).toContain("accessibilityLabel={copy.home}");
     expect(source).not.toContain("useFocusEffect");
+  });
+
+  it("チャット詳細と募集詳細からホームへ直接戻れる", async () => {
+    const chatSource = await readScreen("app/chat/[id].tsx");
+    const recruitmentSource = await readScreen("app/japanese/matches/[id].tsx");
+
+    expect(chatSource).toContain("const homeHref");
+    expect(chatSource).toContain("router.replace(homeHref)");
+    expect(chatSource).toContain('name="home"');
+    expect(recruitmentSource).toContain('router.replace("/japanese")');
+    expect(recruitmentSource).toContain('name="home"');
   });
 });

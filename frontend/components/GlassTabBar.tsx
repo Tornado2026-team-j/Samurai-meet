@@ -14,7 +14,7 @@ import {
 const BLUE = "#5EC5F5";
 const TEXT = "#535353";
 const MUTED = "#8A8A8A";
-const GLASS = "rgba(255, 255, 255, 0.72)";
+const GLASS = "rgba(255, 255, 255, 0.92)";
 const HIGHLIGHT = "rgba(94, 197, 245, 0.16)";
 
 type TabKey = "home" | "chat" | "plans" | "monsters" | "profile";
@@ -32,11 +32,11 @@ function hrefKey(href: Href): string {
   return JSON.stringify(href) ?? "";
 }
 
-const TAB_ITEMS: Array<{
+const TAB_ITEMS: {
   key: TabKey;
   icon: IoniconName;
   activeIcon: IoniconName;
-}> = [
+}[] = [
   { key: "home", icon: "home-outline", activeIcon: "home" },
   { key: "chat", icon: "chatbubbles-outline", activeIcon: "chatbubbles" },
   { key: "plans", icon: "calendar-outline", activeIcon: "calendar" },
@@ -127,7 +127,8 @@ export default function GlassTabBar({
 
   return (
     <View pointerEvents="box-none" style={[styles.wrapper, { bottom }]}>
-      <BlurView intensity={Platform.OS === "ios" ? 42 : 22} tint="light" style={styles.bar}>
+      <View pointerEvents="none" style={styles.contentShield} />
+      <BlurView intensity={Platform.OS === "ios" ? 48 : 35} tint="light" style={styles.bar}>
         <View style={styles.tint} />
         {TAB_ITEMS.map((item) => {
           const selected = item.key === activeTab;
@@ -182,6 +183,16 @@ const styles = StyleSheet.create({
     borderRadius: 34,
     backgroundColor: GLASS,
     boxShadow: "0 8px 22px rgba(31, 45, 61, 0.12)",
+    elevation: 10,
+  },
+  contentShield: {
+    position: "absolute",
+    top: -28,
+    right: -4,
+    bottom: -4,
+    left: -4,
+    borderRadius: 42,
+    backgroundColor: "rgba(255, 255, 255, 0.68)",
   },
   tint: {
     position: "absolute",

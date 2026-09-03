@@ -15,6 +15,12 @@ import {
   buildRecruitmentPreviewModel,
   isManualRecruitmentPreview,
 } from "./recruitment-preview";
+import { RECRUITMENT_RECOMMENDED_LEAD_TIME_MS } from "./recruitment-policy";
+
+export {
+  RECRUITMENT_RECOMMENDED_LEAD_TIME_MS,
+  RECRUITMENT_PUBLICATION_LEAD_TIME_MS,
+} from "./recruitment-policy";
 
 type RecruitmentClassificationResponse = {
   data?: {
@@ -259,6 +265,34 @@ export function formatRecruitmentISODate(date: Date): string {
   return validateCalendarDate(parts);
 }
 
+export function getRecruitmentJSTTimeParts(date: Date): { hour: number; minute: number } {
+  try {
+    const parts = getJSTDateTimeParts(date);
+    return { hour: parts.hour, minute: parts.minute };
+  } catch {
+    return { hour: 0, minute: 0 };
+  }
+}
+
+export function makeRecruitmentTimePickerValue(
+  date: string,
+  hour: number,
+  minute: number,
+): Date {
+  const safeHour = Number.isInteger(hour) && hour >= 0 && hour <= 23 ? hour : 0;
+  const safeMinute =
+    Number.isInteger(minute) && minute >= 0 && minute <= 59 ? minute : 0;
+
+  try {
+    return recruitmentDateTimeToInstant(
+      date,
+      `${String(safeHour).padStart(2, "0")}:${String(safeMinute).padStart(2, "0")}`,
+    );
+  } catch {
+    return new Date(0);
+  }
+}
+
 export function formatRecruitmentDateInput(date: Date): string {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: JST_TIME_ZONE,
@@ -284,6 +318,7 @@ export type DefaultRecruitmentSchedule = {
 
 export type RecruitmentScheduleIssue =
   | "recruitment_date_in_past"
+  | "recruitment_short_notice"
   | "recruitment_must_end_same_day";
 
 function formatTimeInput(totalMinutes: number): string {
@@ -295,7 +330,9 @@ function formatTimeInput(totalMinutes: number): string {
 export function defaultRecruitmentSchedule(
   reference = new Date(),
 ): DefaultRecruitmentSchedule {
-  const now = getJSTDateTimeParts(reference);
+  const now = getJSTDateTimeParts(
+    new Date(reference.getTime() + RECRUITMENT_RECOMMENDED_LEAD_TIME_MS),
+  );
   const roundedMinutes =
     Math.floor((now.hour * 60 + now.minute) / 30) * 30 + 30;
   const nextDate = new Date(0);
@@ -434,6 +471,9 @@ export function getRecruitmentScheduleIssue(
   if (dateAtStart <= now) {
     return "recruitment_date_in_past";
   }
+  if (dateAtStart.getTime() - RECRUITMENT_RECOMMENDED_LEAD_TIME_MS <= now.getTime()) {
+    return "recruitment_short_notice";
+  }
 
   return null;
 }
@@ -453,7 +493,11 @@ export function buildRecruitmentCreateRequest(
     throw new Error("invalid_recruitment_description");
   }
   const scheduleIssue = getRecruitmentScheduleIssue(draft, now);
-  if (scheduleIssue === "recruitment_must_end_same_day" || (scheduleIssue === "recruitment_date_in_past" && status === "open")) {
+  if (
+    scheduleIssue === "recruitment_must_end_same_day" ||
+    (scheduleIssue === "recruitment_date_in_past" &&
+      status === "open")
+  ) {
     throw new Error(scheduleIssue);
   }
 
