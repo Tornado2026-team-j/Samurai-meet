@@ -61,6 +61,7 @@
 | `0050_chat_translation_inflight_expiry_type.sql` | in-flight期限をPostgreSQL timestamp型へ移行する |
 | `0051_chat_key_manifest_commitment_format.sql` | chat DEK commitmentをraw Base64URL（パディングなし）43文字に制限する |
 | `0052_meeting_resume_consent.sql` | 中止済み会合の再開に参加者双方の明示同意を要求する時刻列を追加する |
+| `0053_matching_search_indexes.sql` | 募集検索で空き枠を確認するaccepted match数の参照を高速化する部分indexを追加する |
 
 注意: 現行のmigration runnerはSQLファイルを順番に正規化して実行し、`schema_migrations`へファイル名と正規化SQLのSHA-256 checksum、適用時刻を記録する。同じchecksumの適用済みmigrationはスキップし、PostgreSQL advisory lockで同時起動を直列化する。適用済みファイルの内容が変わった場合はchecksum mismatchで起動を停止する。適用済みmigrationを編集・置換してはいけない。DDL変更は新しい番号のSQLを追加する。
 
