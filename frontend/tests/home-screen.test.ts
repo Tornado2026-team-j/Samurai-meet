@@ -117,6 +117,19 @@ describe("ホーム画面の更新契約", () => {
     expect(source).toContain("router.replace(href)");
   });
 
+  it("起動・認証待ち・主要一覧は共通の滑らかなロードリングを使う", async () => {
+    const rootSource = await readScreen("../app/index.tsx");
+    const guardSource = await readScreen("../app/_layout.tsx");
+    const chatSource = await readScreen("../app/chat/index.tsx");
+    const spinnerSource = await readScreen("../components/ui/LoadingSpinner.tsx");
+
+    expect(rootSource).toContain("LoadingSpinner");
+    expect(guardSource).toContain("LoadingSpinner");
+    expect(chatSource).toContain("LoadingSpinner");
+    expect(spinnerSource).toContain("Animated.timing(opacity");
+    expect(spinnerSource).toContain("useNativeDriver: true");
+  });
+
   it("外国人ホームは構造化プロフィールJSONをそのまま描画しない", async () => {
     const source = await readScreen("../app/foreigner/index.tsx");
 

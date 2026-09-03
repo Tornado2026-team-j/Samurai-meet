@@ -1,8 +1,9 @@
 import { MaterialIcons } from "@expo/vector-icons";
 import { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ScrollView, StyleSheet, Text, View } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { LoadingSpinner } from "../components/ui";
 import { useAuth } from "../hooks/useAuth";
 import {
   loadLanguage,
@@ -160,7 +161,7 @@ export default function MonstersScreen() {
       >
         {loading ? (
           <View style={styles.statePanel}>
-            <ActivityIndicator color={BLUE} />
+            <LoadingSpinner color={BLUE} size={24} speedMs={680} />
             <Text style={styles.stateText}>{copy.loading}</Text>
           </View>
         ) : hasDetails ? (

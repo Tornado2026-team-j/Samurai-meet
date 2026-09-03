@@ -15,7 +15,7 @@ import {
 import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { RecoveryCompletion, RecoveryKeyDisplay } from "../components/RecoveryFlow";
-import { Header } from "../components/ui";
+import { Header, LoadingSpinner } from "../components/ui";
 import { useAuth } from "../hooks/useAuth";
 import {
   completeRecoveryKeyRotation,
@@ -594,7 +594,7 @@ export default function ProfileScreen() {
     return (
       <View style={[styles.loadingScreen, { paddingTop: Math.max(insets.top, 20) }]}>
         <StatusBar style="dark" />
-        <ActivityIndicator color={BLUE} size="large" />
+        <LoadingSpinner color={BLUE} size={28} speedMs={640} />
         <Text style={styles.loadingText}>{copy.loading}</Text>
       </View>
     );

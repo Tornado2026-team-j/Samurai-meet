@@ -19,6 +19,7 @@ import {
 import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import DismissKeyboardView from "../../components/DismissKeyboardView";
+import { LoadingSpinner } from "../../components/ui";
 import { useAuth } from "../../hooks/useAuth";
 import { APIError } from "../../services/api-client";
 import { loadLanguage, subscribeLanguage } from "../../services/onboarding";
@@ -432,7 +433,7 @@ export default function MyRecruitmentsScreen() {
   };
 
   if (!language) {
-    return <View style={styles.screen}><StatusBar style="light" /><View style={styles.statePanel}><ActivityIndicator color={BLUE} /></View></View>;
+    return <View style={styles.screen}><StatusBar style="light" /><View style={styles.statePanel}><LoadingSpinner color={BLUE} size={28} speedMs={640} /></View></View>;
   }
 
   return (
@@ -498,7 +499,7 @@ export default function MyRecruitmentsScreen() {
 
         {loadState === "loading" ? (
           <View style={styles.statePanel}>
-            <ActivityIndicator color={BLUE} />
+            <LoadingSpinner color={BLUE} size={24} speedMs={680} />
             <Text style={styles.stateText}>{copy.loading}</Text>
           </View>
         ) : loadState === "error" ? (

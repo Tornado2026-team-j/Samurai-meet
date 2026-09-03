@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps 
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { useRouter } from "expo-router";
 import {
-  ActivityIndicator,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -12,6 +11,7 @@ import {
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { LoadingSpinner } from "../../components/ui";
 import { useAuth } from "../../hooks/useAuth";
 import { APIError } from "../../services/api-client";
 import {
@@ -401,7 +401,7 @@ export default function ForeignerNotificationsScreen() {
   };
 
   if (!language) {
-    return <View style={styles.loadingScreen}><StatusBar style="dark" /><ActivityIndicator color={BLUE} size="large" /></View>;
+    return <View style={styles.loadingScreen}><StatusBar style="dark" /><LoadingSpinner color={BLUE} size={28} speedMs={640} /></View>;
   }
 
   return (
@@ -497,7 +497,7 @@ export default function ForeignerNotificationsScreen() {
 
         {loading && notificationRecords.length === 0 ? (
           <View style={styles.emptyState}>
-            <ActivityIndicator color={BLUE} size="small" />
+            <LoadingSpinner color={BLUE} size={24} speedMs={680} />
             <Text style={styles.emptyTitle}>{copy.loading}</Text>
           </View>
         ) : loadError && notificationRecords.length === 0 ? (

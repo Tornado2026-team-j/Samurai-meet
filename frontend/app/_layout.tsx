@@ -2,6 +2,7 @@ import { Redirect, Stack, usePathname, useRouter } from "expo-router";
 import { useEffect, useRef, type ReactNode } from "react";
 import { View } from "react-native";
 import GlobalTabBar from "../components/GlobalTabBar";
+import { LoadingSpinner } from "../components/ui";
 import { AuthProvider, useAuth } from "../hooks/useAuth";
 import {
   isProtectedRoute,
@@ -14,7 +15,11 @@ function AuthRouteGuard({ children }: { children: ReactNode }) {
   const { status } = useAuth();
 
   if (status === "loading" && isProtectedRoute(pathname)) {
-    return <View style={{ flex: 1, backgroundColor: "#ffffff" }} />;
+    return (
+      <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#ffffff" }}>
+        <LoadingSpinner color="#5EC5F5" size={28} speedMs={640} />
+      </View>
+    );
   }
 
   if (shouldRedirectToSignedOutRoot(status, pathname)) {

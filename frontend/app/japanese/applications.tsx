@@ -13,6 +13,7 @@ import {
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { LoadingSpinner } from "../../components/ui";
 import { useAuth } from "../../hooks/useAuth";
 import { APIError } from "../../services/api-client";
 import { loadLanguage, subscribeLanguage } from "../../services/onboarding";
@@ -381,7 +382,7 @@ export default function JapaneseApplicationsScreen() {
 
         {loadState === "loading" ? (
           <View style={styles.statePanel}>
-            <ActivityIndicator color={BLUE} />
+            <LoadingSpinner color={BLUE} size={24} speedMs={680} />
             <Text style={styles.stateText}>{copy.loading}</Text>
           </View>
         ) : loadState === "error" ? (

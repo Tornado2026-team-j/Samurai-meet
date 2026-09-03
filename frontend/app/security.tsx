@@ -12,7 +12,7 @@ import {
   View,
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
-import { Header, colors, opacity, radius, spacing, typography } from "../components/ui";
+import { Header, LoadingSpinner, colors, opacity, radius, spacing, typography } from "../components/ui";
 import { useAuth } from "../hooks/useAuth";
 import { loadLanguage, subscribeLanguage, type AppLanguage } from "../services/onboarding";
 import {
@@ -212,7 +212,7 @@ export default function SecurityScreen() {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void load(true)} tintColor={colors.brand.sky} />}
       >
         <Text style={styles.description}>{copy.description}</Text>
-        {loading ? <View style={styles.state}><ActivityIndicator color={colors.brand.sky} /><Text style={styles.stateText}>{copy.loading}</Text></View> : null}
+        {loading ? <View style={styles.state}><LoadingSpinner color={colors.brand.sky} size={24} speedMs={680} /><Text style={styles.stateText}>{copy.loading}</Text></View> : null}
         {!loading ? (
           <>
             <SectionTitle icon="devices" title={copy.sessions} />

@@ -1,7 +1,8 @@
 import { MaterialIcons } from '@expo/vector-icons';
 import { Redirect, useLocalSearchParams, useRouter } from 'expo-router';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useAuth } from '../../hooks/useAuth';
+import { LoadingSpinner } from '../../components/ui';
 
 export default function OAuthCompleteScreen() {
   const {
@@ -37,7 +38,7 @@ export default function OAuthCompleteScreen() {
   return (
     <View accessibilityLabel="Google認証を完了しています" style={styles.screen}>
       <View style={styles.iconCircle}>
-        <ActivityIndicator color="#e7b454" size="large" />
+        <LoadingSpinner color="#e7b454" size={28} speedMs={640} />
       </View>
       <Text accessibilityRole="header" style={styles.title}>Google認証を確認中</Text>
       <Text style={styles.message}>安全なログイン処理を完了しています。</Text>

@@ -17,6 +17,7 @@ import { StatusBar } from "expo-status-bar";
 import IdentityVerificationPrompt from "../components/IdentityVerificationPrompt";
 import ProfileForm from "../components/ProfileForm";
 import { RecoveryAccountDeleteAction, RecoveryCompletion, RecoveryKeyDisplay, RecoveryKeyInput, SupportAccountID } from "../components/RecoveryFlow";
+import { LoadingSpinner } from "../components/ui";
 import { useAuth } from "../hooks/useAuth";
 import {
   completeInitialKeySetup,
@@ -1048,7 +1049,7 @@ export default function OnboardingScreen() {
             </Pressable>
           </>
         ) : (
-          <ActivityIndicator color={BLUE} size="large" />
+          <LoadingSpinner color={BLUE} size={28} speedMs={640} />
         )}
       </View>
     );
@@ -1100,7 +1101,7 @@ export default function OnboardingScreen() {
     return (
       <View style={styles.loadingScreen}>
         <StatusBar style="dark" />
-        <ActivityIndicator color={BLUE} size="large" />
+        <LoadingSpinner color={BLUE} size={28} speedMs={640} />
         <Text style={styles.loadingText}>
           {loadingText}
         </Text>
@@ -1238,7 +1239,7 @@ export default function OnboardingScreen() {
   ) {
     return (
       <View style={styles.loadingScreen}>
-        <ActivityIndicator color={BLUE} size="large" />
+        <LoadingSpinner color={BLUE} size={28} speedMs={640} />
       </View>
     );
   }

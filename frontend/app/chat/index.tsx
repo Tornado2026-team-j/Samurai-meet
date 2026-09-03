@@ -1,10 +1,10 @@
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { Header } from "../../components/ui";
+import { Header, LoadingSpinner } from "../../components/ui";
 import { useAuth } from "../../hooks/useAuth";
 import { APIError } from "../../services/api-client";
 import {
@@ -203,7 +203,7 @@ export default function ChatListScreen() {
     return (
       <View style={styles.loadingScreen}>
         <StatusBar style="dark" />
-        <ActivityIndicator color={BLUE} size="large" />
+        <LoadingSpinner color={BLUE} size={28} speedMs={640} />
       </View>
     );
   }
@@ -259,7 +259,7 @@ export default function ChatListScreen() {
         ) : null}
         {loading && chats.length === 0 ? (
           <View style={styles.statePanel}>
-            <ActivityIndicator color={BLUE} />
+            <LoadingSpinner color={BLUE} size={24} speedMs={680} />
             <Text style={styles.stateText}>{copy.loading}</Text>
           </View>
         ) : loadError && chats.length === 0 ? (

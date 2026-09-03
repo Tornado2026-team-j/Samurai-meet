@@ -1,9 +1,9 @@
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "expo-router";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { StatusBar } from "expo-status-bar";
-import { Header, colors, radius } from "../components/ui";
+import { Header, LoadingSpinner, colors, radius } from "../components/ui";
 import { useAuth } from "../hooks/useAuth";
 import { loadLanguage, subscribeLanguage, type AppLanguage } from "../services/onboarding";
 import { listBlockedUsers, unblockUser, type BlockedUser } from "../services/safety";
@@ -98,7 +98,7 @@ export default function BlockedUsersScreen() {
       <StatusBar style="light" />
       <Header iconName="block" onBack={() => router.back()} title={copy.title} variant="hero" />
       <ScrollView contentContainerStyle={styles.content}>
-        {loading ? <ActivityIndicator color={colors.brand.sky} /> : null}
+        {loading ? <LoadingSpinner color={colors.brand.sky} size={24} speedMs={680} /> : null}
         {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
         {!loading && items.length === 0 ? <Text style={styles.empty}>{copy.empty}</Text> : null}
         {items.map((item) => (

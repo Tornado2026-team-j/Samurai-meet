@@ -16,8 +16,11 @@ export default function LoadingSpinner({
   style,
 }: LoadingSpinnerProps) {
   const rotation = useRef(new Animated.Value(0)).current;
+  const opacity = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
+    rotation.setValue(0);
+    opacity.setValue(0);
     const loop = Animated.loop(
       Animated.timing(rotation, {
         duration: Math.max(360, speedMs),
@@ -26,9 +29,19 @@ export default function LoadingSpinner({
         useNativeDriver: true,
       }),
     );
+    const entrance = Animated.timing(opacity, {
+      duration: 160,
+      easing: Easing.out(Easing.quad),
+      toValue: 1,
+      useNativeDriver: true,
+    });
     loop.start();
-    return () => loop.stop();
-  }, [rotation, speedMs]);
+    entrance.start();
+    return () => {
+      loop.stop();
+      entrance.stop();
+    };
+  }, [opacity, rotation, speedMs]);
 
   return (
     <Animated.View
@@ -44,6 +57,7 @@ export default function LoadingSpinner({
           borderRightColor: color,
         },
         {
+          opacity,
           transform: [
             {
               rotate: rotation.interpolate({
