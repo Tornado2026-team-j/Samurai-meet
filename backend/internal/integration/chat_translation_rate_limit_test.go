@@ -69,6 +69,34 @@ func TestChatTranslationRateLimitSuppressesDuplicateInFlightRequest(t *testing.T
 	nextRelease()
 }
 
+func TestChatTranslationRateLimitDoesNotDoubleRefillAfterClockRollback(t *testing.T) {
+	ctx := context.Background()
+	now := time.Now().UTC()
+	f := seedAcceptedChat(t, ctx, now)
+	messages := seedTranslationMessages(t, f, ctx, now, 4)
+	f.chatService.ConfigureTranslationRateLimit(2, 1, 4)
+
+	reserve := func(index int, at time.Time) func() {
+		t.Helper()
+		release, err := f.chatService.BeginMessageTranslation(ctx, f.ownerID, f.chatID, messages[index].ID, messages[index].CreatedAt, translationTestText(index), testTranslationCommitmentKey(), "ja", at)
+		if err != nil {
+			t.Fatalf("translation reservation %d at %s: %v", index, at.Format(time.RFC3339Nano), err)
+		}
+		return release
+	}
+
+	reserve(0, now)()
+	// A forward clock movement must still refill the account bucket.
+	reserve(1, now.Add(10*time.Second))()
+	// Consume the remaining token while the wall clock is behind the watermark.
+	reserve(2, now.Add(5*time.Second))()
+
+	last, err := f.chatService.BeginMessageTranslation(ctx, f.ownerID, f.chatID, messages[3].ID, messages[3].CreatedAt, translationTestText(3), testTranslationCommitmentKey(), "ja", now.Add(10*time.Second))
+	if !errors.Is(err, chat.ErrTranslationRateLimited) || last != nil {
+		t.Fatalf("translation reservation after clock rollback returned release=%t err=%v, want no double refill", last != nil, err)
+	}
+}
+
 func TestChatTranslationReservationRejectsStaleRevision(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC()

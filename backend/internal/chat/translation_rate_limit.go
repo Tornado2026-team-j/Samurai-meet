@@ -146,7 +146,8 @@ func (s *Service) BeginMessageTranslation(
 		lastRefillUnix = nowUnix
 	} else if lastRefillUnix > nowUnix {
 		// A backwards wall-clock adjustment must not create free tokens.
-		lastRefillUnix = nowUnix
+		// Keep the previous timestamp so the same interval cannot be refilled again.
+		// lastRefillUnix intentionally remains unchanged.
 	}
 
 	if _, err = tx.ExecContext(ctx, `
