@@ -16,7 +16,7 @@ import { Header, colors, radius, shadows, typography } from "../components/ui";
 import { useAuth } from "../hooks/useAuth";
 import { APIError } from "../services/api-client";
 import { cancelMeeting, createMeeting, endMeeting, getMeetingForMatch, meetingProximityCapability, resumeMeeting, startMeeting, type Meeting } from "../services/meeting";
-import { completeMatch, listMatches, type MatchView } from "../services/matching";
+import { completeMatch, likeMatch, listMatches, type MatchView } from "../services/matching";
 import { loadLanguage, subscribeLanguage, type AppLanguage } from "../services/onboarding";
 import { formatTimeRange } from "../utils/time";
 
@@ -46,6 +46,9 @@ const COPY = {
     meetingStateChanged: "会合の状態が変わりました。最新の予定を読み込んでください。",
     meetingNotAvailable: "この会合は現在開始できません。マッチの状態を確認してください。",
     meetingForbidden: "この会合を操作する権限がありません。",
+    like: "いいね",
+    liked: "いいね済み",
+    likeError: "いいねを送信できませんでした。予定終了後にもう一度お試しください。",
     people: (count: number) => `募集 ${count}人`,
   },
   en: {
@@ -71,6 +74,9 @@ const COPY = {
     meetingStateChanged: "The meeting state changed. Reload the latest plans.",
     meetingNotAvailable: "This meeting cannot be started now. Check the match status.",
     meetingForbidden: "You are not allowed to operate this meeting.",
+    like: "Like",
+    liked: "Liked",
+    likeError: "The like could not be sent. Try again after the plan has ended.",
     people: (count: number) => `${count} people needed`,
   },
 } as const;
@@ -271,6 +277,22 @@ export default function PlansScreen() {
     }
   };
 
+  const sendLike = async (plan: MatchView) => {
+    if (busyMatchId || plan.liked_by_me) return;
+    const activeSession = getCurrentSession() ?? session;
+    if (!activeSession) return;
+    setBusyMatchId(plan.id);
+    setActionError(null);
+    try {
+      await likeMatch(plan.id, activeSession);
+      setPlans((items) => items.map((item) => item.id === plan.id ? { ...item, liked_by_me: true } : item));
+    } catch {
+      setActionError(copy.likeError);
+    } finally {
+      setBusyMatchId(null);
+    }
+  };
+
   return (
     <View style={styles.screen}>
       <StatusBar style="light" />
@@ -337,6 +359,18 @@ export default function PlansScreen() {
                   <Text style={styles.secondaryActionText}>{copy.profile}</Text>
                 </Pressable>
               </View>
+              {activeTab === "past" ? (
+                <Pressable
+                  accessibilityLabel={`${plan.other_user.name}に${copy.like}`}
+                  accessibilityState={{ disabled: plan.liked_by_me || busy }}
+                  disabled={plan.liked_by_me || busy}
+                  onPress={() => void sendLike(plan)}
+                  style={[styles.likeAction, (plan.liked_by_me || busy) && styles.disabled]}
+                >
+                  <MaterialIcons color={plan.liked_by_me ? colors.brand.sky : colors.text.secondary} name={plan.liked_by_me ? "thumb-up" : "thumb-up-off-alt"} size={18} />
+                  <Text style={[styles.likeActionText, plan.liked_by_me && styles.likeActionTextSelected]}>{plan.liked_by_me ? copy.liked : copy.like}</Text>
+                </Pressable>
+              ) : null}
               {activeTab === "today" && plan.status === "accepted" ? (
                 <>
                   {meeting?.status === "completed" ? <Text style={styles.meetingStatus}>{copy.meetingCompleted}</Text> : meeting?.status === "cancelled" && meeting.resume_requested ? <Text style={styles.meetingStatus}>{copy.resumeWaiting}</Text> : <>
@@ -398,6 +432,9 @@ const styles = StyleSheet.create({
   actions: { flexDirection: "row", gap: 8, marginTop: 14 },
   secondaryAction: { flex: 1, minHeight: 42, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, borderWidth: 1, borderColor: colors.border.default, borderRadius: radius.md },
   secondaryActionText: { color: colors.text.secondary, fontSize: 12, fontWeight: "700" },
+  likeAction: { minHeight: 42, marginTop: 8, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, borderWidth: 1, borderColor: colors.border.default, borderRadius: radius.md, backgroundColor: colors.surface.blueSoft },
+  likeActionText: { color: colors.text.secondary, fontSize: 12, fontWeight: "800" },
+  likeActionTextSelected: { color: colors.brand.sky },
   primaryAction: { minHeight: 46, marginTop: 9, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7, borderRadius: radius.md, backgroundColor: colors.brand.sky },
   primaryActionText: { color: colors.text.inverse, fontSize: 14, fontWeight: "800" },
   meetingStatus: { marginTop: 10, color: colors.text.subtle, fontSize: 13, fontWeight: "700", textAlign: "center" },

@@ -112,6 +112,15 @@ type MatchView struct {
 	Match
 	OtherUser   PublicProfile `json:"other_user"`
 	Recruitment Recruitment   `json:"recruitment"`
+	LikedByMe   bool          `json:"liked_by_me"`
+}
+
+// MatchLike is the authenticated participant's one-way appreciation for the
+// other participant after their scheduled plan has ended.
+type MatchLike struct {
+	MatchID string `json:"match_id"`
+	Liked   bool   `json:"liked"`
+	LikedAt string `json:"liked_at"`
 }
 
 type MatchListParams struct {
@@ -216,6 +225,7 @@ type matchRecord struct {
 	MatchedAt     sql.NullString
 	CreatedAt     string
 	UpdatedAt     string
+	LikedByMe     bool
 }
 
 func NewService(database *sql.DB, notificationServices ...*notification.Service) *Service {
@@ -742,7 +752,8 @@ func (s *Service) ListMatches(ctx context.Context, userID string, params MatchLi
 	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT m.id,m.card_id,m.requester_user_id,m.owner_user_id,m.status,
-		       m.matched_at,m.created_at,m.updated_at
+		       m.matched_at,m.created_at,m.updated_at,
+		       EXISTS(SELECT 1 FROM match_likes ml WHERE ml.match_id=m.id AND ml.liker_user_id=$1)
 		FROM matches m
 		JOIN users requester ON requester.id=m.requester_user_id AND requester.status='active'
 		JOIN users owner ON owner.id=m.owner_user_id AND owner.status='active'
@@ -774,7 +785,7 @@ func (s *Service) ListMatches(ctx context.Context, userID string, params MatchLi
 		var record matchRecord
 		if err = rows.Scan(
 			&record.ID, &record.RecruitmentID, &record.RequesterID, &record.OwnerID,
-			&record.Status, &record.MatchedAt, &record.CreatedAt, &record.UpdatedAt,
+			&record.Status, &record.MatchedAt, &record.CreatedAt, &record.UpdatedAt, &record.LikedByMe,
 		); err != nil {
 			return nil, err
 		}
@@ -803,7 +814,8 @@ func (s *Service) GetMatch(ctx context.Context, userID, matchID string) (MatchVi
 	var record matchRecord
 	err := s.db.QueryRowContext(ctx, `
 		SELECT m.id,m.card_id,m.requester_user_id,m.owner_user_id,m.status,
-		       m.matched_at,m.created_at,m.updated_at
+		       m.matched_at,m.created_at,m.updated_at,
+		       EXISTS(SELECT 1 FROM match_likes ml WHERE ml.match_id=m.id AND ml.liker_user_id=$2)
 		FROM matches m
 		JOIN users requester ON requester.id=m.requester_user_id AND requester.status='active'
 		JOIN users owner ON owner.id=m.owner_user_id AND owner.status='active'
@@ -814,7 +826,7 @@ func (s *Service) GetMatch(ctx context.Context, userID, matchID string) (MatchVi
 				   OR (b.blocker_user_id=m.requester_user_id AND b.blocked_user_id=m.owner_user_id)
 		  )`, matchID, userID).Scan(
 		&record.ID, &record.RecruitmentID, &record.RequesterID, &record.OwnerID,
-		&record.Status, &record.MatchedAt, &record.CreatedAt, &record.UpdatedAt)
+		&record.Status, &record.MatchedAt, &record.CreatedAt, &record.UpdatedAt, &record.LikedByMe)
 	if errors.Is(err, sql.ErrNoRows) {
 		return MatchView{}, ErrMatchNotFound
 	}
@@ -1071,6 +1083,74 @@ func (s *Service) CompleteMatch(ctx context.Context, userID, matchID string, now
 	}
 	match.Status, match.UpdatedAt = "completed", updated
 	return match, nil
+}
+
+// LikeMatch records one appreciation per participant after the scheduled plan
+// has ended. A repeated request is idempotent and cannot inflate the count.
+func (s *Service) LikeMatch(ctx context.Context, userID, matchID string, now time.Time) (MatchLike, error) {
+	if s == nil || s.db == nil || strings.TrimSpace(userID) == "" || strings.TrimSpace(matchID) == "" {
+		return MatchLike{}, ErrMatchNotFound
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return MatchLike{}, err
+	}
+	defer tx.Rollback()
+
+	var requesterID, ownerID, status, availableDate, endTime, timezone string
+	err = tx.QueryRowContext(ctx, `
+		SELECT m.requester_user_id,m.owner_user_id,m.status,r.available_date,r.end_time,r.timezone
+		FROM matches m JOIN recruitment_cards r ON r.id=m.card_id
+		WHERE m.id=$1 FOR UPDATE OF m`, matchID).Scan(
+		&requesterID, &ownerID, &status, &availableDate, &endTime, &timezone)
+	if errors.Is(err, sql.ErrNoRows) {
+		return MatchLike{}, ErrMatchNotFound
+	}
+	if err != nil {
+		return MatchLike{}, err
+	}
+	if userID != requesterID && userID != ownerID {
+		return MatchLike{}, ErrForbidden
+	}
+	if status != "accepted" && status != "completed" {
+		return MatchLike{}, ErrInvalidState
+	}
+	recipientID := otherMatchParticipant(userID, requesterID, ownerID)
+	blocked, err := s.blocked(ctx, userID, recipientID)
+	if err != nil {
+		return MatchLike{}, err
+	}
+	if blocked {
+		return MatchLike{}, ErrBlocked
+	}
+	if timezone != recruitmentTimezone {
+		return MatchLike{}, ErrInvalidState
+	}
+	scheduledEnd, err := time.ParseInLocation("2006-01-02 15:04", availableDate+" "+endTime, recruitmentLocation)
+	if err != nil || now.In(recruitmentLocation).Before(scheduledEnd) {
+		return MatchLike{}, ErrInvalidState
+	}
+	createdAt := now.UTC().Format(time.RFC3339Nano)
+	var likedAt string
+	err = tx.QueryRowContext(ctx, `
+		INSERT INTO match_likes (match_id,liker_user_id,liked_user_id,created_at)
+		VALUES ($1,$2,$3,$4)
+		ON CONFLICT (match_id,liker_user_id) DO NOTHING
+		RETURNING created_at`, matchID, userID, recipientID, createdAt).Scan(&likedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		if err = tx.QueryRowContext(ctx, `SELECT created_at FROM match_likes WHERE match_id=$1 AND liker_user_id=$2`, matchID, userID).Scan(&likedAt); err != nil {
+			return MatchLike{}, err
+		}
+	} else if err != nil {
+		return MatchLike{}, err
+	} else if _, err = tx.ExecContext(ctx, `
+		UPDATE profiles SET likes_count=likes_count+1,updated_at=$1 WHERE user_id=$2`, createdAt, recipientID); err != nil {
+		return MatchLike{}, err
+	}
+	if err = tx.Commit(); err != nil {
+		return MatchLike{}, err
+	}
+	return MatchLike{MatchID: matchID, Liked: true, LikedAt: likedAt}, nil
 }
 
 func (s *Service) UpdateLocation(ctx context.Context, userID string, input LocationInput, now time.Time) error {
@@ -1379,7 +1459,15 @@ func (s *Service) buildMatchView(ctx context.Context, userID string, record matc
 		Match:       match,
 		OtherUser:   other,
 		Recruitment: buildRecruitment(card, keywords, ""),
+		LikedByMe:   record.LikedByMe,
 	}, nil
+}
+
+func otherMatchParticipant(userID, requesterID, ownerID string) string {
+	if userID == requesterID {
+		return ownerID
+	}
+	return requesterID
 }
 
 func (s *Service) loadPublicProfile(ctx context.Context, userID string) (PublicProfile, error) {

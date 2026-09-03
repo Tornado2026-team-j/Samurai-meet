@@ -126,6 +126,13 @@ export type MatchParticipant = {
 export type MatchView = RecruitmentInterest & {
   other_user: MatchParticipant;
   recruitment: Recruitment;
+  liked_by_me: boolean;
+};
+
+export type MatchLike = {
+  match_id: string;
+  liked: boolean;
+  liked_at: string;
 };
 
 export type MatchListParams = {
@@ -486,6 +493,22 @@ export async function withdrawRecruitmentInterest(
     { method: "POST", signal },
   );
   if (!response.data) throw new Error("match response is empty");
+  return response.data;
+}
+
+export async function likeMatch(
+  matchId: string,
+  session: Session,
+  signal?: AbortSignal,
+): Promise<MatchLike> {
+  const response = await requestAPI<DataResponse<MatchLike>>(
+    `/matches/${encodeURIComponent(matchId)}/like`,
+    session,
+    { method: "POST", signal },
+  );
+  if (!response.data || response.data.match_id !== matchId || response.data.liked !== true) {
+    throw new Error("match like response is invalid");
+  }
   return response.data;
 }
 

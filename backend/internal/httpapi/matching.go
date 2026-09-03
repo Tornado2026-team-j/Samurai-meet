@@ -269,6 +269,15 @@ func matchAction(service *matching.Service, sessions *auth.SessionService, meeti
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "matching_unavailable"})
 			return
 		}
+		if parts[1] == "like" {
+			result, likeErr := service.LikeMatch(r.Context(), claims.Subject, matchID, time.Now())
+			if likeErr != nil {
+				writeMatchingError(w, likeErr)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"data": result})
+			return
+		}
 		var result matching.Match
 		switch parts[1] {
 		case "accept":
