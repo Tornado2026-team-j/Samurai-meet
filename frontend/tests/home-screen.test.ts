@@ -39,6 +39,13 @@ describe("ホーム画面の更新契約", () => {
     expect(source).toContain('availableFrom: "",');
   });
 
+  it("Recovery Phrase操作は下部ナビの上までスクロールできる", async () => {
+    const source = await readScreen("../components/RecoveryFlow.tsx");
+
+    expect(source).toContain("getTabBarContentBottomPadding(insets.bottom)");
+    expect(source).toContain("contentContainerStyle={[styles.content, { paddingBottom: getTabBarContentBottomPadding(insets.bottom) }]}");
+  });
+
   it("外国人ホームは復帰フォーカスではなく初回取得とPull-to-Refreshだけを使う", async () => {
     const source = await readScreen("../app/foreigner/index.tsx");
 

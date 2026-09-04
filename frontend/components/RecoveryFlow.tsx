@@ -15,6 +15,7 @@ import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { canonicalizeRecoveryPhrase, recoveryPhraseMatches } from "../services/crypto";
 import type { AppLanguage } from "../services/onboarding";
+import { getTabBarContentBottomPadding } from "../utils/layout";
 import type { ThemeColors } from "./ui/tokens";
 import { useTheme, useThemeStyles } from "../hooks/useTheme";
 
@@ -191,7 +192,7 @@ export function RecoveryKeyInput({ accountID, language, busy, error, onBack, onS
 
       <ScrollView
         automaticallyAdjustKeyboardInsets
-        contentContainerStyle={styles.content}
+        contentContainerStyle={[styles.content, { paddingBottom: getTabBarContentBottomPadding(insets.bottom) }]}
         keyboardShouldPersistTaps="handled"
       >
         <MaterialIcons color={BLUE} name="vpn-key" size={58} />
@@ -291,7 +292,7 @@ export function RecoveryKeyDisplay({ accountID, language, mode = "initial", reco
 
       <ScrollView
         automaticallyAdjustKeyboardInsets
-        contentContainerStyle={styles.content}
+        contentContainerStyle={[styles.content, { paddingBottom: getTabBarContentBottomPadding(insets.bottom) }]}
         keyboardShouldPersistTaps="handled"
       >
         <MaterialIcons color={YELLOW} name="key" size={58} />
@@ -582,7 +583,7 @@ export function RecoveryCompletion({
       <View style={[styles.header, { paddingTop: Math.max(insets.top, 20) }]}>
         <Text style={styles.headerTitle}>{copy.title}</Text>
       </View>
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView contentContainerStyle={[styles.content, { paddingBottom: getTabBarContentBottomPadding(insets.bottom) }]}>
         <View style={styles.successIcon}>
         <MaterialIcons color={colors.state.success} name="check" size={44} />
         </View>
