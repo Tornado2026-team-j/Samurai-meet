@@ -32,7 +32,7 @@ func TestPostgresMigrationCreatesAuthTables(t *testing.T) {
 	if err := ApplyMigrations(context.Background(), database, migrationPath); err != nil {
 		t.Fatalf("second migration application failed: %v", err)
 	}
-	for _, want := range []string{"sessions", "photos", "profiles", "user_locations", "recruitment_cards", "blocks", "matches", "chat_threads", "messages", "chat_read_states", "meeting_sessions", "meeting_proximity_latest", "chat_key_manifests", "chat_translation_rate_limits", "chat_translation_inflight"} {
+	for _, want := range []string{"sessions", "photos", "profiles", "user_locations", "recruitment_cards", "blocks", "matches", "match_likes", "chat_threads", "messages", "chat_read_states", "meeting_sessions", "meeting_proximity_latest", "chat_key_manifests", "chat_translation_rate_limits", "chat_translation_inflight", "demo_device_keys"} {
 		var tableName string
 		if err := database.QueryRow("SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = $1", want).Scan(&tableName); err != nil {
 			t.Fatalf("table %q: %v", want, err)

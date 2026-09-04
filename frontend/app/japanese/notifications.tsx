@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps 
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { useRouter } from "expo-router";
 import {
-  ActivityIndicator,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -12,6 +11,7 @@ import {
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { LoadingScreen, RefreshLoadingIndicator } from "../../components/ui";
 import { useAuth } from "../../hooks/useAuth";
 import { APIError } from "../../services/api-client";
 import {
@@ -381,7 +381,11 @@ export default function JapaneseNotificationsScreen() {
   };
 
   if (!language) {
-    return <View style={styles.loadingScreen}><StatusBar style="dark" /><ActivityIndicator color={BLUE} size="large" /></View>;
+    return <LoadingScreen />;
+  }
+
+  if (loading && notificationRecords.length === 0 && !loadError) {
+    return <LoadingScreen />;
   }
 
   return (
@@ -411,11 +415,13 @@ export default function JapaneseNotificationsScreen() {
         contentContainerStyle={styles.content}
         refreshControl={
           <RefreshControl
+            colors={["transparent"]}
             onRefresh={() => {
               void loadNotifications("refresh");
             }}
+            progressBackgroundColor="transparent"
             refreshing={refreshing}
-            tintColor={BLUE}
+            tintColor="transparent"
           />
         }
         showsVerticalScrollIndicator={false}
@@ -475,12 +481,7 @@ export default function JapaneseNotificationsScreen() {
           ) : null}
         </View>
 
-        {loading && notificationRecords.length === 0 ? (
-          <View style={styles.emptyState}>
-            <ActivityIndicator color={BLUE} size="small" />
-            <Text style={styles.emptyTitle}>{copy.loading}</Text>
-          </View>
-        ) : loadError && notificationRecords.length === 0 ? (
+        {loading && notificationRecords.length === 0 ? null : loadError && notificationRecords.length === 0 ? (
           <View style={styles.emptyState}>
             <Text accessibilityRole="alert" style={styles.emptyTitle}>{loadError}</Text>
             <Pressable
@@ -517,6 +518,7 @@ export default function JapaneseNotificationsScreen() {
           </View>
         )}
       </ScrollView>
+      {refreshing ? <RefreshLoadingIndicator color={BLUE} top={248} /> : null}
     </View>
   );
 }

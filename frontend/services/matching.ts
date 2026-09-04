@@ -97,7 +97,7 @@ export type RecruitmentSearchParams = {
   limit?: number;
 };
 
-export const MAX_RECRUITMENT_SEARCH_RANGE_DAYS = 31;
+export const MAX_RECRUITMENT_SEARCH_RANGE_MONTHS = 2;
 
 export type RecruitmentSearchDateRangeError =
   | "search_date_range_requires_both"
@@ -126,6 +126,13 @@ export type MatchParticipant = {
 export type MatchView = RecruitmentInterest & {
   other_user: MatchParticipant;
   recruitment: Recruitment;
+  liked_by_me: boolean;
+};
+
+export type MatchLike = {
+  match_id: string;
+  liked: boolean;
+  liked_at: string;
 };
 
 export type MatchListParams = {
@@ -192,7 +199,7 @@ function appendQueryPart(parts: string[], key: string, value: string | number | 
   parts.push(`${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`);
 }
 
-function parseSearchDate(value: string): number | null {
+function parseSearchDate(value: string): Date | null {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
   if (!match) return null;
 
@@ -206,7 +213,16 @@ function parseSearchDate(value: string): number | null {
   ) {
     return null;
   }
-  return date.getTime();
+  return date;
+}
+
+export function addRecruitmentSearchRangeMonths(date: Date): Date {
+  const next = new Date(date.getTime());
+  const day = date.getUTCDate();
+  next.setUTCDate(1);
+  next.setUTCMonth(next.getUTCMonth() + MAX_RECRUITMENT_SEARCH_RANGE_MONTHS);
+  next.setUTCDate(day);
+  return next;
 }
 
 export function validateRecruitmentSearchDateRange(
@@ -221,8 +237,8 @@ export function validateRecruitmentSearchDateRange(
   const fromTime = parseSearchDate(from);
   const toTime = parseSearchDate(to);
   if (fromTime === null || toTime === null) return "search_date_range_invalid";
-  if (toTime < fromTime) return "search_date_range_reversed";
-  if (toTime - fromTime > MAX_RECRUITMENT_SEARCH_RANGE_DAYS * 24 * 60 * 60 * 1000) {
+  if (toTime.getTime() < fromTime.getTime()) return "search_date_range_reversed";
+  if (toTime.getTime() > addRecruitmentSearchRangeMonths(fromTime).getTime()) {
     return "search_date_range_too_long";
   }
   return null;
@@ -480,6 +496,22 @@ export async function withdrawRecruitmentInterest(
   return response.data;
 }
 
+export async function likeMatch(
+  matchId: string,
+  session: Session,
+  signal?: AbortSignal,
+): Promise<MatchLike> {
+  const response = await requestAPI<DataResponse<MatchLike>>(
+    `/matches/${encodeURIComponent(matchId)}/like`,
+    session,
+    { method: "POST", signal },
+  );
+  if (!response.data || response.data.match_id !== matchId || response.data.liked !== true) {
+    throw new Error("match like response is invalid");
+  }
+  return response.data;
+}
+
 export function completeMatch(
   matchId: string,
   session: Session,
@@ -550,13 +582,13 @@ function parseDateOnly(value: string): Date | null {
 function formatRecruitmentDate(value: string): { card: string; detail: string } {
   const parsed = parseDateOnly(value);
   if (!parsed) return { card: value, detail: value };
-  const month = parsed.toLocaleDateString("en-US", { month: "long", timeZone: "UTC" });
   const shortMonth = parsed.toLocaleDateString("en-US", { month: "short", timeZone: "UTC" });
   const weekday = parsed.toLocaleDateString("en-US", { weekday: "short", timeZone: "UTC" });
+  const month = parsed.getUTCMonth() + 1;
   const day = parsed.getUTCDate();
   const year = parsed.getUTCFullYear();
   return {
-    card: `${month},${day} ${year}`,
+    card: `${year}/${month}/${day}`,
     detail: `${shortMonth} ${day}, ${year} (${weekday})`,
   };
 }
@@ -568,13 +600,20 @@ function formatExpiry(value: string): string {
   if (Number.isNaN(parsed.getTime())) return value;
   const parts = new Intl.DateTimeFormat("en-US", {
     day: "2-digit",
+    hour: "2-digit",
+    hourCycle: "h23",
+    minute: "2-digit",
     month: "2-digit",
     timeZone: JST_TIME_ZONE,
     year: "numeric",
-  }).formatToParts(parsed);
-  const part = (type: Intl.DateTimeFormatPartTypes): string =>
-    parts.find((item) => item.type === type)?.value ?? "";
-  return `${part("year")}/${part("month")}/${part("day")}`;
+  })
+    .formatToParts(parsed)
+    .reduce<Record<string, string>>((result, part) => {
+      if (part.type !== "literal") result[part.type] = part.value;
+      return result;
+    }, {});
+
+  return `${parts.year}/${parts.month}/${parts.day} ${parts.hour}:${parts.minute}`;
 }
 
 function uniqueTags(recruitment: Recruitment): string[] {

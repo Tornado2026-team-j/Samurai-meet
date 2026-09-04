@@ -1,8 +1,9 @@
 import { Ionicons } from "@expo/vector-icons";
 import { BlurView } from "expo-blur";
+import { LinearGradient } from "expo-linear-gradient";
 import { usePathname, useRouter, type Href } from "expo-router";
 import { useEffect, useRef, useState, type ComponentProps } from "react";
-import { Platform, Pressable, StyleSheet, Text, View } from "react-native";
+import { Platform, Pressable, StyleSheet, Text, useColorScheme, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   loadLanguage,
@@ -12,10 +13,6 @@ import {
 } from "../services/onboarding";
 
 const BLUE = "#5EC5F5";
-const TEXT = "#535353";
-const MUTED = "#8A8A8A";
-const GLASS = "rgba(255, 255, 255, 0.72)";
-const HIGHLIGHT = "rgba(94, 197, 245, 0.16)";
 
 type TabKey = "home" | "chat" | "plans" | "monsters" | "profile";
 type IoniconName = ComponentProps<typeof Ionicons>["name"];
@@ -32,11 +29,11 @@ function hrefKey(href: Href): string {
   return JSON.stringify(href) ?? "";
 }
 
-const TAB_ITEMS: Array<{
+const TAB_ITEMS: {
   key: TabKey;
   icon: IoniconName;
   activeIcon: IoniconName;
-}> = [
+}[] = [
   { key: "home", icon: "home-outline", activeIcon: "home" },
   { key: "chat", icon: "chatbubbles-outline", activeIcon: "chatbubbles" },
   { key: "plans", icon: "calendar-outline", activeIcon: "calendar" },
@@ -50,14 +47,14 @@ const TAB_LABELS: Record<AppLanguage, Record<TabKey, string>> = {
     chat: "チャット",
     plans: "予定",
     monsters: "コレクション",
-    profile: "プロフィール",
+    profile: "アカウント",
   },
   en: {
     home: "Home",
     chat: "Chat",
     plans: "Plans",
     monsters: "Collection",
-    profile: "Profile",
+    profile: "Account",
   },
 };
 
@@ -70,13 +67,33 @@ export default function GlassTabBar({
   const insets = useSafeAreaInsets();
   const pathname = usePathname();
   const router = useRouter();
+  const isDark = useColorScheme() === "dark";
   const pendingHref = useRef<string | null>(null);
   const [language, setLanguage] = useState<AppLanguage | null>(null);
-  const bottom = Math.max(insets.bottom + 8, 18);
+  const bottom = Math.max(insets.bottom + 3, 10);
   const defaultHomeHref: Href = appMode === "traveler" ? "/foreigner" : "/japanese";
   const defaultPlansHref: Href = "/plans";
   const fallbackLanguage: AppLanguage = appMode === "traveler" ? "en" : "ja";
   const labels = TAB_LABELS[language ?? fallbackLanguage];
+  const visual = isDark
+    ? {
+      bar: "rgba(24, 29, 34, 0.88)",
+      highlight: "rgba(94, 197, 245, 0.2)",
+      muted: "rgba(255, 255, 255, 0.68)",
+      text: "rgba(255, 255, 255, 0.9)",
+      fade: ["rgba(0, 0, 0, 0.02)", "rgba(0, 0, 0, 0.2)"] as const,
+      bottomFade: ["rgba(0, 0, 0, 0)", "rgba(0, 0, 0, 0.18)", "rgba(0, 0, 0, 0.52)"] as const,
+      shadow: "0 8px 22px rgba(0, 0, 0, 0.28)",
+    }
+    : {
+      bar: "rgba(255, 255, 255, 0.84)",
+      highlight: "rgba(94, 197, 245, 0.16)",
+      muted: "#8A8A8A",
+      text: "#535353",
+      fade: ["rgba(255, 255, 255, 0.02)", "rgba(255, 255, 255, 0.18)"] as const,
+      bottomFade: ["rgba(255, 255, 255, 0)", "rgba(255, 255, 255, 0.48)", "rgba(255, 255, 255, 0.92)"] as const,
+      shadow: "0 8px 22px rgba(31, 45, 61, 0.14)",
+    };
 
   useEffect(() => {
     pendingHref.current = null;
@@ -127,8 +144,22 @@ export default function GlassTabBar({
 
   return (
     <View pointerEvents="box-none" style={[styles.wrapper, { bottom }]}>
-      <BlurView intensity={Platform.OS === "ios" ? 42 : 22} tint="light" style={styles.bar}>
-        <View style={styles.tint} />
+      <LinearGradient
+        colors={visual.bottomFade}
+        locations={[0, 0.52, 1]}
+        pointerEvents="none"
+        style={[styles.bottomFade, { bottom: -bottom }]}
+      />
+      <BlurView
+        intensity={Platform.OS === "ios" ? 56 : 38}
+        tint={isDark ? "dark" : "light"}
+        style={[styles.bar, { backgroundColor: visual.bar, boxShadow: visual.shadow }]}
+      >
+        <LinearGradient
+          colors={visual.fade}
+          pointerEvents="none"
+          style={styles.contentFade}
+        />
         {TAB_ITEMS.map((item) => {
           const selected = item.key === activeTab;
           const label = labels[item.key];
@@ -144,14 +175,14 @@ export default function GlassTabBar({
                 pressed && styles.pressed,
               ]}
             >
-              <View style={[styles.iconBubble, selected && styles.iconBubbleSelected]}>
+              <View style={[styles.iconBubble, selected && { backgroundColor: visual.highlight }]}>
                 <Ionicons
-                  color={selected ? BLUE : MUTED}
+                  color={selected ? BLUE : visual.muted}
                   name={selected ? item.activeIcon : item.icon}
                   size={22}
                 />
               </View>
-              <Text numberOfLines={1} style={[styles.label, selected && styles.labelSelected]}>
+              <Text numberOfLines={1} style={[styles.label, { color: visual.text }, selected && styles.labelSelected]}>
                 {label}
               </Text>
             </Pressable>
@@ -165,8 +196,8 @@ export default function GlassTabBar({
 const styles = StyleSheet.create({
   wrapper: {
     position: "absolute",
-    right: 18,
-    left: 18,
+    right: 14,
+    left: 14,
     zIndex: 20,
   },
   bar: {
@@ -176,20 +207,24 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     overflow: "hidden",
     paddingHorizontal: 8,
-    paddingVertical: 7,
-    borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.78)",
+    paddingVertical: 5,
+    borderWidth: 0,
     borderRadius: 34,
-    backgroundColor: GLASS,
-    boxShadow: "0 8px 22px rgba(31, 45, 61, 0.12)",
+    elevation: 12,
   },
-  tint: {
+  contentFade: {
     position: "absolute",
     top: 0,
     right: 0,
     bottom: 0,
     left: 0,
-    backgroundColor: GLASS,
+    borderRadius: 34,
+  },
+  bottomFade: {
+    position: "absolute",
+    top: 48,
+    right: -14,
+    left: -14,
   },
   tab: {
     minWidth: 56,
@@ -206,11 +241,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     borderRadius: 17,
   },
-  iconBubbleSelected: {
-    backgroundColor: HIGHLIGHT,
-  },
   label: {
-    color: TEXT,
     fontSize: 10,
     fontWeight: "600",
     letterSpacing: 0,

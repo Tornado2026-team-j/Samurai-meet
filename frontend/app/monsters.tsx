@@ -1,8 +1,9 @@
 import { MaterialIcons } from "@expo/vector-icons";
 import { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ScrollView, StyleSheet, Text, View } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { LoadingSpinner } from "../components/ui";
 import { useAuth } from "../hooks/useAuth";
 import {
   loadLanguage,
@@ -11,6 +12,7 @@ import {
   type AppLanguage,
   type LocalProfile,
 } from "../services/onboarding";
+import { getTabBarContentBottomPadding } from "../utils/layout";
 
 const BLUE = "#5ec5f5";
 const YELLOW = "#e7b454";
@@ -153,13 +155,13 @@ export default function MonstersScreen() {
       <ScrollView
         contentContainerStyle={[
           styles.content,
-          { paddingBottom: Math.max(insets.bottom + 120, 132) },
+          { paddingBottom: getTabBarContentBottomPadding(insets.bottom) },
         ]}
         showsVerticalScrollIndicator={false}
       >
         {loading ? (
           <View style={styles.statePanel}>
-            <ActivityIndicator color={BLUE} />
+            <LoadingSpinner color={BLUE} size={24} />
             <Text style={styles.stateText}>{copy.loading}</Text>
           </View>
         ) : hasDetails ? (

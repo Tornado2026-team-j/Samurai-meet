@@ -11,6 +11,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/accountscope"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/auth"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/notification"
 )
@@ -148,6 +149,7 @@ type chatAccess struct {
 	OwnerUserID string
 	RequesterID string
 	OtherUserID string
+	AccountType string
 }
 
 func NewService(database *sql.DB, signer *auth.Signer, notificationServices ...*notification.Service) *Service {
@@ -221,6 +223,9 @@ func (s *Service) sessionActive(ctx context.Context, userID, sessionID string, n
 		!now.Before(expiry) || !now.Before(lastSeenAt.Add(auth.RefreshIdleTTL)) {
 		return time.Time{}, ErrChatForbidden
 	}
+	if _, scopeErr := accountscope.Resolve(ctx, s.db, userID, now); scopeErr != nil {
+		return time.Time{}, ErrChatForbidden
+	}
 	return expiry, nil
 }
 
@@ -274,7 +279,7 @@ func (s *Service) Get(ctx context.Context, userID, chatID string, now time.Time)
 	if s == nil || s.db == nil || strings.TrimSpace(userID) == "" || strings.TrimSpace(chatID) == "" {
 		return ChatSummary{}, ErrChatNotFound
 	}
-	access, err := s.loadChat(ctx, userID, chatID, true)
+	access, err := s.loadChat(ctx, userID, chatID, true, now)
 	if err != nil {
 		return ChatSummary{}, err
 	}
@@ -302,7 +307,7 @@ func (s *Service) ListMessagesBefore(ctx context.Context, userID, chatID string,
 
 func (s *Service) listMessages(ctx context.Context, userID, chatID string, after int64, before *int64, limit int, now time.Time) (MessagePage, error) {
 	limit = normalizeLimit(limit)
-	access, err := s.loadChat(ctx, userID, chatID, true)
+	access, err := s.loadChat(ctx, userID, chatID, true, now)
 	if err != nil {
 		return MessagePage{}, err
 	}
@@ -390,7 +395,7 @@ func (s *Service) SendMessage(ctx context.Context, userID, chatID string, input 
 // plaintext-only moderation request so unauthorized callers never send chat
 // text to an external provider.
 func (s *Service) AuthorizeMessageSend(ctx context.Context, userID, chatID string) error {
-	_, err := s.loadChat(ctx, userID, chatID, false)
+	_, err := s.loadChat(ctx, userID, chatID, false, time.Now())
 	return err
 }
 
@@ -400,7 +405,7 @@ func (s *Service) AuthorizeMessageSend(ctx context.Context, userID, chatID strin
 // commitment key is client-held and is used only for this request; it is never
 // persisted by the server.
 func (s *Service) AuthorizeMessageTranslation(ctx context.Context, userID, chatID, messageID, text, commitmentKey string) (string, error) {
-	access, err := s.loadChat(ctx, userID, chatID, true)
+	access, err := s.loadChat(ctx, userID, chatID, true, time.Now())
 	if err != nil {
 		return "", err
 	}
@@ -436,8 +441,11 @@ func (s *Service) sendMessage(ctx context.Context, userID, chatID string, input 
 			return Message{}, false, &RateLimitError{RetryAfter: retryAfter}
 		}
 	}
-	access, err := s.loadChat(ctx, userID, chatID, false)
+	access, err := s.loadChat(ctx, userID, chatID, false, now)
 	if err != nil {
+		return Message{}, false, err
+	}
+	if err := validateMessageScope(access.AccountType, input.KeyVersion); err != nil {
 		return Message{}, false, err
 	}
 	if access.MatchStatus != "accepted" {
@@ -541,8 +549,11 @@ func (s *Service) UpdateMessage(ctx context.Context, userID, chatID, messageID s
 	if err := validateUpdateMessageInput(input); err != nil {
 		return Message{}, err
 	}
-	access, err := s.loadChat(ctx, userID, chatID, false)
+	access, err := s.loadChat(ctx, userID, chatID, false, now)
 	if err != nil {
+		return Message{}, err
+	}
+	if err := validateMessageScope(access.AccountType, input.KeyVersion); err != nil {
 		return Message{}, err
 	}
 
@@ -609,7 +620,7 @@ func (s *Service) UpdateMessage(ctx context.Context, userID, chatID, messageID s
 // cleared immediately, an append-only audit row records the user request, and
 // a deletion event lets connected clients remove the message without a reload.
 func (s *Service) DeleteMessage(ctx context.Context, userID, chatID, messageID string, now time.Time) error {
-	access, err := s.loadChat(ctx, userID, chatID, false)
+	access, err := s.loadChat(ctx, userID, chatID, false, now)
 	if err != nil {
 		return err
 	}
@@ -711,7 +722,7 @@ func (s *Service) markRead(ctx context.Context, userID, chatID string, sequence 
 	if sequence <= 0 {
 		return ErrChatInvalidInput
 	}
-	access, err := s.loadChat(ctx, userID, chatID, true)
+	access, err := s.loadChat(ctx, userID, chatID, true, now)
 	if err != nil {
 		return err
 	}
@@ -770,7 +781,7 @@ func (s *Service) IssueTransportToken(ctx context.Context, userID, sessionID, ch
 	if transport != QUICTransport {
 		return TransportToken{}, ErrChatInvalidInput
 	}
-	access, err := s.loadChat(ctx, userID, chatID, false)
+	access, err := s.loadChat(ctx, userID, chatID, false, now)
 	if err != nil {
 		return TransportToken{}, err
 	}
@@ -852,6 +863,15 @@ func (s *Service) ensureChat(ctx context.Context, userID, matchID string, now ti
 	if blocked {
 		return chatAccess{}, ErrChatBlocked
 	}
+	scope, err := accountscope.RequireCompatible(ctx, tx, access.OwnerUserID, access.RequesterID, now)
+	if err != nil {
+		if errors.Is(err, accountscope.ErrUserNotFound) || errors.Is(err, accountscope.ErrInactive) ||
+			errors.Is(err, accountscope.ErrExpired) || errors.Is(err, accountscope.ErrMismatch) || errors.Is(err, accountscope.ErrInvalid) {
+			return chatAccess{}, ErrChatNotFound
+		}
+		return chatAccess{}, err
+	}
+	access.AccountType = scope.AccountType
 	access.OtherUserID = access.OwnerUserID
 	if userID == access.OwnerUserID {
 		access.OtherUserID = access.RequesterID
@@ -875,7 +895,7 @@ func (s *Service) ensureChat(ctx context.Context, userID, matchID string, now ti
 	return access, nil
 }
 
-func (s *Service) loadChat(ctx context.Context, userID, chatID string, allowCompleted bool) (chatAccess, error) {
+func (s *Service) loadChat(ctx context.Context, userID, chatID string, allowCompleted bool, times ...time.Time) (chatAccess, error) {
 	if s == nil || s.db == nil || strings.TrimSpace(userID) == "" || strings.TrimSpace(chatID) == "" {
 		return chatAccess{}, ErrChatNotFound
 	}
@@ -892,6 +912,19 @@ func (s *Service) loadChat(ctx context.Context, userID, chatID string, allowComp
 	if userID != access.OwnerUserID && userID != access.RequesterID {
 		return chatAccess{}, ErrChatForbidden
 	}
+	now := time.Now()
+	if len(times) > 0 {
+		now = times[0]
+	}
+	scope, err := accountscope.RequireCompatible(ctx, s.db, access.OwnerUserID, access.RequesterID, now)
+	if err != nil {
+		if errors.Is(err, accountscope.ErrUserNotFound) || errors.Is(err, accountscope.ErrInactive) ||
+			errors.Is(err, accountscope.ErrExpired) || errors.Is(err, accountscope.ErrMismatch) || errors.Is(err, accountscope.ErrInvalid) {
+			return chatAccess{}, ErrChatNotFound
+		}
+		return chatAccess{}, err
+	}
+	access.AccountType = scope.AccountType
 	if access.MatchStatus != "accepted" && (!allowCompleted || access.MatchStatus != "completed") {
 		return chatAccess{}, ErrChatNotAvailable
 	}
@@ -972,7 +1005,7 @@ func validateMessageInput(input SendMessageInput) error {
 		return ErrChatInvalidInput
 	}
 	if input.ContentType == "text" {
-		if input.KeyVersion == chatMessageKeyVersion {
+		if input.KeyVersion == chatMessageKeyVersion || input.KeyVersion == DemoChatKeyVersion {
 			if !validPlaintextBinding(input.PlaintextCommitment, input.PlaintextCommitmentSalt) {
 				return ErrChatInvalidInput
 			}
@@ -1002,11 +1035,27 @@ func validateUpdateMessageInput(input UpdateMessageInput) error {
 	if err := validateEncryptedMessageInput(input.Ciphertext, input.Nonce, input.Algorithm, input.KeyVersion); err != nil {
 		return err
 	}
-	if input.KeyVersion == chatMessageKeyVersion {
+	if input.KeyVersion == chatMessageKeyVersion || input.KeyVersion == DemoChatKeyVersion {
 		if !validPlaintextBinding(input.PlaintextCommitment, input.PlaintextCommitmentSalt) {
 			return ErrChatInvalidInput
 		}
 	} else if input.PlaintextCommitment != "" || input.PlaintextCommitmentSalt != "" {
+		return ErrChatInvalidInput
+	}
+	return nil
+}
+
+func validateMessageScope(accountType, keyVersion string) error {
+	switch accountType {
+	case accountscope.Demo:
+		if keyVersion != DemoChatKeyVersion {
+			return ErrChatInvalidInput
+		}
+	case accountscope.Regular:
+		if keyVersion == DemoChatKeyVersion {
+			return ErrChatInvalidInput
+		}
+	default:
 		return ErrChatInvalidInput
 	}
 	return nil

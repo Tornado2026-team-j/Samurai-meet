@@ -1,10 +1,10 @@
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { Header } from "../../components/ui";
+import { Header, LoadingScreen, RefreshLoadingIndicator } from "../../components/ui";
 import { useAuth } from "../../hooks/useAuth";
 import { APIError } from "../../services/api-client";
 import {
@@ -14,6 +14,7 @@ import {
   type ChatSummary,
 } from "../../services/chat";
 import { loadLanguage, subscribeLanguage, type AppLanguage } from "../../services/onboarding";
+import { getTabBarContentBottomPadding } from "../../utils/layout";
 
 const BLUE = "#5ec5f5";
 const YELLOW = "#e7b454";
@@ -199,12 +200,11 @@ export default function ChatListScreen() {
   }, [chats, loadError, loading, router, targetMatchID]);
 
   if (!language) {
-    return (
-      <View style={styles.loadingScreen}>
-        <StatusBar style="dark" />
-        <ActivityIndicator color={BLUE} size="large" />
-      </View>
-    );
+    return <LoadingScreen />;
+  }
+
+  if (loading && chats.length === 0 && !loadError) {
+    return <LoadingScreen />;
   }
 
   return (
@@ -221,10 +221,16 @@ export default function ChatListScreen() {
       <ScrollView
         contentContainerStyle={[
           styles.content,
-          { paddingBottom: Math.max(insets.bottom + 120, 132) },
+          { paddingBottom: getTabBarContentBottomPadding(insets.bottom) },
         ]}
         refreshControl={
-          <RefreshControl onRefresh={() => void load("refresh")} refreshing={refreshing} tintColor={BLUE} />
+          <RefreshControl
+            colors={["transparent"]}
+            onRefresh={() => void load("refresh")}
+            progressBackgroundColor="transparent"
+            refreshing={refreshing}
+            tintColor="transparent"
+          />
         }
         showsVerticalScrollIndicator={false}
       >
@@ -256,12 +262,7 @@ export default function ChatListScreen() {
             </View>
           </View>
         ) : null}
-        {loading && chats.length === 0 ? (
-          <View style={styles.statePanel}>
-            <ActivityIndicator color={BLUE} />
-            <Text style={styles.stateText}>{copy.loading}</Text>
-          </View>
-        ) : loadError && chats.length === 0 ? (
+        {loading && chats.length === 0 ? null : loadError && chats.length === 0 ? (
           <View style={styles.statePanel}>
             <Text accessibilityRole="alert" style={styles.stateText}>{loadError}</Text>
             <Pressable
@@ -349,6 +350,7 @@ export default function ChatListScreen() {
           </View>
         )}
       </ScrollView>
+      {refreshing ? <RefreshLoadingIndicator color={BLUE} top={188} /> : null}
     </View>
   );
 }

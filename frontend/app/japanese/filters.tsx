@@ -1,5 +1,5 @@
 import DateTimePicker, {
-  type DateTimePickerChangeEvent,
+  type DateTimePickerEvent,
 } from "@react-native-community/datetimepicker";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { useState } from "react";
@@ -23,7 +23,8 @@ import {
   parseRecruitmentDateInput,
 } from "../../services/recruitment";
 import {
-  MAX_RECRUITMENT_SEARCH_RANGE_DAYS,
+  MAX_RECRUITMENT_SEARCH_RANGE_MONTHS,
+  addRecruitmentSearchRangeMonths,
   validateRecruitmentSearchDateRange,
   type RecruitmentSearchDateRangeError,
 } from "../../services/matching";
@@ -45,7 +46,26 @@ const TIMES = [
 
 type DateField = "from" | "to";
 
-const SEARCH_DAY_MS = 24 * 60 * 60 * 1000;
+function shiftPickerDateByDays(date: Date, days: number): Date {
+  const shifted = new Date(date.getTime());
+  shifted.setUTCDate(shifted.getUTCDate() + days);
+  return shifted;
+}
+
+function minimumSearchRangeStartDate(toDate: Date): Date {
+  let candidate = new Date(toDate.getTime());
+  candidate.setUTCMonth(candidate.getUTCMonth() - MAX_RECRUITMENT_SEARCH_RANGE_MONTHS);
+
+  while (
+    addRecruitmentSearchRangeMonths(shiftPickerDateByDays(candidate, -1)).getTime() >= toDate.getTime()
+  ) {
+    candidate = shiftPickerDateByDays(candidate, -1);
+  }
+  while (addRecruitmentSearchRangeMonths(candidate).getTime() < toDate.getTime()) {
+    candidate = shiftPickerDateByDays(candidate, 1);
+  }
+  return candidate;
+}
 
 function dateRangeErrorMessage(error: RecruitmentSearchDateRangeError): string {
   switch (error) {
@@ -56,7 +76,7 @@ function dateRangeErrorMessage(error: RecruitmentSearchDateRangeError): string {
     case "search_date_range_reversed":
       return "終了日は開始日以降を指定してください。";
     case "search_date_range_too_long":
-      return `検索期間は${MAX_RECRUITMENT_SEARCH_RANGE_DAYS}日差以内で指定してください。`;
+      return `検索期間は最大${MAX_RECRUITMENT_SEARCH_RANGE_MONTHS}か月以内で指定してください。`;
   }
 }
 
@@ -73,13 +93,13 @@ function datePickerBounds(field: DateField, availableFrom: string, availableTo: 
 
   if (field === "from") {
     return {
-      minimumDate: new Date(otherDate.getTime() - MAX_RECRUITMENT_SEARCH_RANGE_DAYS * SEARCH_DAY_MS),
+      minimumDate: minimumSearchRangeStartDate(otherDate),
       maximumDate: otherDate,
     };
   }
   return {
     minimumDate: otherDate,
-    maximumDate: new Date(otherDate.getTime() + MAX_RECRUITMENT_SEARCH_RANGE_DAYS * SEARCH_DAY_MS),
+    maximumDate: addRecruitmentSearchRangeMonths(otherDate),
   };
 }
 
@@ -157,7 +177,12 @@ export default function JapaneseFiltersScreen() {
     closeDatePicker();
   };
 
-  const handleDatePickerValueChange = (_event: DateTimePickerChangeEvent, value: Date) => {
+  const handleDatePickerChange = (event: DateTimePickerEvent, value?: Date) => {
+    if (event.type === "dismissed" || !value) {
+      closeDatePicker();
+      return;
+    }
+
     if (Platform.OS === "android") {
       commitDate(value);
       return;
@@ -192,18 +217,22 @@ export default function JapaneseFiltersScreen() {
       <StatusBar style="light" />
       <Header
         onBack={() => router.back()}
-        right={
+        right={hasActiveFilters ? (
           <Pressable
             accessibilityLabel="検索条件をリセット"
             accessibilityRole="button"
             hitSlop={8}
             onPress={resetFilters}
-            style={({ pressed }) => [styles.resetButton, pressed && styles.pressed]}
+            style={({ pressed }) => [
+              styles.resetButton,
+              hasActiveFilters && styles.resetButtonActive,
+              pressed && styles.pressed,
+            ]}
           >
-            <MaterialIcons color={hasActiveFilters ? colors.brand.gold : "rgba(255, 255, 255, 0.75)"} name="refresh" size={18} />
+            <MaterialIcons color={hasActiveFilters ? colors.text.primary : "rgba(255, 255, 255, 0.86)"} name="refresh" size={18} />
             <Text style={[styles.resetText, hasActiveFilters && styles.resetTextActive]}>リセット</Text>
           </Pressable>
-        }
+        ) : null}
         title="検索条件"
         titleStyle={{ marginLeft: 42 }}
         variant="compact"
@@ -216,6 +245,7 @@ export default function JapaneseFiltersScreen() {
           <View style={styles.choices}>{TIMES.map((item) => <Choice key={item.value} label={item.label} onPress={() => setTime(item.value)} selected={time === item.value} />)}</View>
         </FilterGroup>
         <FilterGroup label="募集日（期間）">
+          <Text style={styles.hint}>OS標準の日付選択で指定（開始日・終了日必須、最大2か月）</Text>
           <View style={styles.dateRow}>
             <DateFilterField
               label="開始日"
@@ -261,7 +291,7 @@ export default function JapaneseFiltersScreen() {
           mode="date"
           minimumDate={pickerBounds.minimumDate}
           onDismiss={closeDatePicker}
-          onValueChange={handleDatePickerValueChange}
+          onChange={handleDatePickerChange}
           timeZoneName={JST_TIME_ZONE}
           value={pickerDate}
         />
@@ -298,7 +328,7 @@ export default function JapaneseFiltersScreen() {
                 mode="date"
                 minimumDate={pickerBounds.minimumDate}
                 onDismiss={closeDatePicker}
-                onValueChange={handleDatePickerValueChange}
+                onChange={handleDatePickerChange}
                 style={styles.nativePicker}
                 themeVariant="light"
                 timeZoneName={JST_TIME_ZONE}
@@ -387,8 +417,9 @@ const styles = StyleSheet.create({
   apply: { minHeight: 46, marginTop: 4, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, borderRadius: radius.md, backgroundColor: colors.brand.sky },
   applyText: { color: colors.text.inverse, fontSize: 14, fontWeight: "900" },
   resetButton: { flexDirection: "row", alignItems: "center", gap: 3, paddingHorizontal: 8, paddingVertical: 4, borderRadius: radius.pill, backgroundColor: "rgba(255, 255, 255, 0.2)" },
+  resetButtonActive: { backgroundColor: colors.surface.default },
   resetText: { color: "rgba(255, 255, 255, 0.85)", fontSize: 12, fontWeight: "700" },
-  resetTextActive: { color: colors.brand.gold, fontWeight: "900" },
+  resetTextActive: { color: colors.text.primary, fontWeight: "900" },
   modalBackdrop: { flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0, 0, 0, 0.28)" },
   pickerSheet: { minHeight: 286, paddingTop: 8, borderTopLeftRadius: 28, borderTopRightRadius: 28, backgroundColor: colors.surface.default },
   pickerHeader: { height: 48, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16 },

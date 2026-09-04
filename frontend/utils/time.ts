@@ -52,3 +52,39 @@ export function shiftTime(time: string, amountMinutes: number): string {
 
   return formatMinutes(parseTime(time) + amountMinutes);
 }
+
+/** Returns whether a JST-scheduled plan has reached its stated end time. */
+export function isJSTScheduleEnded(
+  date: string,
+  endTime: string,
+  now = new Date(),
+): boolean {
+  const dateMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date.trim());
+  const timeMatch = /^(\d{2}):([0-5]\d)$/.exec(endTime.trim());
+  if (!dateMatch || !timeMatch || Number(timeMatch[1]) > 23) return false;
+
+  const end = new Date(`${date}T${endTime}:00+09:00`);
+  if (Number.isNaN(end.getTime())) return false;
+
+  const endParts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Tokyo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    hourCycle: "h23",
+    minute: "2-digit",
+  }).formatToParts(end);
+  const values = Object.fromEntries(endParts.map((part) => [part.type, part.value]));
+  if (
+    values.year !== dateMatch[1]
+    || values.month !== dateMatch[2]
+    || values.day !== dateMatch[3]
+    || values.hour !== timeMatch[1]
+    || values.minute !== timeMatch[2]
+  ) {
+    return false;
+  }
+
+  return end.getTime() <= now.getTime();
+}

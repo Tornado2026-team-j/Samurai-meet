@@ -27,6 +27,9 @@ func recoveryChallenge(service *keys.RecoveryService, sessions *auth.SessionServ
 
 		if sessions != nil {
 			if claims, ok := accessClaims(r, sessions); ok {
+				if !requireRegularAccount(w, claims) {
+					return
+				}
 				if !requireRecentPasskey(r, sessions, claims) {
 					writeRecentPasskeyRequired(w)
 					return
@@ -71,6 +74,9 @@ func recoveryVerify(service *keys.RecoveryService, sessions *auth.SessionService
 
 		if sessions != nil {
 			if claims, ok := accessClaims(r, sessions); ok {
+				if !requireRegularAccount(w, claims) {
+					return
+				}
 				if !requireRecentPasskey(r, sessions, claims) {
 					writeRecentPasskeyRequired(w)
 					return

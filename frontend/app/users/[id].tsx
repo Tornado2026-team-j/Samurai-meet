@@ -1,9 +1,9 @@
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { useEffect, useMemo, useState } from "react";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { StatusBar } from "expo-status-bar";
-import { Header, colors, radius, shadows } from "../../components/ui";
+import { Header, LoadingSpinner, colors, radius, shadows } from "../../components/ui";
 import { useAuth } from "../../hooks/useAuth";
 import { blockUser } from "../../services/chat";
 import { getMatch, type MatchParticipant } from "../../services/matching";
@@ -73,7 +73,7 @@ export default function UserProfileScreen() {
       <StatusBar style="light" />
       <Header iconName="person-outline" onBack={() => router.back()} title="プロフィール" variant="hero" />
       <ScrollView contentContainerStyle={styles.content}>
-        {loading ? <ActivityIndicator color={colors.brand.sky} /> : null}
+        {loading ? <LoadingSpinner color={colors.brand.sky} size={24} /> : null}
         {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
         {profile ? (
           <>

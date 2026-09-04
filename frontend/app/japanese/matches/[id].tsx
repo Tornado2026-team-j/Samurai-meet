@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import { MaterialIcons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import {
-  ActivityIndicator,
   Pressable,
   Image,
   ScrollView,
@@ -12,7 +11,7 @@ import {
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { colors } from "../../../components/ui";
+import { colors, LoadingSpinner } from "../../../components/ui";
 import { useAuth } from "../../../hooks/useAuth";
 import { APIError } from "../../../services/api-client";
 import { loadLanguage, subscribeLanguage } from "../../../services/onboarding";
@@ -60,6 +59,7 @@ type MatchDetailCopy = {
   sending: string;
   categoryIllustration: string;
   report: string;
+  home: string;
 };
 
 const COPY: Record<AppLanguage, MatchDetailCopy> = {
@@ -81,6 +81,7 @@ const COPY: Record<AppLanguage, MatchDetailCopy> = {
     sending: "応募を送信中...",
     categoryIllustration: "カテゴリのイラスト",
     report: "この募集を通報",
+    home: "ホーム",
   },
   en: {
     back: "Back",
@@ -100,6 +101,7 @@ const COPY: Record<AppLanguage, MatchDetailCopy> = {
     sending: "Sending application...",
     categoryIllustration: " category illustration",
     report: "Report this recruitment",
+    home: "Home",
   },
 };
 
@@ -209,7 +211,7 @@ export default function JapaneseMatchDetailScreen() {
     return (
       <View style={styles.loadingScreen}>
         <StatusBar style="light" />
-        <ActivityIndicator color={HEADER_BLUE} />
+        <LoadingSpinner color={HEADER_BLUE} size={26} />
       </View>
     );
   }
@@ -218,7 +220,7 @@ export default function JapaneseMatchDetailScreen() {
     return (
       <View style={styles.loadingScreen}>
         <StatusBar style="light" />
-        {loadState === "loading" ? <ActivityIndicator color={HEADER_BLUE} /> : null}
+        {loadState === "loading" ? <LoadingSpinner color={HEADER_BLUE} size={26} /> : null}
         <Text accessibilityRole={loadState === "error" ? "alert" : undefined} style={styles.loadingText}>
           {loadState === "loading" ? copy.loading : loadError}
         </Text>
@@ -326,6 +328,20 @@ export default function JapaneseMatchDetailScreen() {
               ]}
             >
               <MaterialIcons color="#ffffff" name="chevron-left" size={30} />
+            </Pressable>
+
+            <Pressable
+              accessibilityLabel={copy.home}
+              accessibilityRole="button"
+              hitSlop={10}
+              onPress={() => router.replace("/japanese")}
+              style={({ pressed }) => [
+                styles.homeButton,
+                { top: Math.max(insets.top + 6, 45) },
+                pressed && styles.pressed,
+              ]}
+            >
+              <MaterialIcons color="#ffffff" name="home" size={24} />
             </Pressable>
 
             <View
@@ -532,6 +548,16 @@ const styles = StyleSheet.create({
     height: 26,
     alignItems: "center",
     justifyContent: "center",
+  },
+  homeButton: {
+    position: "absolute",
+    right: 18,
+    width: 40,
+    height: 40,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 20,
+    backgroundColor: "rgba(255,255,255,0.18)",
   },
   categoryImage: {
     position: "absolute",

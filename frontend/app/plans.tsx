@@ -1,8 +1,8 @@
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useFocusEffect, useRouter } from "expo-router";
 import {
-  ActivityIndicator,
+  Modal,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -12,13 +12,14 @@ import {
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { Header, colors, radius, shadows, typography } from "../components/ui";
+import { Header, colors, LoadingScreen, RefreshLoadingIndicator, radius, shadows, typography } from "../components/ui";
 import { useAuth } from "../hooks/useAuth";
 import { APIError } from "../services/api-client";
 import { cancelMeeting, createMeeting, endMeeting, getMeetingForMatch, meetingProximityCapability, resumeMeeting, startMeeting, type Meeting } from "../services/meeting";
-import { completeMatch, listMatches, type MatchView } from "../services/matching";
+import { completeMatch, likeMatch, listMatches, type MatchView } from "../services/matching";
 import { loadLanguage, subscribeLanguage, type AppLanguage } from "../services/onboarding";
-import { formatTimeRange } from "../utils/time";
+import { formatTimeRange, isJSTScheduleEnded } from "../utils/time";
+import { getTabBarContentBottomPadding } from "../utils/layout";
 
 type PlanTab = "today" | "upcoming" | "past";
 
@@ -46,6 +47,16 @@ const COPY = {
     meetingStateChanged: "会合の状態が変わりました。最新の予定を読み込んでください。",
     meetingNotAvailable: "この会合は現在開始できません。マッチの状態を確認してください。",
     meetingForbidden: "この会合を操作する権限がありません。",
+    like: "いいね",
+    liked: "いいね済み",
+    likeError: "いいねを送信できませんでした。予定終了後にもう一度お試しください。",
+    reviewTitle: "予定はいかがでしたか？",
+    reviewMessage: "相手にいいねを送れます。",
+    reviewDate: "実施日時",
+    reviewPerson: "評価する相手",
+    reviewPending: "未評価",
+    reviewAlreadyLiked: "評価済み",
+    reviewLater: "あとで評価する",
     people: (count: number) => `募集 ${count}人`,
   },
   en: {
@@ -71,6 +82,16 @@ const COPY = {
     meetingStateChanged: "The meeting state changed. Reload the latest plans.",
     meetingNotAvailable: "This meeting cannot be started now. Check the match status.",
     meetingForbidden: "You are not allowed to operate this meeting.",
+    like: "Like",
+    liked: "Liked",
+    likeError: "The like could not be sent. Try again after the plan has ended.",
+    reviewTitle: "How was your plan?",
+    reviewMessage: "You can send the other participant a like.",
+    reviewDate: "When",
+    reviewPerson: "Person to rate",
+    reviewPending: "Not rated yet",
+    reviewAlreadyLiked: "Already rated",
+    reviewLater: "Rate later",
     people: (count: number) => `${count} people needed`,
   },
 } as const;
@@ -124,6 +145,8 @@ export default function PlansScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [busyMatchId, setBusyMatchId] = useState<string | null>(null);
+  const [reviewPlan, setReviewPlan] = useState<MatchView | null>(null);
+  const reviewPromptedRef = useRef(new Set<string>());
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const copy = COPY[language];
@@ -150,7 +173,11 @@ export default function PlansScreen() {
       setError(COPY[language].loadError);
       return;
     }
-    refreshMode ? setRefreshing(true) : setLoading(true);
+    if (refreshMode) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
+    }
     setError(null);
     try {
       let result: MatchView[];
@@ -163,7 +190,14 @@ export default function PlansScreen() {
         if (!nextSession) throw requestError;
         result = await listMatches(nextSession, { role: "all", limit: 50 });
       }
-      setPlans(result.filter((item) => item.status === "accepted" || item.status === "completed"));
+      const nextPlans = result.filter((item) => item.status === "accepted" || item.status === "completed");
+      setPlans(nextPlans);
+      const reviewCandidate = nextPlans.find((item) =>
+        item.status === "completed" && !item.liked_by_me && !reviewPromptedRef.current.has(item.id));
+      if (reviewCandidate) {
+        reviewPromptedRef.current.add(reviewCandidate.id);
+        setReviewPlan(reviewCandidate);
+      }
       setActionError(null);
     } catch {
       setError(COPY[language].loadError);
@@ -214,12 +248,14 @@ export default function PlansScreen() {
 
   const visiblePlans = useMemo(() => {
     const today = jstDateKey();
+    const now = new Date();
     return plans
       .filter((plan) => {
         const date = plan.recruitment.available_date;
-        if (activeTab === "today") return date === today && plan.status === "accepted";
+        const ended = isJSTScheduleEnded(plan.recruitment.available_date, plan.recruitment.end_time, now);
+        if (activeTab === "today") return date === today && plan.status === "accepted" && !ended;
         if (activeTab === "upcoming") return date > today && plan.status === "accepted";
-        return date < today || plan.status === "completed";
+        return date < today || plan.status === "completed" || ended;
       })
       .sort((left, right) => {
         const direction = activeTab === "past" ? -1 : 1;
@@ -228,6 +264,10 @@ export default function PlansScreen() {
         );
       });
   }, [activeTab, plans]);
+
+  if (loading && plans.length === 0 && !error) {
+    return <LoadingScreen />;
+  }
 
   const updateMeeting = async (plan: MatchView) => {
     if (busyMatchId) return;
@@ -259,13 +299,41 @@ export default function PlansScreen() {
       setMeetings((items) => ({ ...items, [plan.id]: next }));
       if (next.status === "completed") {
         await completeMatch(plan.id, activeSession).catch(() => undefined);
-        setPlans((items) => items.map((item) => item.id === plan.id ? { ...item, status: "completed" } : item));
+        const completedPlan = { ...plan, status: "completed" as const };
+        reviewPromptedRef.current.add(plan.id);
+        setPlans((items) => items.map((item) => item.id === plan.id ? completedPlan : item));
+        setReviewPlan(completedPlan);
       }
     } catch (error) {
       setActionError(meetingActionError(error, copy));
       if (error instanceof APIError && (error.status === 404 || error.status === 409)) {
         await load(true);
       }
+    } finally {
+      setBusyMatchId(null);
+    }
+  };
+
+  const sendLike = async (plan: MatchView) => {
+    if (busyMatchId || plan.liked_by_me) return;
+    const activeSession = getCurrentSession() ?? session;
+    if (!activeSession) return;
+    setBusyMatchId(plan.id);
+    setActionError(null);
+    try {
+      try {
+        await likeMatch(plan.id, activeSession);
+      } catch (requestError) {
+        if (!(requestError instanceof APIError) || requestError.status !== 401) throw requestError;
+        await refresh();
+        const refreshedSession = getCurrentSession();
+        if (!refreshedSession) throw requestError;
+        await likeMatch(plan.id, refreshedSession);
+      }
+      setPlans((items) => items.map((item) => item.id === plan.id ? { ...item, liked_by_me: true } : item));
+      setReviewPlan((current) => current?.id === plan.id ? null : current);
+    } catch {
+      setActionError(copy.likeError);
     } finally {
       setBusyMatchId(null);
     }
@@ -297,13 +365,19 @@ export default function PlansScreen() {
       </View>
 
       <ScrollView
-        contentContainerStyle={[styles.content, { paddingBottom: Math.max(insets.bottom + 116, 132) }]}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void load(true)} tintColor={colors.brand.sky} />}
+        contentContainerStyle={[styles.content, { paddingBottom: getTabBarContentBottomPadding(insets.bottom) }]}
+        refreshControl={
+          <RefreshControl
+            colors={["transparent"]}
+            onRefresh={() => void load(true)}
+            progressBackgroundColor="transparent"
+            refreshing={refreshing}
+            tintColor="transparent"
+          />
+        }
         showsVerticalScrollIndicator={false}
       >
-        {loading ? (
-          <View style={styles.state}><ActivityIndicator color={colors.brand.sky} /><Text style={styles.stateText}>{copy.loading}</Text></View>
-        ) : error ? (
+        {loading && plans.length === 0 ? null : error ? (
           <View style={styles.state}>
             <Text accessibilityRole="alert" style={styles.stateText}>{error}</Text>
             <Pressable onPress={() => void load()} style={styles.retry}><Text style={styles.retryText}>{copy.retry}</Text></Pressable>
@@ -337,6 +411,18 @@ export default function PlansScreen() {
                   <Text style={styles.secondaryActionText}>{copy.profile}</Text>
                 </Pressable>
               </View>
+              {activeTab === "past" ? (
+                <Pressable
+                  accessibilityLabel={`${plan.other_user.name}に${copy.like}`}
+                  accessibilityState={{ disabled: plan.liked_by_me || busy }}
+                  disabled={plan.liked_by_me || busy}
+                  onPress={() => void sendLike(plan)}
+                  style={[styles.likeAction, (plan.liked_by_me || busy) && styles.disabled]}
+                >
+                  <MaterialIcons color={plan.liked_by_me ? colors.brand.sky : colors.text.secondary} name={plan.liked_by_me ? "thumb-up" : "thumb-up-off-alt"} size={18} />
+                  <Text style={[styles.likeActionText, plan.liked_by_me && styles.likeActionTextSelected]}>{plan.liked_by_me ? copy.liked : copy.like}</Text>
+                </Pressable>
+              ) : null}
               {activeTab === "today" && plan.status === "accepted" ? (
                 <>
                   {meeting?.status === "completed" ? <Text style={styles.meetingStatus}>{copy.meetingCompleted}</Text> : meeting?.status === "cancelled" && meeting.resume_requested ? <Text style={styles.meetingStatus}>{copy.resumeWaiting}</Text> : <>
@@ -354,6 +440,44 @@ export default function PlansScreen() {
         })}
         {actionError ? <Text accessibilityRole="alert" style={styles.error}>{actionError}</Text> : null}
       </ScrollView>
+      {refreshing ? <RefreshLoadingIndicator color={colors.brand.sky} top={248} /> : null}
+      <Modal
+        animationType="fade"
+        onRequestClose={() => setReviewPlan(null)}
+        transparent
+        visible={reviewPlan !== null}
+      >
+        <View style={styles.reviewBackdrop}>
+          <View style={styles.reviewSheet}>
+            <MaterialIcons color={colors.brand.sky} name="thumb-up" size={32} />
+            <Text style={styles.reviewTitle}>{copy.reviewTitle}</Text>
+            <Text style={styles.reviewMessage}>{copy.reviewMessage}</Text>
+            {reviewPlan ? (
+              <View style={styles.reviewPlanCard}>
+                <Text style={styles.reviewPlanDate}>{copy.reviewDate}: {displayDate(reviewPlan.recruitment.available_date, language)}</Text>
+                <Text style={styles.reviewPlanTime}>{formatTimeRange(reviewPlan.recruitment.start_time, reviewPlan.recruitment.duration_hours)}</Text>
+                <Text numberOfLines={1} style={styles.reviewPlanPerson}>{copy.reviewPerson}: {reviewPlan.other_user.name}</Text>
+                <Text style={styles.reviewPlanStatus}>{reviewPlan.liked_by_me ? copy.reviewAlreadyLiked : copy.reviewPending}</Text>
+              </View>
+            ) : null}
+            <Pressable
+              accessibilityRole="button"
+              disabled={busyMatchId !== null || !reviewPlan}
+              onPress={() => { if (reviewPlan) void sendLike(reviewPlan); }}
+              style={[styles.reviewPrimary, (busyMatchId !== null || !reviewPlan) && styles.disabled]}
+            >
+              <Text style={styles.reviewPrimaryText}>{reviewPlan?.liked_by_me ? copy.liked : copy.like}</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setReviewPlan(null)}
+              style={styles.reviewLater}
+            >
+              <Text style={styles.reviewLaterText}>{copy.reviewLater}</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -398,10 +522,26 @@ const styles = StyleSheet.create({
   actions: { flexDirection: "row", gap: 8, marginTop: 14 },
   secondaryAction: { flex: 1, minHeight: 42, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, borderWidth: 1, borderColor: colors.border.default, borderRadius: radius.md },
   secondaryActionText: { color: colors.text.secondary, fontSize: 12, fontWeight: "700" },
+  likeAction: { minHeight: 42, marginTop: 8, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, borderWidth: 1, borderColor: colors.border.default, borderRadius: radius.md, backgroundColor: colors.surface.blueSoft },
+  likeActionText: { color: colors.text.secondary, fontSize: 12, fontWeight: "800" },
+  likeActionTextSelected: { color: colors.brand.sky },
   primaryAction: { minHeight: 46, marginTop: 9, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7, borderRadius: radius.md, backgroundColor: colors.brand.sky },
   primaryActionText: { color: colors.text.inverse, fontSize: 14, fontWeight: "800" },
   meetingStatus: { marginTop: 10, color: colors.text.subtle, fontSize: 13, fontWeight: "700", textAlign: "center" },
   disabled: { opacity: 0.55 },
   error: { color: colors.state.danger, fontSize: 13, fontWeight: "700", textAlign: "center" },
   proximityNotice: { marginTop: 8, color: colors.text.subtle, fontSize: 12, lineHeight: 18, textAlign: "center" },
+  reviewBackdrop: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24, backgroundColor: "rgba(0,0,0,0.35)" },
+  reviewSheet: { width: "100%", maxWidth: 420, alignItems: "center", padding: 26, borderRadius: radius.xl, backgroundColor: colors.surface.default, ...shadows.card },
+  reviewTitle: { marginTop: 12, color: colors.text.primary, fontSize: 20, fontWeight: "800", textAlign: "center" },
+  reviewMessage: { marginTop: 8, color: colors.text.secondary, fontSize: 14, fontWeight: "600", textAlign: "center" },
+  reviewPlanCard: { width: "100%", marginTop: 18, padding: 14, borderRadius: radius.md, backgroundColor: colors.surface.blueSoft },
+  reviewPlanDate: { color: colors.text.secondary, fontSize: 12, fontWeight: "700" },
+  reviewPlanTime: { marginTop: 4, color: colors.text.primary, fontSize: 15, fontWeight: "800" },
+  reviewPlanPerson: { marginTop: 4, color: colors.text.secondary, fontSize: 13, fontWeight: "700" },
+  reviewPlanStatus: { marginTop: 8, color: colors.brand.sky, fontSize: 12, fontWeight: "800" },
+  reviewPrimary: { width: "100%", minHeight: 46, marginTop: 22, alignItems: "center", justifyContent: "center", borderRadius: radius.md, backgroundColor: colors.brand.sky },
+  reviewPrimaryText: { color: colors.text.inverse, fontSize: 14, fontWeight: "800" },
+  reviewLater: { minHeight: 42, marginTop: 8, alignItems: "center", justifyContent: "center", paddingHorizontal: 18 },
+  reviewLaterText: { color: colors.text.subtle, fontSize: 13, fontWeight: "700" },
 });

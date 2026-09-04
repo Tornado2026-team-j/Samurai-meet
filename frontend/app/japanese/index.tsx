@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MaterialIcons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import {
-  ActivityIndicator,
   Keyboard,
   PanResponder,
   Pressable,
@@ -16,7 +15,7 @@ import {
 import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import MatchCard from "../../components/MatchCard";
-import { colors } from "../../components/ui";
+import { colors, LoadingScreen, RefreshLoadingIndicator } from "../../components/ui";
 import { useAuth } from "../../hooks/useAuth";
 import { useDelayedLoading } from "../../hooks/useDelayedLoading";
 import { useNavigationGuard } from "../../hooks/useNavigationGuard";
@@ -33,6 +32,7 @@ import {
 } from "../../services/matching";
 import { loadLanguage, subscribeLanguage, type AppLanguage } from "../../services/onboarding";
 import { isMatchCategory, type MatchCardData } from "../../types/match";
+import { getTabBarContentBottomPadding } from "../../utils/layout";
 
 const BLUE = colors.brand.sky;
 const YELLOW = colors.brand.gold;
@@ -182,6 +182,7 @@ export default function JapaneseHomeScreen() {
     controller: AbortController;
     cancelled: boolean;
   } | null>(null);
+  const mountedRef = useRef(true);
   const locationCacheRef = useRef<{ coordinates: Coordinates; cachedAt: number } | null>(null);
   const [selectedDate, setSelectedDate] = useState(params.date ?? todayDateKey);
   const [sortMode, setSortMode] = useState<SortMode>(params.sort === "deadline" ? "deadline" : "near");
@@ -274,7 +275,10 @@ export default function JapaneseHomeScreen() {
   const sortTop = dateTop + (hasDateRange ? 0 : 76);
   const headerHeight = Math.max(hasDateRange ? 184 : 246, sortTop + 58);
 
-  const loadRecruitments = useCallback((mode: "initial" | "refresh" = "refresh") => {
+  const loadRecruitments = useCallback((
+    mode: "initial" | "refresh" = "refresh",
+    options?: { preserveContent?: boolean },
+  ) => {
     const previousRequest = activeSearchRequestRef.current;
     if (previousRequest) {
       previousRequest.cancelled = true;
@@ -286,18 +290,21 @@ export default function JapaneseHomeScreen() {
     const request = { id: requestId, controller, cancelled: false };
     activeSearchRequestRef.current = request;
     const isCurrentRequest = () =>
-      activeSearchRequestRef.current?.id === requestId && !request.cancelled;
+      mountedRef.current && searchRequestIDRef.current === requestId && !request.cancelled && !controller.signal.aborted;
     const releaseRequest = () => {
       if (activeSearchRequestRef.current?.id === requestId) {
         activeSearchRequestRef.current = null;
       }
     };
 
-    setRecruitments([]);
-    setApplicationStatuses({});
-    setTodayPlanCount(0);
-    setLoading(true);
-    setRefreshing(mode !== "initial");
+    const preserveContent = mode === "refresh" && options?.preserveContent === true;
+    if (!preserveContent) {
+      setRecruitments([]);
+      setApplicationStatuses({});
+      setTodayPlanCount(0);
+    }
+    setLoading(mode === "initial" || !preserveContent);
+    setRefreshing(mode === "refresh");
     setLoadError(null);
 
     const run = async () => {
@@ -316,28 +323,17 @@ export default function JapaneseHomeScreen() {
       }
 
       try {
-        let coordinates: Coordinates | null = null;
-        let locationWasRefreshed = false;
         const cachedLocation = locationCacheRef.current;
-        if (cachedLocation && Date.now() - cachedLocation.cachedAt < SEARCH_LOCATION_CACHE_TTL_MS) {
-          coordinates = cachedLocation.coordinates;
-        } else {
-          try {
-            coordinates = await getCurrentCoordinates();
-          } catch {
-            coordinates = null;
-          }
-          if (coordinates) {
-            locationCacheRef.current = { coordinates, cachedAt: Date.now() };
-            locationWasRefreshed = true;
-          }
-        }
-        if (coordinates && locationWasRefreshed) {
-          // Search already carries the fresh coordinates. Persisting them is
-          // useful for later requests, but must not add another RTT to the
-          // visible search flow.
-          void updateCurrentLocation(coordinates, activeSession, controller.signal).catch(() => undefined);
-        }
+        const coordinates = cachedLocation?.coordinates ?? null;
+        const locationIsFresh = Boolean(
+          cachedLocation && Date.now() - cachedLocation.cachedAt < SEARCH_LOCATION_CACHE_TTL_MS,
+        );
+        // Android emulators can take a long time to produce a GPS fix. Start
+        // that lookup in parallel and let the recruitment request use the
+        // cached/server-side location (or no location) immediately.
+        const locationRefresh = locationIsFresh
+          ? null
+          : getCurrentCoordinates().catch(() => null);
 
         const searchParams = {
           keywords: submittedQuery ? [submittedQuery] : [],
@@ -375,6 +371,29 @@ export default function JapaneseHomeScreen() {
         setTodayPlanCount(0);
         setLoading(false);
         setRefreshing(false);
+
+        if (locationRefresh) {
+          void locationRefresh.then(async (freshCoordinates) => {
+            if (!freshCoordinates || !isCurrentRequest()) return;
+
+            locationCacheRef.current = { coordinates: freshCoordinates, cachedAt: Date.now() };
+            // The first search already returned cards. Persisting the location
+            // and refining the radius in the background must not delay them.
+            void updateCurrentLocation(freshCoordinates, searchSession, controller.signal).catch(() => undefined);
+            try {
+              const refinedResult = await searchRecruitments(
+                searchSession,
+                { ...searchParams, latitude: freshCoordinates.latitude, longitude: freshCoordinates.longitude },
+                controller.signal,
+              );
+              if (!isCurrentRequest()) return;
+              setRecruitments(refinedResult);
+            } catch {
+              // Keep the already visible result when the optional refinement
+              // fails; the next refresh can retry it.
+            }
+          });
+        }
 
         void (async () => {
           let applicationResult;
@@ -420,6 +439,7 @@ export default function JapaneseHomeScreen() {
   }, [getCurrentSession, params.availableFrom, params.availableTo, refresh, selectedCategory, selectedDate, selectedRadius, session, status, submittedQuery, timeRange]);
 
   useEffect(() => () => {
+    mountedRef.current = false;
     const activeRequest = activeSearchRequestRef.current;
     if (!activeRequest) return;
     activeRequest.cancelled = true;
@@ -497,12 +517,11 @@ export default function JapaneseHomeScreen() {
   };
 
   if (!language) {
-    return (
-      <View style={styles.loadingScreen}>
-        <StatusBar style="dark" />
-        {showLanguageLoading ? <ActivityIndicator color={BLUE} size="large" /> : null}
-      </View>
-    );
+    return showLanguageLoading ? <LoadingScreen /> : <View style={styles.loadingScreen} />;
+  }
+
+  if (showInitialLoading && loading && matches.length === 0 && !loadError) {
+    return <LoadingScreen />;
   }
 
   return (
@@ -510,22 +529,27 @@ export default function JapaneseHomeScreen() {
       <StatusBar style="light" />
 
       <ScrollView
+        alwaysBounceVertical
+        bounces
         contentContainerStyle={[
           styles.matchListContent,
           {
             paddingTop: headerHeight + 28,
-            paddingBottom: Math.max(insets.bottom + 120, 132),
+            paddingBottom: getTabBarContentBottomPadding(insets.bottom),
           },
         ]}
         refreshControl={
           <RefreshControl
-            onRefresh={() => loadRecruitments("refresh")}
+            colors={["transparent"]}
+            onRefresh={() => { void loadRecruitments("refresh", { preserveContent: true }); }}
+            progressBackgroundColor="transparent"
             refreshing={refreshing}
-            tintColor={BLUE}
+            tintColor="transparent"
           />
         }
         showsVerticalScrollIndicator={false}
         style={styles.matchList}
+        nestedScrollEnabled
         {...dateSwipeResponder.panHandlers}
       >
         {todayPlanCount > 0 ? (
@@ -536,12 +560,7 @@ export default function JapaneseHomeScreen() {
           </Pressable>
         ) : null}
         {loading && matches.length === 0 ? (
-          showInitialLoading ? (
-            <View style={styles.statePanel}>
-              <ActivityIndicator color={BLUE} size="small" />
-              <Text style={styles.stateText}>{copy.loading}</Text>
-            </View>
-          ) : null
+          null
         ) : loadError && matches.length === 0 ? (
           <View style={styles.statePanel}>
             <Text accessibilityRole="alert" style={styles.stateText}>{loadError}</Text>
@@ -560,7 +579,7 @@ export default function JapaneseHomeScreen() {
                 <Text accessibilityRole="alert" style={styles.inlineErrorText}>{loadError}</Text>
                 <Pressable
                   accessibilityRole="button"
-                  onPress={() => loadRecruitments("refresh")}
+                  onPress={() => loadRecruitments("refresh", { preserveContent: true })}
                   style={({ pressed }) => [styles.retryButton, pressed && styles.pressed]}
                 >
                   <Text style={styles.retryButtonText}>{copy.retry}</Text>
@@ -568,7 +587,7 @@ export default function JapaneseHomeScreen() {
               </View>
             ) : null}
             {filteredMatches.map((match) => (
-              <MatchCard key={match.id} match={match} onOpen={openMatch} />
+              <MatchCard key={match.id} language={language ?? "ja"} match={match} onOpen={openMatch} />
             ))}
           </>
         )}
@@ -578,8 +597,10 @@ export default function JapaneseHomeScreen() {
         )}
       </ScrollView>
 
-      <View style={[styles.header, { height: headerHeight }]}>
-        <View style={[styles.actionRow, { top: actionTop }]}>
+      {refreshing ? <RefreshLoadingIndicator color={BLUE} top={headerHeight + 10} /> : null}
+
+      <View pointerEvents="box-none" style={[styles.header, { height: headerHeight }]}>
+        <View pointerEvents="box-none" style={[styles.actionRow, { top: actionTop }]}>
           <View style={styles.searchField}>
             <MaterialIcons
               color={PLACEHOLDER_GRAY}

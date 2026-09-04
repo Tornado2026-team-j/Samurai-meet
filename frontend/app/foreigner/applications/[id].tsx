@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import {
-  ActivityIndicator,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -12,6 +11,7 @@ import {
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { LoadingSpinner } from "../../../components/ui";
 import { useAuth } from "../../../hooks/useAuth";
 import { APIError } from "../../../services/api-client";
 import { loadLanguage, subscribeLanguage } from "../../../services/onboarding";
@@ -59,6 +59,7 @@ type DetailCopy = {
   loginRequired: string;
   loadError: string;
   back: string;
+  home: string;
   title: string;
   introduction: string;
   noIntroduction: string;
@@ -86,6 +87,7 @@ const COPY: Record<AppLanguage, DetailCopy> = {
     loginRequired: "Sign in to view this application.",
     loadError: "Application could not be loaded. It may already have been processed.",
     back: "Back",
+    home: "Home",
     title: "Application detail",
     introduction: "About this guide",
     noIntroduction: "No introduction provided.",
@@ -111,6 +113,7 @@ const COPY: Record<AppLanguage, DetailCopy> = {
     loginRequired: "ログインすると応募を確認できます。",
     loadError: "応募を読み込めませんでした。すでに処理済みの可能性があります。",
     back: "戻る",
+    home: "ホーム",
     title: "応募詳細",
     introduction: "自己紹介",
     noIntroduction: "自己紹介はありません。",
@@ -258,7 +261,7 @@ export default function ForeignerApplicationDetailScreen() {
         ]}
       >
         <StatusBar style="light" />
-        {loadState === "loading" ? <ActivityIndicator color={BLUE} /> : null}
+        {loadState === "loading" ? <LoadingSpinner color={BLUE} size={26} /> : null}
         <Text accessibilityRole={loadState === "error" ? "alert" : undefined} style={styles.loadingText}>
           {loadState === "loading" ? copy.loading : loadError ? (loadError === "loginRequired" ? copy.loginRequired : copy.loadError) : null}
         </Text>
@@ -345,6 +348,20 @@ export default function ForeignerApplicationDetailScreen() {
           ]}
         >
           <MaterialIcons color="#ffffff" name="chevron-left" size={30} />
+        </Pressable>
+
+        <Pressable
+          accessibilityLabel={copy.home}
+          accessibilityRole="button"
+          hitSlop={10}
+          onPress={() => router.replace("/foreigner")}
+          style={({ pressed }) => [
+            styles.homeButton,
+            { top: Math.max(insets.top + 5, 46) },
+            pressed && styles.pressed,
+          ]}
+        >
+          <MaterialIcons color="#ffffff" name="home" size={24} />
         </Pressable>
 
         <Text style={styles.headerTitle}>{copy.title}</Text>
@@ -538,6 +555,16 @@ const styles = StyleSheet.create({
     height: 26,
     alignItems: "center",
     justifyContent: "center",
+  },
+  homeButton: {
+    position: "absolute",
+    right: 18,
+    width: 40,
+    height: 40,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 20,
+    backgroundColor: "rgba(255,255,255,0.18)",
   },
   headerTitle: {
     color: "#ffffff",

@@ -22,6 +22,11 @@ type AccessClaims struct {
 	TokenID   string `json:"jti"`
 	IssuedAt  int64  `json:"iat"`
 	ExpiresAt int64  `json:"exp"`
+	// AccountType and DemoExpiresAt are resolved from the database by
+	// SessionService.Authenticate. They are intentionally not serialized into
+	// the bearer token, so a token payload can never choose its own scope.
+	AccountType   string     `json:"-"`
+	DemoExpiresAt *time.Time `json:"-"`
 }
 type Signer struct {
 	keys             map[string][]byte
@@ -73,7 +78,15 @@ func validKeyID(value string) bool {
 	return true
 }
 func (s *Signer) Issue(userID, sessionID, tokenID string, now time.Time) (string, AccessClaims, error) {
-	claims := AccessClaims{s.issuer, s.audience, userID, sessionID, tokenID, now.Unix(), now.Add(AccessTokenTTL).Unix()}
+	claims := AccessClaims{
+		Issuer:    s.issuer,
+		Audience:  s.audience,
+		Subject:   userID,
+		SessionID: sessionID,
+		TokenID:   tokenID,
+		IssuedAt:  now.Unix(),
+		ExpiresAt: now.Add(AccessTokenTTL).Unix(),
+	}
 	header, _ := json.Marshal(map[string]string{"alg": "HS256", "typ": "JWT", "kid": s.activeKeyID})
 	payload, err := json.Marshal(claims)
 	if err != nil {

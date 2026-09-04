@@ -14,6 +14,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/accountscope"
 )
 
 var (
@@ -93,6 +95,9 @@ func (s *Service) CreateReport(ctx context.Context, reporterID string, input Rep
 	if s == nil || s.db == nil || strings.TrimSpace(reporterID) == "" {
 		return Report{}, ErrInvalidReport
 	}
+	if _, err := accountscope.Resolve(ctx, s.db, reporterID, now); err != nil {
+		return Report{}, ErrInvalidReport
+	}
 	input.TargetType = strings.TrimSpace(input.TargetType)
 	input.TargetID = strings.TrimSpace(input.TargetID)
 	input.Reason = strings.TrimSpace(input.Reason)
@@ -108,7 +113,7 @@ func (s *Service) CreateReport(ctx context.Context, reporterID string, input Rep
 	if input.TargetType == "user" && input.TargetID == reporterID {
 		return Report{}, ErrInvalidReport
 	}
-	reportable, err := s.reportTargetExists(ctx, reporterID, input.TargetType, input.TargetID)
+	reportable, err := s.reportTargetExists(ctx, reporterID, input.TargetType, input.TargetID, now)
 	if err != nil {
 		return Report{}, err
 	}
@@ -159,6 +164,12 @@ func (s *Service) BlockUser(ctx context.Context, blockerID, blockedID string, no
 	if blockedID == blockerID {
 		return ErrSelfBlock
 	}
+	if _, err := accountscope.RequireCompatible(ctx, s.db, blockerID, blockedID, now); err != nil {
+		if isAccountScopeIsolationError(err) {
+			return ErrTargetNotFound
+		}
+		return err
+	}
 	exists, err := s.userExists(ctx, blockedID)
 	if err != nil {
 		return err
@@ -178,6 +189,12 @@ func (s *Service) Unblock(ctx context.Context, blockerID, blockedID string) erro
 	if s == nil || s.db == nil || strings.TrimSpace(blockerID) == "" || strings.TrimSpace(blockedID) == "" {
 		return ErrInvalidBlock
 	}
+	if _, err := accountscope.RequireCompatible(ctx, s.db, blockerID, blockedID, time.Now()); err != nil {
+		if isAccountScopeIsolationError(err) {
+			return ErrBlockNotFound
+		}
+		return err
+	}
 	result, err := s.db.ExecContext(ctx, `DELETE FROM blocks WHERE blocker_user_id=$1 AND blocked_user_id=$2`, blockerID, blockedID)
 	if err != nil {
 		return err
@@ -196,13 +213,21 @@ func (s *Service) ListBlocks(ctx context.Context, blockerID string) ([]BlockedUs
 	if s == nil || s.db == nil || strings.TrimSpace(blockerID) == "" {
 		return nil, ErrInvalidBlock
 	}
+	if _, err := accountscope.Resolve(ctx, s.db, blockerID, time.Now()); err != nil {
+		return nil, ErrInvalidBlock
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT b.blocked_user_id, COALESCE(NULLIF(p.name,''), u.display_name, ''), b.created_at
 		FROM blocks b
 		JOIN users u ON u.id = b.blocked_user_id
+		JOIN users blocker ON blocker.id = b.blocker_user_id
 		LEFT JOIN profiles p ON p.user_id = b.blocked_user_id
 		WHERE b.blocker_user_id = $1
-		ORDER BY b.created_at DESC`, blockerID)
+		  AND u.status='active'
+		  AND u.account_type=blocker.account_type
+		  AND (u.account_type='regular' OR u.demo_expires_at::timestamptz > $2::timestamptz)
+		ORDER BY b.created_at DESC`, blockerID, now)
 	if err != nil {
 		return nil, err
 	}
@@ -230,10 +255,10 @@ func (s *Service) userExists(ctx context.Context, userID string) (bool, error) {
 //
 // We return the same false result for an unknown object and an unauthorized
 // object so this endpoint does not become an object-existence oracle.
-func (s *Service) reportTargetExists(ctx context.Context, reporterID, targetType, targetID string) (bool, error) {
+func (s *Service) reportTargetExists(ctx context.Context, reporterID, targetType, targetID string, now time.Time) (bool, error) {
 	switch targetType {
 	case "user":
-		return s.userExists(ctx, targetID)
+		return s.sameActiveScope(ctx, reporterID, targetID, now)
 	case "recruitment_card":
 		var exists bool
 		err := s.db.QueryRowContext(ctx, `
@@ -250,12 +275,21 @@ func (s *Service) reportTargetExists(ctx context.Context, reporterID, targetType
 							  AND (m.owner_user_id=$2 OR m.requester_user_id=$2)
 						)
 				  )
+				  AND EXISTS(
+					SELECT 1
+					FROM users target_user
+					JOIN users reporter_user ON reporter_user.id=$2
+					WHERE target_user.id=r.owner_user_id
+					  AND target_user.status='active'
+					  AND target_user.account_type=reporter_user.account_type
+					  AND (target_user.account_type='regular' OR target_user.demo_expires_at::timestamptz > $3::timestamptz)
+				  )
 				  AND NOT EXISTS(
 					SELECT 1 FROM blocks b
 					WHERE (b.blocker_user_id=$2 AND b.blocked_user_id=r.owner_user_id)
 					   OR (b.blocker_user_id=r.owner_user_id AND b.blocked_user_id=$2)
 				  )
-			)`, targetID, reporterID).Scan(&exists)
+			)`, targetID, reporterID, now.UTC().Format(time.RFC3339Nano)).Scan(&exists)
 		return exists, err
 	case "message":
 		var exists bool
@@ -268,7 +302,21 @@ func (s *Service) reportTargetExists(ctx context.Context, reporterID, targetType
 				WHERE msg.id=$1
 				  AND msg.deleted_at IS NULL
 				  AND (m.owner_user_id=$2 OR m.requester_user_id=$2)
-			)`, targetID, reporterID).Scan(&exists)
+				  AND EXISTS(
+					SELECT 1
+					FROM users reporter_user
+					JOIN users owner_user ON owner_user.id=m.owner_user_id
+					JOIN users requester_user ON requester_user.id=m.requester_user_id
+					WHERE reporter_user.id=$2
+					  AND reporter_user.status='active'
+					  AND owner_user.status='active'
+					  AND requester_user.status='active'
+					  AND reporter_user.account_type=owner_user.account_type
+					  AND reporter_user.account_type=requester_user.account_type
+					  AND (owner_user.account_type='regular' OR owner_user.demo_expires_at::timestamptz > $3::timestamptz)
+					  AND (requester_user.account_type='regular' OR requester_user.demo_expires_at::timestamptz > $3::timestamptz)
+				  )
+			)`, targetID, reporterID, now.UTC().Format(time.RFC3339Nano)).Scan(&exists)
 		return exists, err
 	case "photo":
 		var exists bool
@@ -280,7 +328,14 @@ func (s *Service) reportTargetExists(ctx context.Context, reporterID, targetType
 				  AND p.owner_user_id<>$2
 				  AND p.visibility='profile'
 				  AND p.deleted_at IS NULL
-				  AND EXISTS(SELECT 1 FROM users u WHERE u.id=p.owner_user_id AND u.status='active')
+				  AND EXISTS(
+					SELECT 1 FROM users u
+					JOIN users reporter_user ON reporter_user.id=$2
+					WHERE u.id=p.owner_user_id AND u.status='active'
+					  AND reporter_user.status='active'
+					  AND u.account_type=reporter_user.account_type
+					  AND (u.account_type='regular' OR u.demo_expires_at::timestamptz > $3::timestamptz)
+				  )
 				UNION ALL
 				SELECT 1
 				FROM chat_attachments a
@@ -289,11 +344,40 @@ func (s *Service) reportTargetExists(ctx context.Context, reporterID, targetType
 				WHERE a.id=$1
 				  AND a.deleted_at IS NULL
 				  AND (m.owner_user_id=$2 OR m.requester_user_id=$2)
-			)`, targetID, reporterID).Scan(&exists)
+				  AND EXISTS(
+					SELECT 1
+					FROM users reporter_user
+					JOIN users owner_user ON owner_user.id=m.owner_user_id
+					JOIN users requester_user ON requester_user.id=m.requester_user_id
+					WHERE reporter_user.id=$2
+					  AND reporter_user.status='active'
+					  AND owner_user.status='active'
+					  AND requester_user.status='active'
+					  AND reporter_user.account_type=owner_user.account_type
+					  AND reporter_user.account_type=requester_user.account_type
+					  AND (owner_user.account_type='regular' OR owner_user.demo_expires_at::timestamptz > $3::timestamptz)
+					  AND (requester_user.account_type='regular' OR requester_user.demo_expires_at::timestamptz > $3::timestamptz)
+				  )
+			)`, targetID, reporterID, now.UTC().Format(time.RFC3339Nano)).Scan(&exists)
 		return exists, err
 	default:
 		return false, nil
 	}
+}
+
+func (s *Service) sameActiveScope(ctx context.Context, firstID, secondID string, now time.Time) (bool, error) {
+	if _, err := accountscope.RequireCompatible(ctx, s.db, firstID, secondID, now); err != nil {
+		if isAccountScopeIsolationError(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+func isAccountScopeIsolationError(err error) bool {
+	return errors.Is(err, accountscope.ErrUserNotFound) || errors.Is(err, accountscope.ErrInactive) ||
+		errors.Is(err, accountscope.ErrExpired) || errors.Is(err, accountscope.ErrMismatch) || errors.Is(err, accountscope.ErrInvalid)
 }
 
 func randomID() (string, error) {

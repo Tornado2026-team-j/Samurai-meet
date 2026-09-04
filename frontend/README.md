@@ -54,6 +54,23 @@ $env:EXPO_PUBLIC_WEB_APP_ORIGIN="http://localhost:8081"
 
 iPhoneのExpo GoからローカルGo APIを確認する場合だけ、`EXPO_PUBLIC_API_BASE_URL`へiPhoneから到達できるURL（例: `http://192.168.11.16:8080/api/v1`）を明示してください。通常は本番APIドメインへ接続します。API接続先を切り替えた場合、セッションはサーバー環境ごとに別なので、その環境で再ログインします。Google OAuthをトンネルで完結させる場合は、Go側のcallbackとGoogle Cloud Consoleの登録値も同じ公開Originに揃え、環境変数を変更した後はExpoを再起動してください。
 
+### ハッカソン審査用Demo入口
+
+Demoボタンは`EXPO_PUBLIC_DEMO_ACCOUNT_ENABLED=true`を明示したビルドに表示されます。
+現在の本番APIでDemoを使う場合は、API側でも`DEMO_ACCOUNT_ENABLED=true`を明示してください。
+分離したDemo APIを使う場合は、審査用API・DB・署名鍵・ストレージを分離したうえで、
+`frontend/.env.demo.example`を`frontend/.env`へコピーし、`<review-api-origin>`を
+実際のDemo APIへ置き換えてからExpoを再起動してください。フロント側だけ有効にすると
+`demo_account_disabled`になります。
+
+```powershell
+Copy-Item .env.demo.example .env
+bun run start -- --clear
+```
+
+この設定で、Googleログインの途中状態を含む未ログイン画面に「デモを体験する」が
+表示されます。API側のDemoフラグが無効な場合は、入口を表示してもアカウント発行は拒否されます。
+
 ## チャットの現行境界
 
 `app/chat/[id].tsx` は暗号化RESTの履歴・送信・既読、画像添付、本文編集・削除、チャットDEK復号、翻訳と`Original`切替に接続済みです。バックエンドのリアルタイム経路はHTTP/3 WebTransportですが、Expo Goにはnative WebTransport APIがないため、Expo GoではREST同期を使います。native bridgeを含むDevelopment Buildと2端末の実機E2Eは別ゲートです。
@@ -66,7 +83,7 @@ iPhoneのExpo GoからローカルGo APIを確認する場合だけ、`EXPO_PUBL
 
 募集フローは、プロフィール同期後に募集を公開し、別ユーザーが現在地・キーワードで検索して関心を送り、募集者が応募一覧から承認または辞退できます。現在地を使う場合は`expo-location`の前景位置情報許可が必要です。許可しなくてもキーワード検索と募集公開は継続できますが、距離による絞り込みは行われません。
 
-募集の利用日は日本国内向けに`Asia/Tokyo`へ固定しています。`available_date`は`YYYY-MM-DD`、`start_time` / `end_time`は24時間制の`HH:mm`で扱い、APIへ送る`timezone`も`Asia/Tokyo`です。DBの期限などの絶対時刻はUTC RFC3339ですが、募集の日付・時刻は端末や実行ホストのローカルタイムゾーンへ変換しません。
+募集の利用日は日本国内向けに`Asia/Tokyo`へ固定しています。`available_date`は`YYYY-MM-DD`、`start_time` / `end_time`は24時間制の`HH:mm`で扱い、APIへ送る`timezone`も`Asia/Tokyo`です。募集は開始時刻まで公開でき、開始まで6時間未満の場合だけ参加者が集まりにくい可能性を注意表示します。DBの期限などの絶対時刻はUTC RFC3339ですが、募集の日付・時刻は端末や実行ホストのローカルタイムゾーンへ変換しません。
 
 OSのプッシュ通知は未実装で、現在の通知機能はGo APIの一覧・既読とアプリ内通知画面です。以前iOSで報告された募集画面の初期日時パース問題はISO内部値／`Asia/Tokyo`固定化と自動テストで解消済みですが、募集公開から応募・通知遷移までの実機全通し確認は未完了です。
 
