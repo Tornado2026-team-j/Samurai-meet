@@ -148,11 +148,11 @@ const RECRUITMENT_COPY = {
     closeScheduleWarning: "Close schedule warning",
     pastStartTitle: "This start time has passed.",
     shortNoticeTitle: "The start time is within 6 hours.",
-    midnightTitle: "This duration crosses midnight.",
+    midnightTitle: "Overnight schedules are planned for a future update.",
     pastStartQuestion: "Change it to tomorrow?",
     shortNoticeQuestion:
       "It may be harder to find participants on short notice. Choose a later time?",
-    midnightQuestion: "Change it to tomorrow at 09:00?",
+    midnightQuestion: "For now, choose a schedule that ends on the same day.",
     suggestedSchedule: "Suggested schedule",
     useSuggestion: "YES, USE THIS",
     editSchedule: "NO, EDIT",
@@ -165,7 +165,7 @@ const RECRUITMENT_COPY = {
     locationRequired: "Choose a valid place for Where.",
     pastDate: "The selected start time has already passed. Choose another time.",
     crossesMidnight:
-      "The selected duration crosses midnight. Choose an earlier time or shorter duration.",
+      "Overnight schedules are planned for a future update. For now, choose a duration that ends on the same day.",
     invalidDetails: "Check the recruitment details.",
     previewError: "Preview could not be prepared. Please try again.",
     classificationUnavailable: "Automatic category selection is not available yet. Please try again later.",
@@ -262,11 +262,11 @@ const RECRUITMENT_COPY = {
     closeScheduleWarning: "日時の確認を閉じる",
     pastStartTitle: "開始時刻が過ぎています。",
     shortNoticeTitle: "開始まで6時間以内です。",
-    midnightTitle: "所要時間が日付をまたぎます。",
+    midnightTitle: "日跨ぎは今後対応予定です。",
     pastStartQuestion: "明日に変更しますか？",
     shortNoticeQuestion:
       "直前の募集は参加者が集まりにくい可能性があります。もう少し余裕のある日時に変更しますか？",
-    midnightQuestion: "明日の09:00に変更しますか？",
+    midnightQuestion: "現在は同日内で終了する予定を選択してください。",
     suggestedSchedule: "変更案",
     useSuggestion: "はい、これを使う",
     editSchedule: "いいえ、編集する",
@@ -279,7 +279,7 @@ const RECRUITMENT_COPY = {
     locationRequired: "Whereで有効な場所を選択してください。",
     pastDate: "選択した開始時刻は過ぎています。別の時刻を選択してください。",
     crossesMidnight:
-      "所要時間が日付をまたぎます。早い時刻または短い所要時間を選択してください。",
+      "日跨ぎは今後対応予定です。現在は同日内で終了する所要時間を選択してください。",
     invalidDetails: "募集内容を確認してください。",
     previewError: "プレビューを作成できませんでした。もう一度お試しください。",
     classificationUnavailable: "案内カテゴリの自動判定を準備中です。しばらくしてからもう一度お試しください。",
@@ -1974,7 +1974,9 @@ export default function SearchPreferencesScreen() {
                   publishStatus === "publishing" ||
                   draftSaveStatus === "saving"
                 }
-                onPress={() => void publish()}
+                // Schedule warnings are handled before entering confirmation;
+                // do not ask the same question again from the final action.
+                onPress={() => void publish(true)}
                 size="sm"
                 style={styles.goButton}
                 textStyle={styles.goButtonText}

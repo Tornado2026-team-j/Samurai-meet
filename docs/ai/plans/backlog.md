@@ -15,6 +15,7 @@ flowchart TD
 | P0 | 端末Key-Bの実機・監査 | Secure Storage / PostgreSQL | 端末移行、proof replay、Key-B表示保護、秘密値なし監査を検証 |
 | P0 | 再認証tokenをURLから除去 | session handoff API | 完了: fragmentは`bootstrap_token`だけ。Web options/verify、短命hash、request_id再送制限を実装・テスト |
 | P1 | 募集・応募・通知遷移のiOS実機E2E | 募集API／iOS日時UI | ISO内部値・利用日／壁時計の`Asia/Tokyo`固定、絶対時刻UTC、過去時刻・日跨ぎ、公開・応募・通知遷移を一連の実機E2Eで確認する |
+| P1 | 募集日時の日跨ぎ対応 | 募集日時API／検索／終了判定／UI | `end_time`が開始時刻より早い場合を翌日終了として一貫して扱い、23:00〜翌00:00の公開・検索・応募・終了判定を自動テストと実機E2Eで確認する |
 | P1 | client画像UI統合 | Key-A/端末Key-B HKDF | 写真選択・表示・削除を端末暗号化APIへ接続し、サーバーは暗号文のみ |
 | P1 | 削除reconciler | DB/ストレージ | 孤児検出、冪等ジョブ、監査、バックアップ期限の運用 |
 | P1 | native Passkey実機 | app links | Associated Domains/assetlinks、登録・別端末・解除を確認 |
