@@ -179,7 +179,7 @@ func (s *Service) messageTranslationRevisionForText(
 	if err != nil {
 		return "", err
 	}
-	if metadata.KeyVersion != chatMessageKeyVersion {
+	if metadata.KeyVersion != chatMessageKeyVersion && metadata.KeyVersion != DemoChatKeyVersion {
 		return "", ErrTranslationBindingMissing
 	}
 	if !validPlaintextBinding(metadata.Commitment, metadata.CommitmentSalt) {

@@ -82,6 +82,7 @@ func (s *Service) delete(ctx context.Context, userID string, now time.Time, auth
 		`DELETE FROM key_envelopes WHERE user_id=$1`,
 		`DELETE FROM device_request_nonces WHERE user_id=$1`,
 		`DELETE FROM photo_device_key_envelopes WHERE user_id=$1`,
+		`DELETE FROM demo_device_keys WHERE user_id=$1`,
 		`DELETE FROM devices WHERE user_id=$1`,
 		`DELETE FROM key_b_materials WHERE user_id=$1`,
 		`DELETE FROM oauth_handoffs WHERE user_id=$1`,

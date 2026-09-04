@@ -20,6 +20,9 @@ func keyEnvelopeList(service *keys.Service, sessions *auth.SessionService) http.
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing_or_invalid_access_token"})
 			return
 		}
+		if !requireRegularAccount(w, claims) {
+			return
+		}
 		if !requireRecentPasskey(r, sessions, claims) {
 			writeRecentPasskeyRequired(w)
 			return
@@ -64,6 +67,9 @@ func keyEnvelopeItem(service *keys.Service, sessions *auth.SessionService) http.
 		claims, ok := accessClaims(r, sessions)
 		if !ok {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing_or_invalid_access_token"})
+			return
+		}
+		if !requireRegularAccount(w, claims) {
 			return
 		}
 		if !requireRecentPasskey(r, sessions, claims) {

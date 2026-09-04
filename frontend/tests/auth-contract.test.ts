@@ -83,7 +83,13 @@ describe('認証handoff契約', () => {
 
   it('sessionのruntime形状を検証する', () => {
     expect(isSession(session)).toBe(true);
+    expect(isSession({
+      ...session,
+      account_type: 'demo',
+      demo_expires_at: '2026-09-05T12:00:00Z',
+    })).toBe(true);
     expect(isSession({ ...session, access_token: '' })).toBe(false);
+    expect(isSession({ ...session, account_type: 'demo' })).toBe(false);
   });
 
   it('Passkey bootstrap responseのscopeとtoken形状を検証する', () => {

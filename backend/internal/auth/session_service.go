@@ -9,7 +9,10 @@ import (
 	"time"
 )
 
-var ErrRefreshReuse = errors.New("refresh token reuse detected")
+var (
+	ErrRefreshReuse       = errors.New("refresh token reuse detected")
+	ErrDemoAccountExpired = errors.New("demo account expired")
+)
 
 const (
 	accessTokenMaxSize  = 4096
@@ -18,10 +21,12 @@ const (
 )
 
 type SessionTokens struct {
-	UserID       string `json:"user_id"`
-	SessionID    string `json:"session_id"`
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
+	UserID        string     `json:"user_id"`
+	SessionID     string     `json:"session_id"`
+	AccessToken   string     `json:"access_token"`
+	RefreshToken  string     `json:"refresh_token"`
+	AccountType   string     `json:"account_type,omitempty"`
+	DemoExpiresAt *time.Time `json:"demo_expires_at,omitempty"`
 }
 type SessionService struct {
 	db     *sql.DB
@@ -50,12 +55,35 @@ func (s *SessionService) Authenticate(ctx context.Context, accessToken string, n
 	if err != nil {
 		return AccessClaims{}, err
 	}
-	var status, expires, lastSeen string
-	if err = s.db.QueryRowContext(ctx, `SELECT status,expires_at,last_seen_at FROM sessions WHERE id=$1 AND user_id=$2`, claims.SessionID, claims.Subject).Scan(&status, &expires, &lastSeen); err != nil {
+	var status, expires, lastSeen, accountType string
+	var demoExpires sql.NullString
+	if err = s.db.QueryRowContext(ctx, `
+		SELECT s.status,s.expires_at,s.last_seen_at,u.account_type,u.demo_expires_at
+		FROM sessions s
+		JOIN users u ON u.id=s.user_id
+		WHERE s.id=$1 AND s.user_id=$2`,
+		claims.SessionID,
+		claims.Subject,
+	).Scan(&status, &expires, &lastSeen, &accountType, &demoExpires); err != nil {
 		return AccessClaims{}, err
 	}
 	expiry, err := time.Parse(time.RFC3339Nano, expires)
 	lastSeenAt, lastSeenErr := time.Parse(time.RFC3339Nano, lastSeen)
+	if accountType == "demo" {
+		demoExpiry, demoErr := parseDemoExpiry(demoExpires)
+		if demoErr != nil || !now.Before(demoExpiry) {
+			return AccessClaims{}, ErrDemoAccountExpired
+		}
+		claims.AccountType = accountType
+		claims.DemoExpiresAt = &demoExpiry
+	} else if accountType == "regular" {
+		if demoExpires.Valid && strings.TrimSpace(demoExpires.String) != "" {
+			return AccessClaims{}, errors.New("regular account has a demo expiry")
+		}
+		claims.AccountType = accountType
+	} else {
+		return AccessClaims{}, errors.New("account scope is invalid")
+	}
 	if err != nil || lastSeenErr != nil || status != string(SessionActive) || !now.Before(expiry) || !now.Before(lastSeenAt.Add(RefreshIdleTTL)) {
 		return AccessClaims{}, errors.New("session is inactive")
 	}
@@ -88,8 +116,15 @@ func (s *SessionService) CreateSession(ctx context.Context, userID string, now t
 // open. Passkey-authenticated sessions are marked so a browser-to-app handoff
 // cannot be created from an old, non-passkey session.
 func (s *SessionService) createSessionTx(ctx context.Context, tx *sql.Tx, userID string, now time.Time, passkeyAuthenticated bool) (SessionTokens, error) {
+	return s.createSessionWithExpiryTx(ctx, tx, userID, now, now.Add(RefreshAbsoluteTTL), passkeyAuthenticated)
+}
+
+func (s *SessionService) createSessionWithExpiryTx(ctx context.Context, tx *sql.Tx, userID string, now, expiresAt time.Time, passkeyAuthenticated bool) (SessionTokens, error) {
 	if s.signer == nil {
 		return SessionTokens{}, errors.New("session signer is not configured")
+	}
+	if !expiresAt.After(now) {
+		return SessionTokens{}, errors.New("session expiry is invalid")
 	}
 	sessionID, familyID, refreshID := newID(), newID(), newID()
 	refresh, err := NewRefreshToken()
@@ -101,7 +136,7 @@ func (s *SessionService) createSessionTx(ctx context.Context, tx *sql.Tx, userID
 		return SessionTokens{}, err
 	}
 	created := now.UTC().Format(time.RFC3339Nano)
-	expires := now.Add(RefreshAbsoluteTTL).UTC().Format(time.RFC3339Nano)
+	expires := expiresAt.UTC().Format(time.RFC3339Nano)
 	var lastPasskeyAt any
 	if passkeyAuthenticated {
 		lastPasskeyAt = created
@@ -243,9 +278,18 @@ func (s *SessionService) Refresh(ctx context.Context, token, requestID string, n
 		return SessionTokens{}, err
 	}
 	defer tx.Rollback()
-	var sessionID, userID, status, expires, lastSeen string
+	var sessionID, userID, status, expires, lastSeen, accountType string
 	var used, revoked sql.NullString
-	err = tx.QueryRowContext(ctx, `SELECT s.id,s.user_id,s.status,s.expires_at,s.last_seen_at,rt.used_at,rt.revoked_at FROM refresh_tokens rt JOIN sessions s ON s.id=rt.session_id WHERE rt.token_hash=$1 FOR UPDATE`, hash).Scan(&sessionID, &userID, &status, &expires, &lastSeen, &used, &revoked)
+	var demoExpires sql.NullString
+	err = tx.QueryRowContext(ctx, `
+		SELECT s.id,s.user_id,s.status,s.expires_at,s.last_seen_at,rt.used_at,rt.revoked_at,u.account_type,u.demo_expires_at
+		FROM refresh_tokens rt
+		JOIN sessions s ON s.id=rt.session_id
+		JOIN users u ON u.id=s.user_id
+		WHERE rt.token_hash=$1
+		FOR UPDATE`,
+		hash,
+	).Scan(&sessionID, &userID, &status, &expires, &lastSeen, &used, &revoked, &accountType, &demoExpires)
 	if errors.Is(err, sql.ErrNoRows) {
 		return SessionTokens{}, errors.New("refresh token is invalid")
 	}
@@ -254,6 +298,21 @@ func (s *SessionService) Refresh(ctx context.Context, token, requestID string, n
 	}
 	expiry, err := time.Parse(time.RFC3339Nano, expires)
 	lastSeenAt, lastSeenErr := time.Parse(time.RFC3339Nano, lastSeen)
+	var demoExpiry *time.Time
+	switch accountType {
+	case "demo":
+		parsed, demoErr := parseDemoExpiry(demoExpires)
+		if demoErr != nil || !now.Before(parsed) {
+			return SessionTokens{}, ErrDemoAccountExpired
+		}
+		demoExpiry = &parsed
+	case "regular":
+		if demoExpires.Valid && strings.TrimSpace(demoExpires.String) != "" {
+			return SessionTokens{}, errors.New("regular account has a demo expiry")
+		}
+	default:
+		return SessionTokens{}, errors.New("account scope is invalid")
+	}
 	if err != nil || lastSeenErr != nil || !now.Before(expiry) || !now.Before(lastSeenAt.Add(RefreshIdleTTL)) || status != "active" || revoked.Valid {
 		return SessionTokens{}, errors.New("session is inactive")
 	}
@@ -298,7 +357,16 @@ func (s *SessionService) Refresh(ctx context.Context, token, requestID string, n
 	if err != nil {
 		return SessionTokens{}, err
 	}
-	result := SessionTokens{userID, sessionID, access, newRefresh}
+	result := SessionTokens{
+		UserID:       userID,
+		SessionID:    sessionID,
+		AccessToken:  access,
+		RefreshToken: newRefresh,
+	}
+	if accountType == "demo" {
+		result.AccountType = accountType
+		result.DemoExpiresAt = demoExpiry
+	}
 	payload, err := json.Marshal(result) // #nosec G117 -- immediately encrypted for bounded retry storage; never logged or returned as JSON
 	if err != nil {
 		return SessionTokens{}, err
@@ -325,6 +393,13 @@ func (s *SessionService) Refresh(ctx context.Context, token, requestID string, n
 		return SessionTokens{}, err
 	}
 	return result, nil
+}
+
+func parseDemoExpiry(value sql.NullString) (time.Time, error) {
+	if !value.Valid || strings.TrimSpace(value.String) == "" {
+		return time.Time{}, errors.New("demo expiry is missing")
+	}
+	return time.Parse(time.RFC3339Nano, value.String)
 }
 
 func (s *SessionService) Logout(ctx context.Context, accessToken string, now time.Time) error {

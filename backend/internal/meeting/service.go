@@ -8,6 +8,8 @@ import (
 	"errors"
 	"strings"
 	"time"
+
+	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/accountscope"
 )
 
 var (
@@ -94,6 +96,12 @@ func (s *Service) Create(ctx context.Context, userID, matchID, scheduledAt strin
 	}
 	if matchStatus != "accepted" {
 		return Meeting{}, ErrMeetingUnavailable
+	}
+	if _, err = accountscope.RequireCompatible(ctx, tx, ownerID, requesterID, now); err != nil {
+		if isAccountScopeIsolationError(err) {
+			return Meeting{}, ErrMeetingNotFound
+		}
+		return Meeting{}, err
 	}
 	blocked, err := blockedTx(ctx, tx, ownerID, requesterID)
 	if err != nil {
@@ -540,6 +548,12 @@ func (s *Service) loadWithQuery(ctx context.Context, queryer rowQuerier, userID,
 	if userID != ownerID && userID != requesterID {
 		return meetingAccess{}, ErrMeetingForbidden
 	}
+	if _, err := accountscope.RequireCompatible(ctx, queryer, ownerID, requesterID, time.Now()); err != nil {
+		if isAccountScopeIsolationError(err) {
+			return meetingAccess{}, ErrMeetingNotFound
+		}
+		return meetingAccess{}, err
+	}
 	if matchStatus != "accepted" && (!allowCompleted || matchStatus != "completed") {
 		return meetingAccess{}, ErrMeetingUnavailable
 	}
@@ -555,6 +569,11 @@ func (s *Service) loadWithQuery(ctx context.Context, queryer rowQuerier, userID,
 		return meetingAccess{}, ErrMeetingBlocked
 	}
 	return access, nil
+}
+
+func isAccountScopeIsolationError(err error) bool {
+	return errors.Is(err, accountscope.ErrUserNotFound) || errors.Is(err, accountscope.ErrInactive) ||
+		errors.Is(err, accountscope.ErrExpired) || errors.Is(err, accountscope.ErrMismatch) || errors.Is(err, accountscope.ErrInvalid)
 }
 
 func loadMatchParticipant(ctx context.Context, tx *sql.Tx, matchID string) (string, string, string, error) {

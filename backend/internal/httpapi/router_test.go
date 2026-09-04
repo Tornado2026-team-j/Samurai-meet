@@ -191,6 +191,7 @@ func TestSensitiveAuthHandlersSetNoStoreHeaders(t *testing.T) {
 		method  string
 	}{
 		"bootstrap":        {handler: passkeyBootstrap(nil, nil, nil, "development", false), method: http.MethodGet},
+		"demo account":     {handler: demoAccountStart(nil), method: http.MethodGet},
 		"handoff start":    {handler: sessionHandoffStart(nil, nil, "development", false), method: http.MethodGet},
 		"handoff exchange": {handler: sessionHandoffExchange(nil), method: http.MethodPost},
 	}
@@ -206,6 +207,21 @@ func TestSensitiveAuthHandlersSetNoStoreHeaders(t *testing.T) {
 				t.Fatalf("Referrer-Policy = %q, want no-referrer", got)
 			}
 		})
+	}
+}
+
+func TestDemoAccountStartDisabledIsExplicit(t *testing.T) {
+	handler := NewRouterWithOptions(RouterOptions{Sessions: &auth.SessionService{}})
+	req := httptest.NewRequest(http.MethodPost, APIV1Prefix+"/auth/demo/start", strings.NewReader(`{"language":"ja","app_mode":"local"}`))
+	req.Header.Set("Content-Type", "application/json")
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+
+	if res.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", res.Code, http.StatusServiceUnavailable)
+	}
+	if body := res.Body.String(); !strings.Contains(body, `"error":"demo_account_disabled"`) {
+		t.Fatalf("body = %s", body)
 	}
 }
 

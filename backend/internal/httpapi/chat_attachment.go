@@ -57,7 +57,7 @@ func chatAttachmentUpload(w http.ResponseWriter, r *http.Request, service *chat.
 		return
 	}
 	bodyHash := strings.TrimSpace(r.Header.Get(deviceBodyHashHeader))
-	if !requireDeviceProof(w, r, devices, claims, bodyHash) {
+	if claims.AccountType != "demo" && !requireDeviceProof(w, r, devices, claims, bodyHash) {
 		return
 	}
 	contentType := strings.TrimSpace(r.Header.Get(chatAttachmentContentTypeHeader))
@@ -97,11 +97,18 @@ func chatAttachmentDownload(w http.ResponseWriter, r *http.Request, service *cha
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "chat_attachment_unavailable"})
 		return
 	}
-	if !requireDeviceProof(w, r, devices, claims, emptyBodyHash()) {
-		return
-	}
 	deviceID := strings.TrimSpace(r.Header.Get(deviceIDHeader))
-	attachment, ciphertext, _, err := service.OpenAttachment(r.Context(), claims.Subject, chatID, attachmentID, deviceID)
+	var attachment chat.Attachment
+	var ciphertext []byte
+	var err error
+	if claims.AccountType == "demo" {
+		attachment, ciphertext, err = service.OpenDemoAttachment(r.Context(), claims.Subject, chatID, attachmentID)
+	} else {
+		if !requireDeviceProof(w, r, devices, claims, emptyBodyHash()) {
+			return
+		}
+		attachment, ciphertext, _, err = service.OpenAttachment(r.Context(), claims.Subject, chatID, attachmentID, deviceID)
+	}
 	if err != nil {
 		writeChatError(w, err)
 		return

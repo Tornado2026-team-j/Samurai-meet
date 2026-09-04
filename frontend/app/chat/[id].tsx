@@ -811,7 +811,7 @@ export default function ChatDetailScreen() {
           const keyMessages = serverMessages === null
             ? cachedForSession?.messages ?? []
             : serverMessages;
-          const hasCurrentChatKeyMessage = keyMessages.some((message) => message.key_version === "chat-dek-v1");
+          const hasCurrentChatKeyMessage = keyMessages.some((message) => message.key_version === "chat-dek-v1" || message.key_version === "demo-chat-v1");
           const hasLegacyChatMessage = keyMessages.some((message) => message.key_version === "chat-mvp-v1" || message.key_version === "chat-keyb-v1");
           const hasLegacyDeviceKeyMessage = keyMessages.some((message) => message.key_version === "chat-keyb-v1"
             || message.translations?.some((translation) => translation.key_version === "chat-translation-keyb-v1"));
@@ -1238,7 +1238,7 @@ export default function ChatDetailScreen() {
               if (!activeSession) return;
               if (frame.type === "message.created" || frame.type === "message.ack") {
                 void (async () => {
-                  if (frame.message.key_version === "chat-dek-v1" && !chatMessageKeyRef.current) {
+                  if ((frame.message.key_version === "chat-dek-v1" || frame.message.key_version === "demo-chat-v1") && !chatMessageKeyRef.current) {
                     await ensureChatMessageKey(activeSession, undefined, false).catch(() => undefined);
                   }
                   if (frame.message.key_version === "chat-keyb-v1" && !legacyChatMessageKeyRef.current) {
@@ -1256,7 +1256,7 @@ export default function ChatDetailScreen() {
                 })();
               } else if (frame.type === "message.updated") {
                 void (async () => {
-                  if (frame.message.key_version === "chat-dek-v1" && !chatMessageKeyRef.current) {
+                  if ((frame.message.key_version === "chat-dek-v1" || frame.message.key_version === "demo-chat-v1") && !chatMessageKeyRef.current) {
                     await ensureChatMessageKey(activeSession, undefined, false).catch(() => undefined);
                   }
                   if (frame.message.key_version === "chat-keyb-v1" && !legacyChatMessageKeyRef.current) {
