@@ -9,14 +9,13 @@ import { useAuth } from "../hooks/useAuth";
 import { useThemeStyles } from "../hooks/useTheme";
 import {
   loadLanguage,
-  loadLocalProfile,
   saveLocalProfile,
   serializeMonsterSeedForLegacyBio,
   subscribeLanguage,
   type AppLanguage,
   type LocalProfile,
 } from "../services/onboarding";
-import { updateMyProfile } from "../services/profile";
+import { loadProfileSnapshot as loadRemoteProfileSnapshot, updateMyProfile } from "../services/profile";
 
 const COPY = {
   ja: {
@@ -53,7 +52,7 @@ export default function ProfileEditScreen() {
   useEffect(() => {
     const activeSession = getCurrentSession() ?? session;
     if (!activeSession) return;
-    void Promise.all([loadLanguage(), loadLocalProfile(activeSession.user_id)]).then(([storedLanguage, storedProfile]) => {
+    void Promise.all([loadLanguage(), loadRemoteProfileSnapshot(activeSession)]).then(([storedLanguage, storedProfile]) => {
       setLanguage(storedLanguage ?? "ja");
       setProfile(storedProfile);
       setLoaded(true);

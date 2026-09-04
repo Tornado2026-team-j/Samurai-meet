@@ -38,11 +38,10 @@ import {
 } from "../../services/location";
 import type { Coordinates } from "../../services/matching";
 import {
-  loadLocalProfile,
   serializeMonsterSeedForLegacyBio,
   type AppLanguage,
 } from "../../services/onboarding";
-import { updateMyProfile } from "../../services/profile";
+import { loadProfileSnapshot as loadRemoteProfileSnapshot, updateMyProfile } from "../../services/profile";
 import {
   createRecruitmentPreview,
   defaultRecruitmentSchedule,
@@ -1033,7 +1032,7 @@ export default function SearchPreferencesScreen() {
 		}
 		const result = await createRecruitmentPreview(draft, activeSession, controller.signal);
       const localProfile = activeSession
-        ? await loadLocalProfile(activeSession.user_id)
+        ? await loadRemoteProfileSnapshot(activeSession, controller.signal)
         : null;
       const personalizedResult = localProfile
         ? {
@@ -1098,7 +1097,7 @@ export default function SearchPreferencesScreen() {
       const result = buildManualRecruitmentPreviewModel(draft, category, keywords);
       const activeSession = getCurrentSession() ?? session;
       const localProfile = activeSession
-        ? await loadLocalProfile(activeSession.user_id)
+        ? await loadRemoteProfileSnapshot(activeSession)
         : null;
       const personalizedResult = localProfile && activeSession
         ? {
@@ -1165,7 +1164,7 @@ export default function SearchPreferencesScreen() {
         throw new Error("not_signed_in");
       }
 
-      const localProfile = await loadLocalProfile(activeSession.user_id);
+      const localProfile = await loadRemoteProfileSnapshot(activeSession);
       if (localProfile?.completed) {
         await updateMyProfile(activeSession, {
           name: localProfile.name,

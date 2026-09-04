@@ -84,6 +84,68 @@ export function serializeMonsterSeedForLegacyBio(profile: LocalProfile): string 
   });
 }
 
+export function parseMonsterSeedFromBio(value: unknown): MonsterSeedProfile {
+  if (typeof value !== "string") {
+    return {
+      skillTags: [],
+      interestTags: [],
+      freeText: "",
+    };
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return {
+      skillTags: [],
+      interestTags: [],
+      freeText: "",
+    };
+  }
+
+  try {
+    const parsed: unknown = JSON.parse(trimmed);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const seed = (parsed as { monsterSeed?: unknown }).monsterSeed;
+      if (seed && typeof seed === "object" && !Array.isArray(seed)) {
+        const structuredSeed = parseMonsterSeedProfile(
+          seed as Partial<MonsterSeedProfile>,
+          null,
+        );
+        if (structuredSeed) return structuredSeed;
+      }
+    }
+  } catch {
+    // Older profiles may contain ordinary prose instead of structured metadata.
+  }
+
+  return {
+    skillTags: [],
+    interestTags: [],
+    freeText: trimmed.slice(0, 150),
+  };
+}
+
+export function localProfileFromRemoteProfile(
+  remote: {
+    name?: unknown;
+    nationality_code?: unknown;
+    bio?: unknown;
+    completed?: unknown;
+  },
+  identityVerificationChoice: IdentityVerificationChoice = null,
+): LocalProfile {
+  return {
+    name: typeof remote.name === "string" ? remote.name.trim() : "",
+    nationalityCode:
+      typeof remote.nationality_code === "string"
+        ? remote.nationality_code.trim().toUpperCase()
+        : "",
+    monsterSeed: parseMonsterSeedFromBio(remote.bio),
+    completed: remote.completed === true,
+    identityVerificationChoice,
+  };
+}
+
 function parseTagList(value: unknown): string[] | null {
   if (!Array.isArray(value)) return null;
   if (!value.every((tag) => typeof tag === "string")) return null;

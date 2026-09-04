@@ -1,6 +1,7 @@
 import type { PropsWithChildren } from "react";
 import {
   Keyboard,
+  Platform,
   TouchableWithoutFeedback,
   View,
   type ViewProps,
@@ -18,6 +19,10 @@ export default function DismissKeyboardView({ children, ...viewProps }: DismissK
   const dismissKeyboard = () => {
     dismissKeyboardForTap(Keyboard, "outside");
   };
+
+  if (Platform.OS === "web") {
+    return <View {...viewProps}>{children}</View>;
+  }
 
   return (
     <TouchableWithoutFeedback onPress={dismissKeyboard}>

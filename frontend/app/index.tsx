@@ -47,7 +47,7 @@ import {
   saveDemoKeyMaterial,
   saveDemoKeyMaterialDraft,
 } from "../services/demo-key-management";
-import { updateMyProfile } from "../services/profile";
+import { loadProfileSnapshot, updateMyProfile } from "../services/profile";
 import { resolveDefaultAppMode } from "../services/device-locale";
 import {
   clearAppMode,
@@ -55,7 +55,6 @@ import {
   loadAppMode,
   loadIdentityVerificationChoice,
   loadLanguage,
-  loadLocalProfile,
   saveAppMode,
   saveIdentityVerificationChoice,
   saveLanguage,
@@ -960,7 +959,8 @@ export default function OnboardingScreen() {
   }, [status]);
 
   useEffect(() => {
-    if (!session?.user_id) {
+    const activeSession = sessionRef.current;
+    if (!activeSession?.user_id) {
       setProfile(null);
       setIdentityVerificationChoice(null);
       setAccountStepCompleted(false);
@@ -970,19 +970,23 @@ export default function OnboardingScreen() {
     }
 
     let active = true;
-    const userID = session.user_id;
+    const userID = activeSession.user_id;
     const loadUserOnboardingState =
       async (): Promise<LoadedUserOnboardingState> => {
-        const storedProfile = await loadLocalProfile(userID);
-        const storedIdentityVerificationChoice =
-          await loadIdentityVerificationChoice(userID);
+        const [storedProfile, storedIdentityVerificationChoice] = await Promise.all([
+          loadProfileSnapshot(activeSession),
+          loadIdentityVerificationChoice(userID),
+        ]);
+        const identityVerificationChoice =
+          storedIdentityVerificationChoice ??
+          storedProfile?.identityVerificationChoice ??
+          null;
 
         return {
-          profile: storedProfile,
-          identityVerificationChoice:
-            storedIdentityVerificationChoice ??
-            storedProfile?.identityVerificationChoice ??
-            null,
+          profile: storedProfile
+            ? { ...storedProfile, identityVerificationChoice }
+            : null,
+          identityVerificationChoice,
         };
       };
 
