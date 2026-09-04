@@ -20,6 +20,13 @@ const (
 )
 
 func requireDeviceProof(w http.ResponseWriter, r *http.Request, devices *keys.DeviceService, claims auth.AccessClaims, bodyHash string) bool {
+	if claims.AccountType != "regular" {
+		// Demo uses its own public-key table and has no normal device-proof
+		// credential. Never let a non-regular session reach a regular photo,
+		// attachment, chat-envelope, or device-transfer protocol.
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "demo_account_regular_api_forbidden"})
+		return false
+	}
 	if devices == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "device_key_unavailable"})
 		return false

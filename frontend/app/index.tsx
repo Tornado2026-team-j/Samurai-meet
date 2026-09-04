@@ -37,6 +37,14 @@ import {
   type GeneratedKeyMaterial,
 } from "../services/key-management";
 import { createRecoveryMaterial, deriveAccountDataKey, type KeyEnvelope } from "../services/crypto";
+import { createDemoKeyMaterial, type DemoKeyMaterial } from "../services/demo-crypto";
+import {
+  loadDemoKeyMaterialDraft,
+  loadStoredDemoAgreementPrivateKey,
+  registerDemoDeviceKey,
+  saveDemoKeyMaterial,
+  saveDemoKeyMaterialDraft,
+} from "../services/demo-key-management";
 import { updateMyProfile } from "../services/profile";
 import { resolveDefaultAppMode } from "../services/device-locale";
 import {
@@ -443,7 +451,7 @@ function AuthStep({ appMode, language, onAuthenticated, onBack }: AuthStepProps)
               </Pressable>
             ) : null}
 
-            {!passkeyReady && !signedIn && demoEntryEnabled ? (
+            {!signedIn && demoEntryEnabled ? (
               <DemoAccountEntry
                 disabled={busy}
                 language={language}
@@ -523,6 +531,7 @@ type ProfileStepProps = {
 type KeySetupState =
   | { status: "loading" }
   | { status: "create"; material: GeneratedKeyMaterial }
+  | { status: "demo-create"; material: DemoKeyMaterial }
   | { status: "recover"; envelope: KeyEnvelope; error?: string }
   | { status: "rotate"; material: GeneratedKeyMaterial; error?: string }
   | { status: "complete"; mode: "initial" | "recovery" }
@@ -562,6 +571,7 @@ function describeKeySetupError(reason: unknown, language: AppLanguage): string {
 
 function KeySetupError({
   accountID,
+  demo = false,
   actionError,
   actionBusy,
   language,
@@ -572,6 +582,7 @@ function KeySetupError({
   onRetry,
 }: {
   accountID: string;
+  demo?: boolean;
   actionError: string | null;
   actionBusy: boolean;
   language: AppLanguage;
@@ -583,7 +594,41 @@ function KeySetupError({
 }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleteConfirmation, setDeleteConfirmation] = useState("");
-  const copy = language === "ja"
+  const copy = demo
+    ? language === "ja"
+      ? {
+          title: "Demo鍵を準備できません",
+          description: "Demo用の通信または鍵登録に失敗しました。再試行するか、Demoアカウントを終了してください。",
+          reauthenticate: "",
+          retry: "もう一度試す",
+          logout: "Demoを終了",
+          deleteAccount: "",
+          deleteTitle: "",
+          deleteWarning: "",
+          deleteScope: "",
+          deleteConfirmation: "",
+          confirmDeleteInstruction: "",
+          confirmDeletePlaceholder: "",
+          deleteConfirm: "",
+          cancel: "",
+        }
+      : {
+          title: "Demo keys are not ready",
+          description: "The Demo key registration failed. Try again or end this Demo account.",
+          reauthenticate: "",
+          retry: "Try again",
+          logout: "End Demo",
+          deleteAccount: "",
+          deleteTitle: "",
+          deleteWarning: "",
+          deleteScope: "",
+          deleteConfirmation: "",
+          confirmDeleteInstruction: "",
+          confirmDeletePlaceholder: "",
+          deleteConfirm: "",
+          cancel: "",
+        }
+    : language === "ja"
     ? {
         title: "暗号鍵を準備できません",
         description: "通信またはサーバー設定を確認してから、もう一度お試しください。暗号鍵を登録するまでアプリは先へ進みません。",
@@ -627,23 +672,27 @@ function KeySetupError({
       <Text style={styles.keySetupErrorMessage}>{message}</Text>
       {actionError ? <Text style={styles.keySetupErrorMessage}>{actionError}</Text> : null}
       <SupportAccountID accountID={accountID} language={language} />
-      <Pressable disabled={actionBusy} onPress={() => void onReauthenticate()} style={[styles.primaryButton, actionBusy && styles.disabled]}>
-        {actionBusy ? <ActivityIndicator color="#ffffff" /> : <Text style={styles.primaryButtonText}>{copy.reauthenticate}</Text>}
-      </Pressable>
+      {!demo ? (
+        <Pressable disabled={actionBusy} onPress={() => void onReauthenticate()} style={[styles.primaryButton, actionBusy && styles.disabled]}>
+          {actionBusy ? <ActivityIndicator color="#ffffff" /> : <Text style={styles.primaryButtonText}>{copy.reauthenticate}</Text>}
+        </Pressable>
+      ) : null}
       <Pressable disabled={actionBusy} onPress={onRetry} style={[styles.secondaryButton, actionBusy && styles.disabled]}>
         <Text style={styles.secondaryButtonText}>{copy.retry}</Text>
       </Pressable>
-      <Pressable
-        disabled={actionBusy}
-        onPress={() => {
-          setDeleteConfirmation("");
-          setConfirmDelete(true);
-        }}
-        style={[styles.deleteAccountButton, actionBusy && styles.disabled]}
-      >
-        <Text style={styles.deleteAccountButtonText}>{copy.deleteAccount}</Text>
-      </Pressable>
-      <Modal
+      {!demo ? (
+        <Pressable
+          disabled={actionBusy}
+          onPress={() => {
+            setDeleteConfirmation("");
+            setConfirmDelete(true);
+          }}
+          style={[styles.deleteAccountButton, actionBusy && styles.disabled]}
+        >
+          <Text style={styles.deleteAccountButtonText}>{copy.deleteAccount}</Text>
+        </Pressable>
+      ) : null}
+      {!demo ? <Modal
         animationType="fade"
         onRequestClose={() => {
           if (!actionBusy) setConfirmDelete(false);
@@ -692,7 +741,7 @@ function KeySetupError({
             </Pressable>
           </View>
         </ScrollView>
-      </Modal>
+      </Modal> : null}
       <Pressable disabled={actionBusy} onPress={onLogout} style={[styles.secondaryButton, actionBusy && styles.disabled]}>
         <Text style={styles.secondaryButtonText}>{copy.logout}</Text>
       </Pressable>
@@ -954,6 +1003,25 @@ export default function OnboardingScreen() {
     void (async () => {
       try {
         await withTimeout((async () => {
+          if (activeSession.account_type === "demo") {
+            setKeySetupStage("generating");
+            const storedAgreementPrivateKey = await loadStoredDemoAgreementPrivateKey(userID);
+            if (storedAgreementPrivateKey) {
+              storedAgreementPrivateKey.fill(0);
+              if (!active) return;
+              setKeySetupState({ status: "ready" });
+              setKeySetupFor(userID);
+              return;
+            }
+            const demoDraft = await loadDemoKeyMaterialDraft(userID);
+            const material = demoDraft ?? await createDemoKeyMaterial();
+            if (!active) return;
+            if (!demoDraft) await saveDemoKeyMaterialDraft(userID, material);
+            if (!active) return;
+            setKeySetupState({ status: "demo-create", material });
+            setKeySetupFor(userID);
+            return;
+          }
           const [pendingRotation, initialDraft, storedKeyA, storedEnvelope] = await Promise.all([
             loadPendingRecoveryKeyRotation(userID),
             loadInitialKeyMaterialDraft(userID),
@@ -1150,6 +1218,7 @@ export default function OnboardingScreen() {
         accountID={session.user_id}
         actionBusy={keySetupActionBusy}
         actionError={keySetupActionError}
+        demo={session.account_type === "demo"}
         language={language}
         message={keySetupState.message}
         onDeleteAccount={deleteBlockedAccount}
@@ -1167,6 +1236,38 @@ export default function OnboardingScreen() {
         language={language}
         mode={keySetupState.mode}
         onContinue={() => setKeySetupState({ status: "ready" })}
+      />
+    );
+  }
+
+  if (keySetupState.status === "demo-create") {
+    return (
+      <RecoveryKeyDisplay
+        accountID={session.user_id}
+        busy={keySetupBusy || keySetupActionBusy}
+        error={null}
+        language={language}
+        onBack={() => void logout()}
+        onConfirm={async () => {
+          setKeySetupBusy(true);
+          try {
+            // Demo registration is deliberately a different endpoint and a
+            // different local storage namespace. It never creates a normal
+            // /me/devices record or uploads a production Key-B envelope.
+            await registerDemoDeviceKey(session, keySetupState.material);
+            await saveDemoKeyMaterial(session.user_id, keySetupState.material);
+            setKeySetupState({ status: "complete", mode: "initial" });
+          } catch (reason) {
+            setKeySetupState({
+              status: "error",
+              message: reason instanceof Error ? reason.message : "demo key setup failed",
+            });
+          } finally {
+            setKeySetupBusy(false);
+          }
+        }}
+        onDeleteAccount={session.account_type === "demo" ? undefined : deleteBlockedAccount}
+        recoveryKey={keySetupState.material.recoveryKey}
       />
     );
   }

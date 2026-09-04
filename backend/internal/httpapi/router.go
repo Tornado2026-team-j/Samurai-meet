@@ -146,6 +146,7 @@ func NewRouterWithOptions(o RouterOptions) http.Handler {
 		m.HandleFunc(APIV1Prefix+"/matches/", matchAction(nil, o.Sessions, o.Meetings))
 	}
 	if o.Sessions != nil && o.Chats != nil {
+		m.HandleFunc(APIV1Prefix+"/me/demo/device-key", demoDeviceKey(o.Chats, o.Sessions))
 		m.HandleFunc(chatPath, chatCollection(o.Chats, o.Sessions))
 		m.HandleFunc(chatPath+"/", chatItem(o.Chats, o.ChatModeration, o.ChatTranslation, o.Sessions, o.Devices))
 		m.HandleFunc(chatWebSocketPrefix, chatWebSocket())

@@ -27,6 +27,9 @@ func deviceRegistrations(service *keys.DeviceService, sessions *auth.SessionServ
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing_or_invalid_access_token"})
 			return
 		}
+		if !requireRegularAccount(w, claims) {
+			return
+		}
 		if !requireRecentPasskey(r, sessions, claims) {
 			writeRecentPasskeyRequired(w)
 			return

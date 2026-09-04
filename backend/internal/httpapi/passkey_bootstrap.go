@@ -38,6 +38,9 @@ func passkeyBootstrap(service *auth.PasskeyBootstrapService, sessions *auth.Sess
 		var result auth.PasskeyBootstrap
 		var err error
 		if claims, ok := accessClaims(r, sessions); ok {
+			if !requireRegularAccount(w, claims) {
+				return
+			}
 			if scope != auth.PasskeyBootstrapRegister && scope != auth.PasskeyBootstrapReauth {
 				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid_passkey_scope"})
 				return

@@ -74,6 +74,15 @@ func (s *SessionService) Authenticate(ctx context.Context, accessToken string, n
 		if demoErr != nil || !now.Before(demoExpiry) {
 			return AccessClaims{}, ErrDemoAccountExpired
 		}
+		claims.AccountType = accountType
+		claims.DemoExpiresAt = &demoExpiry
+	} else if accountType == "regular" {
+		if demoExpires.Valid && strings.TrimSpace(demoExpires.String) != "" {
+			return AccessClaims{}, errors.New("regular account has a demo expiry")
+		}
+		claims.AccountType = accountType
+	} else {
+		return AccessClaims{}, errors.New("account scope is invalid")
 	}
 	if err != nil || lastSeenErr != nil || status != string(SessionActive) || !now.Before(expiry) || !now.Before(lastSeenAt.Add(RefreshIdleTTL)) {
 		return AccessClaims{}, errors.New("session is inactive")
@@ -290,12 +299,19 @@ func (s *SessionService) Refresh(ctx context.Context, token, requestID string, n
 	expiry, err := time.Parse(time.RFC3339Nano, expires)
 	lastSeenAt, lastSeenErr := time.Parse(time.RFC3339Nano, lastSeen)
 	var demoExpiry *time.Time
-	if accountType == "demo" {
+	switch accountType {
+	case "demo":
 		parsed, demoErr := parseDemoExpiry(demoExpires)
 		if demoErr != nil || !now.Before(parsed) {
 			return SessionTokens{}, ErrDemoAccountExpired
 		}
 		demoExpiry = &parsed
+	case "regular":
+		if demoExpires.Valid && strings.TrimSpace(demoExpires.String) != "" {
+			return SessionTokens{}, errors.New("regular account has a demo expiry")
+		}
+	default:
+		return SessionTokens{}, errors.New("account scope is invalid")
 	}
 	if err != nil || lastSeenErr != nil || !now.Before(expiry) || !now.Before(lastSeenAt.Add(RefreshIdleTTL)) || status != "active" || revoked.Valid {
 		return SessionTokens{}, errors.New("session is inactive")

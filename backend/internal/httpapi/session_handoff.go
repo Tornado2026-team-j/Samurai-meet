@@ -16,6 +16,9 @@ func sessionHandoffStart(service *auth.SessionHandoffService, sessions *auth.Ses
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing_or_invalid_access_token"})
 			return
 		}
+		if !requireRegularAccount(w, claims) {
+			return
+		}
 		if r.Method != http.MethodPost {
 			w.Header().Set("Allow", http.MethodPost)
 			w.WriteHeader(http.StatusMethodNotAllowed)

@@ -88,6 +88,8 @@ func chatItem(service *chat.Service, moderation chat.ModerationProvider, transla
 			chatRead(w, r, service, claims.Subject, chatID)
 		case rest[0] == "transport-token" && len(rest) == 1:
 			chatTransportToken(w, r, service, claims.Subject, claims.SessionID, chatID)
+		case rest[0] == "demo" && len(rest) == 2 && rest[1] == "peer-key":
+			chatDemoPeerKey(w, r, service, claims.Subject, chatID)
 		case rest[0] == "attachment-key-recipients" && len(rest) == 1:
 			chatAttachmentKeyRecipients(w, r, service, devices, claims, chatID)
 		case rest[0] == "key-recipients" && len(rest) == 1:
@@ -108,6 +110,20 @@ func chatItem(service *chat.Service, moderation chat.ModerationProvider, transla
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "chat_not_found"})
 		}
 	}
+}
+
+func chatDemoPeerKey(w http.ResponseWriter, r *http.Request, service *chat.Service, userID, chatID string) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	key, err := service.GetDemoPeerKey(r.Context(), userID, chatID, now())
+	if err != nil {
+		writeChatError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": key})
 }
 
 func chatMessages(w http.ResponseWriter, r *http.Request, service *chat.Service, userID, chatID string) {
@@ -358,6 +374,12 @@ func writeChatError(w http.ResponseWriter, err error) {
 		status, code = http.StatusServiceUnavailable, "chat_transport_unavailable"
 	case errors.Is(err, chat.ErrChatAttachmentUnavailable):
 		status, code = http.StatusServiceUnavailable, "chat_attachment_unavailable"
+	case errors.Is(err, chat.ErrDemoKeyNotFound):
+		status, code = http.StatusConflict, "demo_peer_key_unavailable"
+	case errors.Is(err, chat.ErrDemoKeyForbidden):
+		status, code = http.StatusForbidden, "demo_key_forbidden"
+	case errors.Is(err, chat.ErrDemoKeyConflict):
+		status, code = http.StatusConflict, "demo_device_key_conflict"
 	}
 	writeJSON(w, status, map[string]string{"error": code})
 }

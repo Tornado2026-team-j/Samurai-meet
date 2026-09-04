@@ -23,6 +23,17 @@ func accessClaims(r *http.Request, service *auth.SessionService) (auth.AccessCla
 	return claims, err == nil
 }
 
+// requireRegularAccount protects production-only identity and key-management
+// APIs. AccountType is populated from the user row during Authenticate; it is
+// not trusted from the client or from a token payload.
+func requireRegularAccount(w http.ResponseWriter, claims auth.AccessClaims) bool {
+	if claims.AccountType != "regular" {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "demo_account_regular_api_forbidden"})
+		return false
+	}
+	return true
+}
+
 func refreshSession(service *auth.SessionService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		prepareSensitiveAuthResponse(w)
