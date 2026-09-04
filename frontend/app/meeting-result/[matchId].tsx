@@ -40,7 +40,6 @@ const COPY = {
   subtitle: "案内の体験からコレクション用キャラクターを作ります。",
   takePhoto: "写真を撮る",
   retake: "撮り直す",
-  usePhoto: "この写真を使う",
   shoot: "撮影",
   objectLabel: "一番記憶に残ったオブジェクト",
   objectPlaceholder: "例：赤い提灯",
@@ -63,6 +62,7 @@ const COPY = {
   requestPermission: "カメラを許可",
   photoRequired: "写真を撮影してください",
   inputRequired: "オブジェクトと思い出を入力してください",
+  windowExpired: "思い出を作れる期間（終了後24時間）を過ぎました。",
   keyError: "この端末の保存鍵が見つかりません。Recovery Phraseで復旧してください。",
   error: "生成に失敗しました。写真と入力内容を確認して再試行してください。",
   deviceSavePermissionError: "写真への保存が許可されていません。",
@@ -79,7 +79,6 @@ export default function MeetingResultScreen() {
   const [cameraVisible, setCameraVisible] = useState(false);
   const [capturing, setCapturing] = useState(false);
   const [captured, setCaptured] = useState<CapturedPhoto | null>(null);
-  const [photoAccepted, setPhotoAccepted] = useState(false);
   const [memorableObject, setMemorableObject] = useState("");
   const [memoryText, setMemoryText] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -92,7 +91,7 @@ export default function MeetingResultScreen() {
   const [collectionStored, setCollectionStored] = useState(false);
 
   const activeSession = getCurrentSession() ?? session;
-  const canGenerate = Boolean(photoAccepted && captured && memorableObject.trim() && memoryText.trim() && !submitting && !generated);
+  const canGenerate = Boolean(captured && memorableObject.trim() && memoryText.trim() && !submitting && !generated);
 
   const openCamera = async () => {
     setError(null);
@@ -100,7 +99,6 @@ export default function MeetingResultScreen() {
       const next = await requestPermission();
       if (!next.granted) return;
     }
-    setPhotoAccepted(false);
     setCameraVisible(true);
   };
 
@@ -113,7 +111,6 @@ export default function MeetingResultScreen() {
       if (!photo?.uri) throw new Error("capture failed");
       const bytes = await readURI(photo.uri);
       setCaptured({ uri: photo.uri, bytes, contentType: contentTypeForURI(photo.uri) });
-      setPhotoAccepted(false);
       setCameraVisible(false);
     } catch {
       setError(COPY.error);
@@ -124,7 +121,7 @@ export default function MeetingResultScreen() {
 
   const submit = async () => {
     if (!matchId || Array.isArray(matchId) || !activeSession) return;
-    if (!captured || !photoAccepted) {
+    if (!captured) {
       setError(COPY.photoRequired);
       return;
     }
@@ -161,7 +158,13 @@ export default function MeetingResultScreen() {
       setCollectionStored(false);
       setResultModalVisible(true);
     } catch (reason) {
-      setError(reason instanceof Error && reason.message === COPY.keyError ? COPY.keyError : COPY.error);
+      if (reason instanceof Error && reason.message === COPY.keyError) {
+        setError(COPY.keyError);
+      } else if (reason instanceof Error && reason.message.includes("memory_monster_creation_window_expired")) {
+        setError(COPY.windowExpired);
+      } else {
+        setError(COPY.error);
+      }
     } finally {
       setSubmitting(false);
     }
@@ -256,11 +259,6 @@ export default function MeetingResultScreen() {
                 <Button fullWidth iconLeft={<MaterialIcons color={colors.text.inverse} name="photo-camera" size={20} />} onPress={() => void openCamera()}>
                   {captured ? COPY.retake : COPY.takePhoto}
                 </Button>
-                {captured ? (
-                  <Button fullWidth iconLeft={<MaterialIcons color={colors.brand.sky} name="check" size={20} />} onPress={() => setPhotoAccepted(true)} variant="secondary">
-                    {COPY.usePhoto}
-                  </Button>
-                ) : null}
               </View>
             </View>
 

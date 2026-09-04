@@ -15,21 +15,22 @@ import (
 // Config contains the process-level settings required before external services
 // such as PostgreSQL, Google OAuth, and Passkey are connected.
 type Config struct {
-	HTTPAddr            string
-	Environment         string
-	AllowExpoGoRedirect bool
-	DemoAccountEnabled  bool
-	GoogleLoginEnabled  bool
-	DevClientOrigin     string
-	ClientOrigin        string
-	Database            DatabaseConfig
-	ImageStorage        ImageStorageConfig
-	GoogleOIDC          GoogleOIDCConfig
-	Gemini              GeminiConfig
-	Stripe              StripeConfig
-	WebAuthn            WebAuthnConfig
-	JWS                 JWSConfig
-	Chat                ChatConfig
+	HTTPAddr                string
+	Environment             string
+	AllowExpoGoRedirect     bool
+	DemoAccountEnabled      bool
+	GoogleLoginEnabled      bool
+	DevClientOrigin         string
+	ClientOrigin            string
+	AdditionalClientOrigins []string
+	Database                DatabaseConfig
+	ImageStorage            ImageStorageConfig
+	GoogleOIDC              GoogleOIDCConfig
+	Gemini                  GeminiConfig
+	Stripe                  StripeConfig
+	WebAuthn                WebAuthnConfig
+	JWS                     JWSConfig
+	Chat                    ChatConfig
 }
 
 // ChatConfig tunes chat message send rate limiting, translation provider
@@ -49,7 +50,12 @@ type ChatConfig struct {
 type GoogleOIDCConfig struct{ ClientID, ClientSecret, RedirectURI string }
 type GeminiConfig struct{ APIKey, Model, ImageModel string }
 type StripeConfig struct{ SecretKey, IdentityWebhookSecret, IdentityReturnURL string }
-type WebAuthnConfig struct{ RPID, RPOrigin, RPDisplayName string }
+type WebAuthnConfig struct {
+	RPID                string
+	RPOrigin            string
+	RPDisplayName       string
+	AdditionalRPOrigins []string
+}
 type JWSConfig struct{ SigningKey, KeyID, VerifyKeys, Issuer, Audience string }
 
 type ImageStorageConfig struct {
@@ -120,6 +126,12 @@ func (c Config) ValidateForEnvironment() error {
 	if !validSecureOrigin(c.ClientOrigin) {
 		missing = append(missing, "CLIENT_ORIGIN (https origin)")
 	}
+	for _, origin := range c.AdditionalClientOrigins {
+		if !validSecureOrigin(origin) {
+			missing = append(missing, "ADDITIONAL_CLIENT_ORIGINS (https origins)")
+			break
+		}
+	}
 	if strings.TrimSpace(c.Database.Password) == "" {
 		missing = append(missing, "DB_PASSWORD")
 	}
@@ -134,6 +146,12 @@ func (c Config) ValidateForEnvironment() error {
 	}
 	if !validSecureOrigin(c.WebAuthn.RPOrigin) || strings.TrimSpace(c.WebAuthn.RPID) == "" {
 		missing = append(missing, "WEBAUTHN_RP_ID/WEBAUTHN_RP_ORIGIN (https origin)")
+	}
+	for _, origin := range c.WebAuthn.AdditionalRPOrigins {
+		if !validSecureOrigin(origin) {
+			missing = append(missing, "ADDITIONAL_CLIENT_ORIGINS (WebAuthn https origins)")
+			break
+		}
 	}
 	if len(missing) > 0 {
 		return fmt.Errorf("production configuration is incomplete: %s", strings.Join(missing, ", "))
@@ -187,15 +205,17 @@ func Load() Config {
 	if err := LoadDotEnv(".env"); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: .env を読み込めません: %v\n", err)
 	}
+	additionalClientOrigins := commaSeparatedValues(os.Getenv("ADDITIONAL_CLIENT_ORIGINS"))
 
 	return Config{
-		HTTPAddr:            valueOrDefault("HTTP_ADDR", ":8080"),
-		Environment:         valueOrDefault("APP_ENV", "development"),
-		AllowExpoGoRedirect: boolValueOrDefault("ALLOW_EXPO_GO_REDIRECT", false),
-		DemoAccountEnabled:  boolValueOrDefault("DEMO_ACCOUNT_ENABLED", false),
-		GoogleLoginEnabled:  boolValueOrDefault("GOOGLE_LOGIN_ENABLED", true),
-		DevClientOrigin:     valueOrDefault("DEV_CLIENT_ORIGIN", "http://localhost:8081"),
-		ClientOrigin:        os.Getenv("CLIENT_ORIGIN"),
+		HTTPAddr:                valueOrDefault("HTTP_ADDR", ":8080"),
+		Environment:             valueOrDefault("APP_ENV", "development"),
+		AllowExpoGoRedirect:     boolValueOrDefault("ALLOW_EXPO_GO_REDIRECT", false),
+		DemoAccountEnabled:      boolValueOrDefault("DEMO_ACCOUNT_ENABLED", false),
+		GoogleLoginEnabled:      boolValueOrDefault("GOOGLE_LOGIN_ENABLED", true),
+		DevClientOrigin:         valueOrDefault("DEV_CLIENT_ORIGIN", "http://localhost:8081"),
+		ClientOrigin:            os.Getenv("CLIENT_ORIGIN"),
+		AdditionalClientOrigins: additionalClientOrigins,
 		Database: DatabaseConfig{
 			Host:     valueOrDefault("DB_HOST", "127.0.0.1"),
 			Port:     valueOrDefault("DB_PORT", "5432"),
@@ -216,8 +236,13 @@ func Load() Config {
 		GoogleOIDC: GoogleOIDCConfig{os.Getenv("GOOGLE_CLIENT_ID"), os.Getenv("GOOGLE_CLIENT_SECRET"), os.Getenv("GOOGLE_REDIRECT_URI")},
 		Gemini:     GeminiConfig{os.Getenv("GEMINI_API_KEY"), valueOrDefault("GEMINI_MODEL", "gemini-3.1-flash-lite"), valueOrDefault("GEMINI_IMAGE_MODEL", "gemini-3.1-flash-lite-image")},
 		Stripe:     StripeConfig{os.Getenv("STRIPE_SECRET_KEY"), os.Getenv("STRIPE_IDENTITY_WEBHOOK_SECRET"), os.Getenv("STRIPE_IDENTITY_RETURN_URL")},
-		WebAuthn:   WebAuthnConfig{valueOrDefault("WEBAUTHN_RP_ID", "localhost"), valueOrDefault("WEBAUTHN_RP_ORIGIN", "http://localhost:8081"), valueOrDefault("WEBAUTHN_RP_DISPLAY_NAME", "Samurai Meet")},
-		JWS:        JWSConfig{os.Getenv("JWS_SIGNING_KEY"), valueOrDefault("JWS_KEY_ID", "v1"), os.Getenv("JWS_VERIFY_KEYS"), valueOrDefault("JWS_ISSUER", "samurai-meet-api"), valueOrDefault("JWS_AUDIENCE", "samurai-meet-mobile")},
+		WebAuthn: WebAuthnConfig{
+			RPID:                valueOrDefault("WEBAUTHN_RP_ID", "localhost"),
+			RPOrigin:            valueOrDefault("WEBAUTHN_RP_ORIGIN", "http://localhost:8081"),
+			RPDisplayName:       valueOrDefault("WEBAUTHN_RP_DISPLAY_NAME", "Samurai Meet"),
+			AdditionalRPOrigins: append([]string(nil), additionalClientOrigins...),
+		},
+		JWS: JWSConfig{os.Getenv("JWS_SIGNING_KEY"), valueOrDefault("JWS_KEY_ID", "v1"), os.Getenv("JWS_VERIFY_KEYS"), valueOrDefault("JWS_ISSUER", "samurai-meet-api"), valueOrDefault("JWS_AUDIENCE", "samurai-meet-mobile")},
 		Chat: ChatConfig{
 			SendBurst:                         intValueOrDefault("CHAT_SEND_BURST", 15),
 			SendRefillPerMinute:               intValueOrDefault("CHAT_SEND_REFILL_PER_MINUTE", 60),
@@ -244,6 +269,17 @@ func boolValueOrDefault(key string, fallback bool) bool {
 		return fallback
 	}
 	return value
+}
+
+func commaSeparatedValues(value string) []string {
+	var values []string
+	for _, item := range strings.Split(value, ",") {
+		item = strings.TrimSpace(item)
+		if item != "" {
+			values = append(values, item)
+		}
+	}
+	return values
 }
 
 // LoadDotEnv loads a simple KEY=VALUE file without overriding existing

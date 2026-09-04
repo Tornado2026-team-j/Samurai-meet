@@ -52,7 +52,12 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    Appearance.setColorScheme(preference === "system" ? "unspecified" : preference);
+    // react-native-web exposes getColorScheme/addChangeListener but does not
+    // implement the native setColorScheme API. The ThemeContext already owns
+    // the rendered palette, so this native synchronization is optional on web.
+    if (typeof Appearance.setColorScheme === "function") {
+      Appearance.setColorScheme(preference === "system" ? "unspecified" : preference);
+    }
   }, [preference]);
 
   const scheme: ColorScheme = preference === "system" ? systemScheme : preference;

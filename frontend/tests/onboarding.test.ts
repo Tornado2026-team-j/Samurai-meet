@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import {
+  localProfileFromRemoteProfile,
   parseAppMode,
   parseLanguage,
   parseLocalProfile,
+  parseMonsterSeedFromBio,
 } from "../services/onboarding-contract";
 import { resolveDefaultAppMode, resolveDefaultNationalityCode } from "../services/device-locale";
 
@@ -78,6 +80,44 @@ describe("onboarding storage validation", () => {
         }),
       )?.monsterSeed,
     ).toEqual({
+      skillTags: [],
+      interestTags: [],
+      freeText: "大阪を案内します",
+    });
+  });
+
+  test("hydrates a remote structured bio into the shared profile shape", () => {
+    expect(
+      localProfileFromRemoteProfile(
+        {
+          name: "  Rina  ",
+          nationality_code: "jp",
+          bio: JSON.stringify({
+            monsterSeed: {
+              skillTags: ["photography"],
+              interestTags: ["cafes"],
+              freeText: "",
+            },
+          }),
+          completed: true,
+        },
+        "later",
+      ),
+    ).toEqual({
+      name: "Rina",
+      nationalityCode: "JP",
+      monsterSeed: {
+        skillTags: ["photography"],
+        interestTags: ["cafes"],
+        freeText: "",
+      },
+      completed: true,
+      identityVerificationChoice: "later",
+    });
+  });
+
+  test("keeps ordinary remote bio text as the profile note", () => {
+    expect(parseMonsterSeedFromBio("大阪を案内します")).toEqual({
       skillTags: [],
       interestTags: [],
       freeText: "大阪を案内します",

@@ -14,6 +14,12 @@ describe("ホーム画面の更新契約", () => {
     expect(source).toContain("<RefreshControl");
     expect(source).toContain("alwaysBounceVertical");
     expect(source).toContain('pointerEvents="box-none"');
+    expect(source).toContain('setRefreshing(mode === "refresh" && preserveContent)');
+    expect(source).toContain("const [todayKey] = useState(todayDateKey);");
+    expect(source).toContain("const dateSwipeBlockedRef = useRef(true);");
+    expect(source).toContain("DATE_SWIPE_DOMINANCE_RATIO");
+    expect(source).toContain("if (dateSwipeBlockedRef.current) return false;");
+    expect(source).toContain("router.setParams({ date: item.dateKey });");
   });
 
   it("日本語ホームはカード検索を優先し、位置保存と応募履歴を待たない", async () => {
@@ -31,6 +37,13 @@ describe("ホーム画面の更新契約", () => {
     expect(source).toContain("previousRequest.controller.abort()");
     expect(source).not.toContain("loadInFlight.current");
     expect(source).toContain('availableFrom: "",');
+  });
+
+  it("Recovery Phrase操作は下部ナビの上までスクロールできる", async () => {
+    const source = await readScreen("../components/RecoveryFlow.tsx");
+
+    expect(source).toContain("getTabBarContentBottomPadding(insets.bottom)");
+    expect(source).toContain("contentContainerStyle={[styles.content, { paddingBottom: getTabBarContentBottomPadding(insets.bottom) }]}");
   });
 
   it("外国人ホームは復帰フォーカスではなく初回取得とPull-to-Refreshだけを使う", async () => {
@@ -60,6 +73,24 @@ describe("ホーム画面の更新契約", () => {
     expect(source).toContain('event.type === "dismissed"');
   });
 
+  it("募集管理では下書きの公開と公開停止から下書きへの復帰を提供する", async () => {
+    const source = await readScreen("../app/recruitments/mine.tsx");
+
+    expect(source).toContain("changeRecruitmentStatus");
+    expect(source).toContain('changeRecruitmentStatus(recruitment, "open")');
+    expect(source).toContain('changeRecruitmentStatus(recruitment, "draft")');
+    expect(source).toContain("moveToDraftTitle");
+    expect(source).toContain("DateTimePicker");
+    expect(source).toContain("openEditDatePicker");
+    expect(source).toContain("openEditTimePicker");
+  });
+
+  it("下書き保存後は募集管理へ進む", async () => {
+    const source = await readScreen("../app/tabs/index.tsx");
+
+    expect(source).toContain('router.replace("/recruitments/mine")');
+  });
+
   it("条件変更時だけ表示するリセットは金色にせず高コントラストで表示する", async () => {
     const source = await readScreen("../app/japanese/filters.tsx");
 
@@ -78,12 +109,21 @@ describe("ホーム画面の更新契約", () => {
 
     expect(source).toContain("isJSTScheduleEnded");
     expect(source).toContain("plan.recruitment.end_time");
-    expect(source).toContain("setReviewPlan(completedPlan)");
+    expect(source).toContain("setReviewPlan(null)");
+    expect(source).toContain("reviewPromptedRef.current.delete(plan.id)");
+    expect(source).not.toContain("setReviewPlan(completedPlan)");
     expect(source).toContain("reviewPromptedRef");
     expect(source).toContain("reviewPlan.recruitment.available_date");
     expect(source).toContain("reviewPlan.other_user.name");
     expect(source).toContain("reviewAlreadyLiked");
     expect(source).toContain("reviewTitle");
+    expect(source).toContain("loadDeferredReviewMatchIDs");
+    expect(source).toContain("deferReviewForMatch");
+    expect(source).toContain("onPress={() => void deferReview()}");
+    expect(source).toContain("canCreateMemoryMonster");
+    expect(source).toContain("MEMORY_MONSTER_CREATION_WINDOW_MS");
+    expect(source).toContain("Date.parse(plan.updated_at)");
+    expect(source).toContain('pathname: "/meeting-result/[matchId]"');
     expect(chatSource).toContain('if (match.status === "completed") return true;');
   });
 

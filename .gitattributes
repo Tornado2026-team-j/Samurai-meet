@@ -1,0 +1,2 @@
+# Go source must use LF so the CI gofmt check sees the same bytes on every OS.
+*.go text eol=lf

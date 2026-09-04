@@ -16,6 +16,7 @@ var (
 	ErrForbidden     = errors.New("memory monster forbidden")
 	ErrInvalidInput  = errors.New("invalid memory monster input")
 	ErrInvalidState  = errors.New("invalid memory monster state")
+	ErrWindowExpired = errors.New("memory monster creation window expired")
 	ErrPhotoNotFound = errors.New("memory monster source photo not found")
 )
 
@@ -25,6 +26,8 @@ const (
 	MaxObjectRunes        = 15
 	MaxMemoryRunes        = 100
 )
+
+const MemoryMonsterCreationWindow = 24 * time.Hour
 
 type Monster struct {
 	ID                   string `json:"id"`
@@ -80,7 +83,7 @@ func (s *Service) Create(ctx context.Context, userID string, input CreateInput, 
 	if err := validateCreateInput(userID, input); err != nil {
 		return Monster{}, err
 	}
-	if err := s.authorizeCreate(ctx, userID, input.MatchID, input.MeetingID, input.SourcePhotoID); err != nil {
+	if err := s.authorizeCreate(ctx, userID, input.MatchID, input.MeetingID, input.SourcePhotoID, now); err != nil {
 		return Monster{}, err
 	}
 	generated, err := s.generator.Generate(ctx, GenerateInput{
@@ -180,33 +183,73 @@ func (s *Service) GetImage(ctx context.Context, userID, monsterID string) (Image
 	return Image{Bytes: body, ContentType: contentType}, nil
 }
 
-func (s *Service) authorizeCreate(ctx context.Context, userID, matchID, meetingID, sourcePhotoID string) error {
-	var exists bool
+func (s *Service) authorizeCreate(ctx context.Context, userID, matchID, meetingID, sourcePhotoID string, now time.Time) error {
+	var status, matchUpdatedAt, availableDate, endTime, timezone, latestMeetingEndedAt string
 	err := s.db.QueryRowContext(ctx, `
-		SELECT EXISTS (
-			SELECT 1 FROM matches
-			WHERE id=$1 AND status IN ('accepted','completed') AND (owner_user_id=$2 OR requester_user_id=$2)
-		)`, matchID, userID).Scan(&exists)
+		SELECT m.status,m.updated_at,r.available_date,r.end_time,r.timezone,
+		       COALESCE((
+				SELECT ms.ended_at
+				FROM meeting_sessions ms
+				WHERE ms.match_id=m.id AND ms.status='completed' AND ms.ended_at IS NOT NULL
+				ORDER BY ms.ended_at DESC
+				LIMIT 1
+		       ), '')
+		FROM matches m
+		JOIN recruitment_cards r ON r.id=m.card_id
+		WHERE m.id=$1 AND m.status IN ('accepted','completed')
+		  AND (m.owner_user_id=$2 OR m.requester_user_id=$2)`, matchID, userID).Scan(
+		&status, &matchUpdatedAt, &availableDate, &endTime, &timezone, &latestMeetingEndedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrForbidden
+	}
 	if err != nil {
 		return err
 	}
-	if !exists {
-		return ErrForbidden
+
+	endAt, err := recruitmentEndAt(availableDate, endTime, timezone)
+	if err != nil {
+		return ErrInvalidState
 	}
-	if meetingID != "" {
-		err = s.db.QueryRowContext(ctx, `
-			SELECT EXISTS (
-				SELECT 1 FROM meeting_sessions ms
-				JOIN matches m ON m.id=ms.match_id
-				WHERE ms.id=$1 AND ms.match_id=$2 AND ms.status='completed' AND (m.owner_user_id=$3 OR m.requester_user_id=$3)
-			)`, meetingID, matchID, userID).Scan(&exists)
+	if latestMeetingEndedAt != "" {
+		endAt, err = time.Parse(time.RFC3339Nano, latestMeetingEndedAt)
 		if err != nil {
-			return err
+			return ErrInvalidState
 		}
-		if !exists {
+	} else if status == "completed" {
+		// A manually completed match may not have a meeting session. Its match
+		// transition timestamp is then the best available actual end time.
+		endAt, err = time.Parse(time.RFC3339Nano, matchUpdatedAt)
+		if err != nil {
 			return ErrInvalidState
 		}
 	}
+	if meetingID != "" {
+		var requestedMeetingEndedAt string
+		err = s.db.QueryRowContext(ctx, `
+			SELECT COALESCE(ms.ended_at,'')
+			FROM meeting_sessions ms
+			JOIN matches m ON m.id=ms.match_id
+			WHERE ms.id=$1 AND ms.match_id=$2 AND ms.status='completed'
+			  AND (m.owner_user_id=$3 OR m.requester_user_id=$3)`, meetingID, matchID, userID).Scan(&requestedMeetingEndedAt)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrInvalidState
+		}
+		if err != nil {
+			return err
+		}
+		if requestedMeetingEndedAt == "" {
+			return ErrInvalidState
+		}
+		endAt, err = time.Parse(time.RFC3339Nano, requestedMeetingEndedAt)
+		if err != nil {
+			return ErrInvalidState
+		}
+	}
+	if !memoryMonsterCreationWindowOpen(endAt, now) {
+		return ErrWindowExpired
+	}
+
+	var exists bool
 	err = s.db.QueryRowContext(ctx, `
 		SELECT EXISTS (
 			SELECT 1 FROM photos
@@ -219,6 +262,17 @@ func (s *Service) authorizeCreate(ctx context.Context, userID, matchID, meetingI
 		return ErrPhotoNotFound
 	}
 	return nil
+}
+
+func recruitmentEndAt(availableDate, endTime, timezone string) (time.Time, error) {
+	if timezone != "Asia/Tokyo" {
+		return time.Time{}, errors.New("unsupported recruitment timezone")
+	}
+	return time.ParseInLocation("2006-01-02 15:04", availableDate+" "+endTime, time.FixedZone(timezone, 9*60*60))
+}
+
+func memoryMonsterCreationWindowOpen(endAt, now time.Time) bool {
+	return !endAt.IsZero() && !now.Before(endAt) && now.Before(endAt.Add(MemoryMonsterCreationWindow))
 }
 
 func validateCreateInput(userID string, input CreateInput) error {

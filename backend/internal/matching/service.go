@@ -431,6 +431,15 @@ func (s *Service) ListOwnedRecruitments(ctx context.Context, userID string, now 
 		return nil, err
 	}
 	nowText := now.UTC().Format(time.RFC3339Nano)
+	// Reconcile cards created before the full-capacity transition was made
+	// explicit. A full card is no longer public, even if it was left in the
+	// legacy open/matched state.
+	if _, err := s.db.ExecContext(ctx, `
+		UPDATE recruitment_cards r SET status='closed',updated_at=$1
+		WHERE r.owner_user_id=$2 AND r.status IN ('open','matched')
+		  AND (SELECT COUNT(*) FROM matches m WHERE m.card_id=r.id AND m.status='accepted') >= r.participant_limit`, nowText, userID); err != nil {
+		return nil, err
+	}
 	if _, err := s.db.ExecContext(ctx, `
 		UPDATE recruitment_cards SET status='expired',updated_at=$1
 		WHERE owner_user_id=$2 AND status IN ('open','matched') AND expires_at <= $1`, nowText, userID); err != nil {
@@ -1104,7 +1113,9 @@ func (s *Service) AcceptMatch(ctx context.Context, userID, matchID string, now t
 	}
 	nextCardStatus := "open"
 	if acceptedCount+1 >= participantLimit {
-		nextCardStatus = "matched"
+		// The final accepted participant consumes the card. Keep the accepted
+		// match history, but stop advertising the recruitment immediately.
+		nextCardStatus = "closed"
 	}
 	if _, err = tx.ExecContext(ctx, `
 		UPDATE recruitment_cards SET status=$1,updated_at=$2

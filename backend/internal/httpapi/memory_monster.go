@@ -180,6 +180,8 @@ func writeMemoryMonsterError(w http.ResponseWriter, err error) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "match_not_found"})
 	case errors.Is(err, memorymonster.ErrInvalidState):
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "memory_monster_meeting_not_completed"})
+	case errors.Is(err, memorymonster.ErrWindowExpired):
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "memory_monster_creation_window_expired"})
 	case errors.Is(err, memorymonster.ErrPhotoNotFound):
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "source_photo_not_found"})
 	case errors.Is(err, memorymonster.ErrGenerationUnavailable):

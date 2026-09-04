@@ -50,6 +50,19 @@ func TestLoadReadsSeparateDatabaseSettings(t *testing.T) {
 	}
 }
 
+func TestLoadReadsAdditionalClientOrigins(t *testing.T) {
+	t.Setenv("ADDITIONAL_CLIENT_ORIGINS", " https://samurai-meet-expo-go-pre.disnana.com/ , https://samurai-meet-staging.disnana.com ")
+
+	cfg := Load()
+	got := strings.Join(cfg.AdditionalClientOrigins, ",")
+	if got != "https://samurai-meet-expo-go-pre.disnana.com/,https://samurai-meet-staging.disnana.com" {
+		t.Fatalf("AdditionalClientOrigins = %q", got)
+	}
+	if got := strings.Join(cfg.WebAuthn.AdditionalRPOrigins, ","); got != "https://samurai-meet-expo-go-pre.disnana.com/,https://samurai-meet-staging.disnana.com" {
+		t.Fatalf("WebAuthn.AdditionalRPOrigins = %q", got)
+	}
+}
+
 func TestLoadReadsDemoReviewSwitches(t *testing.T) {
 	t.Setenv("DEMO_ACCOUNT_ENABLED", "true")
 	t.Setenv("GOOGLE_LOGIN_ENABLED", "false")
@@ -82,6 +95,16 @@ func TestProductionValidationAllowsExplicitModerationFreeModeForTemporaryTesting
 	cfg.Chat.DevelopmentModerationFreeMode = true
 	if err := cfg.ValidateForEnvironment(); err != nil {
 		t.Fatalf("explicit moderation free mode should remain an acknowledged production exception: %v", err)
+	}
+}
+
+func TestProductionValidationRejectsInsecureAdditionalClientOrigin(t *testing.T) {
+	cfg := completeProductionConfig()
+	cfg.AdditionalClientOrigins = []string{"http://samurai-meet-expo-go-pre.disnana.com"}
+
+	err := cfg.ValidateForEnvironment()
+	if err == nil || !strings.Contains(err.Error(), "ADDITIONAL_CLIENT_ORIGINS") {
+		t.Fatalf("insecure additional client origin error = %v", err)
 	}
 }
 

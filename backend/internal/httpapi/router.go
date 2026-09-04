@@ -25,35 +25,36 @@ import (
 const APIV1Prefix = "/api/v1"
 
 type RouterOptions struct {
-	Environment           string
-	AllowExpoGoRedirect   bool
-	DevClientOrigin       string
-	ClientOrigin          string
-	OAuthLogin            *auth.OAuthLoginService
-	DemoAccounts          *auth.DemoAccountService
-	PreAuth               *auth.PreAuthService
-	Sessions              *auth.SessionService
-	SessionHandoffs       *auth.SessionHandoffService
-	PasskeyBootstraps     *auth.PasskeyBootstrapService
-	Recovery              *keys.RecoveryService
-	Passkeys              *auth.PasskeyService
-	KeyEnvelopes          *keys.Service
-	Devices               *keys.DeviceService
-	DeviceTransfers       *keys.DeviceTransferService
-	Images                *image.Service
-	Accounts              *account.Service
-	Profiles              *profileuser.Service
-	Matching              *matching.Service
-	RecruitmentClassifier *classification.Service
-	Chats                 *chat.Service
-	ChatModeration        chat.ModerationProvider
-	ChatTranslation       *translation.Service
-	Meetings              *meeting.Service
-	MemoryMonsters        *memorymonster.Service
-	Notifications         *notification.Service
-	Safety                *safety.Service
-	Identity              *identity.Service
-	Push                  *push.Service
+	Environment             string
+	AllowExpoGoRedirect     bool
+	DevClientOrigin         string
+	ClientOrigin            string
+	AdditionalClientOrigins []string
+	OAuthLogin              *auth.OAuthLoginService
+	DemoAccounts            *auth.DemoAccountService
+	PreAuth                 *auth.PreAuthService
+	Sessions                *auth.SessionService
+	SessionHandoffs         *auth.SessionHandoffService
+	PasskeyBootstraps       *auth.PasskeyBootstrapService
+	Recovery                *keys.RecoveryService
+	Passkeys                *auth.PasskeyService
+	KeyEnvelopes            *keys.Service
+	Devices                 *keys.DeviceService
+	DeviceTransfers         *keys.DeviceTransferService
+	Images                  *image.Service
+	Accounts                *account.Service
+	Profiles                *profileuser.Service
+	Matching                *matching.Service
+	RecruitmentClassifier   *classification.Service
+	Chats                   *chat.Service
+	ChatModeration          chat.ModerationProvider
+	ChatTranslation         *translation.Service
+	Meetings                *meeting.Service
+	MemoryMonsters          *memorymonster.Service
+	Notifications           *notification.Service
+	Safety                  *safety.Service
+	Identity                *identity.Service
+	Push                    *push.Service
 }
 
 func NewRouter() http.Handler { return NewRouterWithOptions(RouterOptions{}) }
@@ -64,15 +65,16 @@ func NewRouterWithOptions(o RouterOptions) http.Handler {
 	m.HandleFunc("/readyz", readyz)
 	m.HandleFunc("/passkey", passkeyPage)
 	m.HandleFunc("/passkey/", passkeyPage)
+	m.HandleFunc("/.well-known/webauthn", webAuthnRelatedOrigins(o.Environment, o.ClientOrigin, o.DevClientOrigin, o.AdditionalClientOrigins))
 	m.HandleFunc(APIV1Prefix+"/healthz", healthz)
 	m.HandleFunc(APIV1Prefix+"/readyz", readyz)
 	if o.Identity != nil {
 		m.HandleFunc(identityWebhookPath, identityWebhook(o.Identity))
 	}
 	if o.OAuthLogin != nil {
-		m.HandleFunc(APIV1Prefix+"/auth/google/start", googleStart(o.OAuthLogin, o.Environment, o.AllowExpoGoRedirect, o.ClientOrigin, o.DevClientOrigin))
+		m.HandleFunc(APIV1Prefix+"/auth/google/start", googleStart(o.OAuthLogin, o.Environment, o.AllowExpoGoRedirect, o.ClientOrigin, o.DevClientOrigin, o.AdditionalClientOrigins))
 		m.HandleFunc(APIV1Prefix+"/auth/google/exchange", googleExchange(o.OAuthLogin))
-		m.HandleFunc("/auth/callback", googleCallback(o.OAuthLogin, o.Environment, o.AllowExpoGoRedirect, o.ClientOrigin, o.DevClientOrigin))
+		m.HandleFunc("/auth/callback", googleCallback(o.OAuthLogin, o.Environment, o.AllowExpoGoRedirect, o.ClientOrigin, o.DevClientOrigin, o.AdditionalClientOrigins))
 	}
 	if o.Sessions != nil {
 		m.HandleFunc(APIV1Prefix+"/auth/demo/start", demoAccountStart(o.DemoAccounts))
@@ -181,7 +183,7 @@ func NewRouterWithOptions(o RouterOptions) http.Handler {
 }
 
 func withCORS(next http.Handler, o RouterOptions) http.Handler {
-	allowedOrigins := clientOrigins(o.Environment, o.ClientOrigin, o.DevClientOrigin)
+	allowedOrigins := clientOrigins(o.Environment, o.ClientOrigin, o.DevClientOrigin, o.AdditionalClientOrigins...)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
 		if containsExactOrigin(allowedOrigins, origin) {
@@ -210,8 +212,8 @@ var developmentClientOriginDefaults = []string{
 	"http://127.0.0.1:5173",
 }
 
-func clientOrigins(environment, clientOrigin, devClientOrigin string) []string {
-	origins := make([]string, 0, 1+len(developmentClientOriginDefaults))
+func clientOrigins(environment, clientOrigin, devClientOrigin string, additionalClientOrigins ...string) []string {
+	origins := make([]string, 0, 1+len(additionalClientOrigins)+len(developmentClientOriginDefaults))
 	appendOrigin := func(value string) {
 		value = strings.TrimRight(strings.TrimSpace(value), "/")
 		if value == "" || containsExactOrigin(origins, value) {
@@ -220,6 +222,9 @@ func clientOrigins(environment, clientOrigin, devClientOrigin string) []string {
 		origins = append(origins, value)
 	}
 	appendOrigin(clientOrigin)
+	for _, origin := range additionalClientOrigins {
+		appendOrigin(origin)
+	}
 	if environment == "development" || environment == "test" {
 		appendOrigin(devClientOrigin)
 		for _, origin := range developmentClientOriginDefaults {

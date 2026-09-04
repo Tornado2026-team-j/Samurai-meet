@@ -10,6 +10,7 @@ import {
   Image,
   Keyboard,
   KeyboardAvoidingView,
+  Linking,
   Modal,
   Platform,
   Pressable,
@@ -23,6 +24,7 @@ import {
 import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import DismissKeyboardView from "../../components/DismissKeyboardView";
+import WebDatePicker from "../../components/WebDatePicker";
 import { Button, Card, LoadingSpinner, Pill, opacity, radius, shadows, spacing, typography } from "../../components/ui";
 import type { ThemeColors } from "../../components/ui/tokens";
 import ForeignerHomeScreen from "../foreigner";
@@ -37,11 +39,10 @@ import {
 } from "../../services/location";
 import type { Coordinates } from "../../services/matching";
 import {
-  loadLocalProfile,
   serializeMonsterSeedForLegacyBio,
   type AppLanguage,
 } from "../../services/onboarding";
-import { updateMyProfile } from "../../services/profile";
+import { loadProfileSnapshot as loadRemoteProfileSnapshot, updateMyProfile } from "../../services/profile";
 import {
   createRecruitmentPreview,
   defaultRecruitmentSchedule,
@@ -145,6 +146,7 @@ const RECRUITMENT_COPY = {
     currentLocationResolving: "Finding your area...",
     currentLocationFallback: "Current location",
     noLocationResults: "No places found",
+    locationProviderAttribution: "Place search: © OpenStreetMap contributors",
     closeScheduleWarning: "Close schedule warning",
     pastStartTitle: "This start time has passed.",
     shortNoticeTitle: "The start time is within 6 hours.",
@@ -259,6 +261,7 @@ const RECRUITMENT_COPY = {
     currentLocationResolving: "現在地を確認中…",
     currentLocationFallback: "現在地",
     noLocationResults: "候補が見つかりません",
+    locationProviderAttribution: "地名検索: © OpenStreetMap contributors",
     closeScheduleWarning: "日時の確認を閉じる",
     pastStartTitle: "開始時刻が過ぎています。",
     shortNoticeTitle: "開始まで6時間以内です。",
@@ -660,7 +663,7 @@ export default function SearchPreferencesScreen() {
     let active = true;
     setLocationSearchStatus("loading");
     setLocationSuggestions([]);
-    void resolveCurrentLocationDisplay()
+    void resolveCurrentLocationDisplay(copy.currentLocationFallback)
       .then((result) => {
         if (!active) return;
         const displayName = result?.displayName ?? copy.currentLocationFallback;
@@ -698,9 +701,10 @@ export default function SearchPreferencesScreen() {
     }
 
     let active = true;
+    const controller = new AbortController();
     setLocationSearchStatus("loading");
     const timeout = setTimeout(() => {
-      void searchLocationSuggestions(trimmedLocation)
+      void searchLocationSuggestions(trimmedLocation, controller.signal)
         .then((suggestions) => {
           if (!active) return;
           setLocationSuggestions(suggestions);
@@ -715,6 +719,7 @@ export default function SearchPreferencesScreen() {
 
     return () => {
       active = false;
+      controller.abort();
       clearTimeout(timeout);
     };
   }, [location, selectedLocationCoordinates, selectedLocationLabel, useCurrentLocation]);
@@ -841,7 +846,7 @@ export default function SearchPreferencesScreen() {
     setLocationSearchStatus("loading");
     try {
       if (useCurrentLocation) {
-        const result = await resolveCurrentLocationDisplay();
+        const result = await resolveCurrentLocationDisplay(copy.currentLocationFallback);
         if (!result) return null;
         setLocation(result.displayName);
         setSelectedLocationLabel(result.displayName);
@@ -1032,7 +1037,7 @@ export default function SearchPreferencesScreen() {
 		}
 		const result = await createRecruitmentPreview(draft, activeSession, controller.signal);
       const localProfile = activeSession
-        ? await loadLocalProfile(activeSession.user_id)
+        ? await loadRemoteProfileSnapshot(activeSession, controller.signal)
         : null;
       const personalizedResult = localProfile
         ? {
@@ -1097,7 +1102,7 @@ export default function SearchPreferencesScreen() {
       const result = buildManualRecruitmentPreviewModel(draft, category, keywords);
       const activeSession = getCurrentSession() ?? session;
       const localProfile = activeSession
-        ? await loadLocalProfile(activeSession.user_id)
+        ? await loadRemoteProfileSnapshot(activeSession)
         : null;
       const personalizedResult = localProfile && activeSession
         ? {
@@ -1164,7 +1169,7 @@ export default function SearchPreferencesScreen() {
         throw new Error("not_signed_in");
       }
 
-      const localProfile = await loadLocalProfile(activeSession.user_id);
+      const localProfile = await loadRemoteProfileSnapshot(activeSession);
       if (localProfile?.completed) {
         await updateMyProfile(activeSession, {
           name: localProfile.name,
@@ -1297,6 +1302,9 @@ export default function SearchPreferencesScreen() {
       );
       setSavedDraftID(savedRecruitment.id);
       setDraftSaveStatus("saved");
+      // Continue at the management screen so the saved draft has an obvious
+      // next step: edit it, publish it, or move it back to a draft later.
+      router.replace("/recruitments/mine");
       saved = true;
     } catch (error) {
       const localMessage = recruitmentInputMessage(error, language);
@@ -1530,6 +1538,17 @@ export default function SearchPreferencesScreen() {
                     <Text style={styles.locationSuggestionEmpty}>
                       {copy.noLocationResults}
                     </Text>
+                  ) : null}
+                  {Platform.OS === "web" ? (
+                    <Pressable
+                      accessibilityRole="link"
+                      onPress={() => void Linking.openURL("https://www.openstreetmap.org/copyright")}
+                      style={styles.locationProviderAttribution}
+                    >
+                      <Text style={styles.locationProviderAttributionText}>
+                        {copy.locationProviderAttribution}
+                      </Text>
+                    </Pressable>
                   ) : null}
                 </View>
               ) : null}
@@ -2070,7 +2089,18 @@ export default function SearchPreferencesScreen() {
         )}
       </Animated.View>
 
-      {Platform.OS !== "ios" && datePickerVisible ? (
+      {Platform.OS === "web" && datePickerVisible ? (
+        <WebDatePicker
+          cancelLabel={copy.pickerCancel}
+          doneLabel={copy.pickerDone}
+          label={copy.pickerDateTitle}
+          maximumDate={maximumDate}
+          minimumDate={minimumDate}
+          onChange={commitDate}
+          onDismiss={() => setDatePickerVisible(false)}
+          value={pickerDate}
+        />
+      ) : Platform.OS !== "ios" && datePickerVisible ? (
         <DateTimePicker
           display="default"
           maximumDate={maximumDate}
@@ -2978,6 +3008,19 @@ function createStyles(colors: ThemeColors) {
     letterSpacing: 0,
     lineHeight: 16,
     textAlign: "center",
+  },
+  locationProviderAttribution: {
+    borderTopWidth: 1,
+    borderTopColor: colors.border.subtle,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+  },
+  locationProviderAttributionText: {
+    color: colors.text.muted,
+    fontSize: 10,
+    lineHeight: 14,
+    textAlign: "right",
+    textDecorationLine: "underline",
   },
   currentLocation: {
     position: "absolute",

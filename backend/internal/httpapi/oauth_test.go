@@ -29,8 +29,14 @@ func TestAllowedAppRedirectURI(t *testing.T) {
 	if !allowedOAuthRedirectURI("https://samurai-meet.disnana.com/auth/complete", "production", false, "https://samurai-meet.disnana.com", "") {
 		t.Fatal("production web callback should be allowed only for configured client origin")
 	}
+	if !allowedOAuthRedirectURI("https://samurai-meet-expo-go-pre.disnana.com/auth/complete", "production", false, "https://samurai-meet.disnana.com", "", "https://samurai-meet-expo-go-pre.disnana.com") {
+		t.Fatal("explicitly configured preview web callback should be allowed in production")
+	}
 	if allowedOAuthRedirectURI("https://attacker.example/auth/complete", "production", false, "https://samurai-meet.disnana.com", "") {
 		t.Fatal("unconfigured production web callback must be rejected")
+	}
+	if allowedOAuthRedirectURI("https://samurai-meet-expo-go-pre.disnana.com.evil.example/auth/complete", "production", false, "https://samurai-meet.disnana.com", "", "https://samurai-meet-expo-go-pre.disnana.com") {
+		t.Fatal("lookalike preview web callback must be rejected")
 	}
 	if !allowedOAuthRedirectURI("http://localhost:5173/auth/complete", "development", false, "", "http://localhost:5173") {
 		t.Fatal("local web callback should be allowed in development")

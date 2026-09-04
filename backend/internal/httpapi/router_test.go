@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -135,6 +136,58 @@ func TestProductionCORSAllowsOnlyPublicOrigin(t *testing.T) {
 		t.Fatalf("status = %d, want %d", res.Code, http.StatusNoContent)
 	}
 	if got := res.Header().Get("Access-Control-Allow-Origin"); got != "https://samurai-meet.disnana.com" {
+		t.Fatalf("Access-Control-Allow-Origin = %q", got)
+	}
+}
+
+func TestWebAuthnRelatedOriginsListsConfiguredWebClients(t *testing.T) {
+	handler := NewRouterWithOptions(RouterOptions{
+		Environment:             "production",
+		ClientOrigin:            "https://samurai-meet.disnana.com",
+		AdditionalClientOrigins: []string{"https://samurai-meet-expo-go-pre.disnana.com"},
+	})
+	req := httptest.NewRequest(http.MethodGet, "/.well-known/webauthn", nil)
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", res.Code, http.StatusOK)
+	}
+	if got := res.Header().Get("Content-Type"); got != "application/json" {
+		t.Fatalf("Content-Type = %q, want application/json", got)
+	}
+	if got := res.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Fatalf("Access-Control-Allow-Origin = %q, want *", got)
+	}
+	var body struct {
+		Origins []string `json:"origins"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &body); err != nil {
+		t.Fatalf("response is not JSON: %v", err)
+	}
+	want := []string{
+		"https://samurai-meet.disnana.com",
+		"https://samurai-meet-expo-go-pre.disnana.com",
+	}
+	if strings.Join(body.Origins, ",") != strings.Join(want, ",") {
+		t.Fatalf("origins = %v, want %v", body.Origins, want)
+	}
+}
+
+func TestProductionCORSAllowsExplicitAdditionalClientOrigin(t *testing.T) {
+	handler := NewRouterWithOptions(RouterOptions{
+		Environment:             "production",
+		ClientOrigin:            "https://samurai-meet.disnana.com",
+		AdditionalClientOrigins: []string{"https://samurai-meet-expo-go-pre.disnana.com"},
+	})
+	req := httptest.NewRequest(http.MethodOptions, APIV1Prefix+"/auth/google/exchange", nil)
+	req.Header.Set("Origin", "https://samurai-meet-expo-go-pre.disnana.com")
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", res.Code, http.StatusNoContent)
+	}
+	if got := res.Header().Get("Access-Control-Allow-Origin"); got != "https://samurai-meet-expo-go-pre.disnana.com" {
 		t.Fatalf("Access-Control-Allow-Origin = %q", got)
 	}
 }

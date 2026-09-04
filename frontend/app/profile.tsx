@@ -35,7 +35,6 @@ import type { Session } from "../services/auth-contract";
 import {
   loadAppMode,
   loadLanguage,
-  loadLocalProfile,
   saveAppMode,
   saveLanguage,
   type AppMode,
@@ -44,6 +43,7 @@ import type {
   AppLanguage,
   LocalProfile,
 } from "../services/onboarding-contract";
+import { loadProfileSnapshot as loadRemoteProfileSnapshot } from "../services/profile";
 
 const COPY = {
   ja: {
@@ -341,7 +341,7 @@ export function ProfileScreen({ settingsOnly = false }: ProfileScreenProps = {})
     void Promise.all([
       loadLanguage(),
       loadAppMode(),
-      loadLocalProfile(activeSession.user_id),
+      loadRemoteProfileSnapshot(activeSession),
     ]).then(([storedLanguage, storedMode, storedProfile]) => {
       if (!active) return;
       setAppMode(storedMode ?? (storedLanguage === "en" ? "traveler" : "local"));
