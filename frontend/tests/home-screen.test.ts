@@ -139,6 +139,7 @@ describe("ホーム画面の更新契約", () => {
     const profileSource = await readScreen("../app/profile.tsx");
     const accountSettingsSource = await readScreen("../app/account-settings.tsx");
     const tabBarSource = await readScreen("../components/GlobalTabBar.tsx");
+    const glassTabBarSource = await readScreen("../components/GlassTabBar.tsx");
 
     expect(profileSource).toContain("export function ProfileScreen");
     expect(profileSource).toContain("settingsOnly?: boolean");
@@ -147,9 +148,11 @@ describe("ホーム画面の更新契約", () => {
     expect(profileSource).toContain("{!settingsOnly ? (");
     expect(profileSource).toContain("{settingsOnly ? (");
     expect(profileSource).toContain("settingsContent");
+    expect(profileSource).toContain('title: "アカウント"');
     expect(accountSettingsSource).toContain('import { ProfileScreen } from "./profile"');
     expect(accountSettingsSource).toContain("<ProfileScreen settingsOnly />");
     expect(tabBarSource).toContain('pathname === "/profile" || pathname === "/account-settings"');
+    expect(glassTabBarSource).toContain('profile: "アカウント"');
   });
 
   it("起動・認証待ち・主要一覧は共通の滑らかなロードリングを使う", async () => {

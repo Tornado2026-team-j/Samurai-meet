@@ -47,14 +47,14 @@ const TAB_LABELS: Record<AppLanguage, Record<TabKey, string>> = {
     chat: "チャット",
     plans: "予定",
     monsters: "コレクション",
-    profile: "プロフィール",
+    profile: "アカウント",
   },
   en: {
     home: "Home",
     chat: "Chat",
     plans: "Plans",
     monsters: "Collection",
-    profile: "Profile",
+    profile: "Account",
   },
 };
 

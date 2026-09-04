@@ -51,9 +51,9 @@ const BORDER_GRAY = "#d4d4d4";
 
 const COPY = {
   ja: {
-    title: "プロフィール",
+    title: "アカウント",
     back: "戻る",
-    loading: "プロフィールを読み込んでいます…",
+    loading: "アカウントを読み込んでいます…",
     name: "名前",
     nationality: "国籍",
     skills: "得意なこと",
@@ -137,9 +137,9 @@ const COPY = {
     resetDeviceError: "端末データの初期化に失敗しました。もう一度お試しください。",
   },
   en: {
-    title: "Profile",
+    title: "Account",
     back: "Back",
-    loading: "Loading profile…",
+    loading: "Loading account…",
     name: "Name",
     nationality: "Nationality",
     skills: "Skills",
