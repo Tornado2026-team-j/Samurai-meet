@@ -10,6 +10,7 @@ import {
   Image,
   Keyboard,
   KeyboardAvoidingView,
+  Linking,
   Modal,
   Platform,
   Pressable,
@@ -145,6 +146,7 @@ const RECRUITMENT_COPY = {
     currentLocationResolving: "Finding your area...",
     currentLocationFallback: "Current location",
     noLocationResults: "No places found",
+    locationProviderAttribution: "Place search: © OpenStreetMap contributors",
     closeScheduleWarning: "Close schedule warning",
     pastStartTitle: "This start time has passed.",
     shortNoticeTitle: "The start time is within 6 hours.",
@@ -259,6 +261,7 @@ const RECRUITMENT_COPY = {
     currentLocationResolving: "現在地を確認中…",
     currentLocationFallback: "現在地",
     noLocationResults: "候補が見つかりません",
+    locationProviderAttribution: "地名検索: © OpenStreetMap contributors",
     closeScheduleWarning: "日時の確認を閉じる",
     pastStartTitle: "開始時刻が過ぎています。",
     shortNoticeTitle: "開始まで6時間以内です。",
@@ -660,7 +663,7 @@ export default function SearchPreferencesScreen() {
     let active = true;
     setLocationSearchStatus("loading");
     setLocationSuggestions([]);
-    void resolveCurrentLocationDisplay()
+    void resolveCurrentLocationDisplay(copy.currentLocationFallback)
       .then((result) => {
         if (!active) return;
         const displayName = result?.displayName ?? copy.currentLocationFallback;
@@ -698,9 +701,10 @@ export default function SearchPreferencesScreen() {
     }
 
     let active = true;
+    const controller = new AbortController();
     setLocationSearchStatus("loading");
     const timeout = setTimeout(() => {
-      void searchLocationSuggestions(trimmedLocation)
+      void searchLocationSuggestions(trimmedLocation, controller.signal)
         .then((suggestions) => {
           if (!active) return;
           setLocationSuggestions(suggestions);
@@ -715,6 +719,7 @@ export default function SearchPreferencesScreen() {
 
     return () => {
       active = false;
+      controller.abort();
       clearTimeout(timeout);
     };
   }, [location, selectedLocationCoordinates, selectedLocationLabel, useCurrentLocation]);
@@ -841,7 +846,7 @@ export default function SearchPreferencesScreen() {
     setLocationSearchStatus("loading");
     try {
       if (useCurrentLocation) {
-        const result = await resolveCurrentLocationDisplay();
+        const result = await resolveCurrentLocationDisplay(copy.currentLocationFallback);
         if (!result) return null;
         setLocation(result.displayName);
         setSelectedLocationLabel(result.displayName);
@@ -1533,6 +1538,17 @@ export default function SearchPreferencesScreen() {
                     <Text style={styles.locationSuggestionEmpty}>
                       {copy.noLocationResults}
                     </Text>
+                  ) : null}
+                  {Platform.OS === "web" ? (
+                    <Pressable
+                      accessibilityRole="link"
+                      onPress={() => void Linking.openURL("https://www.openstreetmap.org/copyright")}
+                      style={styles.locationProviderAttribution}
+                    >
+                      <Text style={styles.locationProviderAttributionText}>
+                        {copy.locationProviderAttribution}
+                      </Text>
+                    </Pressable>
                   ) : null}
                 </View>
               ) : null}
@@ -2992,6 +3008,19 @@ function createStyles(colors: ThemeColors) {
     letterSpacing: 0,
     lineHeight: 16,
     textAlign: "center",
+  },
+  locationProviderAttribution: {
+    borderTopWidth: 1,
+    borderTopColor: colors.border.subtle,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+  },
+  locationProviderAttributionText: {
+    color: colors.text.muted,
+    fontSize: 10,
+    lineHeight: 14,
+    textAlign: "right",
+    textDecorationLine: "underline",
   },
   currentLocation: {
     position: "absolute",
