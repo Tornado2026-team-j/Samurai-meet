@@ -15,10 +15,12 @@ import {
 import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import MatchCard from "../../components/MatchCard";
-import { colors, LoadingScreen, RefreshLoadingIndicator } from "../../components/ui";
+import { LoadingScreen, RefreshLoadingIndicator } from "../../components/ui";
+import type { ThemeColors } from "../../components/ui/tokens";
 import { useAuth } from "../../hooks/useAuth";
 import { useDelayedLoading } from "../../hooks/useDelayedLoading";
 import { useNavigationGuard } from "../../hooks/useNavigationGuard";
+import { useTheme, useThemeStyles } from "../../hooks/useTheme";
 import { useUnreadNotifications } from "../../hooks/useUnreadNotifications";
 import { APIError } from "../../services/api-client";
 import { getCurrentCoordinates } from "../../services/location";
@@ -34,13 +36,6 @@ import { loadLanguage, subscribeLanguage, type AppLanguage } from "../../service
 import { isMatchCategory, type MatchCardData } from "../../types/match";
 import { getTabBarContentBottomPadding } from "../../utils/layout";
 
-const BLUE = colors.brand.sky;
-const YELLOW = colors.brand.gold;
-const TEXT_GRAY = colors.text.secondary;
-const PLACEHOLDER_GRAY = colors.text.muted;
-const BORDER_GRAY = colors.border.default;
-const SATURDAY_BLUE = "#0b70e0";
-const SUNDAY_RED = "#e11919";
 const DATE_SWIPE_THRESHOLD = 42;
 const DATE_SWIPE_VERTICAL_LIMIT = 28;
 const SEARCH_LOCATION_CACHE_TTL_MS = 60_000;
@@ -165,6 +160,10 @@ export default function JapaneseHomeScreen() {
   const { push } = useNavigationGuard();
   const params = useLocalSearchParams<{ query?: string; date?: string; sort?: string; category?: string; time?: string; radius?: string; availableFrom?: string; availableTo?: string }>();
   const insets = useSafeAreaInsets();
+  const { colors } = useTheme();
+  const styles = useThemeStyles(createStyles);
+  const BLUE = colors.brand.sky;
+  const PLACEHOLDER_GRAY = colors.text.muted;
   const { getCurrentSession, refresh, session, status } = useAuth();
   const hasUnreadNotifications = useUnreadNotifications();
   const [language, setLanguage] = useState<AppLanguage | null>(null);
@@ -190,7 +189,6 @@ export default function JapaneseHomeScreen() {
   const selectedCategory = isMatchCategory(params.category) ? params.category : undefined;
   const selectedTime = params.time === "morning" || params.time === "afternoon" || params.time === "evening" ? params.time : undefined;
   const selectedRadius: 1 | 3 | 5 = params.radius === "1" ? 1 : params.radius === "5" ? 5 : 3;
-  const verifiedOnly = false;
   const hasDateRange = Boolean(params.availableFrom || params.availableTo);
   const hasActiveFilters = Boolean(
     selectedCategory || selectedTime || params.availableFrom || params.availableTo || selectedRadius !== 3
@@ -526,7 +524,7 @@ export default function JapaneseHomeScreen() {
 
   return (
     <View style={styles.screen}>
-      <StatusBar style="light" />
+      <StatusBar style="dark" />
 
       <ScrollView
         alwaysBounceVertical
@@ -666,7 +664,7 @@ export default function JapaneseHomeScreen() {
               pressed && styles.pressed,
             ]}
           >
-            <MaterialIcons color="#ffffff" name="notifications-none" size={32} />
+            <MaterialIcons color={colors.text.onSky} name="notifications-none" size={32} />
             {hasUnreadNotifications ? <View style={styles.notificationBadge} /> : null}
           </Pressable>
 
@@ -681,7 +679,7 @@ export default function JapaneseHomeScreen() {
               pressed && styles.pressed,
             ]}
           >
-            <MaterialIcons color="#ffffff" name="account-circle" size={34} />
+            <MaterialIcons color={colors.text.onSky} name="account-circle" size={34} />
           </Pressable>
         </View>
 
@@ -720,10 +718,10 @@ export default function JapaneseHomeScreen() {
                     pressed && styles.pressed,
                   ]}
                 >
-                  <Text numberOfLines={1} style={styles.dateLabel}>
+                  <Text numberOfLines={1} style={[styles.dateLabel, item.isToday && styles.todayDateLabel]}>
                     {item.label}
                   </Text>
-                  <Text numberOfLines={1} style={[styles.weekdayLabel, weekendStyle]}>
+                  <Text numberOfLines={1} style={[styles.weekdayLabel, weekendStyle, item.isToday && styles.todayDateLabel]}>
                     {item.weekdayLabel}
                   </Text>
                 </Pressable>
@@ -742,7 +740,7 @@ export default function JapaneseHomeScreen() {
             pressed && styles.pressed,
           ]}
         >
-          <MaterialIcons color={TEXT_GRAY} name="swap-vert" size={28} />
+          <MaterialIcons color={colors.text.onSky} name="swap-vert" size={28} />
           <Text style={styles.sortText}>{sortMode === "near" ? copy.nearest : copy.deadlineSoon}</Text>
         </Pressable>
       </View>
@@ -750,10 +748,11 @@ export default function JapaneseHomeScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ThemeColors) {
+  return StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.screen,
   },
   matchList: {
     flex: 1,
@@ -774,11 +773,11 @@ const styles = StyleSheet.create({
     gap: 8,
     paddingHorizontal: 14,
     borderRadius: 10,
-    backgroundColor: "#eff8ff",
+    backgroundColor: colors.surface.blueSoft,
   },
   planShortcutText: {
     flex: 1,
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 13,
     fontWeight: "800",
   },
@@ -791,7 +790,7 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     borderBottomLeftRadius: 50,
     borderBottomRightRadius: 50,
-    backgroundColor: BLUE,
+    backgroundColor: colors.brand.sky,
   },
   actionRow: {
     position: "absolute",
@@ -808,9 +807,9 @@ const styles = StyleSheet.create({
     height: 44,
     justifyContent: "center",
     borderWidth: 1,
-    borderColor: BORDER_GRAY,
+    borderColor: colors.border.default,
     borderRadius: 22,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.default,
   },
   searchIcon: {
     position: "absolute",
@@ -823,7 +822,7 @@ const styles = StyleSheet.create({
     paddingRight: 84,
     paddingBottom: 0,
     paddingLeft: 48,
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 15,
     fontWeight: "400",
     letterSpacing: 0,
@@ -861,9 +860,9 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderWidth: 1,
-    borderColor: BLUE,
+    borderColor: colors.brand.sky,
     borderRadius: 4,
-    backgroundColor: YELLOW,
+    backgroundColor: colors.brand.gold,
   },
   profileButton: {
     width: 44,
@@ -886,20 +885,20 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
-    borderColor: BORDER_GRAY,
+    borderColor: colors.border.default,
     borderRadius: 10,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.default,
   },
   todayButton: {
-    borderColor: YELLOW,
-    backgroundColor: YELLOW,
+    borderColor: colors.brand.gold,
+    backgroundColor: colors.brand.gold,
   },
   dateButtonSelected: {
-    borderColor: YELLOW,
+    borderColor: colors.brand.gold,
     borderWidth: 2,
   },
   dateLabel: {
-    color: "#000000",
+    color: colors.text.primary,
     fontSize: 12,
     fontWeight: "600",
     letterSpacing: 0,
@@ -907,18 +906,21 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
   weekdayLabel: {
-    color: "#000000",
+    color: colors.text.primary,
     fontSize: 12,
     fontWeight: "600",
     letterSpacing: 0,
     lineHeight: 15,
     textAlign: "center",
   },
+  todayDateLabel: {
+    color: colors.text.onGold,
+  },
   saturdayText: {
-    color: SATURDAY_BLUE,
+    color: colors.state.link,
   },
   sundayText: {
-    color: SUNDAY_RED,
+    color: colors.state.danger,
   },
   sortRow: {
     position: "absolute",
@@ -931,7 +933,7 @@ const styles = StyleSheet.create({
     paddingRight: 16,
   },
   sortText: {
-    color: TEXT_GRAY,
+    color: colors.text.onSky,
     fontSize: 16,
     fontWeight: "600",
     letterSpacing: 0,
@@ -941,11 +943,11 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.screen,
   },
   emptyText: {
     marginTop: 40,
-    color: PLACEHOLDER_GRAY,
+    color: colors.text.muted,
     fontSize: 13,
     fontWeight: "600",
     letterSpacing: 0,
@@ -965,14 +967,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
   },
   inlineErrorText: {
-    color: "#b42318",
+    color: colors.state.danger,
     fontSize: 13,
     fontWeight: "600",
     lineHeight: 18,
     textAlign: "center",
   },
   stateText: {
-    color: PLACEHOLDER_GRAY,
+    color: colors.text.muted,
     fontSize: 13,
     fontWeight: "600",
     lineHeight: 18,
@@ -985,14 +987,15 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingHorizontal: 14,
     borderRadius: 16,
-    backgroundColor: YELLOW,
+    backgroundColor: colors.brand.gold,
   },
   retryButtonText: {
-    color: "#ffffff",
+    color: colors.text.onGold,
     fontSize: 12,
     fontWeight: "800",
   },
   pressed: {
     opacity: 0.72,
   },
-});
+  });
+}

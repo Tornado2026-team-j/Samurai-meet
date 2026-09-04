@@ -3,8 +3,9 @@ import { BlurView } from "expo-blur";
 import { LinearGradient } from "expo-linear-gradient";
 import { usePathname, useRouter, type Href } from "expo-router";
 import { useEffect, useRef, useState, type ComponentProps } from "react";
-import { Platform, Pressable, StyleSheet, Text, useColorScheme, View } from "react-native";
+import { Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useTheme } from "../hooks/useTheme";
 import {
   loadLanguage,
   subscribeLanguage,
@@ -67,7 +68,8 @@ export default function GlassTabBar({
   const insets = useSafeAreaInsets();
   const pathname = usePathname();
   const router = useRouter();
-  const isDark = useColorScheme() === "dark";
+  const { scheme } = useTheme();
+  const isDark = scheme === "dark";
   const pendingHref = useRef<string | null>(null);
   const [language, setLanguage] = useState<AppLanguage | null>(null);
   const bottom = Math.max(insets.bottom + 3, 10);

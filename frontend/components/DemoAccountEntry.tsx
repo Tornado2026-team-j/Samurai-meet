@@ -1,7 +1,8 @@
 import { MaterialIcons } from "@expo/vector-icons";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import type { AppLanguage } from "../services/onboarding";
-import { colors, opacity, radius, spacing, typography } from "./ui";
+import { useTheme, useThemeStyles } from "../hooks/useTheme";
+import { opacity, radius, spacing, typography, type ThemeColors } from "./ui/tokens";
 
 type DemoAccountEntryProps = {
   language: AppLanguage;
@@ -15,6 +16,8 @@ type DemoAccountEntryProps = {
  * fallback so it can be reused when the real temporary-account flow is wired.
  */
 export default function DemoAccountEntry({ language, onPress, disabled = false }: DemoAccountEntryProps) {
+  const { colors } = useTheme();
+  const styles = useThemeStyles(createStyles);
   const copy = language === "ja"
     ? { title: "デモを体験する", note: "登録不要・24時間の審査用アカウント" }
     : { title: "Try the demo", note: "No sign-up · 24-hour review account" };
@@ -44,7 +47,8 @@ export default function DemoAccountEntry({ language, onPress, disabled = false }
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ThemeColors) {
+  return StyleSheet.create({
   entry: {
     minHeight: 64,
     paddingHorizontal: spacing.md,
@@ -83,4 +87,5 @@ const styles = StyleSheet.create({
   pressed: {
     opacity: opacity.pressed,
   },
-});
+  });
+}

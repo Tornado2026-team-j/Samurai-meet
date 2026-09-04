@@ -20,7 +20,9 @@ import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import DismissKeyboardView from "../../components/DismissKeyboardView";
 import { LoadingSpinner } from "../../components/ui";
+import type { ThemeColors } from "../../components/ui/tokens";
 import { useAuth } from "../../hooks/useAuth";
+import { useTheme, useThemeStyles } from "../../hooks/useTheme";
 import { APIError } from "../../services/api-client";
 import { loadLanguage, subscribeLanguage } from "../../services/onboarding";
 import type { AppLanguage } from "../../services/onboarding-contract";
@@ -37,13 +39,6 @@ import {
 } from "../../services/matching";
 import { formatTimeRange } from "../../utils/time";
 import { MATCH_CATEGORIES, type MatchCategory } from "../../types/match";
-
-const BLUE = "#5ec5f5";
-const YELLOW = "#e7b454";
-const TEXT_GRAY = "#535353";
-const MUTED_GRAY = "#949494";
-const BORDER_GRAY = "#e4e4e4";
-const SOFT_BLUE = "#eff8ff";
 
 const CATEGORIES = MATCH_CATEGORIES;
 
@@ -142,16 +137,16 @@ export function matchesRecruitmentFilter(
   }
 }
 
-function recruitmentStatusColor(status: Recruitment["status"]): string {
-  if (status === "open" || status === "matched") return "#168df0";
-  if (status === "draft") return YELLOW;
-  return MUTED_GRAY;
+function recruitmentStatusColor(status: Recruitment["status"], colors: ThemeColors): string {
+  if (status === "open" || status === "matched") return colors.state.link;
+  if (status === "draft") return colors.brand.gold;
+  return colors.text.muted;
 }
 
-function matchStatusColor(status: MatchStatus): string {
-  if (status === "accepted" || status === "completed") return "#168df0";
-  if (status === "pending") return YELLOW;
-  return MUTED_GRAY;
+function matchStatusColor(status: MatchStatus, colors: ThemeColors): string {
+  if (status === "accepted" || status === "completed") return colors.state.link;
+  if (status === "pending") return colors.brand.gold;
+  return colors.text.muted;
 }
 
 function canEdit(recruitment: Recruitment): boolean {
@@ -168,6 +163,11 @@ export default function MyRecruitmentsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { getCurrentSession, refresh, session, status } = useAuth();
+  const { colors } = useTheme();
+  const styles = useThemeStyles(createStyles);
+  const BLUE = colors.brand.sky;
+  const TEXT_GRAY = colors.text.secondary;
+  const MUTED_GRAY = colors.text.muted;
   const [language, setLanguage] = useState<AppLanguage | null>(null);
   const [recruitments, setRecruitments] = useState<Recruitment[]>([]);
   const [applications, setApplications] = useState<MatchView[]>([]);
@@ -433,12 +433,12 @@ export default function MyRecruitmentsScreen() {
   };
 
   if (!language) {
-    return <View style={styles.screen}><StatusBar style="light" /><View style={styles.statePanel}><LoadingSpinner color={BLUE} size={28} /></View></View>;
+    return <View style={styles.screen}><StatusBar style="dark" /><View style={styles.statePanel}><LoadingSpinner color={BLUE} size={28} /></View></View>;
   }
 
   return (
     <View style={styles.screen}>
-      <StatusBar style="light" />
+      <StatusBar style="dark" />
       <View style={[styles.header, {
         minHeight: Math.max(108, insets.top + 72),
         paddingTop: Math.max(insets.top, 18),
@@ -450,7 +450,7 @@ export default function MyRecruitmentsScreen() {
           onPress={goBack}
           style={({ pressed }) => [styles.backButton, pressed && styles.pressed]}
         >
-          <MaterialIcons color="#ffffff" name="chevron-left" size={30} />
+          <MaterialIcons color={colors.text.onSky} name="chevron-left" size={30} />
         </Pressable>
         <Text style={styles.headerTitle}>{copy.title}</Text>
       </View>
@@ -558,8 +558,8 @@ export default function MyRecruitmentsScreen() {
                     {recruitment.location_name || "-"} · {recruitment.participant_limit}人
                   </Text>
                 </View>
-                <View style={[styles.statusPill, { borderColor: recruitmentStatusColor(status) }]}>
-                  <Text style={[styles.statusText, { color: recruitmentStatusColor(status) }]}>
+                <View style={[styles.statusPill, { borderColor: recruitmentStatusColor(status, colors) }]}>
+                  <Text style={[styles.statusText, { color: recruitmentStatusColor(status, colors) }]}>
                     {copy.recruitmentStatus[status]}
                   </Text>
                 </View>
@@ -589,7 +589,7 @@ export default function MyRecruitmentsScreen() {
                     onPress={() => closeOwnedRecruitment(recruitment)}
                     style={({ pressed }) => [styles.closeButton, closing && styles.disabled, pressed && styles.pressed]}
                   >
-                    {closing ? <ActivityIndicator color="#b42318" size="small" /> : null}
+                    {closing ? <ActivityIndicator color={colors.state.danger} size="small" /> : null}
                     <Text style={styles.closeButtonText}>{closing ? copy.ending : copy.endPublic}</Text>
                   </Pressable>
                 ) : null}
@@ -610,7 +610,7 @@ export default function MyRecruitmentsScreen() {
                     style={({ pressed }) => [styles.applicationRow, pressed && styles.pressed]}
                   >
                     <View style={styles.applicationAvatar}>
-                      <MaterialIcons color="#d4d4d4" name="account-circle" size={32} />
+                      <MaterialIcons color={colors.border.muted} name="account-circle" size={32} />
                     </View>
                     <View style={styles.applicationText}>
                       <Text numberOfLines={1} style={styles.applicantName}>
@@ -620,7 +620,7 @@ export default function MyRecruitmentsScreen() {
                         {application.other_user.nationality_code || "—"} · {copy.matchStatus[application.status]}
                       </Text>
                     </View>
-                    <Text style={[styles.applicationAction, { color: matchStatusColor(application.status) }]}>
+                    <Text style={[styles.applicationAction, { color: matchStatusColor(application.status, colors) }]}>
                       {application.status === "pending" ? copy.review : copy.state} ›
                     </Text>
                   </Pressable>
@@ -823,7 +823,7 @@ export default function MyRecruitmentsScreen() {
                       }}
                       style={({ pressed }) => [styles.saveButton, saving && styles.disabled, pressed && styles.pressed]}
                     >
-                      {saving ? <ActivityIndicator color="#ffffff" size="small" /> : null}
+                      {saving ? <ActivityIndicator color={colors.text.onGold} size="small" /> : null}
                       <Text style={styles.saveText}>{saving ? copy.saving : copy.save}</Text>
                     </Pressable>
                   </View>
@@ -838,87 +838,89 @@ export default function MyRecruitmentsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: "#ffffff" },
+function createStyles(colors: ThemeColors) {
+  return StyleSheet.create({
+  screen: { flex: 1, backgroundColor: colors.surface.screen },
   header: {
     minHeight: 108,
     flexDirection: "row",
     alignItems: "flex-end",
     paddingHorizontal: 20,
     paddingBottom: 18,
-    backgroundColor: BLUE,
+    backgroundColor: colors.brand.sky,
     borderBottomLeftRadius: 36,
     borderBottomRightRadius: 36,
   },
   backButton: { width: 34, height: 34, alignItems: "center", justifyContent: "center", marginRight: 12 },
-  headerTitle: { color: "#ffffff", fontSize: 22, fontWeight: "800" },
+  headerTitle: { color: colors.text.onSky, fontSize: 22, fontWeight: "800" },
   content: { alignItems: "center", paddingHorizontal: 18, paddingTop: 22, gap: 14 },
-  intro: { alignSelf: "stretch", color: MUTED_GRAY, fontSize: 13, lineHeight: 19, textAlign: "center" },
+  intro: { alignSelf: "stretch", color: colors.text.muted, fontSize: 13, lineHeight: 19, textAlign: "center" },
   filterScroll: { alignSelf: "stretch" },
   filterContent: { gap: 8, paddingHorizontal: 2 },
-  filterButton: { minHeight: 36, alignItems: "center", justifyContent: "center", paddingHorizontal: 14, borderWidth: 1, borderColor: BORDER_GRAY, borderRadius: 18, backgroundColor: "#ffffff" },
-  filterButtonSelected: { borderColor: BLUE, backgroundColor: SOFT_BLUE },
-  filterButtonText: { color: TEXT_GRAY, fontSize: 13, fontWeight: "800" },
-  filterButtonTextSelected: { color: BLUE },
-  operationError: { alignSelf: "stretch", color: "#b42318", fontSize: 13, fontWeight: "700", lineHeight: 19, textAlign: "center" },
+  filterButton: { minHeight: 36, alignItems: "center", justifyContent: "center", paddingHorizontal: 14, borderWidth: 1, borderColor: colors.border.default, borderRadius: 18, backgroundColor: colors.surface.default },
+  filterButtonSelected: { borderColor: colors.brand.sky, backgroundColor: colors.surface.blueSoft },
+  filterButtonText: { color: colors.text.secondary, fontSize: 13, fontWeight: "800" },
+  filterButtonTextSelected: { color: colors.brand.sky },
+  operationError: { alignSelf: "stretch", color: colors.state.danger, fontSize: 13, fontWeight: "700", lineHeight: 19, textAlign: "center" },
   statePanel: { minHeight: 180, width: "100%", alignItems: "center", justifyContent: "center", gap: 12, paddingHorizontal: 20 },
   inlineError: { width: "100%", alignItems: "center", gap: 8, paddingHorizontal: 20 },
-  inlineErrorText: { color: "#b42318", fontSize: 13, fontWeight: "600", lineHeight: 19, textAlign: "center" },
-  stateText: { color: MUTED_GRAY, fontSize: 14, fontWeight: "600", lineHeight: 20, textAlign: "center" },
-  retryButton: { minWidth: 84, minHeight: 36, alignItems: "center", justifyContent: "center", paddingHorizontal: 16, borderRadius: 18, backgroundColor: YELLOW },
-  retryText: { color: "#ffffff", fontSize: 13, fontWeight: "800" },
-  recruitmentCard: { width: "100%", maxWidth: 390, padding: 16, gap: 12, borderWidth: 1, borderColor: BORDER_GRAY, borderRadius: 18, backgroundColor: "#ffffff" },
+  inlineErrorText: { color: colors.state.danger, fontSize: 13, fontWeight: "600", lineHeight: 19, textAlign: "center" },
+  stateText: { color: colors.text.muted, fontSize: 14, fontWeight: "600", lineHeight: 20, textAlign: "center" },
+  retryButton: { minWidth: 84, minHeight: 36, alignItems: "center", justifyContent: "center", paddingHorizontal: 16, borderRadius: 18, backgroundColor: colors.brand.gold },
+  retryText: { color: colors.text.onGold, fontSize: 13, fontWeight: "800" },
+  recruitmentCard: { width: "100%", maxWidth: 390, padding: 16, gap: 12, borderWidth: 1, borderColor: colors.border.default, borderRadius: 18, backgroundColor: colors.surface.default },
   recruitmentHeader: { flexDirection: "row", alignItems: "flex-start", gap: 10 },
   recruitmentTitleBlock: { flex: 1, gap: 5 },
-  category: { color: TEXT_GRAY, fontSize: 18, fontWeight: "800" },
-  schedule: { color: TEXT_GRAY, fontSize: 13, fontWeight: "700", lineHeight: 19 },
+  category: { color: colors.text.secondary, fontSize: 18, fontWeight: "800" },
+  schedule: { color: colors.text.secondary, fontSize: 13, fontWeight: "700", lineHeight: 19 },
   statusPill: { minHeight: 28, alignItems: "center", justifyContent: "center", paddingHorizontal: 9, borderWidth: 1, borderRadius: 14 },
   statusText: { fontSize: 12, fontWeight: "800" },
-  description: { color: TEXT_GRAY, fontSize: 14, fontWeight: "600", lineHeight: 20 },
-  keywords: { color: MUTED_GRAY, fontSize: 12, lineHeight: 18 },
+  description: { color: colors.text.secondary, fontSize: 14, fontWeight: "600", lineHeight: 20 },
+  keywords: { color: colors.text.muted, fontSize: 12, lineHeight: 18 },
   recruitmentActions: { flexDirection: "row", gap: 10 },
-  secondaryButton: { minHeight: 40, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, paddingHorizontal: 14, borderWidth: 1, borderColor: BLUE, borderRadius: 20, backgroundColor: "#ffffff" },
-  secondaryButtonText: { color: BLUE, fontSize: 13, fontWeight: "800" },
-  closeButton: { minHeight: 40, flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingHorizontal: 12, borderWidth: 1, borderColor: "#d9aaa5", borderRadius: 20, backgroundColor: "#fff8f7" },
-  closeButtonText: { color: "#b42318", fontSize: 13, fontWeight: "800" },
-  applicationsSection: { gap: 8, paddingTop: 4, borderTopWidth: 1, borderTopColor: "#f0f0f0" },
-  applicationsTitle: { color: TEXT_GRAY, fontSize: 15, fontWeight: "800" },
-  noApplications: { color: MUTED_GRAY, fontSize: 12 },
-  applicationRow: { minHeight: 56, flexDirection: "row", alignItems: "center", gap: 9, paddingHorizontal: 10, borderRadius: 12, backgroundColor: SOFT_BLUE },
-  applicationAvatar: { width: 36, height: 36, alignItems: "center", justifyContent: "center", borderRadius: 18, backgroundColor: "#ffffff" },
+  secondaryButton: { minHeight: 40, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, paddingHorizontal: 14, borderWidth: 1, borderColor: colors.brand.sky, borderRadius: 20, backgroundColor: colors.surface.default },
+  secondaryButtonText: { color: colors.brand.sky, fontSize: 13, fontWeight: "800" },
+  closeButton: { minHeight: 40, flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingHorizontal: 12, borderWidth: 1, borderColor: colors.border.danger, borderRadius: 20, backgroundColor: colors.surface.dangerSoft },
+  closeButtonText: { color: colors.state.danger, fontSize: 13, fontWeight: "800" },
+  applicationsSection: { gap: 8, paddingTop: 4, borderTopWidth: 1, borderTopColor: colors.border.subtle },
+  applicationsTitle: { color: colors.text.secondary, fontSize: 15, fontWeight: "800" },
+  noApplications: { color: colors.text.muted, fontSize: 12 },
+  applicationRow: { minHeight: 56, flexDirection: "row", alignItems: "center", gap: 9, paddingHorizontal: 10, borderRadius: 12, backgroundColor: colors.surface.blueSoft },
+  applicationAvatar: { width: 36, height: 36, alignItems: "center", justifyContent: "center", borderRadius: 18, backgroundColor: colors.surface.default },
   applicationText: { flex: 1, gap: 3 },
-  applicantName: { color: TEXT_GRAY, fontSize: 14, fontWeight: "800" },
-  applicantMeta: { color: MUTED_GRAY, fontSize: 12, fontWeight: "600" },
+  applicantName: { color: colors.text.secondary, fontSize: 14, fontWeight: "800" },
+  applicantMeta: { color: colors.text.muted, fontSize: 12, fontWeight: "600" },
   applicationAction: { fontSize: 12, fontWeight: "800" },
   disabled: { opacity: 0.6 },
   pressed: { opacity: 0.72 },
   modalKeyboardAvoiding: { flex: 1 },
-  modalBackdrop: { flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0, 0, 0, 0.3)" },
+  modalBackdrop: { flex: 1, justifyContent: "flex-end", backgroundColor: colors.overlay.scrim },
   modalScrollView: { flex: 1 },
   modalContent: { flexGrow: 1, justifyContent: "flex-end" },
-  editorPanel: { gap: 10, padding: 20, borderTopLeftRadius: 26, borderTopRightRadius: 26, backgroundColor: "#ffffff" },
+  editorPanel: { gap: 10, padding: 20, borderTopLeftRadius: 26, borderTopRightRadius: 26, backgroundColor: colors.surface.default },
   editorHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 4 },
-  editorTitle: { color: TEXT_GRAY, fontSize: 20, fontWeight: "900" },
+  editorTitle: { color: colors.text.secondary, fontSize: 20, fontWeight: "900" },
   closeIcon: { width: 34, height: 34, alignItems: "center", justifyContent: "center" },
-  fieldLabel: { color: TEXT_GRAY, fontSize: 13, fontWeight: "800" },
+  fieldLabel: { color: colors.text.secondary, fontSize: 13, fontWeight: "800" },
   categoryChoices: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  categoryChoice: { minHeight: 36, alignItems: "center", justifyContent: "center", paddingHorizontal: 12, borderWidth: 1, borderColor: BORDER_GRAY, borderRadius: 18, backgroundColor: "#ffffff" },
-  categoryChoiceSelected: { borderColor: BLUE, backgroundColor: SOFT_BLUE },
-  categoryChoiceText: { color: TEXT_GRAY, fontSize: 13, fontWeight: "700" },
-  categoryChoiceTextSelected: { color: BLUE },
-  textInput: { minHeight: 44, paddingHorizontal: 13, borderWidth: 1, borderColor: BORDER_GRAY, borderRadius: 12, color: TEXT_GRAY, backgroundColor: "#ffffff", fontSize: 15 },
+  categoryChoice: { minHeight: 36, alignItems: "center", justifyContent: "center", paddingHorizontal: 12, borderWidth: 1, borderColor: colors.border.default, borderRadius: 18, backgroundColor: colors.surface.default },
+  categoryChoiceSelected: { borderColor: colors.brand.sky, backgroundColor: colors.surface.blueSoft },
+  categoryChoiceText: { color: colors.text.secondary, fontSize: 13, fontWeight: "700" },
+  categoryChoiceTextSelected: { color: colors.brand.sky },
+  textInput: { minHeight: 44, paddingHorizontal: 13, borderWidth: 1, borderColor: colors.border.default, borderRadius: 12, color: colors.text.secondary, backgroundColor: colors.surface.default, fontSize: 15 },
   descriptionInput: { minHeight: 82, paddingTop: 11, textAlignVertical: "top" },
   inlineFields: { flexDirection: "row", gap: 10 },
   inlineField: { flex: 1, gap: 10 },
   radiusChoices: { flexDirection: "row", gap: 8 },
-  radiusChoice: { minWidth: 70, minHeight: 36, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: BORDER_GRAY, borderRadius: 18, backgroundColor: "#ffffff" },
-  radiusChoiceSelected: { borderColor: YELLOW, backgroundColor: YELLOW },
-  radiusText: { color: TEXT_GRAY, fontSize: 13, fontWeight: "800" },
-  radiusTextSelected: { color: "#ffffff" },
-  jstHint: { color: MUTED_GRAY, fontSize: 12, lineHeight: 18 },
+  radiusChoice: { minWidth: 70, minHeight: 36, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: colors.border.default, borderRadius: 18, backgroundColor: colors.surface.default },
+  radiusChoiceSelected: { borderColor: colors.brand.gold, backgroundColor: colors.brand.gold },
+  radiusText: { color: colors.text.secondary, fontSize: 13, fontWeight: "800" },
+  radiusTextSelected: { color: colors.text.onGold },
+  jstHint: { color: colors.text.muted, fontSize: 12, lineHeight: 18 },
   editorActions: { flexDirection: "row", gap: 10, marginTop: 8 },
-  cancelButton: { minHeight: 46, flex: 1, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: BORDER_GRAY, borderRadius: 23, backgroundColor: "#ffffff" },
-  cancelText: { color: TEXT_GRAY, fontSize: 14, fontWeight: "800" },
-  saveButton: { minHeight: 46, flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7, borderRadius: 23, backgroundColor: YELLOW },
-  saveText: { color: "#ffffff", fontSize: 14, fontWeight: "900" },
-});
+  cancelButton: { minHeight: 46, flex: 1, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: colors.border.default, borderRadius: 23, backgroundColor: colors.surface.default },
+  cancelText: { color: colors.text.secondary, fontSize: 14, fontWeight: "800" },
+  saveButton: { minHeight: 46, flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7, borderRadius: 23, backgroundColor: colors.brand.gold },
+  saveText: { color: colors.text.onGold, fontSize: 14, fontWeight: "900" },
+  });
+}

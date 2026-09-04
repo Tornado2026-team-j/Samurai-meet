@@ -3,7 +3,9 @@ import { useEffect, useState } from "react";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { ScrollView, StyleSheet, Text, View } from "react-native";
 import { StatusBar } from "expo-status-bar";
-import { Header, colors, radius } from "../../components/ui";
+import { Header, radius } from "../../components/ui";
+import type { ThemeColors } from "../../components/ui/tokens";
+import { useTheme, useThemeStyles } from "../../hooks/useTheme";
 import { loadLanguage, subscribeLanguage, type AppLanguage } from "../../services/onboarding";
 
 type LegalDocument = "terms" | "privacy" | "safety";
@@ -54,6 +56,8 @@ const DOCUMENTS: Record<AppLanguage, Record<LegalDocument, LegalContent>> = {
 
 export default function LegalDocumentScreen() {
   const router = useRouter();
+  const { colors } = useTheme();
+  const styles = useThemeStyles(createStyles);
   const { document } = useLocalSearchParams<{ document?: string }>();
   const [language, setLanguage] = useState<AppLanguage>("ja");
   const selected: LegalDocument = document === "privacy" || document === "safety" ? document : "terms";
@@ -85,7 +89,8 @@ export default function LegalDocumentScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ThemeColors) {
+  return StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.surface.screen },
   content: { padding: 22, paddingBottom: 48, gap: 14 },
   notice: { flexDirection: "row", alignItems: "center", gap: 8, padding: 12, borderRadius: radius.md, backgroundColor: colors.surface.blueSoft },
@@ -93,4 +98,5 @@ const styles = StyleSheet.create({
   section: { paddingBottom: 16, borderBottomWidth: 1, borderBottomColor: colors.border.subtle },
   title: { color: colors.text.primary, fontSize: 16, fontWeight: "900" },
   body: { marginTop: 8, color: colors.text.secondary, fontSize: 14, lineHeight: 23 },
-});
+  });
+}

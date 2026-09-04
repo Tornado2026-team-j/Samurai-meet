@@ -12,7 +12,9 @@ import {
 import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { LoadingSpinner } from "../../../components/ui";
+import type { ThemeColors } from "../../../components/ui/tokens";
 import { useAuth } from "../../../hooks/useAuth";
+import { useTheme, useThemeStyles } from "../../../hooks/useTheme";
 import { APIError } from "../../../services/api-client";
 import { loadLanguage, subscribeLanguage } from "../../../services/onboarding";
 import type { AppLanguage } from "../../../services/onboarding-contract";
@@ -22,13 +24,6 @@ import {
   rejectMatch,
   type MatchView,
 } from "../../../services/matching";
-
-const BLUE = "#5ec5f5";
-const YELLOW = "#e7b454";
-const TEXT_GRAY = "#535353";
-const MUTED_GRAY = "#949494";
-const BORDER_GRAY = "#e4e4e4";
-const SOFT_BLUE = "#eff8ff";
 
 export function humanReadableIntroduction(value: unknown, fallback: string): string {
   if (typeof value !== "string") return fallback;
@@ -143,6 +138,10 @@ export default function ForeignerApplicationDetailScreen() {
   const { id } = useLocalSearchParams<{
     id?: string | string[];
   }>();
+  const { colors } = useTheme();
+  const styles = useThemeStyles(createStyles);
+  const BLUE = colors.brand.sky;
+  const MUTED_GRAY = colors.text.muted;
   const applicationId = (Array.isArray(id) ? id[0] : id)?.trim();
   const [application, setApplication] = useState<MatchView | null>(null);
   const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading");
@@ -328,7 +327,7 @@ export default function ForeignerApplicationDetailScreen() {
 
   return (
     <View style={styles.screen}>
-      <StatusBar style="light" />
+      <StatusBar style="dark" />
 
       <View
         style={[
@@ -347,7 +346,7 @@ export default function ForeignerApplicationDetailScreen() {
             pressed && styles.pressed,
           ]}
         >
-          <MaterialIcons color="#ffffff" name="chevron-left" size={30} />
+          <MaterialIcons color={colors.text.onSky} name="chevron-left" size={30} />
         </Pressable>
 
         <Pressable
@@ -361,7 +360,7 @@ export default function ForeignerApplicationDetailScreen() {
             pressed && styles.pressed,
           ]}
         >
-          <MaterialIcons color="#ffffff" name="home" size={24} />
+          <MaterialIcons color={colors.text.onSky} name="home" size={24} />
         </Pressable>
 
         <Text style={styles.headerTitle}>{copy.title}</Text>
@@ -385,7 +384,7 @@ export default function ForeignerApplicationDetailScreen() {
       >
         <View style={styles.profileCard}>
           <View style={styles.avatarCircle}>
-            <MaterialIcons color="#d4d4d4" name="account-circle" size={92} />
+            <MaterialIcons color={colors.border.muted} name="account-circle" size={92} />
           </View>
 
           <Text numberOfLines={1} style={styles.name}>
@@ -447,7 +446,7 @@ export default function ForeignerApplicationDetailScreen() {
             })}
             style={({ pressed }) => [styles.chatButton, pressed && styles.pressed]}
           >
-            <MaterialIcons color="#ffffff" name="chat-bubble-outline" size={21} />
+            <MaterialIcons color={colors.text.onSky} name="chat-bubble-outline" size={21} />
             <Text style={styles.chatButtonText}>{copy.openChat}</Text>
           </Pressable>
         ) : null}
@@ -503,10 +502,11 @@ export default function ForeignerApplicationDetailScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ThemeColors) {
+  return StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.screen,
   },
   loadingScreen: {
     flex: 1,
@@ -514,10 +514,10 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingHorizontal: 32,
     gap: 14,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.screen,
   },
   loadingText: {
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 14,
     fontWeight: "700",
     lineHeight: 20,
@@ -530,10 +530,10 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingHorizontal: 16,
     borderRadius: 18,
-    backgroundColor: YELLOW,
+    backgroundColor: colors.brand.gold,
   },
   loadingBackButtonText: {
-    color: "#ffffff",
+    color: colors.text.onGold,
     fontSize: 13,
     fontWeight: "800",
   },
@@ -545,7 +545,7 @@ const styles = StyleSheet.create({
     paddingTop: 36,
     borderBottomLeftRadius: 50,
     borderBottomRightRadius: 50,
-    backgroundColor: BLUE,
+    backgroundColor: colors.brand.sky,
   },
   backButton: {
     position: "absolute",
@@ -564,10 +564,10 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderRadius: 20,
-    backgroundColor: "rgba(255,255,255,0.18)",
+    backgroundColor: colors.overlay.sheet,
   },
   headerTitle: {
-    color: "#ffffff",
+    color: colors.text.onSky,
     fontSize: 26,
     fontWeight: "900",
     letterSpacing: 0,
@@ -589,9 +589,9 @@ const styles = StyleSheet.create({
     paddingBottom: 30,
     paddingLeft: 24,
     borderWidth: 1,
-    borderColor: BORDER_GRAY,
+    borderColor: colors.border.default,
     borderRadius: 20,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.default,
   },
   avatarCircle: {
     width: 108,
@@ -599,14 +599,14 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
-    borderColor: BORDER_GRAY,
+    borderColor: colors.border.default,
     borderRadius: 54,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.default,
   },
   name: {
     maxWidth: "100%",
     marginTop: 20,
-    color: "#101318",
+    color: colors.text.primary,
     fontSize: 24,
     fontWeight: "900",
     letterSpacing: 0,
@@ -615,7 +615,7 @@ const styles = StyleSheet.create({
   },
   country: {
     marginTop: 4,
-    color: MUTED_GRAY,
+    color: colors.text.muted,
     fontSize: 13,
     fontWeight: "700",
     letterSpacing: 0,
@@ -625,12 +625,12 @@ const styles = StyleSheet.create({
     width: "100%",
     height: 1,
     marginTop: 24,
-    backgroundColor: BORDER_GRAY,
+    backgroundColor: colors.border.default,
   },
   sectionLabel: {
     alignSelf: "flex-start",
     marginTop: 22,
-    color: BLUE,
+    color: colors.brand.sky,
     fontSize: 13,
     fontWeight: "900",
     letterSpacing: 0,
@@ -638,7 +638,7 @@ const styles = StyleSheet.create({
   },
   bio: {
     marginTop: 10,
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 14,
     fontWeight: "700",
     letterSpacing: 0,
@@ -655,8 +655,8 @@ const styles = StyleSheet.create({
     paddingBottom: 34,
     paddingLeft: 32,
     borderTopWidth: 1,
-    borderTopColor: "#f0f0f0",
-    backgroundColor: "#ffffff",
+    borderTopColor: colors.border.subtle,
+    backgroundColor: colors.surface.default,
   },
   resultBanner: {
     width: "100%",
@@ -668,23 +668,23 @@ const styles = StyleSheet.create({
     gap: 8,
     marginBottom: 14,
     borderWidth: 1,
-    borderColor: "#caeafd",
+    borderColor: colors.border.blue,
     borderRadius: 10,
-    backgroundColor: SOFT_BLUE,
+    backgroundColor: colors.surface.blueSoft,
   },
   resultBannerDeclined: {
-    borderColor: BORDER_GRAY,
-    backgroundColor: "#f7f7f7",
+    borderColor: colors.border.default,
+    backgroundColor: colors.surface.subtle,
   },
   resultText: {
-    color: BLUE,
+    color: colors.brand.sky,
     fontSize: 13,
     fontWeight: "900",
     letterSpacing: 0,
     lineHeight: 17,
   },
   resultTextDeclined: {
-    color: MUTED_GRAY,
+    color: colors.text.muted,
   },
   primaryButton: {
     width: "100%",
@@ -693,9 +693,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
-    borderColor: YELLOW,
+    borderColor: colors.brand.gold,
     borderRadius: 10,
-    backgroundColor: YELLOW,
+    backgroundColor: colors.brand.gold,
   },
   chatButton: {
     width: "100%",
@@ -707,17 +707,17 @@ const styles = StyleSheet.create({
     gap: 8,
     marginBottom: 12,
     borderRadius: 10,
-    backgroundColor: BLUE,
+    backgroundColor: colors.brand.sky,
   },
   chatButtonText: {
-    color: "#ffffff",
+    color: colors.text.onSky,
     fontSize: 15,
     fontWeight: "900",
     letterSpacing: 0,
     lineHeight: 18,
   },
   primaryButtonText: {
-    color: "#ffffff",
+    color: colors.text.onGold,
     fontSize: 15,
     fontWeight: "900",
     letterSpacing: 0,
@@ -731,37 +731,37 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginTop: 12,
     borderWidth: 1,
-    borderColor: BLUE,
+    borderColor: colors.brand.sky,
     borderRadius: 10,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.default,
   },
   secondaryButtonText: {
-    color: BLUE,
+    color: colors.brand.sky,
     fontSize: 15,
     fontWeight: "900",
     letterSpacing: 0,
     lineHeight: 18,
   },
   disabledButton: {
-    borderColor: BORDER_GRAY,
-    backgroundColor: BORDER_GRAY,
+    borderColor: colors.border.default,
+    backgroundColor: colors.border.default,
   },
   disabledSecondaryButton: {
-    borderColor: BORDER_GRAY,
+    borderColor: colors.border.default,
   },
   disabledSecondaryButtonText: {
-    color: MUTED_GRAY,
+    color: colors.text.muted,
   },
   actionStatus: {
     marginTop: 10,
-    color: BLUE,
+    color: colors.brand.sky,
     fontSize: 12,
     fontWeight: "700",
   },
   actionError: {
     maxWidth: 326,
     marginTop: 10,
-    color: "#b42318",
+    color: colors.state.danger,
     fontSize: 12,
     fontWeight: "700",
     lineHeight: 17,
@@ -770,4 +770,5 @@ const styles = StyleSheet.create({
   pressed: {
     opacity: 0.72,
   },
-});
+  });
+}

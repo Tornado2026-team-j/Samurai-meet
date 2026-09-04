@@ -17,6 +17,16 @@ describe("push notification Expo Go fallback", () => {
     }
   });
 
+  it("recognizes Expo Go through the SDK 57 execution environment", async () => {
+    mock.module("react-native", () => ({ Platform: { OS: "ios" } }));
+    mock.module("expo-constants", () => ({ default: { executionEnvironment: "storeClient" } }));
+    const freshPushNotifications = await import(`../services/push-notifications?expo-go-${Date.now()}`);
+
+    const result = await freshPushNotifications.getPushCapability();
+
+    expect(result).toEqual({ available: false, reason: "expo_go" });
+  });
+
   it("returns a reason for token acquisition failure", async () => {
     const result = await pushNotifications.requestPushTokenResult();
 

@@ -3,8 +3,10 @@ import { useRouter } from "expo-router";
 import { ScrollView, StyleSheet, Text, View } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import ProfileForm from "../components/ProfileForm";
-import { Header, colors, spacing, typography } from "../components/ui";
+import { Header, spacing, typography } from "../components/ui";
+import type { ThemeColors } from "../components/ui/tokens";
 import { useAuth } from "../hooks/useAuth";
+import { useThemeStyles } from "../hooks/useTheme";
 import {
   loadLanguage,
   loadLocalProfile,
@@ -33,6 +35,7 @@ const COPY = {
 
 export default function ProfileEditScreen() {
   const router = useRouter();
+  const styles = useThemeStyles(createStyles);
   const { getCurrentSession, session } = useAuth();
   const [language, setLanguage] = useState<AppLanguage>("ja");
   const [profile, setProfile] = useState<LocalProfile | null>(null);
@@ -83,9 +86,11 @@ export default function ProfileEditScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ThemeColors) {
+  return StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.surface.screen },
   content: { padding: spacing.xl, paddingBottom: 110, gap: spacing.lg },
   description: { color: colors.text.secondary, ...typography.body, lineHeight: 23 },
   saved: { color: colors.state.success, ...typography.caption, textAlign: "center" },
-});
+  });
+}

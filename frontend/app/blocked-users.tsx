@@ -3,8 +3,10 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "expo-router";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { StatusBar } from "expo-status-bar";
-import { Header, LoadingSpinner, colors, radius } from "../components/ui";
+import { Header, LoadingSpinner, radius } from "../components/ui";
+import type { ThemeColors } from "../components/ui/tokens";
 import { useAuth } from "../hooks/useAuth";
+import { useTheme, useThemeStyles } from "../hooks/useTheme";
 import { loadLanguage, subscribeLanguage, type AppLanguage } from "../services/onboarding";
 import { listBlockedUsers, unblockUser, type BlockedUser } from "../services/safety";
 
@@ -39,6 +41,8 @@ const COPY: Record<AppLanguage, {
 
 export default function BlockedUsersScreen() {
   const router = useRouter();
+  const { colors } = useTheme();
+  const styles = useThemeStyles(createStyles);
   const { getCurrentSession, session } = useAuth();
   const [items, setItems] = useState<BlockedUser[]>([]);
   const [loading, setLoading] = useState(true);
@@ -115,7 +119,8 @@ export default function BlockedUsersScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ThemeColors) {
+  return StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.surface.screen },
   content: { padding: 20, gap: 10 },
   row: { minHeight: 66, flexDirection: "row", alignItems: "center", gap: 12, padding: 12, borderWidth: 1, borderColor: colors.border.subtle, borderRadius: radius.md, backgroundColor: colors.surface.default },
@@ -124,4 +129,5 @@ const styles = StyleSheet.create({
   unblockText: { color: colors.brand.sky, fontSize: 13, fontWeight: "800" },
   empty: { marginTop: 80, color: colors.text.muted, fontSize: 14, textAlign: "center" },
   error: { color: colors.state.danger, fontSize: 13, fontWeight: "700", textAlign: "center" },
-});
+  });
+}

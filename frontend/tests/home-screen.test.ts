@@ -17,6 +17,17 @@ mock.module("react-native", () => ({
   View: noop,
 }));
 mock.module("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ bottom: 0, left: 0, right: 0, top: 0 }) }));
+mock.module(join(testDir, "../hooks/useTheme.tsx"), () => ({
+  useTheme: () => ({
+    colors: {
+      brand: { sky: "#5ec5f5", gold: "#e7b454" },
+      border: { default: "#e4e4e4", subtle: "#e4e4e4" },
+      surface: { blueSoft: "#eff8ff" },
+      text: { muted: "#949494", secondary: "#535353" },
+    },
+  }),
+  useThemeStyles: (factory: (colors: unknown) => unknown) => factory({}),
+}));
 mock.module(join(testDir, "../components/ui/index.ts"), () => ({
   LoadingScreen: noop,
   LoadingSpinner: noop,
@@ -120,7 +131,8 @@ describe("ホーム画面の更新契約", () => {
   it("下部ナビはLINE風のテーマ連動半透明固定バーを使う", async () => {
     const source = await readScreen("../components/GlassTabBar.tsx");
 
-    expect(source).toContain("useColorScheme");
+    expect(source).toContain("useTheme");
+    expect(source).toContain("const isDark = scheme === \"dark\";");
     expect(source).toContain('tint={isDark ? "dark" : "light"}');
     expect(source).toContain('bar: "rgba(255, 255, 255, 0.84)"');
     expect(source).toContain("borderWidth: 0");
@@ -171,11 +183,22 @@ describe("ホーム画面の更新契約", () => {
     expect(spinnerSource).toContain("Easing.inOut(Easing.cubic)");
     expect(spinnerSource).toContain("Animated.delay");
     expect(spinnerSource).toContain("resetBeforeIteration: true");
-    expect(spinnerSource).toContain("trackColor = \"rgba(31, 45, 61, 0.12)\"");
+    expect(spinnerSource).toContain("trackColorProp ?? colors.border.subtle");
     expect(spinnerSource).toContain("borderWidth: Math.max(1, Math.round(size / 14))");
     expect(spinnerSource).toContain("borderColor: trackColor");
     expect(spinnerSource).toContain("borderTopColor: color");
     expect(spinnerSource).not.toContain("borderRightColor: color");
+  });
+
+  it("テーマ設定は端末連動を初期値にして固定テーマを選べる", async () => {
+    const screenSource = await readScreen("../app/theme-settings.tsx");
+    const serviceSource = await readScreen("../services/theme.ts");
+
+    expect(screenSource).toContain('system: "端末の設定"');
+    expect(screenSource).toContain('light: "ライト"');
+    expect(screenSource).toContain('dark: "ダーク"');
+    expect(screenSource).toContain("setPreference");
+    expect(serviceSource).toContain('return value === "light" || value === "dark" || value === "system" ? value : "system"');
   });
 
   it("外国人ホームは構造化プロフィールJSONをそのまま描画しない", async () => {

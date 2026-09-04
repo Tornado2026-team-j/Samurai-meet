@@ -5,7 +5,9 @@ import { StatusBar } from "expo-status-bar";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Header, LoadingScreen, RefreshLoadingIndicator } from "../../components/ui";
+import type { ThemeColors } from "../../components/ui/tokens";
 import { useAuth } from "../../hooks/useAuth";
+import { useTheme, useThemeStyles } from "../../hooks/useTheme";
 import { APIError } from "../../services/api-client";
 import {
   filterChatsByStatus,
@@ -15,13 +17,6 @@ import {
 } from "../../services/chat";
 import { loadLanguage, subscribeLanguage, type AppLanguage } from "../../services/onboarding";
 import { getTabBarContentBottomPadding } from "../../utils/layout";
-
-const BLUE = "#5ec5f5";
-const YELLOW = "#e7b454";
-const TEXT_GRAY = "#535353";
-const MUTED_GRAY = "#949494";
-const BORDER_GRAY = "#e4e4e4";
-const SOFT_BLUE = "#eff8ff";
 
 const COPY = {
   ja: {
@@ -90,6 +85,11 @@ function formatRelative(value?: string): string | null {
 export default function ChatListScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { colors } = useTheme();
+  const styles = useThemeStyles(createStyles);
+  const BLUE = colors.brand.sky;
+  const TEXT_GRAY = colors.text.secondary;
+  const MUTED_GRAY = colors.text.muted;
   const { matchId } = useLocalSearchParams<{ matchId?: string | string[] }>();
   const targetMatchID = Array.isArray(matchId) ? matchId[0] : matchId;
   const { getCurrentSession, refresh, session, status } = useAuth();
@@ -209,7 +209,7 @@ export default function ChatListScreen() {
 
   return (
     <View style={styles.screen}>
-      <StatusBar style="light" />
+      <StatusBar style="dark" />
       <Header
         iconName="chat-bubble-outline"
         style={[styles.header, { paddingTop: Math.max(insets.top, 20) }]}
@@ -355,16 +355,17 @@ export default function ChatListScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ThemeColors) {
+  return StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.screen,
   },
   loadingScreen: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.screen,
   },
   header: {
     minHeight: 178,
@@ -375,7 +376,7 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     marginTop: 8,
-    color: "#ffffff",
+    color: colors.text.onSky,
     fontSize: 28,
     fontWeight: "800",
     letterSpacing: 0,
@@ -394,7 +395,7 @@ const styles = StyleSheet.create({
   },
   filterTitle: {
     marginBottom: 9,
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 13,
     fontWeight: "900",
     lineHeight: 18,
@@ -411,22 +412,22 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingHorizontal: 8,
     borderWidth: 1,
-    borderColor: BORDER_GRAY,
+    borderColor: colors.border.default,
     borderRadius: 12,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.default,
   },
   filterButtonSelected: {
-    borderColor: BLUE,
-    backgroundColor: BLUE,
+    borderColor: colors.brand.sky,
+    backgroundColor: colors.brand.sky,
   },
   filterButtonText: {
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 13,
     fontWeight: "900",
     lineHeight: 18,
   },
   filterButtonTextSelected: {
-    color: "#ffffff",
+    color: colors.text.onSky,
   },
   chatList: {
     width: "100%",
@@ -441,9 +442,9 @@ const styles = StyleSheet.create({
     paddingRight: 10,
     paddingLeft: 18,
     borderWidth: 1,
-    borderColor: BORDER_GRAY,
+    borderColor: colors.border.default,
     borderRadius: 20,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.default,
   },
   avatarCircle: {
     width: 62,
@@ -451,9 +452,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
-    borderColor: BORDER_GRAY,
+    borderColor: colors.border.default,
     borderRadius: 31,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.default,
   },
   chatText: {
     flex: 1,
@@ -467,7 +468,7 @@ const styles = StyleSheet.create({
   },
   chatName: {
     flex: 1,
-    color: "#101318",
+    color: colors.text.primary,
     fontSize: 17,
     fontWeight: "900",
     letterSpacing: 0,
@@ -485,12 +486,12 @@ const styles = StyleSheet.create({
     borderRadius: 14,
   },
   statusPillActive: {
-    borderColor: "#b8e4fb",
-    backgroundColor: SOFT_BLUE,
+    borderColor: colors.border.blueStrong,
+    backgroundColor: colors.surface.blueSoft,
   },
   statusPillCompleted: {
-    borderColor: BORDER_GRAY,
-    backgroundColor: "#f7f7f7",
+    borderColor: colors.border.default,
+    backgroundColor: colors.surface.subtle,
   },
   statusText: {
     fontSize: 12,
@@ -498,14 +499,14 @@ const styles = StyleSheet.create({
     lineHeight: 16,
   },
   statusTextActive: {
-    color: BLUE,
+    color: colors.brand.sky,
   },
   statusTextCompleted: {
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
   },
   chatPreview: {
     marginTop: 7,
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 13,
     fontWeight: "700",
     letterSpacing: 0,
@@ -518,10 +519,10 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingHorizontal: 7,
     borderRadius: 12,
-    backgroundColor: YELLOW,
+    backgroundColor: colors.brand.gold,
   },
   unreadText: {
-    color: "#ffffff",
+    color: colors.text.onGold,
     fontSize: 12,
     fontWeight: "900",
     letterSpacing: 0,
@@ -529,7 +530,7 @@ const styles = StyleSheet.create({
   },
   unreadLabel: {
     marginTop: 6,
-    color: YELLOW,
+    color: colors.brand.gold,
     fontSize: 12,
     fontWeight: "900",
     letterSpacing: 0,
@@ -543,7 +544,7 @@ const styles = StyleSheet.create({
   },
   stateText: {
     maxWidth: 290,
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 14,
     fontWeight: "700",
     lineHeight: 22,
@@ -555,9 +556,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
-    borderColor: "#caeafd",
+    borderColor: colors.border.blue,
     borderRadius: 38,
-    backgroundColor: SOFT_BLUE,
+    backgroundColor: colors.surface.blueSoft,
   },
   retryButton: {
     minWidth: 92,
@@ -566,10 +567,10 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingHorizontal: 18,
     borderRadius: 10,
-    backgroundColor: YELLOW,
+    backgroundColor: colors.brand.gold,
   },
   retryButtonText: {
-    color: "#ffffff",
+    color: colors.text.onGold,
     fontSize: 13,
     fontWeight: "900",
     letterSpacing: 0,
@@ -581,11 +582,11 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingHorizontal: 16,
     borderWidth: 1,
-    borderColor: BLUE,
+    borderColor: colors.brand.sky,
     borderRadius: 10,
   },
   clearFilterButtonText: {
-    color: BLUE,
+    color: colors.brand.sky,
     fontSize: 13,
     fontWeight: "900",
     lineHeight: 18,
@@ -593,4 +594,5 @@ const styles = StyleSheet.create({
   pressed: {
     opacity: 0.72,
   },
-});
+  });
+}

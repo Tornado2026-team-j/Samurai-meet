@@ -16,7 +16,9 @@ import {
   View,
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
-import { Header, colors, radius } from "../../components/ui";
+import { Header, radius } from "../../components/ui";
+import type { ThemeColors } from "../../components/ui/tokens";
+import { useTheme, useThemeStyles } from "../../hooks/useTheme";
 import {
   formatRecruitmentISODate,
   JST_TIME_ZONE,
@@ -106,6 +108,8 @@ function datePickerBounds(field: DateField, availableFrom: string, availableTo: 
 export default function JapaneseFiltersScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { colors, scheme } = useTheme();
+  const styles = useThemeStyles(createStyles);
   const params = useLocalSearchParams<{ category?: string; time?: string; radius?: string; query?: string; date?: string; sort?: string; availableFrom?: string; availableTo?: string }>();
   const [category, setCategory] = useState<MatchCategory | "">(CATEGORIES.some((item) => item.value === params.category) ? params.category as MatchCategory : "");
   const [time, setTime] = useState(TIMES.some((item) => item.value === params.time) ? params.time ?? "" : "");
@@ -330,7 +334,7 @@ export default function JapaneseFiltersScreen() {
                 onDismiss={closeDatePicker}
                 onChange={handleDatePickerChange}
                 style={styles.nativePicker}
-                themeVariant="light"
+                themeVariant={scheme}
                 timeZoneName={JST_TIME_ZONE}
                 value={pickerDate}
               />
@@ -343,9 +347,11 @@ export default function JapaneseFiltersScreen() {
 }
 
 function FilterGroup({ children, label }: { children: React.ReactNode; label: string }) {
+  const styles = useThemeStyles(createStyles);
   return <View style={styles.group}><Text style={styles.groupLabel}>{label}</Text>{children}</View>;
 }
 function Choice({ label, onPress, selected }: { label: string; onPress: () => void; selected: boolean }) {
+  const styles = useThemeStyles(createStyles);
   return <Pressable accessibilityRole="radio" accessibilityState={{ selected }} onPress={onPress} style={[styles.choice, selected && styles.choiceSelected]}><Text style={[styles.choiceText, selected && styles.choiceTextSelected]}>{label}</Text></Pressable>;
 }
 
@@ -360,6 +366,8 @@ function DateFilterField({
   onPress: () => void;
   value: string;
 }) {
+  const { colors } = useTheme();
+  const styles = useThemeStyles(createStyles);
   return (
     <View style={styles.dateFieldWrap}>
       <Pressable
@@ -389,7 +397,8 @@ function DateFilterField({
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ThemeColors) {
+  return StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.surface.screen },
   content: { paddingHorizontal: 18, paddingTop: 12, paddingBottom: 24, gap: 12 },
   group: { gap: 5 },
@@ -429,4 +438,5 @@ const styles = StyleSheet.create({
   pickerDoneText: { color: colors.brand.sky, fontSize: 14, fontWeight: "900" },
   nativePicker: { alignSelf: "center", width: "100%", height: 216 },
   pressed: { opacity: 0.72 },
-});
+  });
+}

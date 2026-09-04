@@ -16,6 +16,7 @@ const PROTECTED_ROUTE_ROOTS = [
   "/report",
   "/security",
   "/tabs",
+  "/theme-settings",
   "/users",
 ] as const;
 

@@ -55,6 +55,28 @@ type PushModulesResult =
   | { available: true; modules: PushModules }
   | { available: false; reason: PushUnavailableReason };
 
+function isExpoGo(Constants: ConstantsModule): boolean {
+  // appOwnership is deprecated and can be null in newer SDKs. Expo Go reports
+  // storeClient through executionEnvironment instead; check both before the
+  // optional notifications module is evaluated.
+  return Constants.default?.executionEnvironment === "storeClient"
+    || Constants.default?.appOwnership === "expo";
+}
+
+function loadNotificationsModule(): NotificationsModule | null {
+  try {
+    // Dynamic import is implemented as Metro's `importAll`, which enumerates
+    // React Native's legacy exports while loading expo-notifications. On SDK
+    // 57 that touches PushNotificationIOS before this optional module can
+    // report its availability. A delayed CommonJS require keeps evaluation
+    // behind the capability checks without enumerating those exports.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    return require("expo-notifications") as NotificationsModule;
+  } catch {
+    return null;
+  }
+}
+
 async function loadPushModules(): Promise<PushModulesResult> {
   const platform = runtimePlatform();
   if (platform !== "ios" && platform !== "android") {
@@ -64,7 +86,7 @@ async function loadPushModules(): Promise<PushModulesResult> {
   const Constants = await import("expo-constants").catch(() => null);
   if (!Constants) return { available: false, reason: "native_module_unavailable" };
 
-  if (Constants.default?.appOwnership === "expo") {
+  if (isExpoGo(Constants)) {
     return { available: false, reason: "expo_go" };
   }
 
@@ -72,7 +94,7 @@ async function loadPushModules(): Promise<PushModulesResult> {
   if (!Device) return { available: false, reason: "native_module_unavailable" };
   if (!Device.isDevice) return { available: false, reason: "physical_device_required" };
 
-  const Notifications = await import("expo-notifications").catch(() => null);
+  const Notifications = loadNotificationsModule();
   if (!Notifications
     || typeof Notifications.getPermissionsAsync !== "function"
     || typeof Notifications.requestPermissionsAsync !== "function"

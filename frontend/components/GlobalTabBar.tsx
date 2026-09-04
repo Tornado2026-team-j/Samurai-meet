@@ -10,7 +10,7 @@ function activeTabFor(pathname: string): TabKey | null {
   if (pathname === "/chat") return "chat";
   if (pathname === "/plans") return "plans";
   if (pathname === "/monsters") return "monsters";
-  if (pathname === "/profile" || pathname === "/account-settings") return "profile";
+  if (pathname === "/profile" || pathname === "/account-settings" || pathname === "/theme-settings") return "profile";
   return null;
 }
 

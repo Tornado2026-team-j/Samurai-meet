@@ -12,8 +12,10 @@ import {
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { Header, colors, LoadingScreen, RefreshLoadingIndicator, radius, shadows, typography } from "../components/ui";
+import { Header, LoadingScreen, RefreshLoadingIndicator, radius, shadows, typography } from "../components/ui";
+import type { ThemeColors } from "../components/ui/tokens";
 import { useAuth } from "../hooks/useAuth";
+import { useTheme, useThemeStyles } from "../hooks/useTheme";
 import { APIError } from "../services/api-client";
 import { cancelMeeting, createMeeting, endMeeting, getMeetingForMatch, meetingProximityCapability, resumeMeeting, startMeeting, type Meeting } from "../services/meeting";
 import { completeMatch, likeMatch, listMatches, type MatchView } from "../services/matching";
@@ -137,6 +139,8 @@ function displayDate(value: string, language: AppLanguage): string {
 export default function PlansScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { colors } = useTheme();
+  const styles = useThemeStyles(createStyles);
   const { getCurrentSession, refresh, session, status } = useAuth();
   const [language, setLanguage] = useState<AppLanguage>("ja");
   const [activeTab, setActiveTab] = useState<PlanTab>("today");
@@ -341,7 +345,7 @@ export default function PlansScreen() {
 
   return (
     <View style={styles.screen}>
-      <StatusBar style="light" />
+      <StatusBar style="dark" />
       <Header
         iconName="event-available"
         style={[styles.header, { paddingTop: Math.max(insets.top, 20) }]}
@@ -482,7 +486,8 @@ export default function PlansScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ThemeColors) {
+  return StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.surface.screen },
   header: {
     minHeight: 178,
@@ -493,7 +498,7 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     marginTop: 8,
-    color: colors.text.inverse,
+    color: colors.text.onSky,
     fontSize: 28,
     fontWeight: "800",
     letterSpacing: 0,
@@ -508,7 +513,7 @@ const styles = StyleSheet.create({
   state: { minHeight: 220, alignItems: "center", justifyContent: "center", gap: 12 },
   stateText: { color: colors.text.subtle, ...typography.body, textAlign: "center" },
   retry: { minHeight: 42, justifyContent: "center", paddingHorizontal: 22, borderRadius: radius.pill, backgroundColor: colors.brand.sky },
-  retryText: { color: colors.text.inverse, fontWeight: "800" },
+  retryText: { color: colors.text.onSky, fontWeight: "800" },
   card: { padding: 16, borderWidth: 1, borderColor: colors.border.subtle, borderRadius: radius.lg, backgroundColor: colors.surface.default, ...shadows.card },
   cardTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   dateBadge: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: radius.pill, backgroundColor: colors.surface.blueSoft },
@@ -526,7 +531,7 @@ const styles = StyleSheet.create({
   likeActionText: { color: colors.text.secondary, fontSize: 12, fontWeight: "800" },
   likeActionTextSelected: { color: colors.brand.sky },
   primaryAction: { minHeight: 46, marginTop: 9, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7, borderRadius: radius.md, backgroundColor: colors.brand.sky },
-  primaryActionText: { color: colors.text.inverse, fontSize: 14, fontWeight: "800" },
+  primaryActionText: { color: colors.text.onSky, fontSize: 14, fontWeight: "800" },
   meetingStatus: { marginTop: 10, color: colors.text.subtle, fontSize: 13, fontWeight: "700", textAlign: "center" },
   disabled: { opacity: 0.55 },
   error: { color: colors.state.danger, fontSize: 13, fontWeight: "700", textAlign: "center" },
@@ -541,7 +546,8 @@ const styles = StyleSheet.create({
   reviewPlanPerson: { marginTop: 4, color: colors.text.secondary, fontSize: 13, fontWeight: "700" },
   reviewPlanStatus: { marginTop: 8, color: colors.brand.sky, fontSize: 12, fontWeight: "800" },
   reviewPrimary: { width: "100%", minHeight: 46, marginTop: 22, alignItems: "center", justifyContent: "center", borderRadius: radius.md, backgroundColor: colors.brand.sky },
-  reviewPrimaryText: { color: colors.text.inverse, fontSize: 14, fontWeight: "800" },
+  reviewPrimaryText: { color: colors.text.onSky, fontSize: 14, fontWeight: "800" },
   reviewLater: { minHeight: 42, marginTop: 8, alignItems: "center", justifyContent: "center", paddingHorizontal: 18 },
   reviewLaterText: { color: colors.text.subtle, fontSize: 13, fontWeight: "700" },
-});
+  });
+}

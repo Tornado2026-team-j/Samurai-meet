@@ -1,3 +1,4 @@
+import type { Platform } from "react-native";
 import { requestAPI } from "./api-client";
 import type { Session } from "./auth-contract";
 import {
@@ -17,13 +18,21 @@ const DEMO_MATERIAL_DRAFT_STORAGE_PREFIX = "samurai_meet_demo_key_material_draft
 
 /**
  * Keep native storage modules out of the module graph for pure service
- * consumers. Bun tests and the Expo Go review path can still load the demo
- * crypto/API contract without evaluating React Native's native entrypoint;
- * storage is resolved only when a demo key is actually read or written.
+ * consumers. Storage is resolved only when a demo key is actually read or
+ * written. Do not dynamically import `react-native` here: Metro's importAll
+ * enumerates legacy native exports and crashes Expo Go before storage runs.
  */
-async function loadPlatform(): Promise<typeof import("react-native").Platform> {
-  const { Platform } = await import("react-native");
-  return Platform;
+function isWebPlatform(): boolean {
+  try {
+    // A CommonJS require is deliberately deferred until storage is used. In
+    // contrast to dynamic import, Metro does not enumerate React Native's
+    // deprecated native getters such as PushNotificationIOS.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const native = require("react-native") as { Platform?: typeof Platform };
+    return native.Platform?.OS === "web";
+  } catch {
+    return true;
+  }
 }
 
 async function loadSecureStore(): Promise<typeof import("expo-secure-store")> {
@@ -62,15 +71,13 @@ function materialDraftStorageKey(userID: string): string {
 }
 
 async function getDeviceStoredItem(key: string): Promise<string | null> {
-  const Platform = await loadPlatform();
-  if (Platform.OS === "web") return globalThis.sessionStorage?.getItem(key) ?? null;
+  if (isWebPlatform()) return globalThis.sessionStorage?.getItem(key) ?? null;
   const SecureStore = await loadSecureStore();
   return SecureStore.getItemAsync(key);
 }
 
 async function setDeviceStoredItem(key: string, value: string): Promise<void> {
-  const Platform = await loadPlatform();
-  if (Platform.OS === "web") {
+  if (isWebPlatform()) {
     globalThis.sessionStorage?.setItem(key, value);
     return;
   }
@@ -81,8 +88,7 @@ async function setDeviceStoredItem(key: string, value: string): Promise<void> {
 }
 
 async function deleteDeviceStoredItem(key: string): Promise<void> {
-  const Platform = await loadPlatform();
-  if (Platform.OS === "web") {
+  if (isWebPlatform()) {
     globalThis.sessionStorage?.removeItem(key);
     return;
   }

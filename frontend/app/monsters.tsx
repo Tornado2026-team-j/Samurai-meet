@@ -3,8 +3,10 @@ import { useEffect, useRef, useState } from "react";
 import { ScrollView, StyleSheet, Text, View } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import type { ThemeColors } from "../components/ui/tokens";
 import { LoadingSpinner } from "../components/ui";
 import { useAuth } from "../hooks/useAuth";
+import { useTheme, useThemeStyles } from "../hooks/useTheme";
 import {
   loadLanguage,
   loadLocalProfile,
@@ -13,13 +15,6 @@ import {
   type LocalProfile,
 } from "../services/onboarding";
 import { getTabBarContentBottomPadding } from "../utils/layout";
-
-const BLUE = "#5ec5f5";
-const YELLOW = "#e7b454";
-const TEXT_GRAY = "#535353";
-const MUTED_GRAY = "#8A8A8A";
-const BORDER_GRAY = "#e4e4e4";
-const SOFT_BLUE = "#eff8ff";
 
 const COPY = {
   ja: {
@@ -103,6 +98,9 @@ function formatTags(tags: string[], language: AppLanguage): string {
 
 export default function MonstersScreen() {
   const insets = useSafeAreaInsets();
+  const { colors } = useTheme();
+  const styles = useThemeStyles(createStyles);
+  const BLUE = colors.brand.sky;
   const { session } = useAuth();
   const [language, setLanguage] = useState<AppLanguage>("ja");
   const [profile, setProfile] = useState<LocalProfile | null>(null);
@@ -146,9 +144,9 @@ export default function MonstersScreen() {
 
   return (
     <View style={styles.screen}>
-      <StatusBar style="light" />
+      <StatusBar style="dark" />
       <View style={[styles.header, { paddingTop: Math.max(insets.top, 20) }]}>
-        <MaterialIcons color="#ffffff" name="auto-awesome" size={42} />
+        <MaterialIcons color={colors.text.onSky} name="auto-awesome" size={42} />
         <Text accessibilityRole="header" style={styles.headerTitle}>{copy.title}</Text>
       </View>
 
@@ -189,6 +187,7 @@ export default function MonstersScreen() {
 }
 
 function InfoBlock({ label, value }: { label: string; value: string }) {
+  const styles = useThemeStyles(createStyles);
   return (
     <View style={styles.infoBlock}>
       <Text style={styles.infoLabel}>{label}</Text>
@@ -197,10 +196,11 @@ function InfoBlock({ label, value }: { label: string; value: string }) {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ThemeColors) {
+  return StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.screen,
   },
   header: {
     minHeight: 178,
@@ -211,10 +211,10 @@ const styles = StyleSheet.create({
     paddingBottom: 26,
     borderBottomLeftRadius: 42,
     borderBottomRightRadius: 42,
-    backgroundColor: BLUE,
+    backgroundColor: colors.brand.sky,
   },
   headerTitle: {
-    color: "#ffffff",
+    color: colors.text.onSky,
     fontSize: 28,
     fontWeight: "800",
     letterSpacing: 0,
@@ -232,9 +232,9 @@ const styles = StyleSheet.create({
     gap: 14,
     padding: 20,
     borderWidth: 1,
-    borderColor: BORDER_GRAY,
+    borderColor: colors.border.default,
     borderRadius: 24,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.default,
   },
   avatar: {
     width: 92,
@@ -242,23 +242,23 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderRadius: 46,
-    backgroundColor: SOFT_BLUE,
+    backgroundColor: colors.surface.blueSoft,
   },
   infoBlock: {
     width: "100%",
     gap: 6,
     padding: 14,
     borderRadius: 16,
-    backgroundColor: "#f8fbfd",
+    backgroundColor: colors.surface.subtle,
   },
   infoLabel: {
-    color: MUTED_GRAY,
+    color: colors.text.muted,
     fontSize: 12,
     fontWeight: "700",
     letterSpacing: 0,
   },
   infoValue: {
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 15,
     fontWeight: "700",
     letterSpacing: 0,
@@ -277,12 +277,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
-    borderColor: "#caeafd",
+    borderColor: colors.border.blue,
     borderRadius: 38,
-    backgroundColor: SOFT_BLUE,
+    backgroundColor: colors.surface.blueSoft,
   },
   emptyTitle: {
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 17,
     fontWeight: "800",
     letterSpacing: 0,
@@ -290,11 +290,12 @@ const styles = StyleSheet.create({
   },
   stateText: {
     maxWidth: 290,
-    color: MUTED_GRAY,
+    color: colors.text.muted,
     fontSize: 14,
     fontWeight: "600",
     letterSpacing: 0,
     lineHeight: 22,
     textAlign: "center",
   },
-});
+  });
+}
