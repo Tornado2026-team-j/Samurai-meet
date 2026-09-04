@@ -15,22 +15,22 @@ import (
 // Config contains the process-level settings required before external services
 // such as PostgreSQL, Google OAuth, and Passkey are connected.
 type Config struct {
-	HTTPAddr            string
-	Environment         string
-	AllowExpoGoRedirect bool
-	DemoAccountEnabled  bool
-	GoogleLoginEnabled  bool
-	DevClientOrigin     string
-	ClientOrigin        string
+	HTTPAddr                string
+	Environment             string
+	AllowExpoGoRedirect     bool
+	DemoAccountEnabled      bool
+	GoogleLoginEnabled      bool
+	DevClientOrigin         string
+	ClientOrigin            string
 	AdditionalClientOrigins []string
-	Database            DatabaseConfig
-	ImageStorage        ImageStorageConfig
-	GoogleOIDC          GoogleOIDCConfig
-	Gemini              GeminiConfig
-	Stripe              StripeConfig
-	WebAuthn            WebAuthnConfig
-	JWS                 JWSConfig
-	Chat                ChatConfig
+	Database                DatabaseConfig
+	ImageStorage            ImageStorageConfig
+	GoogleOIDC              GoogleOIDCConfig
+	Gemini                  GeminiConfig
+	Stripe                  StripeConfig
+	WebAuthn                WebAuthnConfig
+	JWS                     JWSConfig
+	Chat                    ChatConfig
 }
 
 // ChatConfig tunes chat message send rate limiting, translation provider
@@ -51,10 +51,10 @@ type GoogleOIDCConfig struct{ ClientID, ClientSecret, RedirectURI string }
 type GeminiConfig struct{ APIKey, Model, ImageModel string }
 type StripeConfig struct{ SecretKey, IdentityWebhookSecret, IdentityReturnURL string }
 type WebAuthnConfig struct {
-	RPID                 string
-	RPOrigin             string
-	RPDisplayName        string
-	AdditionalRPOrigins  []string
+	RPID                string
+	RPOrigin            string
+	RPDisplayName       string
+	AdditionalRPOrigins []string
 }
 type JWSConfig struct{ SigningKey, KeyID, VerifyKeys, Issuer, Audience string }
 
@@ -208,13 +208,13 @@ func Load() Config {
 	additionalClientOrigins := commaSeparatedValues(os.Getenv("ADDITIONAL_CLIENT_ORIGINS"))
 
 	return Config{
-		HTTPAddr:            valueOrDefault("HTTP_ADDR", ":8080"),
-		Environment:         valueOrDefault("APP_ENV", "development"),
-		AllowExpoGoRedirect: boolValueOrDefault("ALLOW_EXPO_GO_REDIRECT", false),
-		DemoAccountEnabled:  boolValueOrDefault("DEMO_ACCOUNT_ENABLED", false),
-		GoogleLoginEnabled:  boolValueOrDefault("GOOGLE_LOGIN_ENABLED", true),
-		DevClientOrigin:     valueOrDefault("DEV_CLIENT_ORIGIN", "http://localhost:8081"),
-		ClientOrigin:        os.Getenv("CLIENT_ORIGIN"),
+		HTTPAddr:                valueOrDefault("HTTP_ADDR", ":8080"),
+		Environment:             valueOrDefault("APP_ENV", "development"),
+		AllowExpoGoRedirect:     boolValueOrDefault("ALLOW_EXPO_GO_REDIRECT", false),
+		DemoAccountEnabled:      boolValueOrDefault("DEMO_ACCOUNT_ENABLED", false),
+		GoogleLoginEnabled:      boolValueOrDefault("GOOGLE_LOGIN_ENABLED", true),
+		DevClientOrigin:         valueOrDefault("DEV_CLIENT_ORIGIN", "http://localhost:8081"),
+		ClientOrigin:            os.Getenv("CLIENT_ORIGIN"),
 		AdditionalClientOrigins: additionalClientOrigins,
 		Database: DatabaseConfig{
 			Host:     valueOrDefault("DB_HOST", "127.0.0.1"),
@@ -242,7 +242,7 @@ func Load() Config {
 			RPDisplayName:       valueOrDefault("WEBAUTHN_RP_DISPLAY_NAME", "Samurai Meet"),
 			AdditionalRPOrigins: append([]string(nil), additionalClientOrigins...),
 		},
-		JWS:        JWSConfig{os.Getenv("JWS_SIGNING_KEY"), valueOrDefault("JWS_KEY_ID", "v1"), os.Getenv("JWS_VERIFY_KEYS"), valueOrDefault("JWS_ISSUER", "samurai-meet-api"), valueOrDefault("JWS_AUDIENCE", "samurai-meet-mobile")},
+		JWS: JWSConfig{os.Getenv("JWS_SIGNING_KEY"), valueOrDefault("JWS_KEY_ID", "v1"), os.Getenv("JWS_VERIFY_KEYS"), valueOrDefault("JWS_ISSUER", "samurai-meet-api"), valueOrDefault("JWS_AUDIENCE", "samurai-meet-mobile")},
 		Chat: ChatConfig{
 			SendBurst:                         intValueOrDefault("CHAT_SEND_BURST", 15),
 			SendRefillPerMinute:               intValueOrDefault("CHAT_SEND_REFILL_PER_MINUTE", 60),

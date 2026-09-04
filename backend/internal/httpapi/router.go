@@ -25,36 +25,36 @@ import (
 const APIV1Prefix = "/api/v1"
 
 type RouterOptions struct {
-	Environment           string
-	AllowExpoGoRedirect   bool
-	DevClientOrigin       string
-	ClientOrigin          string
+	Environment             string
+	AllowExpoGoRedirect     bool
+	DevClientOrigin         string
+	ClientOrigin            string
 	AdditionalClientOrigins []string
-	OAuthLogin            *auth.OAuthLoginService
-	DemoAccounts          *auth.DemoAccountService
-	PreAuth               *auth.PreAuthService
-	Sessions              *auth.SessionService
-	SessionHandoffs       *auth.SessionHandoffService
-	PasskeyBootstraps     *auth.PasskeyBootstrapService
-	Recovery              *keys.RecoveryService
-	Passkeys              *auth.PasskeyService
-	KeyEnvelopes          *keys.Service
-	Devices               *keys.DeviceService
-	DeviceTransfers       *keys.DeviceTransferService
-	Images                *image.Service
-	Accounts              *account.Service
-	Profiles              *profileuser.Service
-	Matching              *matching.Service
-	RecruitmentClassifier *classification.Service
-	Chats                 *chat.Service
-	ChatModeration        chat.ModerationProvider
-	ChatTranslation       *translation.Service
-	Meetings              *meeting.Service
-	MemoryMonsters        *memorymonster.Service
-	Notifications         *notification.Service
-	Safety                *safety.Service
-	Identity              *identity.Service
-	Push                  *push.Service
+	OAuthLogin              *auth.OAuthLoginService
+	DemoAccounts            *auth.DemoAccountService
+	PreAuth                 *auth.PreAuthService
+	Sessions                *auth.SessionService
+	SessionHandoffs         *auth.SessionHandoffService
+	PasskeyBootstraps       *auth.PasskeyBootstrapService
+	Recovery                *keys.RecoveryService
+	Passkeys                *auth.PasskeyService
+	KeyEnvelopes            *keys.Service
+	Devices                 *keys.DeviceService
+	DeviceTransfers         *keys.DeviceTransferService
+	Images                  *image.Service
+	Accounts                *account.Service
+	Profiles                *profileuser.Service
+	Matching                *matching.Service
+	RecruitmentClassifier   *classification.Service
+	Chats                   *chat.Service
+	ChatModeration          chat.ModerationProvider
+	ChatTranslation         *translation.Service
+	Meetings                *meeting.Service
+	MemoryMonsters          *memorymonster.Service
+	Notifications           *notification.Service
+	Safety                  *safety.Service
+	Identity                *identity.Service
+	Push                    *push.Service
 }
 
 func NewRouter() http.Handler { return NewRouterWithOptions(RouterOptions{}) }

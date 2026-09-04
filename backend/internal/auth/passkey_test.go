@@ -2,8 +2,8 @@ package auth
 
 import (
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/config"
-	"testing"
 	"strings"
+	"testing"
 )
 
 func TestNewPasskeyRelyingParty(t *testing.T) {
