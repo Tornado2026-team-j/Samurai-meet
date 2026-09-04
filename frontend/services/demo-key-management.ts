@@ -1,5 +1,3 @@
-import * as SecureStore from "expo-secure-store";
-import { Platform } from "react-native";
 import { requestAPI } from "./api-client";
 import type { Session } from "./auth-contract";
 import {
@@ -16,6 +14,21 @@ const DEMO_KEY_B_STORAGE_PREFIX = "samurai_meet_demo_key_b_v1_";
 const DEMO_AGREEMENT_PRIVATE_STORAGE_PREFIX = "samurai_meet_demo_agreement_private_v1_";
 const DEMO_AGREEMENT_PUBLIC_STORAGE_PREFIX = "samurai_meet_demo_agreement_public_v1_";
 const DEMO_MATERIAL_DRAFT_STORAGE_PREFIX = "samurai_meet_demo_key_material_draft_v1_";
+
+/**
+ * Keep native storage modules out of the module graph for pure service
+ * consumers. Bun tests and the Expo Go review path can still load the demo
+ * crypto/API contract without evaluating React Native's native entrypoint;
+ * storage is resolved only when a demo key is actually read or written.
+ */
+async function loadPlatform(): Promise<typeof import("react-native").Platform> {
+  const { Platform } = await import("react-native");
+  return Platform;
+}
+
+async function loadSecureStore(): Promise<typeof import("expo-secure-store")> {
+  return import("expo-secure-store");
+}
 
 type DataResponse<T> = { data?: T };
 
@@ -49,25 +62,31 @@ function materialDraftStorageKey(userID: string): string {
 }
 
 async function getDeviceStoredItem(key: string): Promise<string | null> {
+  const Platform = await loadPlatform();
   if (Platform.OS === "web") return globalThis.sessionStorage?.getItem(key) ?? null;
+  const SecureStore = await loadSecureStore();
   return SecureStore.getItemAsync(key);
 }
 
 async function setDeviceStoredItem(key: string, value: string): Promise<void> {
+  const Platform = await loadPlatform();
   if (Platform.OS === "web") {
     globalThis.sessionStorage?.setItem(key, value);
     return;
   }
+  const SecureStore = await loadSecureStore();
   await SecureStore.setItemAsync(key, value, {
     keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
   });
 }
 
 async function deleteDeviceStoredItem(key: string): Promise<void> {
+  const Platform = await loadPlatform();
   if (Platform.OS === "web") {
     globalThis.sessionStorage?.removeItem(key);
     return;
   }
+  const SecureStore = await loadSecureStore();
   await SecureStore.deleteItemAsync(key);
 }
 
