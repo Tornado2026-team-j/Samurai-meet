@@ -29,16 +29,42 @@ jobs:
         uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
         with:
           fail-on-severity: moderate
-          # CC-BY-4.0: caniuse-lite, a browser-support data table pulled in
-          #   transitively by Next.js. It is data, not code, and is not modified.
-          # LGPL-3.0-or-later: sharp / libvips, an OPTIONAL native image library
-          #   of Next.js. It is dynamically linked, unmodified, and not
-          #   redistributed; the AI service (ai/) does not use image
-          #   optimisation. See PR that introduced ai/package-lock.json.
-          allow-licenses: MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, MPL-2.0, CC0-1.0, 0BSD, Unlicense, Zlib, CC-BY-4.0, LGPL-3.0-or-later, LicenseRef-scancode-google-patent-license-golang
+          # CC-BY-4.0 added for caniuse-lite: a browser-support data table pulled
+          # in transitively by Next.js. It is data, not code, is not modified, and
+          # its only obligation is attribution (kept in node_modules). It cannot
+          # be removed without removing Next.js.
+          #
+          # LGPL-3.0-or-later is deliberately NOT added here: the product ships an
+          # iOS app and a repo-wide copyleft allowance is too broad. The single
+          # LGPL source (sharp / libvips prebuilt binaries) is instead exempted by
+          # exact package below.
+          allow-licenses: MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, MPL-2.0, CC0-1.0, 0BSD, Unlicense, Zlib, CC-BY-4.0, LicenseRef-scancode-google-patent-license-golang
           # TruffleHog is an unmodified CI-only scanner; it is neither linked
           # into nor distributed with the Samurai-meet product.
-          allow-dependencies-licenses: pkg:githubactions/trufflesecurity/trufflehog@bcfcf73aaf4759d4dadc2783177c245a02792318
+          #
+          # @img/sharp-* are the prebuilt libvips binaries of `sharp`, an OPTIONAL
+          # dependency of Next.js used only for server-side next/image
+          # optimisation. The AI service (ai/) has no images and never loads it;
+          # it is not in the mobile app (frontend/, separate lockfile). Scoped
+          # exemption instead of a repo-wide LGPL-3.0-or-later allowance. If a
+          # sharp bump adds a new platform binary, dependency-review will fail
+          # with its name to add here.
+          allow-dependencies-licenses: >-
+            pkg:githubactions/trufflesecurity/trufflehog@bcfcf73aaf4759d4dadc2783177c245a02792318,
+            pkg:npm/%40img/sharp-libvips-darwin-arm64,
+            pkg:npm/%40img/sharp-libvips-darwin-x64,
+            pkg:npm/%40img/sharp-libvips-linux-arm,
+            pkg:npm/%40img/sharp-libvips-linux-arm64,
+            pkg:npm/%40img/sharp-libvips-linux-ppc64,
+            pkg:npm/%40img/sharp-libvips-linux-riscv64,
+            pkg:npm/%40img/sharp-libvips-linux-s390x,
+            pkg:npm/%40img/sharp-libvips-linux-x64,
+            pkg:npm/%40img/sharp-libvips-linuxmusl-arm64,
+            pkg:npm/%40img/sharp-libvips-linuxmusl-x64,
+            pkg:npm/%40img/sharp-wasm32,
+            pkg:npm/%40img/sharp-win32-arm64,
+            pkg:npm/%40img/sharp-win32-ia32,
+            pkg:npm/%40img/sharp-win32-x64
 
   osv-pr:
     name: OSV dependency vulnerability scan
