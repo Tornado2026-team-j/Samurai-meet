@@ -1,5 +1,5 @@
 import { MaterialIcons } from "@expo/vector-icons";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, Image, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -77,7 +77,7 @@ export default function MonstersScreen() {
     return unsubscribe;
   }, []);
 
-  const load = async (refresh = false) => {
+  const load = useCallback(async (refresh = false) => {
     const activeSession = getCurrentSession() ?? session;
     if (!activeSession) {
       setItems([]);
@@ -112,11 +112,11 @@ export default function MonstersScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  };
+  }, [copy.loadError, getCurrentSession, session]);
 
   useEffect(() => {
     void load();
-  }, [session?.user_id]);
+  }, [load]);
 
   const saveItemToDevice = async (item: MemoryMonster) => {
     const image = images[item.id];

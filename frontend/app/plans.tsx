@@ -289,6 +289,8 @@ export default function PlansScreen() {
         await completeMatch(plan.id, activeSession).catch(() => undefined);
         const completedPlan = { ...plan, status: "completed" as const };
         setPlans((items) => items.map((item) => item.id === plan.id ? completedPlan : item));
+        reviewPromptedRef.current.add(completedPlan.id);
+        setReviewPlan(completedPlan);
         router.push({
           pathname: "/meeting-result/[matchId]",
           params: { matchId: plan.id, meetingId: next.id },

@@ -75,7 +75,15 @@ func (s *Store) Read(storagePath string, maxBytes int64) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	file, err := os.Open(absolute)
+	storageRoot, err := filepath.Abs(filepath.Dir(s.root))
+	if err != nil {
+		return nil, err
+	}
+	relative, err := filepath.Rel(storageRoot, absolute)
+	if err != nil {
+		return nil, err
+	}
+	file, err := os.OpenInRoot(storageRoot, relative)
 	if err != nil {
 		return nil, err
 	}
