@@ -18,6 +18,8 @@ type Config struct {
 	HTTPAddr            string
 	Environment         string
 	AllowExpoGoRedirect bool
+	DemoAccountEnabled  bool
+	GoogleLoginEnabled  bool
 	DevClientOrigin     string
 	ClientOrigin        string
 	Database            DatabaseConfig
@@ -78,6 +80,25 @@ type DatabaseConfig struct {
 // single-host deployment may use a loopback-only PostgreSQL connection when
 // PostgreSQL TLS is not enabled.
 func (c Config) ValidateForEnvironment() error {
+	if c.DemoAccountEnabled {
+		var demoProblems []string
+		if c.GoogleLoginEnabled {
+			demoProblems = append(demoProblems, "GOOGLE_LOGIN_ENABLED must be false when DEMO_ACCOUNT_ENABLED is true")
+		}
+		if databaseName := strings.TrimSpace(c.Database.Name); databaseName == "" || databaseName == "samurai_meet" {
+			demoProblems = append(demoProblems, "DB_NAME must point to a separated demo database")
+		}
+		if imageDir := strings.TrimSpace(c.ImageStorage.Directory); imageDir == "" || imageDir == "storage/images" {
+			demoProblems = append(demoProblems, "IMAGE_STORAGE_DIR must point to separated demo storage")
+		}
+		if strings.TrimSpace(c.JWS.SigningKey) == "" {
+			demoProblems = append(demoProblems, "JWS_SIGNING_KEY must be a separated demo signing key")
+		}
+		if len(demoProblems) > 0 {
+			return fmt.Errorf("demo configuration is unsafe: %s", strings.Join(demoProblems, ", "))
+		}
+	}
+
 	environment := strings.ToLower(strings.TrimSpace(c.Environment))
 	if environment != "production" && environment != "prod" {
 		return nil
@@ -109,6 +130,9 @@ func (c Config) ValidateForEnvironment() error {
 	}
 	if strings.TrimSpace(c.ImageStorage.ProfileWrappingPrivateKeyPEM) == "" {
 		missing = append(missing, "PROFILE_WRAPPING_PRIVATE_KEY_PEM")
+	}
+	if c.DemoAccountEnabled {
+		missing = append(missing, "DEMO_ACCOUNT_ENABLED must be false in production")
 	}
 	if !validSecureOrigin(c.WebAuthn.RPOrigin) || strings.TrimSpace(c.WebAuthn.RPID) == "" {
 		missing = append(missing, "WEBAUTHN_RP_ID/WEBAUTHN_RP_ORIGIN (https origin)")
@@ -170,6 +194,8 @@ func Load() Config {
 		HTTPAddr:            valueOrDefault("HTTP_ADDR", ":8080"),
 		Environment:         valueOrDefault("APP_ENV", "development"),
 		AllowExpoGoRedirect: boolValueOrDefault("ALLOW_EXPO_GO_REDIRECT", false),
+		DemoAccountEnabled:  boolValueOrDefault("DEMO_ACCOUNT_ENABLED", false),
+		GoogleLoginEnabled:  boolValueOrDefault("GOOGLE_LOGIN_ENABLED", true),
 		DevClientOrigin:     valueOrDefault("DEV_CLIENT_ORIGIN", "http://localhost:8081"),
 		ClientOrigin:        os.Getenv("CLIENT_ORIGIN"),
 		Database: DatabaseConfig{

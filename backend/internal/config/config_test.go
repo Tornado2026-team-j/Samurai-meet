@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -49,6 +50,19 @@ func TestLoadReadsSeparateDatabaseSettings(t *testing.T) {
 	}
 }
 
+func TestLoadReadsDemoReviewSwitches(t *testing.T) {
+	t.Setenv("DEMO_ACCOUNT_ENABLED", "true")
+	t.Setenv("GOOGLE_LOGIN_ENABLED", "false")
+
+	cfg := Load()
+	if !cfg.DemoAccountEnabled {
+		t.Fatal("DEMO_ACCOUNT_ENABLED=true was not loaded")
+	}
+	if cfg.GoogleLoginEnabled {
+		t.Fatal("GOOGLE_LOGIN_ENABLED=false was not loaded")
+	}
+}
+
 func TestProductionValidationFailsClosed(t *testing.T) {
 	cfg := Config{Environment: "production"}
 	if err := cfg.ValidateForEnvironment(); err == nil {
@@ -68,6 +82,52 @@ func TestProductionValidationAllowsExplicitModerationFreeModeForTemporaryTesting
 	cfg.Chat.DevelopmentModerationFreeMode = true
 	if err := cfg.ValidateForEnvironment(); err != nil {
 		t.Fatalf("explicit moderation free mode should remain an acknowledged production exception: %v", err)
+	}
+}
+
+func TestProductionValidationRejectsDemoAccounts(t *testing.T) {
+	cfg := completeProductionConfig()
+	cfg.DemoAccountEnabled = true
+	if err := cfg.ValidateForEnvironment(); err == nil {
+		t.Fatal("production configuration with demo accounts enabled should fail")
+	}
+}
+
+func TestDemoValidationRequiresSeparatedReviewEnvironment(t *testing.T) {
+	cfg := Config{
+		Environment:        "review",
+		DemoAccountEnabled: true,
+		GoogleLoginEnabled: true,
+		Database:           DatabaseConfig{Name: "samurai_meet"},
+		ImageStorage:       ImageStorageConfig{Directory: "storage/images"},
+	}
+	err := cfg.ValidateForEnvironment()
+	if err == nil {
+		t.Fatal("unsafe demo configuration should fail")
+	}
+	for _, want := range []string{
+		"GOOGLE_LOGIN_ENABLED must be false",
+		"DB_NAME must point to a separated demo database",
+		"IMAGE_STORAGE_DIR must point to separated demo storage",
+		"JWS_SIGNING_KEY must be a separated demo signing key",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("demo validation error %q does not contain %q", err.Error(), want)
+		}
+	}
+}
+
+func TestDemoValidationAcceptsSeparatedReviewEnvironment(t *testing.T) {
+	cfg := Config{
+		Environment:        "review",
+		DemoAccountEnabled: true,
+		GoogleLoginEnabled: false,
+		Database:           DatabaseConfig{Name: "samurai_meet_demo"},
+		ImageStorage:       ImageStorageConfig{Directory: "storage/demo-images"},
+		JWS:                JWSConfig{SigningKey: "demo-signing-key"},
+	}
+	if err := cfg.ValidateForEnvironment(); err != nil {
+		t.Fatalf("separated demo configuration rejected: %v", err)
 	}
 }
 

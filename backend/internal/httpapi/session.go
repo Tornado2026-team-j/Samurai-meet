@@ -63,6 +63,10 @@ func refreshSession(service *auth.SessionService) http.HandlerFunc {
 			writeJSON(w, http.StatusConflict, map[string]string{"error": "refresh_reuse_detected"})
 			return
 		}
+		if errors.Is(err, auth.ErrDemoAccountExpired) {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "demo_account_expired"})
+			return
+		}
 		if err != nil {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "refresh_failed"})
 			return

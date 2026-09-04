@@ -35,6 +35,9 @@ func main() {
 	if cfg.Chat.DevelopmentModerationFreeMode {
 		log.Printf("WARNING: CHAT_MODERATION_DEV_FREE_MODE=true is enabled for APP_ENV=%s; chat moderation uses the local conservative provider instead of OpenAI. Do not use real user data; disable this flag and configure OPENAI_API_KEY before normal production operation", cfg.Environment)
 	}
+	if cfg.DemoAccountEnabled {
+		log.Printf("WARNING: DEMO_ACCOUNT_ENABLED=true is enabled for APP_ENV=%s; use only a separated hackathon review API, database, signing key, and storage", cfg.Environment)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	database, err := db.Open(ctx, cfg.Database)
@@ -72,7 +75,9 @@ func main() {
 	preauth := auth.NewPreAuthService(database)
 	recovery := keys.NewRecoveryService(database, preauth)
 	var oauthLogin *auth.OAuthLoginService
-	if cfg.GoogleOIDC.ClientID != "" && cfg.GoogleOIDC.ClientSecret != "" && cfg.GoogleOIDC.RedirectURI != "" && signer != nil {
+	if !cfg.GoogleLoginEnabled {
+		log.Printf("Google OAuth login is disabled by GOOGLE_LOGIN_ENABLED=false")
+	} else if cfg.GoogleOIDC.ClientID != "" && cfg.GoogleOIDC.ClientSecret != "" && cfg.GoogleOIDC.RedirectURI != "" && signer != nil {
 		google, e := auth.NewGoogleOIDC(ctx, cfg.GoogleOIDC)
 		if e != nil {
 			log.Fatalf("Google OAuth initialization failed: %v", e)
@@ -80,11 +85,15 @@ func main() {
 		oauthLogin = auth.NewOAuthLoginService(google, auth.NewOAuthStateStore(database), database, signer, preauth)
 	}
 	var sessions *auth.SessionService
+	var demoAccounts *auth.DemoAccountService
 	var passkeys *auth.PasskeyService
 	var handoffs *auth.SessionHandoffService
 	var bootstraps *auth.PasskeyBootstrapService
 	if signer != nil {
 		sessions = auth.NewSessionService(database, signer)
+		if cfg.DemoAccountEnabled {
+			demoAccounts = auth.NewDemoAccountService(database, sessions)
+		}
 		bootstraps = auth.NewPasskeyBootstrapService(database)
 		rp, e := auth.NewPasskeyRelyingParty(cfg.WebAuthn)
 		if e != nil {
@@ -116,6 +125,10 @@ func main() {
 	devices := keys.NewDeviceService(database)
 	deviceTransfers := keys.NewDeviceTransferService(database)
 	accounts := account.NewService(database, images)
+	if demoAccounts != nil {
+		sweepExpiredDemoAccounts(demoAccounts, accounts)
+		startDemoAccountSweep(demoAccounts, accounts)
+	}
 	profiles := user.NewService(database)
 	notifications := notification.NewService(database)
 	matchingService := matching.NewService(database, notifications)
@@ -159,7 +172,7 @@ func main() {
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       60 * time.Second,
 		MaxHeaderBytes:    32 * 1024,
-		Handler:           httpapi.NewRouterWithOptions(httpapi.RouterOptions{Environment: cfg.Environment, AllowExpoGoRedirect: cfg.AllowExpoGoRedirect, DevClientOrigin: cfg.DevClientOrigin, ClientOrigin: cfg.ClientOrigin, OAuthLogin: oauthLogin, PreAuth: preauth, Sessions: sessions, SessionHandoffs: handoffs, PasskeyBootstraps: bootstraps, Recovery: recovery, Passkeys: passkeys, KeyEnvelopes: envelopes, Devices: devices, DeviceTransfers: deviceTransfers, Images: images, Accounts: accounts, Profiles: profiles, Matching: matchingService, RecruitmentClassifier: recruitmentClassifier, Chats: chatService, ChatModeration: chatModeration, ChatTranslation: chatTranslation, Meetings: meetingService, Notifications: notifications, Safety: safetyService, Identity: identityService, Push: pushService}),
+		Handler:           httpapi.NewRouterWithOptions(httpapi.RouterOptions{Environment: cfg.Environment, AllowExpoGoRedirect: cfg.AllowExpoGoRedirect, DevClientOrigin: cfg.DevClientOrigin, ClientOrigin: cfg.ClientOrigin, OAuthLogin: oauthLogin, DemoAccounts: demoAccounts, PreAuth: preauth, Sessions: sessions, SessionHandoffs: handoffs, PasskeyBootstraps: bootstraps, Recovery: recovery, Passkeys: passkeys, KeyEnvelopes: envelopes, Devices: devices, DeviceTransfers: deviceTransfers, Images: images, Accounts: accounts, Profiles: profiles, Matching: matchingService, RecruitmentClassifier: recruitmentClassifier, Chats: chatService, ChatModeration: chatModeration, ChatTranslation: chatTranslation, Meetings: meetingService, Notifications: notifications, Safety: safetyService, Identity: identityService, Push: pushService}),
 	}
 	log.Printf("chat message retention window: %d days", chatService.RetentionDays())
 	log.Printf("backend server listening on %s (environment=%s)", cfg.HTTPAddr, cfg.Environment)
@@ -186,6 +199,38 @@ func startChatAttachmentSweep(chatService *chat.Service) {
 			sweep()
 		}
 	}()
+}
+
+func startDemoAccountSweep(demoAccounts *auth.DemoAccountService, accounts *account.Service) {
+	go func() {
+		ticker := time.NewTicker(time.Hour)
+		defer ticker.Stop()
+		for range ticker.C {
+			sweepExpiredDemoAccounts(demoAccounts, accounts)
+		}
+	}()
+}
+
+func sweepExpiredDemoAccounts(demoAccounts *auth.DemoAccountService, accounts *account.Service) {
+	if demoAccounts == nil || accounts == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	ids, err := demoAccounts.ExpiredUserIDs(ctx, 50, time.Now())
+	if err != nil {
+		log.Printf("demo account cleanup scan failed: %v", err)
+		return
+	}
+	for _, id := range ids {
+		if err := accounts.Delete(ctx, id, time.Now()); err != nil {
+			log.Printf("demo account cleanup failed for user %s: %v", id, err)
+			return
+		}
+	}
+	if len(ids) > 0 {
+		log.Printf("demo account cleanup removed %d expired account(s)", len(ids))
+	}
 }
 
 // startChatRetentionSweep tombstones expired chat messages once at startup and

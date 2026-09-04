@@ -29,6 +29,7 @@ type RouterOptions struct {
 	DevClientOrigin       string
 	ClientOrigin          string
 	OAuthLogin            *auth.OAuthLoginService
+	DemoAccounts          *auth.DemoAccountService
 	PreAuth               *auth.PreAuthService
 	Sessions              *auth.SessionService
 	SessionHandoffs       *auth.SessionHandoffService
@@ -72,6 +73,7 @@ func NewRouterWithOptions(o RouterOptions) http.Handler {
 		m.HandleFunc("/auth/callback", googleCallback(o.OAuthLogin, o.Environment, o.AllowExpoGoRedirect, o.ClientOrigin, o.DevClientOrigin))
 	}
 	if o.Sessions != nil {
+		m.HandleFunc(APIV1Prefix+"/auth/demo/start", demoAccountStart(o.DemoAccounts))
 		m.HandleFunc(APIV1Prefix+"/auth/refresh", refreshSession(o.Sessions))
 		m.HandleFunc(APIV1Prefix+"/auth/logout", logoutSession(o.Sessions))
 		m.HandleFunc(APIV1Prefix+"/auth/logout-all", logoutAllSessions(o.Sessions))

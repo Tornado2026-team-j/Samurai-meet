@@ -206,7 +206,7 @@ type classificationTestRows struct {
 }
 
 func (*classificationTestRows) Columns() []string {
-	return []string{"status", "expires_at", "last_seen_at"}
+	return []string{"status", "expires_at", "last_seen_at", "account_type", "demo_expires_at"}
 }
 
 func (r *classificationTestRows) Close() error {
@@ -222,6 +222,8 @@ func (r *classificationTestRows) Next(dest []driver.Value) error {
 	dest[0] = "active"
 	dest[1] = r.expiresAt
 	dest[2] = r.lastSeenAt
+	dest[3] = "regular"
+	dest[4] = nil
 	return nil
 }
 

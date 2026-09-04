@@ -17,6 +17,7 @@ import { StatusBar } from "expo-status-bar";
 import IdentityVerificationPrompt from "../components/IdentityVerificationPrompt";
 import ProfileForm from "../components/ProfileForm";
 import { RecoveryAccountDeleteAction, RecoveryCompletion, RecoveryKeyDisplay, RecoveryKeyInput, SupportAccountID } from "../components/RecoveryFlow";
+import DemoAccountEntry from "../components/DemoAccountEntry";
 import { useAuth } from "../hooks/useAuth";
 import {
   completeInitialKeySetup,
@@ -260,16 +261,21 @@ function LanguageStep({ onContinue }: LanguageStepProps) {
 }
 
 type AuthStepProps = {
+  appMode: AppMode;
   language: AppLanguage;
   onAuthenticated: () => void;
   onBack: () => Promise<void>;
 };
 
-function AuthStep({ language, onAuthenticated, onBack }: AuthStepProps) {
-  const { busy, continuePasskey, deleteAccount, error, login, logout, preAuth, recoverWithRecoveryKey, recoveryVerified, status } = useAuth();
+function AuthStep({ appMode, language, onAuthenticated, onBack }: AuthStepProps) {
+  const { busy, continuePasskey, deleteAccount, error, login, logout, preAuth, recoverWithRecoveryKey, recoveryVerified, session, startDemoAccount, status } = useAuth();
   const [showRecovery, setShowRecovery] = useState(false);
+  const demoEntryEnabled = process.env.EXPO_PUBLIC_DEMO_ACCOUNT_ENABLED === "true";
+  const googleLoginEnabled = process.env.EXPO_PUBLIC_GOOGLE_LOGIN_ENABLED === "true"
+    || (process.env.EXPO_PUBLIC_GOOGLE_LOGIN_ENABLED !== "false" && !demoEntryEnabled);
   const passkeyReady = status === "pre_auth" && preAuth !== null;
   const signedIn = status === "signed_in";
+  const signedInDemo = signedIn && session?.account_type === "demo";
   const leaveAuthentication = async () => {
     if (busy) return;
     await logout();
@@ -281,7 +287,7 @@ function AuthStep({ language, onAuthenticated, onBack }: AuthStepProps) {
         onAuthenticated();
       } else if (passkeyReady) {
         if (await continuePasskey(language)) onAuthenticated();
-      } else {
+      } else if (googleLoginEnabled) {
         await login();
       }
     } catch {
@@ -292,6 +298,13 @@ function AuthStep({ language, onAuthenticated, onBack }: AuthStepProps) {
     if (await deleteAccount()) return;
     throw new Error(language === "ja" ? "アカウント削除に失敗しました。" : "Account deletion failed.");
   };
+  const startDemo = async () => {
+    try {
+      if (await startDemoAccount(language, appMode)) onAuthenticated();
+    } catch {
+      // useAuth exposes the handled error through its error state.
+    }
+  };
   const copy = language === "ja"
     ? {
         title: signedIn
@@ -300,20 +313,24 @@ function AuthStep({ language, onAuthenticated, onBack }: AuthStepProps) {
             ? "Passkeyを設定"
             : "アカウントを作成",
         subtitle: signedIn
-          ? "Googleアカウントの確認が完了しました。次に本人確認へ進みます。"
+          ? signedInDemo
+            ? "審査用Demoアカウントを作成しました。次にプロフィールへ進みます。"
+            : "Googleアカウントの確認が完了しました。次に本人確認へ進みます。"
           : passkeyReady
             ? recoveryVerified
               ? (preAuth?.passkey_registered
                 ? "Recovery Phraseを確認しました。続けてPasskeyで本人確認します。"
                 : "Recovery Phraseを確認しました。続けてこの端末のPasskeyを登録します。")
               : "Google認証が完了しました。続けてこの端末を保護します。"
-          : "Googleアカウントで安全に登録・ログインできます。",
+          : googleLoginEnabled
+            ? "Googleアカウントで安全に登録・ログインできます。"
+            : "登録不要の審査用Demoアカウントで体験できます。",
         continue: "次へ",
         google: "Googleで続ける",
         passkey: preAuth?.passkey_registered ? "Passkeyで本人確認" : "Passkeyを登録",
         recovery: "Recovery Phraseで復旧",
         logout: "ログアウト",
-        verificationDone: recoveryVerified ? "Recovery Phrase確認済み" : "Google認証済み",
+        verificationDone: signedInDemo ? "Demoアカウント作成済み" : recoveryVerified ? "Recovery Phrase確認済み" : "Google認証済み",
         privacy: "メールアドレスは本人確認のためにのみ使用します",
         passkeyNote: "Passkeyはパスワードを保存せず、この端末の画面ロックで本人確認します",
       }
@@ -324,20 +341,24 @@ function AuthStep({ language, onAuthenticated, onBack }: AuthStepProps) {
             ? "Set up a passkey"
             : "Create your account",
         subtitle: signedIn
-          ? "Your Google account is verified. Next, review identity verification."
+          ? signedInDemo
+            ? "Your review demo account is ready. Continue to your profile."
+            : "Your Google account is verified. Next, review identity verification."
           : passkeyReady
             ? recoveryVerified
                 ? (preAuth?.passkey_registered
                 ? "Your Recovery Phrase was verified. Continue with Passkey verification."
                 : "Your Recovery Phrase was verified. Continue by creating a Passkey for this device.")
               : "Google verification is complete. Now protect this device."
-          : "Sign up or sign in securely with your Google account.",
+          : googleLoginEnabled
+            ? "Sign up or sign in securely with your Google account."
+            : "Try the app with a review demo account. No sign-up required.",
         continue: "Continue",
         google: "Continue with Google",
         passkey: preAuth?.passkey_registered ? "Verify with passkey" : "Create a passkey",
         recovery: "Recover with Recovery Phrase",
         logout: "Log out",
-        verificationDone: recoveryVerified ? "Recovery Phrase verified" : "Google verified",
+        verificationDone: signedInDemo ? "Demo account ready" : recoveryVerified ? "Recovery Phrase verified" : "Google verified",
         privacy: "Your email is used only to verify your account",
         passkeyNote: "Passkeys use your device screen lock, so there is no password to store",
       };
@@ -379,7 +400,9 @@ function AuthStep({ language, onAuthenticated, onBack }: AuthStepProps) {
           <View style={styles.authActions}>
             {passkeyReady || signedIn ? (
               <View style={styles.completedRow}>
-                {recoveryVerified ? (
+                {signedInDemo ? (
+                  <MaterialIcons color={YELLOW} name="play-circle-outline" size={22} />
+                ) : recoveryVerified ? (
                   <MaterialIcons color={YELLOW} name="vpn-key" size={22} />
                 ) : (
                   <View style={styles.googleMarkSmall}>
@@ -391,31 +414,41 @@ function AuthStep({ language, onAuthenticated, onBack }: AuthStepProps) {
               </View>
             ) : null}
 
-            <Pressable
-              accessibilityRole="button"
-              disabled={busy}
-              onPress={() => void startAuthentication()}
-              style={({ pressed }) => [
-                styles.authButton,
-                busy && styles.disabled,
-                pressed && styles.pressed,
-              ]}
-            >
-              {busy ? (
-                <ActivityIndicator color={TEXT_GRAY} />
-              ) : signedIn ? (
-                <MaterialIcons color={YELLOW} name="arrow-forward" size={26} />
-              ) : passkeyReady ? (
-                <MaterialIcons color={YELLOW} name="key" size={26} />
-              ) : (
-                <FontAwesome color="#4285f4" name="google" size={23} />
-              )}
-              {!busy ? (
-                <Text style={styles.authButtonText}>
-                  {signedIn ? copy.continue : passkeyReady ? copy.passkey : copy.google}
-                </Text>
-              ) : null}
-            </Pressable>
+            {passkeyReady || signedIn || googleLoginEnabled ? (
+              <Pressable
+                accessibilityRole="button"
+                disabled={busy}
+                onPress={() => void startAuthentication()}
+                style={({ pressed }) => [
+                  styles.authButton,
+                  busy && styles.disabled,
+                  pressed && styles.pressed,
+                ]}
+              >
+                {busy ? (
+                  <ActivityIndicator color={TEXT_GRAY} />
+                ) : signedIn ? (
+                  <MaterialIcons color={YELLOW} name="arrow-forward" size={26} />
+                ) : passkeyReady ? (
+                  <MaterialIcons color={YELLOW} name="key" size={26} />
+                ) : (
+                  <FontAwesome color="#4285f4" name="google" size={23} />
+                )}
+                {!busy ? (
+                  <Text style={styles.authButtonText}>
+                    {signedIn ? copy.continue : passkeyReady ? copy.passkey : copy.google}
+                  </Text>
+                ) : null}
+              </Pressable>
+            ) : null}
+
+            {!passkeyReady && !signedIn && demoEntryEnabled ? (
+              <DemoAccountEntry
+                disabled={busy}
+                language={language}
+                onPress={() => void startDemo()}
+              />
+            ) : null}
 
             {passkeyReady && preAuth?.passkey_registered && preAuth.recovery_available === true ? (
               <Pressable
@@ -1072,6 +1105,7 @@ export default function OnboardingScreen() {
   if (status !== "signed_in" || !session) {
     return (
       <AuthStep
+        appMode={appMode}
         language={language}
         onAuthenticated={() => setAccountStepCompleted(true)}
         onBack={async () => {
@@ -1246,6 +1280,7 @@ export default function OnboardingScreen() {
   if (!profile?.completed && !accountStepCompleted) {
     return (
       <AuthStep
+        appMode={appMode}
         language={language}
         onAuthenticated={() => setAccountStepCompleted(true)}
         onBack={async () => {
