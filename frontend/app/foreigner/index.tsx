@@ -11,7 +11,7 @@ import {
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { colors, LoadingSpinner, spacing } from "../../components/ui";
+import { colors, LoadingScreen, RefreshLoadingIndicator, spacing } from "../../components/ui";
 import { useAuth } from "../../hooks/useAuth";
 import { useUnreadNotifications } from "../../hooks/useUnreadNotifications";
 import { useDelayedLoading } from "../../hooks/useDelayedLoading";
@@ -255,12 +255,11 @@ export default function ForeignerHomeScreen() {
   };
 
   if (!language) {
-    return (
-      <View style={styles.loadingScreen}>
-        <StatusBar style="dark" />
-        <LoadingSpinner color={BLUE} size={28} speedMs={680} />
-      </View>
-    );
+    return <LoadingScreen />;
+  }
+
+  if (showInitialLoading && loading && applications.length === 0 && !loadError) {
+    return <LoadingScreen />;
   }
 
   return (
@@ -344,8 +343,10 @@ export default function ForeignerHomeScreen() {
             onRefresh={() => {
               void loadApplications("refresh");
             }}
+            colors={["transparent"]}
+            progressBackgroundColor="transparent"
             refreshing={refreshing}
-            tintColor={BLUE}
+            tintColor="transparent"
           />
         }
         nestedScrollEnabled
@@ -387,12 +388,7 @@ export default function ForeignerHomeScreen() {
           </View>
         </View>
 
-        {loading && applications.length === 0 && showInitialLoading ? (
-          <View style={styles.emptyPanel}>
-            <LoadingSpinner color={BLUE} size={24} speedMs={680} />
-            <Text style={styles.emptyTitle}>{copy.loading}</Text>
-          </View>
-        ) : loadError && applications.length === 0 ? (
+        {loading && applications.length === 0 ? null : loadError && applications.length === 0 ? (
           <View style={styles.emptyPanel}>
             <Text accessibilityRole="alert" style={styles.emptyTitle}>{loadError}</Text>
             <Pressable
@@ -490,6 +486,7 @@ export default function ForeignerHomeScreen() {
           </View>
         )}
       </ScrollView>
+      {refreshing ? <RefreshLoadingIndicator color={BLUE} top={186} /> : null}
     </View>
   );
 }

@@ -1917,7 +1917,7 @@ export default function ChatDetailScreen() {
     return (
       <View style={styles.loadingScreen}>
         <StatusBar style="light" />
-        <LoadingSpinner color={BLUE} size={26} speedMs={680} />
+        <LoadingSpinner color={BLUE} size={26} />
         <Text style={styles.loadingText}>{copy.loading}</Text>
       </View>
     );
