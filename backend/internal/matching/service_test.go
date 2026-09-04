@@ -7,8 +7,14 @@ import (
 	"time"
 )
 
+func testCoordinates() (*float64, *float64) {
+	latitude, longitude := 35.681236, 139.767125
+	return &latitude, &longitude
+}
+
 func TestNormalizeRecruitmentInput(t *testing.T) {
 	now := time.Date(2026, time.August, 26, 8, 0, 0, 0, time.UTC)
+	latitude, longitude := testCoordinates()
 	input := RecruitmentInput{
 		Category:           "Food",
 		AvailableDate:      "2026-08-27",
@@ -18,6 +24,8 @@ func TestNormalizeRecruitmentInput(t *testing.T) {
 		Keywords:           []string{" 食事 ", "食事", "日本語"},
 		Description:        "駅の近くで交流しましょう",
 		VisibilityRadiusKM: 3,
+		Latitude:           latitude,
+		Longitude:          longitude,
 		Status:             "open",
 	}
 
@@ -56,6 +64,13 @@ func TestNormalizeRecruitmentInput(t *testing.T) {
 		t.Fatalf("empty description error = %v, want ErrInvalidInput", err)
 	}
 
+	invalid = input
+	invalid.Latitude = nil
+	invalid.Longitude = nil
+	if _, _, err := normalizeRecruitmentInput(invalid, now); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("open recruitment without coordinates error = %v, want ErrInvalidInput", err)
+	}
+
 	for _, category := range []string{"Places", "Activity", "Other"} {
 		valid := input
 		valid.Category = category
@@ -72,6 +87,7 @@ func TestNormalizeRecruitmentInput(t *testing.T) {
 
 func TestNormalizeRecruitmentInputDefaultsToJSTAndRejectsOtherTimezones(t *testing.T) {
 	now := time.Date(2026, time.August, 26, 8, 0, 0, 0, time.UTC)
+	latitude, longitude := testCoordinates()
 	base := RecruitmentInput{
 		Category:           "Food",
 		AvailableDate:      "2026-08-27",
@@ -80,6 +96,8 @@ func TestNormalizeRecruitmentInputDefaultsToJSTAndRejectsOtherTimezones(t *testi
 		Keywords:           []string{"食事"},
 		Description:        "駅の近くで交流しましょう",
 		VisibilityRadiusKM: 3,
+		Latitude:           latitude,
+		Longitude:          longitude,
 	}
 
 	withoutTimezone := base
@@ -110,6 +128,7 @@ func TestNormalizeRecruitmentInputDefaultsToJSTAndRejectsOtherTimezones(t *testi
 }
 
 func TestRecruitmentExpiryUsesJSTStart(t *testing.T) {
+	latitude, longitude := testCoordinates()
 	input := RecruitmentInput{
 		Category:           "Food",
 		AvailableDate:      "2026-08-27",
@@ -119,6 +138,8 @@ func TestRecruitmentExpiryUsesJSTStart(t *testing.T) {
 		Keywords:           []string{"食事"},
 		Description:        "駅の近くで交流しましょう",
 		VisibilityRadiusKM: 3,
+		Latitude:           latitude,
+		Longitude:          longitude,
 		Status:             "open",
 	}
 
@@ -142,6 +163,7 @@ func TestRecruitmentExpiryUsesJSTStart(t *testing.T) {
 
 func TestNormalizeRecruitmentInputAllowsPastDraft(t *testing.T) {
 	now := time.Date(2026, time.August, 26, 8, 0, 0, 0, time.UTC)
+	latitude, longitude := testCoordinates()
 	input := RecruitmentInput{
 		Category:           "Food",
 		AvailableDate:      "2026-08-25",
@@ -151,6 +173,8 @@ func TestNormalizeRecruitmentInputAllowsPastDraft(t *testing.T) {
 		Keywords:           []string{"食事"},
 		Description:        "駅の近くで交流しましょう",
 		VisibilityRadiusKM: 3,
+		Latitude:           latitude,
+		Longitude:          longitude,
 		Status:             "draft",
 	}
 

@@ -15,6 +15,7 @@ import (
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/matching"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/meeting"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/notification"
+	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/places"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/push"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/safety"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/translation"
@@ -48,6 +49,7 @@ type RouterOptions struct {
 	ChatTranslation       *translation.Service
 	Meetings              *meeting.Service
 	Notifications         *notification.Service
+	Places                *places.Service
 	Safety                *safety.Service
 	Identity              *identity.Service
 	Push                  *push.Service
@@ -152,6 +154,10 @@ func NewRouterWithOptions(o RouterOptions) http.Handler {
 		m.HandleFunc(notificationPath, notificationCollection(o.Notifications, o.Sessions))
 		m.HandleFunc(notificationPath+"/read-all", notificationReadAll(o.Notifications, o.Sessions))
 		m.HandleFunc(notificationPath+"/", notificationItem(o.Notifications, o.Sessions))
+	}
+	if o.Sessions != nil && o.Places != nil {
+		m.HandleFunc(placesSearchPath, placeSearch(o.Places, o.Sessions))
+		m.HandleFunc(placesNearbyPath, placeNearby(o.Places, o.Sessions))
 	}
 	if o.Sessions != nil && o.Meetings != nil {
 		m.HandleFunc(meetingPath+"/", meetingItem(o.Meetings, o.Sessions))

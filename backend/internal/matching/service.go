@@ -287,8 +287,18 @@ func (s *Service) SearchRecruitments(ctx context.Context, userID string, params 
 	if err != nil {
 		return nil, err
 	}
+	allowed, err := s.localRecruitmentSearchAllowed(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if !allowed {
+		return []Recruitment{}, nil
+	}
 	if params.Latitude == nil && params.Longitude == nil {
 		params.Latitude, params.Longitude = s.currentLocation(ctx, userID, now)
+	}
+	if params.Latitude == nil {
+		return []Recruitment{}, nil
 	}
 	nowText := now.UTC().Format(time.RFC3339Nano)
 	// Keyword and exact distance matching is finalized below in Go. Do not cap
@@ -1244,6 +1254,9 @@ func normalizeRecruitmentInput(input RecruitmentInput, now time.Time) (Recruitme
 	if (input.Latitude == nil) != (input.Longitude == nil) {
 		return RecruitmentInput{}, "", ErrInvalidInput
 	}
+	if input.Status == "open" && input.Latitude == nil {
+		return RecruitmentInput{}, "", ErrInvalidInput
+	}
 	if input.Latitude != nil && (!finite(*input.Latitude) || !finite(*input.Longitude) || *input.Latitude < -90 || *input.Latitude > 90 || *input.Longitude < -180 || *input.Longitude > 180) {
 		return RecruitmentInput{}, "", ErrInvalidInput
 	}
@@ -1388,6 +1401,22 @@ func (s *Service) profileComplete(ctx context.Context, userID string) (bool, err
 			WHERE user_id=$1 AND btrim(name) <> '' AND nationality_code ~ '^[A-Z]{2}$'
 		)`, userID).Scan(&complete)
 	return complete, err
+}
+
+func (s *Service) localRecruitmentSearchAllowed(ctx context.Context, userID string) (bool, error) {
+	var nationalityCode string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT COALESCE(p.nationality_code,'')
+		FROM users u
+		LEFT JOIN profiles p ON p.user_id=u.id
+		WHERE u.id=$1 AND u.status='active'`, userID).Scan(&nationalityCode)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return strings.EqualFold(strings.TrimSpace(nationalityCode), "JP"), nil
 }
 
 func (s *Service) notificationActorNameTx(ctx context.Context, tx *sql.Tx, userID string) (string, error) {

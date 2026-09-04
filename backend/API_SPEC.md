@@ -1,6 +1,6 @@
 # バックエンド API 仕様（実装基準）
 
-最終更新: 2026-09-03
+最終更新: 2026-09-04
 
 この文書は、現在のGo実装とExpoテストクライアントの契約です。状態は次の記号で表します。
 
@@ -451,6 +451,8 @@ Request body:
 
 `category`は`Food` / `Places` / `Activity` / `Other`、`status`は`draft` / `open` / `closed`、公開半径は1 / 3 / 5だけを受け付けます。日時は`Asia/Tokyo`固定の壁時計として解釈し、募集期限は`available_date`の`start_time`までとして計算します。開始まで6時間未満でも公開できますが、クライアントは参加者が集まりにくい可能性を注意表示します。公開するカードには完成プロフィールが必要です。成功時は201で`{ "data": { ...card } }`を返します。日時入力はISO内部値とJST固定に統一され、自動テストで確認済みです。iOS実機の公開を含む全通しE2Eは未確認です。
 
+`open`として公開する募集には`latitude`と`longitude`が必須です。Where検索で選択した施設・地点の座標を保存し、その地点から`visibility_radius_km`内にいる日本人ユーザーだけが公開検索で見つけられます。正確な座標は作成・更新入力とDB内部に限定し、募集レスポンスには含めません。
+
 `GET /api/v1/recruitments/{id}`は所有者には自身のカードを返し、他ユーザーには期限内の`open` / `matched`だけを返します。`PATCH`は所有者だけが実行でき、`matched`後の内容変更は拒否します。`DELETE`は物理削除ではなく`closed`へ遷移させ、204を返します。
 
 `GET /api/v1/recruitments/mine`は、認証ユーザーが所有する募集カードの一覧を返します。公開検索用の`GET /api/v1/recruitments`とは別の所有者向け一覧です。
@@ -459,9 +461,19 @@ Request body:
 
 `GET /api/v1/recruitments?keyword=食事&available_date=2026-08-27&start_time=18:00&end_time=20:00&radius_km=3&verified_only=true&latitude=35.681236&longitude=139.767125&limit=20`
 
-`keyword`は複数指定できます。緯度経度を指定しなければ、`POST /api/v1/me/location`で保存した有効な最新位置（保持1時間）を使います。位置がない検索はキーワード・日時検索として扱います。結果は期限内の公開カードだけで、所有者自身とブロック関係にある相手は除外します。正確な座標は返さず、距離は`distance_band`（`within_1_km` / `within_3_km` / `within_5_km`）だけで示します。Authorization付きのプロフィール・マッチング応答には`Cache-Control: no-store`を付けます。
+`keyword`は複数指定できます。緯度経度を指定しなければ、`POST /api/v1/me/location`で保存した有効な最新位置（保持1時間）を使います。有効な現在地がない検索は公開募集を返さず、クライアントは位置情報許可ボタンを表示します。結果は期限内の公開カードだけで、所有者自身とブロック関係にある相手は除外します。正確な座標は返さず、距離は`distance_band`（`within_1_km` / `within_3_km` / `within_5_km`）だけで示します。Authorization付きのプロフィール・マッチング応答には`Cache-Control: no-store`を付けます。
 
 `POST /api/v1/me/location`のbodyは`latitude`、`longitude`、`accuracy_m`、任意の`captured_at`です。緯度経度、精度、取得時刻を検証し、成功時は204です。現行のCI/PostgreSQLイメージにPostGISを追加していないため、距離計算はGoのHaversineです。将来の件数増加時にPostGISへ置き換える際も、レスポンスから正確な座標を出さない契約は維持します。
+
+#### 場所検索
+
+`GET /api/v1/places/search?query=大阪城公園&language=ja&latitude=34.6937&longitude=135.5023&limit=5`
+
+認証済みユーザーだけが利用できます。Backendだけが`GOOGLE_PLACES_API_KEY`を保持し、Google Places API (New) のAutocompleteで候補を取得し、Place Detailsで座標を取得します。`query`は2文字以上120文字以内、`language`は`ja`または`en`、`limit`は1〜10です。`latitude` / `longitude`は任意の検索バイアスで、片方だけの指定は拒否します。成功時は`{ "data": [{ "id", "place_id", "label", "subtitle", "provider": "google_maps", "coordinates": { "latitude", "longitude", "accuracy_m" } }] }`を返します。Google Places未設定時は`503 places_unavailable`、provider障害時は`502 places_search_failed`です。候補は駅・観光地・施設などの具体的な地点を、行政区画や住所だけの候補より優先します。
+
+`GET /api/v1/places/nearby?latitude=34.7024854&longitude=135.4959506&language=ja&limit=5`
+
+認証済みユーザーだけが利用できます。現在地を中心にGoogle Places API (New) のNearby Searchを呼び、周辺の観光地・駅・飲食店・商業施設などを座標付き候補として返します。募集作成画面はこの応答を地図ピンとして表示し、選択したピンの「ここで会う」操作で`location_name`と公開範囲の基準座標を保存します。`latitude` / `longitude`は必須、`language`は`ja`または`en`、`limit`は1〜10です。成功時のレスポンス形は場所検索と同じです。
 
 #### 関心・承認・完了
 

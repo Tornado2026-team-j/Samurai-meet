@@ -22,6 +22,7 @@ import {
   View,
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
+import MapView, { Marker } from "react-native-maps";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import DismissKeyboardView from "../../components/DismissKeyboardView";
 import { Button, Card, Pill, colors, opacity, radius, shadows, spacing, typography } from "../../components/ui";
@@ -30,6 +31,7 @@ import { useAuth } from "../../hooks/useAuth";
 import { APIError } from "../../services/api-client";
 import {
   resolveCurrentLocationDisplay,
+  searchNearbyPlaces,
   searchLocationSuggestions,
   type LocationSearchSuggestion,
 } from "../../services/location";
@@ -78,7 +80,7 @@ const TEXT_GRAY = "#535353";
 const PLACEHOLDER_GRAY = "#949494";
 const BORDER_GRAY = "#d4d4d4";
 const COLLAPSED_HEADER_HEIGHT = 156;
-const EXPANDED_HEADER_HEIGHT = 760;
+const EXPANDED_HEADER_HEIGHT = 860;
 const HOME_PEEK_HEIGHT = 96;
 const EXPANSION_DURATION = 360;
 const RECRUITMENT_CATEGORIES = MATCH_CATEGORIES;
@@ -86,6 +88,22 @@ const MIN_DURATION_HOURS = 0.5;
 const MAX_DURATION_HOURS = 8;
 const DURATION_STEP_HOURS = 0.5;
 const LOCATION_SEARCH_DEBOUNCE_MS = 300;
+const FORM_BASE_HEIGHT = 764;
+const WHERE_BASE_HEIGHT = 196;
+const LOCATION_SUGGESTIONS_TOP = 66;
+const LOCATION_SUGGESTION_ROW_HEIGHT = 44;
+const LOCATION_SUGGESTION_EMPTY_HEIGHT = 40;
+const LOCATION_MAP_TOP = 104;
+const LOCATION_MAP_HEIGHT = 180;
+const FORM_TOPS = {
+  date: 303,
+  startTime: 391,
+  duration: 478,
+  participants: 553,
+  distance: 626,
+  nextButton: 709,
+  formError: 744,
+} as const;
 const TIME_PICKER_HOURS = Array.from({ length: 24 }, (_, hourValue) => hourValue);
 const TIME_PICKER_MINUTES = Array.from(
   { length: 12 },
@@ -150,6 +168,9 @@ const RECRUITMENT_COPY = {
     currentLocationResolving: "Finding your area...",
     currentLocationFallback: "Current location",
     noLocationResults: "No places found",
+    googleMapsAttribution: "Google Maps",
+    meetHere: "Meet here",
+    currentLocationMarker: "Current location",
     closeScheduleWarning: "Close schedule warning",
     pastStartTitle: "This start time has passed.",
     shortNoticeTitle: "The start time is within 6 hours.",
@@ -264,6 +285,9 @@ const RECRUITMENT_COPY = {
     currentLocationResolving: "現在地を確認中…",
     currentLocationFallback: "現在地",
     noLocationResults: "候補が見つかりません",
+    googleMapsAttribution: "Google Maps",
+    meetHere: "ここで会う",
+    currentLocationMarker: "現在地",
     closeScheduleWarning: "日時の確認を閉じる",
     pastStartTitle: "開始時刻が過ぎています。",
     shortNoticeTitle: "開始まで6時間以内です。",
@@ -493,12 +517,20 @@ export default function SearchPreferencesScreen() {
   const suggestedDate = suggestedSchedule.date;
   const [description, setDescription] = useState(initialQuery ?? "");
   const [location, setLocation] = useState("");
+  const [currentLocationCoordinates, setCurrentLocationCoordinates] =
+    useState<Coordinates | null>(null);
   const [selectedLocationCoordinates, setSelectedLocationCoordinates] =
     useState<Coordinates | null>(null);
   const [selectedLocationLabel, setSelectedLocationLabel] = useState("");
+  const [selectedLocationSubtitle, setSelectedLocationSubtitle] = useState("");
   const [locationSuggestions, setLocationSuggestions] = useState<LocationSearchSuggestion[]>([]);
   const [locationSearchStatus, setLocationSearchStatus] =
     useState<"idle" | "loading" | "error">("idle");
+  const [nearbyPlaces, setNearbyPlaces] = useState<LocationSearchSuggestion[]>([]);
+  const [nearbySearchStatus, setNearbySearchStatus] =
+    useState<"idle" | "loading" | "error">("idle");
+  const [pendingNearbyPlace, setPendingNearbyPlace] =
+    useState<LocationSearchSuggestion | null>(null);
   const [date, setDate] = useState(suggestedDate);
   const [useCurrentLocation, setUseCurrentLocation] = useState(true);
   const [hour, setHour] = useState(() => Number(suggestedSchedule.startTime.slice(0, 2)));
@@ -559,6 +591,36 @@ export default function SearchPreferencesScreen() {
     return nextMaximum;
   }, [minimumDate]);
   const copy = RECRUITMENT_COPY[language];
+  const mapCenterCoordinates = selectedLocationCoordinates ?? currentLocationCoordinates;
+  const locationMapRegion = mapCenterCoordinates
+    ? {
+        latitude: mapCenterCoordinates.latitude,
+        longitude: mapCenterCoordinates.longitude,
+        latitudeDelta: 0.012,
+        longitudeDelta: 0.012,
+      }
+    : null;
+  const isSelectedLocationSettled = Boolean(
+    selectedLocationCoordinates && location.trim() === selectedLocationLabel,
+  );
+  const isLocationSuggestionListVisible =
+    !useCurrentLocation
+    && !isSelectedLocationSettled
+    && location.trim().length >= 2
+    && (locationSuggestions.length > 0 || locationSearchStatus === "idle");
+  const locationSuggestionPanelHeight = isLocationSuggestionListVisible
+    ? locationSuggestions.length > 0
+      ? locationSuggestions.length * LOCATION_SUGGESTION_ROW_HEIGHT
+      : LOCATION_SUGGESTION_EMPTY_HEIGHT
+    : 0;
+  const locationSuggestionExtraHeight = isLocationSuggestionListVisible
+    ? Math.max(0, LOCATION_SUGGESTIONS_TOP + locationSuggestionPanelHeight + 8 - WHERE_BASE_HEIGHT)
+    : 0;
+  const locationMapExtraHeight = locationMapRegion
+    ? Math.max(0, LOCATION_MAP_TOP + LOCATION_MAP_HEIGHT + 8 - WHERE_BASE_HEIGHT)
+    : 0;
+  const whereExtraHeight = Math.max(locationSuggestionExtraHeight, locationMapExtraHeight);
+  const shiftedFormTop = (top: number) => top + whereExtraHeight;
   const pickerLocale = language === "ja" ? "ja-JP" : "en-US";
   const homePeekHeight = Math.max(HOME_PEEK_HEIGHT, insets.bottom + 72);
   const expandedPanelHeight = Math.min(
@@ -686,14 +748,20 @@ export default function SearchPreferencesScreen() {
         const displayName = result?.displayName ?? copy.currentLocationFallback;
         setLocation(displayName);
         setSelectedLocationLabel(displayName);
+        setSelectedLocationSubtitle("");
+        setCurrentLocationCoordinates(result?.coordinates ?? null);
         setSelectedLocationCoordinates(result?.coordinates ?? null);
+        setPendingNearbyPlace(null);
         setLocationSearchStatus("idle");
       })
       .catch(() => {
         if (!active) return;
         setLocation(copy.currentLocationFallback);
         setSelectedLocationLabel(copy.currentLocationFallback);
+        setSelectedLocationSubtitle("");
+        setCurrentLocationCoordinates(null);
         setSelectedLocationCoordinates(null);
+        setPendingNearbyPlace(null);
         setLocationSearchStatus("error");
       });
 
@@ -701,6 +769,51 @@ export default function SearchPreferencesScreen() {
       active = false;
     };
   }, [copy.currentLocationFallback, useCurrentLocation]);
+
+  useEffect(() => {
+    if (!useCurrentLocation || !currentLocationCoordinates) {
+      setNearbyPlaces([]);
+      setPendingNearbyPlace(null);
+      setNearbySearchStatus("idle");
+      return;
+    }
+
+    const activeSession = getCurrentSession() ?? session;
+    if (!activeSession) {
+      setNearbyPlaces([]);
+      setNearbySearchStatus("error");
+      return;
+    }
+
+    let active = true;
+    const controller = new AbortController();
+    setNearbySearchStatus("loading");
+    void searchNearbyPlaces(currentLocationCoordinates, activeSession, {
+      language,
+      signal: controller.signal,
+    })
+      .then((places) => {
+        if (!active) return;
+        setNearbyPlaces(places);
+        setNearbySearchStatus("idle");
+      })
+      .catch(() => {
+        if (!active) return;
+        setNearbyPlaces([]);
+        setNearbySearchStatus("error");
+      });
+
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [
+    currentLocationCoordinates,
+    getCurrentSession,
+    language,
+    session,
+    useCurrentLocation,
+  ]);
 
   useEffect(() => {
     if (useCurrentLocation) return;
@@ -720,7 +833,17 @@ export default function SearchPreferencesScreen() {
     let active = true;
     setLocationSearchStatus("loading");
     const timeout = setTimeout(() => {
-      void searchLocationSuggestions(trimmedLocation)
+      const activeSession = getCurrentSession() ?? session;
+      if (!activeSession) {
+        setLocationSuggestions([]);
+        setLocationSearchStatus("error");
+        return;
+      }
+      void searchLocationSuggestions(trimmedLocation, activeSession, {
+        language,
+        latitude: currentLocationCoordinates?.latitude,
+        longitude: currentLocationCoordinates?.longitude,
+      })
         .then((suggestions) => {
           if (!active) return;
           setLocationSuggestions(suggestions);
@@ -737,7 +860,17 @@ export default function SearchPreferencesScreen() {
       active = false;
       clearTimeout(timeout);
     };
-  }, [location, selectedLocationCoordinates, selectedLocationLabel, useCurrentLocation]);
+  }, [
+    currentLocationCoordinates?.latitude,
+    currentLocationCoordinates?.longitude,
+    getCurrentSession,
+    language,
+    location,
+    selectedLocationCoordinates,
+    selectedLocationLabel,
+    session,
+    useCurrentLocation,
+  ]);
 
   useEffect(
     () => () => {
@@ -830,25 +963,38 @@ export default function SearchPreferencesScreen() {
     setLocation(value);
     setSelectedLocationCoordinates(null);
     setSelectedLocationLabel("");
+    setSelectedLocationSubtitle("");
+    setPendingNearbyPlace(null);
   };
 
   const selectLocationSuggestion = (suggestion: LocationSearchSuggestion) => {
     setLocation(suggestion.label);
     setSelectedLocationLabel(suggestion.label);
+    setSelectedLocationSubtitle(suggestion.subtitle);
     setSelectedLocationCoordinates(suggestion.coordinates);
     setLocationSuggestions([]);
     setLocationSearchStatus("idle");
+    setPendingNearbyPlace(null);
     Keyboard.dismiss();
+  };
+
+  const confirmNearbyPlace = (suggestion: LocationSearchSuggestion) => {
+    setUseCurrentLocation(false);
+    setNearbyPlaces([]);
+    selectLocationSuggestion(suggestion);
   };
 
   const toggleUseCurrentLocation = () => {
     setUseCurrentLocation((current) => {
       const next = !current;
+      setPendingNearbyPlace(null);
       if (!next) {
         setLocation("");
         setSelectedLocationLabel("");
+        setSelectedLocationSubtitle("");
         setSelectedLocationCoordinates(null);
         setLocationSuggestions([]);
+        setNearbyPlaces([]);
         setLocationSearchStatus("idle");
       }
       return next;
@@ -865,15 +1011,24 @@ export default function SearchPreferencesScreen() {
         if (!result) return null;
         setLocation(result.displayName);
         setSelectedLocationLabel(result.displayName);
+        setSelectedLocationSubtitle("");
+        setCurrentLocationCoordinates(result.coordinates);
         setSelectedLocationCoordinates(result.coordinates);
         return result.coordinates;
       }
 
       if (location.trim().length < 2) return null;
-      const [suggestion] = await searchLocationSuggestions(location);
+      const activeSession = getCurrentSession() ?? session;
+      if (!activeSession) return null;
+      const [suggestion] = await searchLocationSuggestions(location, activeSession, {
+        language,
+        latitude: currentLocationCoordinates?.latitude,
+        longitude: currentLocationCoordinates?.longitude,
+      });
       if (!suggestion) return null;
       setLocation(suggestion.label);
       setSelectedLocationLabel(suggestion.label);
+      setSelectedLocationSubtitle(suggestion.subtitle);
       setSelectedLocationCoordinates(suggestion.coordinates);
       setLocationSuggestions([]);
       return suggestion.coordinates;
@@ -1438,7 +1593,7 @@ export default function SearchPreferencesScreen() {
                   },
                 ]}
               >
-          <View style={styles.form}>
+          <View style={[styles.form, { height: FORM_BASE_HEIGHT + whereExtraHeight }]}>
             <View style={styles.descriptionGroup}>
               <Text style={styles.label}>{copy.activityLabel}</Text>
               <TextInput
@@ -1455,7 +1610,7 @@ export default function SearchPreferencesScreen() {
               />
             </View>
 
-            <View style={styles.whereGroup}>
+            <View style={[styles.whereGroup, { height: WHERE_BASE_HEIGHT + whereExtraHeight }]}>
               <Text style={styles.label}>{copy.whereLabel}</Text>
               <View style={[
                 styles.input,
@@ -1511,8 +1666,11 @@ export default function SearchPreferencesScreen() {
                 <Text style={styles.currentLocationText}>{copy.useCurrentLocation}</Text>
               </Pressable>
 
-              {!useCurrentLocation && location.trim().length >= 2 ? (
-                <View style={styles.locationSuggestions}>
+              {isLocationSuggestionListVisible ? (
+                <View style={[
+                  styles.locationSuggestions,
+                  { height: locationSuggestionPanelHeight },
+                ]}>
                   {locationSuggestions.length > 0 ? (
                     locationSuggestions.map((suggestion) => (
                       <Pressable
@@ -1542,9 +1700,86 @@ export default function SearchPreferencesScreen() {
                   ) : null}
                 </View>
               ) : null}
+
+              {locationMapRegion ? (
+                <View style={styles.locationMapFrame}>
+                  <MapView
+                    initialRegion={locationMapRegion}
+                    region={locationMapRegion}
+                    scrollEnabled
+                    style={styles.locationMap}
+                    toolbarEnabled={false}
+                    zoomEnabled
+                  >
+                    {currentLocationCoordinates ? (
+                      <Marker
+                        coordinate={{
+                          latitude: currentLocationCoordinates.latitude,
+                          longitude: currentLocationCoordinates.longitude,
+                        }}
+                        pinColor={BLUE}
+                        title={copy.currentLocationMarker}
+                      />
+                    ) : null}
+                    {nearbyPlaces.map((place) => (
+                      <Marker
+                        key={place.id}
+                        coordinate={{
+                          latitude: place.coordinates.latitude,
+                          longitude: place.coordinates.longitude,
+                        }}
+                        onPress={() => setPendingNearbyPlace(place)}
+                        title={place.label}
+                        description={place.subtitle}
+                      />
+                    ))}
+                    {selectedLocationCoordinates && !useCurrentLocation ? (
+                      <Marker
+                        coordinate={{
+                          latitude: selectedLocationCoordinates.latitude,
+                          longitude: selectedLocationCoordinates.longitude,
+                        }}
+                        pinColor={YELLOW}
+                        title={selectedLocationLabel || location}
+                        description={selectedLocationSubtitle}
+                      />
+                    ) : null}
+                  </MapView>
+                  {nearbySearchStatus === "loading" ? (
+                    <View style={styles.nearbyLoadingBadge}>
+                      <ActivityIndicator color={colors.brand.gold} size="small" />
+                    </View>
+                  ) : null}
+                  {pendingNearbyPlace ? (
+                    <View style={styles.nearbySelectionPanel}>
+                      <View style={styles.nearbySelectionTextGroup}>
+                        <Text numberOfLines={1} style={styles.nearbySelectionLabel}>
+                          {pendingNearbyPlace.label}
+                        </Text>
+                        <Text numberOfLines={1} style={styles.nearbySelectionSubtitle}>
+                          {pendingNearbyPlace.subtitle}
+                        </Text>
+                      </View>
+                      <Pressable
+                        accessibilityRole="button"
+                        onPress={() => confirmNearbyPlace(pendingNearbyPlace)}
+                        style={({ pressed }) => [
+                          styles.meetHereButton,
+                          pressed && styles.pressed,
+                        ]}
+                      >
+                        <Text style={styles.meetHereText}>{copy.meetHere}</Text>
+                      </Pressable>
+                    </View>
+                  ) : null}
+                  {!pendingNearbyPlace ? (
+                    <Text style={styles.googleMapsAttribution}>{copy.googleMapsAttribution}</Text>
+                  ) : null}
+                </View>
+              ) : null}
             </View>
 
-            <View style={styles.dateGroup}>
+            <View style={[styles.dateGroup, { top: shiftedFormTop(FORM_TOPS.date) }]}>
               <Text style={styles.label}>{copy.dateLabel}</Text>
               <View style={styles.dateRow}>
                 <Pressable
@@ -1573,7 +1808,7 @@ export default function SearchPreferencesScreen() {
               </View>
             </View>
 
-            <View style={styles.startTimeGroup}>
+            <View style={[styles.startTimeGroup, { top: shiftedFormTop(FORM_TOPS.startTime) }]}>
               <Text style={styles.label}>{copy.startTimeLabel}</Text>
               <View style={styles.timeRow}>
                 <Pressable
@@ -1595,7 +1830,7 @@ export default function SearchPreferencesScreen() {
               </View>
             </View>
 
-            <View style={styles.durationGroup}>
+            <View style={[styles.durationGroup, { top: shiftedFormTop(FORM_TOPS.duration) }]}>
               <Text style={styles.label}>{copy.durationLabel}</Text>
               <View style={styles.durationStepper}>
                 <Pressable
@@ -1633,7 +1868,7 @@ export default function SearchPreferencesScreen() {
               </View>
             </View>
 
-            <View style={styles.participantsGroup}>
+            <View style={[styles.participantsGroup, { top: shiftedFormTop(FORM_TOPS.participants) }]}>
               <Text style={styles.label}>{copy.participantsLabel}</Text>
               <View style={styles.durationStepper}>
                 <Pressable
@@ -1668,7 +1903,7 @@ export default function SearchPreferencesScreen() {
               </View>
             </View>
 
-            <View style={styles.distanceGroup}>
+            <View style={[styles.distanceGroup, { top: shiftedFormTop(FORM_TOPS.distance) }]}>
               <Text style={styles.label}>{copy.distanceLabel}</Text>
               <View style={styles.distanceRow}>
                 {[1, 3, 5].map((option) => {
@@ -1697,7 +1932,7 @@ export default function SearchPreferencesScreen() {
                 void showConfirmation();
               }}
               size="sm"
-              style={styles.nextButton}
+              style={[styles.nextButton, { top: shiftedFormTop(FORM_TOPS.nextButton) }]}
               textStyle={styles.nextText}
               variant="secondary"
             >
@@ -1705,7 +1940,7 @@ export default function SearchPreferencesScreen() {
             </Button>
 
             {formError ? (
-              <Text accessibilityRole="alert" style={styles.formError}>
+              <Text accessibilityRole="alert" style={[styles.formError, { top: shiftedFormTop(FORM_TOPS.formError) }]}>
                 {formError}
               </Text>
             ) : null}
@@ -2851,7 +3086,7 @@ const styles = StyleSheet.create({
   form: {
     width: 340,
     maxWidth: "87.18%",
-    height: 674,
+    height: FORM_BASE_HEIGHT,
   },
   label: {
     color: colors.text.inverse,
@@ -2894,7 +3129,7 @@ const styles = StyleSheet.create({
     top: 101,
     right: 0,
     left: 0,
-    height: 82,
+    height: 196,
   },
   locationField: {
     position: "absolute",
@@ -2980,6 +3215,95 @@ const styles = StyleSheet.create({
     lineHeight: 16,
     textAlign: "center",
   },
+  locationMapFrame: {
+    position: "absolute",
+    top: LOCATION_MAP_TOP,
+    right: 0,
+    left: 0,
+    height: LOCATION_MAP_HEIGHT,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: colors.border.default,
+    borderRadius: radius.lg,
+    backgroundColor: colors.surface.default,
+  },
+  locationMap: {
+    width: "100%",
+    height: "100%",
+  },
+  googleMapsAttribution: {
+    position: "absolute",
+    right: 8,
+    bottom: 5,
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    borderRadius: radius.xs,
+    backgroundColor: "rgba(255,255,255,0.9)",
+    color: "#5E5E5E",
+    fontSize: 12,
+    fontWeight: "400",
+    letterSpacing: 0,
+    lineHeight: 14,
+  },
+  nearbyLoadingBadge: {
+    position: "absolute",
+    top: 8,
+    right: 8,
+    width: 34,
+    height: 30,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: radius.md,
+    backgroundColor: "rgba(255,255,255,0.92)",
+  },
+  nearbySelectionPanel: {
+    position: "absolute",
+    right: 8,
+    bottom: 8,
+    left: 8,
+    minHeight: 48,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    padding: 8,
+    borderRadius: radius.md,
+    backgroundColor: "rgba(255,255,255,0.96)",
+    ...shadows.control,
+  },
+  nearbySelectionTextGroup: {
+    flex: 1,
+    minWidth: 0,
+  },
+  nearbySelectionLabel: {
+    color: colors.text.secondary,
+    fontSize: 12,
+    fontWeight: "900",
+    letterSpacing: 0,
+    lineHeight: 15,
+  },
+  nearbySelectionSubtitle: {
+    color: colors.text.muted,
+    fontSize: 10,
+    fontWeight: "600",
+    letterSpacing: 0,
+    lineHeight: 13,
+  },
+  meetHereButton: {
+    minWidth: 86,
+    height: 32,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 12,
+    borderRadius: radius.pill,
+    backgroundColor: colors.brand.gold,
+  },
+  meetHereText: {
+    color: colors.text.inverse,
+    fontSize: 12,
+    fontWeight: "900",
+    letterSpacing: 0,
+    lineHeight: 15,
+  },
   currentLocation: {
     position: "absolute",
     top: 70,
@@ -3007,7 +3331,7 @@ const styles = StyleSheet.create({
   },
   dateGroup: {
     position: "absolute",
-    top: 213,
+    top: 303,
     right: 0,
     left: 0,
     height: 59,
@@ -3041,7 +3365,7 @@ const styles = StyleSheet.create({
   },
   startTimeGroup: {
     position: "absolute",
-    top: 301,
+    top: 391,
     right: 0,
     left: 0,
     height: 57,
@@ -3070,7 +3394,7 @@ const styles = StyleSheet.create({
   },
   durationGroup: {
     position: "absolute",
-    top: 388,
+    top: 478,
     right: 0,
     left: 0,
     height: 51,
@@ -3115,14 +3439,14 @@ const styles = StyleSheet.create({
   },
   participantsGroup: {
     position: "absolute",
-    top: 463,
+    top: 553,
     right: 0,
     left: 0,
     height: 51,
   },
   distanceGroup: {
     position: "absolute",
-    top: 536,
+    top: 626,
     right: 0,
     left: 0,
     height: 53,
@@ -3164,7 +3488,7 @@ const styles = StyleSheet.create({
   },
   nextButton: {
     position: "absolute",
-    top: 619,
+    top: 709,
     alignSelf: "center",
     width: 110,
     height: 25,
@@ -3186,7 +3510,7 @@ const styles = StyleSheet.create({
   },
   formError: {
     position: "absolute",
-    top: 654,
+    top: 744,
     right: 14,
     left: 14,
     color: colors.text.inverse,

@@ -1,5 +1,7 @@
 import type { Platform } from "react-native";
 import type * as Location from "expo-location";
+import type { Session } from "./auth-contract";
+import { requestAPI } from "./api-client";
 import type { Coordinates } from "./matching";
 
 type LocationModule = typeof import("expo-location");
@@ -10,7 +12,8 @@ export type LocationUnavailableReason =
   | "permission_denied"
   | "position_unavailable"
   | "invalid_coordinates"
-  | "geocoding_unavailable";
+  | "geocoding_unavailable"
+  | "places_unavailable";
 
 export type LocationResult<T> =
   | { available: true; value: T }
@@ -39,9 +42,15 @@ async function loadLocationModule(): Promise<LocationModule | null> {
 
 export type LocationSearchSuggestion = {
   id: string;
+  placeId?: string;
   label: string;
   subtitle: string;
+  provider?: "google_maps";
   coordinates: Coordinates;
+};
+
+type PlacesSearchResponse = {
+  data?: unknown;
 };
 
 export async function getCurrentCoordinatesResult(): Promise<LocationResult<Coordinates>> {
@@ -176,66 +185,158 @@ export async function resolveCurrentLocationDisplay(): Promise<{
 
 export async function searchLocationSuggestionsResult(
   query: string,
+  session?: Session | null,
+  options: {
+    language?: "ja" | "en";
+    latitude?: number;
+    longitude?: number;
+    signal?: AbortSignal;
+  } = {},
 ): Promise<LocationResult<LocationSearchSuggestion[]>> {
   const normalized = query.trim();
   if (normalized.length < 2) return { available: true, value: [] };
-  if (runtimePlatform() !== "ios" && runtimePlatform() !== "android") {
-    return { available: false, reason: "unsupported_platform" };
-  }
-
-  const location = await loadLocationModule();
-  if (!location || typeof location.geocodeAsync !== "function") {
-    return { available: false, reason: "native_module_unavailable" };
-  }
+  if (!session) return { available: false, reason: "places_unavailable" };
 
   try {
-    const results = await location.geocodeAsync(normalized);
-    const validResults = results
-      .filter((result) => Number.isFinite(result.latitude) && Number.isFinite(result.longitude))
-      .slice(0, 5);
-    const suggestions = await Promise.all(validResults.map(async (result, index) => {
-      let label = normalized;
-      let subtitle = index === 0 ? "Best match" : `Candidate ${index + 1}`;
-
-      if (typeof location.reverseGeocodeAsync === "function") {
-        try {
-          const [address] = await location.reverseGeocodeAsync({
-            latitude: result.latitude,
-            longitude: result.longitude,
-          });
-          if (address) {
-            label = currentLocationDisplayName(address) ?? normalized;
-            subtitle = locationSubtitle(address) ?? subtitle;
-          }
-        } catch {
-          // Keep the original query as the visible place label if reverse lookup fails.
-        }
-      }
-
-      return {
-        id: `${result.latitude}:${result.longitude}:${index}`,
-        label,
-        subtitle,
-        coordinates: {
-          latitude: result.latitude,
-          longitude: result.longitude,
-          accuracy_m: Number.isFinite(result.accuracy) && result.accuracy !== undefined
-            ? Math.max(0, result.accuracy)
-            : 0,
-          captured_at: new Date().toISOString(),
-        },
-      };
-    }));
-
+    const response = await requestAPI<PlacesSearchResponse>(
+      `/places/search${placesSearchQuery(normalized, options)}`,
+      session,
+      { method: "GET", signal: options.signal },
+    );
+    const suggestions = normalizePlacesSuggestions(response.data);
     return { available: true, value: suggestions };
   } catch {
-    return { available: false, reason: "geocoding_unavailable" };
+    return { available: false, reason: "places_unavailable" };
   }
 }
 
 export async function searchLocationSuggestions(
   query: string,
+  session?: Session | null,
+  options: {
+    language?: "ja" | "en";
+    latitude?: number;
+    longitude?: number;
+    signal?: AbortSignal;
+  } = {},
 ): Promise<LocationSearchSuggestion[]> {
-  const result = await searchLocationSuggestionsResult(query);
+  const result = await searchLocationSuggestionsResult(query, session, options);
   return result.available ? result.value : [];
+}
+
+export async function searchNearbyPlacesResult(
+  coordinates: Coordinates,
+  session?: Session | null,
+  options: {
+    language?: "ja" | "en";
+    signal?: AbortSignal;
+  } = {},
+): Promise<LocationResult<LocationSearchSuggestion[]>> {
+  if (!Number.isFinite(coordinates.latitude) || !Number.isFinite(coordinates.longitude)) {
+    return { available: false, reason: "invalid_coordinates" };
+  }
+  if (!session) return { available: false, reason: "places_unavailable" };
+
+  try {
+    const response = await requestAPI<PlacesSearchResponse>(
+      `/places/nearby${nearbyPlacesQuery(coordinates, options)}`,
+      session,
+      { method: "GET", signal: options.signal },
+    );
+    const suggestions = normalizePlacesSuggestions(response.data);
+    return { available: true, value: suggestions };
+  } catch {
+    return { available: false, reason: "places_unavailable" };
+  }
+}
+
+export async function searchNearbyPlaces(
+  coordinates: Coordinates,
+  session?: Session | null,
+  options: {
+    language?: "ja" | "en";
+    signal?: AbortSignal;
+  } = {},
+): Promise<LocationSearchSuggestion[]> {
+  const result = await searchNearbyPlacesResult(coordinates, session, options);
+  return result.available ? result.value : [];
+}
+
+function placesSearchQuery(
+  query: string,
+  options: {
+    language?: "ja" | "en";
+    latitude?: number;
+    longitude?: number;
+  },
+): string {
+  const parts = [`query=${encodeURIComponent(query)}`, "limit=5"];
+  if (options.language) parts.push(`language=${encodeURIComponent(options.language)}`);
+  if (Number.isFinite(options.latitude) && Number.isFinite(options.longitude)) {
+    parts.push(`latitude=${encodeURIComponent(String(options.latitude))}`);
+    parts.push(`longitude=${encodeURIComponent(String(options.longitude))}`);
+  }
+  return `?${parts.join("&")}`;
+}
+
+function nearbyPlacesQuery(
+  coordinates: Coordinates,
+  options: {
+    language?: "ja" | "en";
+  },
+): string {
+  const parts = [
+    `latitude=${encodeURIComponent(String(coordinates.latitude))}`,
+    `longitude=${encodeURIComponent(String(coordinates.longitude))}`,
+    "limit=5",
+  ];
+  if (options.language) parts.push(`language=${encodeURIComponent(options.language)}`);
+  return `?${parts.join("&")}`;
+}
+
+function normalizePlacesSuggestions(value: unknown): LocationSearchSuggestion[] {
+  if (!Array.isArray(value)) return [];
+  const suggestions: LocationSearchSuggestion[] = [];
+  const seen = new Set<string>();
+
+  for (const item of value) {
+    if (!item || typeof item !== "object") continue;
+    const candidate = item as Record<string, unknown>;
+    const coordinates = candidate.coordinates;
+    if (!coordinates || typeof coordinates !== "object") continue;
+    const coordinateValues = coordinates as Record<string, unknown>;
+    const latitude = coordinateValues.latitude;
+    const longitude = coordinateValues.longitude;
+    const label = candidate.label;
+    if (typeof label !== "string" || !label.trim()) continue;
+    if (typeof latitude !== "number" || typeof longitude !== "number") continue;
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) continue;
+
+    const id = typeof candidate.id === "string" && candidate.id.trim()
+      ? candidate.id.trim()
+      : `${latitude}:${longitude}:${suggestions.length}`;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const subtitle = typeof candidate.subtitle === "string" && candidate.subtitle.trim()
+      ? candidate.subtitle.trim()
+      : "Google Maps";
+    suggestions.push({
+      id,
+      placeId: typeof candidate.place_id === "string" ? candidate.place_id : undefined,
+      label: label.trim(),
+      subtitle,
+      provider: candidate.provider === "google_maps" ? "google_maps" : undefined,
+      coordinates: {
+        latitude,
+        longitude,
+        accuracy_m: typeof coordinateValues.accuracy_m === "number" && Number.isFinite(coordinateValues.accuracy_m)
+          ? Math.max(0, coordinateValues.accuracy_m)
+          : 0,
+        captured_at: new Date().toISOString(),
+      },
+    });
+    if (suggestions.length >= 5) break;
+  }
+
+  return suggestions;
 }

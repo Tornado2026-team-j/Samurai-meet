@@ -39,4 +39,28 @@ describe("募集プレビュー fallback のレイアウト契約", () => {
     expect(source).not.toContain("handleTimePickerChange");
     expect(source).not.toContain("pickerTimeRef");
   });
+
+  it("Where候補の選択後に地図ピンとGoogle attributionを表示する", async () => {
+    const source = await Bun.file(join(root, "app/tabs/index.tsx")).text();
+
+    expect(source).toContain('import MapView, { Marker } from "react-native-maps";');
+    expect(source).toContain("locationMapRegion");
+    expect(source).toContain("<MapView");
+    expect(source).toContain("<Marker");
+    expect(source).toContain("styles.googleMapsAttribution");
+    expect(source).toContain('googleMapsAttribution: "Google Maps"');
+  });
+
+  it("現在地マップからNearby候補をピン選択し、ここで会うで保存できる", async () => {
+    const source = await Bun.file(join(root, "app/tabs/index.tsx")).text();
+
+    expect(source).toContain("searchNearbyPlaces");
+    expect(source).toContain("nearbyPlaces.map");
+    expect(source).toContain("setPendingNearbyPlace(place)");
+    expect(source).toContain("confirmNearbyPlace(pendingNearbyPlace)");
+    expect(source).toContain('meetHere: "ここで会う"');
+    expect(source).toContain("setSelectedLocationCoordinates(suggestion.coordinates)");
+    expect(source).toContain("FORM_BASE_HEIGHT + whereExtraHeight");
+    expect(source).toContain("locationSuggestions.length * LOCATION_SUGGESTION_ROW_HEIGHT");
+  });
 });
