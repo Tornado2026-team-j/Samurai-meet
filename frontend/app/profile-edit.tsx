@@ -19,7 +19,7 @@ import { updateMyProfile } from "../services/profile";
 const COPY = {
   ja: {
     title: "プロフィール編集",
-    description: "表示名、国籍、好きなこと・得意なことを更新できます。",
+    description: "表示名、国籍、好きなこと・得意なことを更新できます。思い出キャラクターは案内終了後に作成します。",
     save: "変更を保存",
     saved: "プロフィールを更新しました。",
   },

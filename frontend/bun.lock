@@ -13,6 +13,7 @@
         "@scure/bip39": "^1.6.0",
         "expo": "^57.0.0",
         "expo-blur": "~57.0.2",
+        "expo-camera": "~57.0.4",
         "expo-clipboard": "~57.0.1",
         "expo-constants": "~57.0.17",
         "expo-crypto": "~57.0.2",
@@ -23,6 +24,7 @@
         "expo-linking": "~57.0.9",
         "expo-localization": "~57.0.1",
         "expo-location": "~57.0.15",
+        "expo-media-library": "~57.0.4",
         "expo-notifications": "~57.0.16",
         "expo-router": "~57.0.18",
         "expo-secure-store": "~57.0.3",
@@ -463,6 +465,8 @@
 
     "@types/bun": ["@types/bun@1.4.0", "", { "dependencies": { "bun-types": "1.4.0" } }, "sha512-K+lZULY23vRgK/CfTjFIV+tyifaNdSMlPh9j+6mQ/cLfpOznLyAuzgV/JQysyECpkBQLVMSyvjlr2fBUSA9wFQ=="],
 
+    "@types/emscripten": ["@types/emscripten@1.41.6", "", {}, "sha512-uN+9i8bFT5CUcZfyIEYDrSueACEyKGbUs5kC/72DGlZZoinh84sJfVV0i8UOJD1asdzkvLPBRrKs41kZ8MdEXg=="],
+
     "@types/estree": ["@types/estree@1.0.9", "", {}, "sha512-GhdPgy1el4/ImP05X05Uw4cw2/M93BCUmnEvWZNStlCzEKME4Fkk+YpoA5OiHNQmoS7Cafb8Xa3Pya8m1Qrzeg=="],
 
     "@types/istanbul-lib-coverage": ["@types/istanbul-lib-coverage@2.0.6", "", {}, "sha512-2QF/t/auWm0lsy8XtKVPG19v3sSOQlJe/YHZgfjb/KBBHOGSV+J2q/S671rcq9uTBrLAXmZpqJiaQbMT+zNU1w=="],
@@ -588,6 +592,8 @@
     "argparse": ["argparse@2.0.1", "", {}, "sha512-8+9WqebbFzpX9OR+Wa6O29asIogeRMzcGtAINdpMHHyAg10f05aSFVBbcEqGf/PXw1EjAZ+q2/bEBg3DvurK3Q=="],
 
     "aria-hidden": ["aria-hidden@1.2.6", "", { "dependencies": { "tslib": "^2.0.0" } }, "sha512-ik3ZgC9dY/lYVVM++OISsaYDeg1tb0VtP5uL3ouh1koGOaUMDPpbFIei4JkFimWUFPn90sbMNMXQAIVOlnYKJA=="],
+
+    "barcode-detector": ["barcode-detector@3.2.2", "", { "dependencies": { "zxing-wasm": "3.1.3" } }, "sha512-/4QOrrNrCRmDSBWiiP4aC72dnkuXUEdcFRidHgbPRXUpy82XcCMvJssI6fEs6JT42LS7DvBVZO70qasJbYKyrA=="],
 
     "array-buffer-byte-length": ["array-buffer-byte-length@1.0.2", "", { "dependencies": { "call-bound": "^1.0.3", "is-array-buffer": "^3.0.5" } }, "sha512-LHE+8BuR7RYGDKvnrmcuSq3tDcKv9OFEXQt/HpbZhY7V6h0zlUXutnAD82GiFx9rdieCMjkvtcsPqBwgUl1Iiw=="],
 
@@ -859,6 +865,8 @@
 
     "expo-blur": ["expo-blur@57.0.2", "", { "peerDependencies": { "expo": "*", "react": "*", "react-native": "*" } }, "sha512-Aoud8H8lmlNkbRufyvRLefmGFELdBf1n5Te/Xm+Zx8ORINH+aXL+gKb5mbftFSha860+I7pMArz77TBYz8HDVg=="],
 
+    "expo-camera": ["expo-camera@57.0.4", "", { "dependencies": { "barcode-detector": "^3.0.0" }, "peerDependencies": { "expo": "*", "react": "*", "react-native": "*", "react-native-web": "*" } }, "sha512-MqbbQ63O+cA8JbK3lfFHiD0f2jv8jB+EG/ILK6f5xnOPV9IR37yaG5+lGtRZNoOeYBzGypyOi17USItleMyuGw=="],
+
     "expo-clipboard": ["expo-clipboard@57.0.1", "", { "peerDependencies": { "expo": "*", "react": "*", "react-native": "*" } }, "sha512-HWICri4+1ao7S6QEfcorxVumXDiDnx1guGGewjZgGJWLGxFYs0RgH8ujBs+lkTzBkMmlwADaWSlaesR+nDJt5Q=="],
 
     "expo-constants": ["expo-constants@57.0.17", "", { "dependencies": { "@expo/env": "~2.4.3" }, "peerDependencies": { "expo": "*", "react-native": "*" } }, "sha512-cPWYBKN1SEbg2lXg2f8VkePJqGZrJPLvVdQDCTfbFu9sQHO1M31Y1zILReUuGnmt/VKeUz40ze579vR00xGu/A=="],
@@ -884,6 +892,8 @@
     "expo-localization": ["expo-localization@57.0.1", "", { "dependencies": { "rtl-detect": "^1.0.2" }, "peerDependencies": { "expo": "*", "react": "*" } }, "sha512-8Ffl4UTbOsQeGT0v5fxMbyPHyPMPnhSPDFQJa8p9rjJrthFoAtNi+fL6Ssmrvf1/7dmPq1mVY52MEt0TMEfgjA=="],
 
     "expo-location": ["expo-location@57.0.15", "", { "dependencies": { "@expo/image-utils": "^0.11.5" }, "peerDependencies": { "expo": "*" } }, "sha512-7ry8gr9I77dDJC3bN+svsmWkJgnm9Xkxq8P4tg6dXtjv+YqulFimCN/4ExYPIzqNiug1PbqHpUFH70k8uyReNw=="],
+
+    "expo-media-library": ["expo-media-library@57.0.4", "", { "peerDependencies": { "expo": "*", "react-native": "*" } }, "sha512-mg/KyGftxNa+fl7qBnFzqPrIjWB8K4NgYwvcAio4ZjyA+tIETTIN/NwYCBgnzIpNtAiOxbK7x9GSrT7Cwcwp1w=="],
 
     "expo-modules-autolinking": ["expo-modules-autolinking@57.0.12", "", { "dependencies": { "@expo/require-utils": "^57.0.5", "@expo/spawn-async": "^1.8.0", "chalk": "^4.1.0", "commander": "^7.2.0" }, "bin": { "expo-modules-autolinking": "bin/expo-modules-autolinking.js" } }, "sha512-Q8KAlq37nLKsQ+HsS9NpQVpd5jCgqtu694TDUNHBUBpV9ViD82mRBh8Uug/h68RG9xnLS+kuL4nYaCuFRghHjg=="],
 
@@ -1641,6 +1651,8 @@
 
     "type-fest": ["type-fest@0.7.1", "", {}, "sha512-Ne2YiiGN8bmrmJJEuTWTLJR32nh/JdL1+PSicowtNb0WFpn59GK8/lfD61bVtzguz7b3PBt74nxpv/Pw5po5Rg=="],
 
+    "zxing-wasm": ["zxing-wasm@3.1.3", "", { "dependencies": { "@types/emscripten": "^1.41.5", "type-fest": "^5.8.0" } }, "sha512-3lC9BJk4fR5ZJxcGjb0hVnDFOW7KpLXHIebiBmVd4FDRQZVeObztoTKxRUPxlWwSgxrMRONK0u50hBD1aTYEKg=="],
+
     "type-is": ["type-is@2.1.0", "", { "dependencies": { "content-type": "^2.0.0", "media-typer": "^1.1.0", "mime-types": "^3.0.0" } }, "sha512-faYHw0anBbc/kWF3zFTEnxSFOAGUX9GFbOBthvDdLsIlEoWOFOtS0zgCiQYwIskL9iGXZL3kAXD8OoZ4GmMATA=="],
 
     "typed-array-buffer": ["typed-array-buffer@1.0.3", "", { "dependencies": { "call-bound": "^1.0.3", "es-errors": "^1.3.0", "is-typed-array": "^1.1.14" } }, "sha512-nAYYwfY3qnzX30IkA6AQZjVbtK6duGontcQm1WSG1MD94YLqK0515GNApXkoxKOWMusVssAHWLh9SeaoefYFGw=="],
@@ -1790,6 +1802,8 @@
     "@react-native-community/cli-server-api/ws": ["ws@6.2.6", "", { "dependencies": { "async-limiter": "~1.0.0" } }, "sha512-XTrf1gv7kXoVf1hbC3PAyAiPgR8Wz1blcrYIjEsUmr08BLksT41R8KbjmS9408C2ERx7v1JDLD/BkpLEttjfKA=="],
 
     "@react-native/babel-preset/@react-native/babel-plugin-codegen": ["@react-native/babel-plugin-codegen@0.87.1", "", { "dependencies": { "@babel/traverse": "^7.29.0", "@react-native/codegen": "0.87.1" } }, "sha512-DfnyLAHG7jH4pqeID7ib6AeD6gG8T+KvM3c/w/yEa5ONkfRcHvTC8JMIRdhUqs4ruA+8xbYcNVQzewYRCPm1Xw=="],
+
+    "zxing-wasm/type-fest": ["type-fest@5.9.0", "", { "dependencies": { "tagged-tag": "^1.0.0" } }, "sha512-yANm3Jr3GiJ1qgJlxGAVxTOIcEOk1rhQHamlXtnrCK7EHP4HeM9OGxtMg/W7HFdrVzw/ZWJKGVIJusVH85sLtw=="],
 
     "@react-native/babel-preset/babel-plugin-syntax-hermes-parser": ["babel-plugin-syntax-hermes-parser@0.36.1", "", { "dependencies": { "hermes-parser": "0.36.1" } }, "sha512-ycduwJbvdvIMmVvlAZqGggS+pm5Eu4Bk9pcV9Sm2Z4PJNRVsKkv0g7vHj+LeuC1gHTeF67sJXFOq61IlqCa2hA=="],
 

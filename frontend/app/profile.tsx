@@ -58,7 +58,7 @@ const COPY = {
     nationality: "国籍",
     skills: "得意なこと",
     interests: "好きなこと",
-    monsterNote: "好きなこと・得意なことメモ",
+    monsterNote: "プロフィールメモ",
     notSet: "未設定",
     myRecruitments: "自分の募集を管理",
     myRecruitmentsDescription: "公開中・下書き・終了した募集と応募者を確認できます。",

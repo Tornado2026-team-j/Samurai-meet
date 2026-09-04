@@ -1,6 +1,6 @@
 # バックエンド API 仕様（実装基準）
 
-最終更新: 2026-09-03
+最終更新: 2026-09-04
 
 この文書は、現在のGo実装とExpoテストクライアントの契約です。状態は次の記号で表します。
 
@@ -476,6 +476,28 @@ Request body:
 応募一覧・マッチ詳細の成功レスポンスは`{ "data": [ ... ] }` / `{ "data": { ... } }`です。各マッチには`other_user`（認証ユーザーから見た相手の公開プロフィール）と`recruitment`（募集カード）が含まれます。正確な位置情報はどの応答にも含めません。
 
 `accepted`前のチャットAPIはありません。カードは承認後も`matched`として残り、所有者が閉じるか期限切れになるまで追加の関心を受け付けます。
+
+#### 思い出キャラクター（実装済み）
+
+案内終了後の結果画面で、アプリ内カメラで撮影した写真、記憶に残ったオブジェクト、案内時の思い出をもとにキャラクター画像を生成します。プロフィール登録時の「好きなこと・得意なこと」は生成入力に使いません。撮影元写真はクライアントで暗号化して`POST /api/v1/me/photos`へprivate保存し、生成APIにはその`source_photo_id`と、生成リクエスト中だけ使う平文写真multipartを渡します。
+
+| Method | Path | 認証 | 用途 |
+| --- | --- | --- | --- |
+| POST | `/api/v1/matches/{id}/memory-monsters` | Access Token | 完了済み案内の写真・オブジェクト・思い出からキャラクターを生成して保管 |
+| GET | `/api/v1/memory-monsters` | Access Token | 自分の保管庫に保存された思い出キャラクター一覧を取得 |
+| GET | `/api/v1/memory-monsters/{id}/image` | Access Token | 自分の生成済みキャラクター画像を取得 |
+
+`POST /api/v1/matches/{id}/memory-monsters`は`multipart/form-data`です。
+
+| Field | 内容 |
+| --- | --- |
+| `photo` | アプリ内カメラで撮影した`image/jpeg`、`image/png`、`image/webp`。最大10MiB |
+| `meeting_id` | 任意。指定時は該当matchの`completed`会合だけ許可 |
+| `source_photo_id` | 既存写真APIでprivate保存済みの元写真ID。所有者本人の写真だけ許可 |
+| `memorable_object` | 1〜15文字 |
+| `memory_text` | 1〜100文字 |
+
+マッチ参加者だけが、`accepted`または`completed`のmatchに対して作成できます。画像生成はサーバー側の`GEMINI_API_KEY`と`GEMINI_IMAGE_MODEL`を使い、既定モデルは`gemini-3.1-flash-lite-image`です。生成画像はサーバー管理の`IMAGE_STORAGE_DIR/memory-monsters/`配下に保存し、レスポンスには画像バイナリではなくメタデータだけを返します。画像取得は`Cache-Control: private, no-store`です。
 
 ### 6.7 チャット（REST同期 + HTTP/3 WebTransport）
 

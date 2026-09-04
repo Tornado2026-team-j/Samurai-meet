@@ -12,7 +12,6 @@ import {
 } from "./onboarding-contract";
 
 export {
-  MONSTER_GENERATION_RULES,
   MONSTER_INPUT_LIMITS,
   parseIdentityVerificationChoice,
   parseAppMode,
