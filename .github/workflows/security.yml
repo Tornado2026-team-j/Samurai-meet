@@ -29,7 +29,13 @@ jobs:
         uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
         with:
           fail-on-severity: moderate
-          allow-licenses: MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, MPL-2.0, CC0-1.0, 0BSD, Unlicense, Zlib, LicenseRef-scancode-google-patent-license-golang
+          # CC-BY-4.0: caniuse-lite, a browser-support data table pulled in
+          #   transitively by Next.js. It is data, not code, and is not modified.
+          # LGPL-3.0-or-later: sharp / libvips, an OPTIONAL native image library
+          #   of Next.js. It is dynamically linked, unmodified, and not
+          #   redistributed; the AI service (ai/) does not use image
+          #   optimisation. See PR that introduced ai/package-lock.json.
+          allow-licenses: MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, MPL-2.0, CC0-1.0, 0BSD, Unlicense, Zlib, CC-BY-4.0, LGPL-3.0-or-later, LicenseRef-scancode-google-patent-license-golang
           # TruffleHog is an unmodified CI-only scanner; it is neither linked
           # into nor distributed with the Samurai-meet product.
           allow-dependencies-licenses: pkg:githubactions/trufflesecurity/trufflehog@bcfcf73aaf4759d4dadc2783177c245a02792318
