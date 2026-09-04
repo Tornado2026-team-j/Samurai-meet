@@ -27,16 +27,19 @@ const (
 )
 
 type Monster struct {
-	ID                   string `json:"id"`
-	MatchID              string `json:"match_id"`
-	MeetingID            string `json:"meeting_id,omitempty"`
-	SourcePhotoID        string `json:"source_photo_id"`
-	MemorableObject      string `json:"memorable_object"`
-	MemoryText           string `json:"memory_text"`
-	PromptVersion        string `json:"prompt_version"`
-	Provider             string `json:"provider"`
-	GeneratedContentType string `json:"generated_content_type"`
-	CreatedAt            string `json:"created_at"`
+	ID                     string `json:"id"`
+	MatchID                string `json:"match_id"`
+	MeetingID              string `json:"meeting_id,omitempty"`
+	GuideDate              string `json:"guide_date,omitempty"`
+	LocationName           string `json:"location_name,omitempty"`
+	SourcePhotoID          string `json:"source_photo_id"`
+	SourcePhotoContentType string `json:"source_photo_content_type,omitempty"`
+	MemorableObject        string `json:"memorable_object"`
+	MemoryText             string `json:"memory_text"`
+	PromptVersion          string `json:"prompt_version"`
+	Provider               string `json:"provider"`
+	GeneratedContentType   string `json:"generated_content_type"`
+	CreatedAt              string `json:"created_at"`
 }
 
 type CreateInput struct {
@@ -138,10 +141,14 @@ func (s *Service) List(ctx context.Context, userID string, limit int) ([]Monster
 		limit = 50
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id,match_id,COALESCE(meeting_id,''),source_photo_id,memorable_object,memory_text,prompt_version,provider,generated_content_type,created_at
-		FROM memory_monsters
-		WHERE owner_user_id=$1 AND deleted_at IS NULL
-		ORDER BY created_at DESC
+		SELECT mm.id,mm.match_id,COALESCE(mm.meeting_id,''),COALESCE(rc.available_date,''),COALESCE(rc.location_name,''),mm.source_photo_id,
+		       COALESCE(p.content_type,''),mm.memorable_object,mm.memory_text,mm.prompt_version,mm.provider,mm.generated_content_type,mm.created_at
+		FROM memory_monsters mm
+		JOIN matches m ON m.id=mm.match_id
+		JOIN recruitment_cards rc ON rc.id=m.card_id
+		LEFT JOIN photos p ON p.id=mm.source_photo_id AND p.owner_user_id=mm.owner_user_id AND p.deleted_at IS NULL
+		WHERE mm.owner_user_id=$1 AND mm.deleted_at IS NULL
+		ORDER BY mm.created_at DESC
 		LIMIT $2`, userID, limit)
 	if err != nil {
 		return nil, err
@@ -150,7 +157,7 @@ func (s *Service) List(ctx context.Context, userID string, limit int) ([]Monster
 	items := make([]Monster, 0)
 	for rows.Next() {
 		var item Monster
-		if err := rows.Scan(&item.ID, &item.MatchID, &item.MeetingID, &item.SourcePhotoID, &item.MemorableObject, &item.MemoryText, &item.PromptVersion, &item.Provider, &item.GeneratedContentType, &item.CreatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.MatchID, &item.MeetingID, &item.GuideDate, &item.LocationName, &item.SourcePhotoID, &item.SourcePhotoContentType, &item.MemorableObject, &item.MemoryText, &item.PromptVersion, &item.Provider, &item.GeneratedContentType, &item.CreatedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, item)
