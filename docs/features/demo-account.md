@@ -1,7 +1,7 @@
 # 設計書：審査・お試し用 Demo アカウント
 
-最終更新: 2026-09-02
-状態: 設計のみ（未実装）
+最終更新: 2026-09-04
+状態: 実装済み（コード・単体/バックエンド回帰テスト確認済み。Demo環境の二端末E2Eと本番構成確認は未実施）
 
 ## 1. 目的
 
@@ -56,38 +56,49 @@ Demo 用の暗号方式は、画面上で暗号鍵の準備を体験させるた
 
 ## 4. 実行環境の分離
 
-本番への影響を避けるため、Demo は本番の公開サービスとは別環境で運用する。
+Demoは通常のアカウントとサーバー側のアカウントスコープで分離し、
+`DEMO_ACCOUNT_ENABLED=true`を明示したAPIでのみ発行する。本番APIでの有効化も許可するが、
+既定値は`false`とし、24時間期限・Demo同士限定の業務API境界・暗号方式の分離を必須とする。
 
 ### 必須構成
 
-- Expo Go の審査ビルドは Demo API Base URL を明示的に持つ。
-- Demo API は Demo 用 PostgreSQL、セッション署名鍵、ログ領域、ストレージを使う。
-- Demo API のDBユーザーに本番DBへの権限を与えない。
-- `APP_ENV=production` では `DEMO_ACCOUNT_ENABLED` を既定値 `false` とする。
-- 本番起動時に Demo 機能が誤って有効なら、起動を失敗させる。
+- Expo Goの審査ビルドは、Demoを有効化したAPI Base URLを明示的に持つ。
+- `APP_ENV=production`でも`DEMO_ACCOUNT_ENABLED=true`を明示した場合だけDemo発行を許可する。
+- 通常アカウントとDemoアカウントの検索、応募、match、chat、添付、通知は、APIの全入口で
+  アカウントスコープを検査する。
+- 分離APIを使う場合は、Demo用PostgreSQL、セッション署名鍵、ログ領域、ストレージを使い、
+  Demo APIのDBユーザーに本番DBへの権限を与えない。
 - API接続先が使えない場合に、本番APIへ自動フォールバックしない。
 
-同一クラスタを使わざるを得ない場合も、DB、DBロール、ストレージprefix、
-セッション署名鍵は分離する。アプリケーション層のスコープ検査だけを分離策の根拠にしない。
+Demo APIを本番APIへ同居させる場合は、通常アカウントとDemoアカウントを同じDBで扱えるが、
+アカウントスコープ、期限検査、Demo専用の鍵/APIバージョンを全入口で強制する。
+分離APIを使う場合は、DB、DBロール、ストレージprefix、セッション署名鍵も分離する。
 
 ### Feature Flag
 
 | 設定 | 既定値 | 用途 |
 | --- | --- | --- |
-| `DEMO_ACCOUNT_ENABLED` | `false` | バックエンドのDemo発行APIとDemo機能を有効化 |
+| `DEMO_ACCOUNT_ENABLED` | `false` | 本番を含む、明示したAPIのDemo発行APIとDemo機能を有効化 |
 | `EXPO_PUBLIC_DEMO_ACCOUNT_ENABLED` | `false` | 審査用クライアントの入口ボタンを表示 |
 | `EXPO_PUBLIC_API_BASE_URL` | 通常値 | DemoビルドではDemo APIを明示指定 |
 
 フラグが片側だけ有効でも利用できないようにする。クライアントだけでフラグを
-判定せず、発行APIでもサーバー側フラグを確認する。
+判定せず、発行APIでもサーバー側フラグを確認する。本番APIで通常ログインと併用する場合は、
+`GOOGLE_LOGIN_ENABLED=true`を許可するが、Demoは通常アカウントと混在させず、
+サーバー側のaccount scope境界を必須とする。
 
 ## 5. アカウント発行と24時間期限
 
-### 5.1 発行API（予定）
+### 5.1 発行API
 
 `POST /api/v1/auth/demo/start`
 
 認証不要。ただし Demo 環境のレートリミットと `DEMO_ACCOUNT_ENABLED` を必須とする。
+
+実装は `backend/internal/auth/demo_account.go` と
+`backend/internal/httpapi/demo_account.go` にあり、`DEMO_ACCOUNT_ENABLED=false` の
+プロセスではサービスを生成せず、発行要求を `503 demo_account_disabled` として拒否する。
+`language` は `ja` / `en`、`app_mode` は `local` / `traveler` だけを受け付ける。
 
 Request:
 
@@ -143,6 +154,10 @@ Demo のユーザーにGoogle subjectやPasskey credentialを後付けするAPI�
 期限後は論理的に利用不可とし、Demo専用のスイープでsession、鍵メタデータ、
 Demoユーザーの業務データを削除する。スイープは `account_type = 'demo'` を条件にし、
 通常ユーザーを対象にできないクエリ構造とテストを持たせる。
+
+`SessionService.Authenticate` と `Refresh` は毎回 `users` の種別・期限を解決し、
+Demoの期限を超えるAccess/Refreshを拒否する。期限切れDemoの削除候補は
+`DemoAccountService.ExpiredUserIDs` が取得し、既存のアカウント削除経路で消去する。
 
 ## 6. 画面とフロー
 
@@ -211,7 +226,7 @@ agreement_public = X25519.publicKey(agreement_private)
 実装では中間鍵とエントロピーを処理後にメモリから消去する。通常用の
 `Argon2id+HKDF-SHA256` envelope、Key-A、Key-Bの保存形式をDemo形式で上書きしない。
 
-### 7.3 Demo鍵API（予定）
+### 7.3 Demo鍵API
 
 `POST /api/v1/me/demo/device-key`
 
@@ -225,6 +240,10 @@ agreement_public = X25519.publicKey(agreement_private)
 Key-B準備画面の状態機械は共有するが、通常用サービスとDemo用サービスの境界は
 TypeScriptの型とAPIパスで明確に分ける。
 
+実装は `frontend/services/demo-crypto.ts`、`frontend/services/demo-key-management.ts`、
+`backend/internal/chat/demo_key.go` に分離されている。通常の `/me/devices`、
+通常のKey envelope、端末移行、Passkey、Recovery APIはDemoセッションを拒否する。
+
 ## 8. Demoチャット暗号
 
 ### 8.1 鍵共有
@@ -233,7 +252,7 @@ TypeScriptの型とAPIパスで明確に分ける。
 相手の公開鍵だけを取得する。エンドポイントは次を満たさない場合に拒否する。
 
 - 呼び出しユーザーが有効なDemoアカウントではない
-- chatがacceptedではない
+- chatがacceptedまたはcompletedではない
 - 参加者2人がともに `demo`
 - 相手のDemo公開鍵が未登録、失効、または期限切れ
 
@@ -258,11 +277,15 @@ X25519秘密鍵と共有鍵はAPIへ送らない。サーバーは公開鍵、�
 - `key_version`: `demo-chat-v1`
 - nonce: メッセージごとに安全な乱数で12バイト
 - AAD: chat ID、鍵バージョン、content typeを含める
-- 本文・位置情報・添付の暗号化に失敗したら送信を中止する
+- 本文・位置情報・チャット画像添付の暗号化に失敗したら送信を中止する
 - 通常の `chat-keyb-v1` と相互変換・相互復号しない
 
 Demoも送信前のモデレーションや翻訳を有効にする場合、それらは既存仕様と同じ
 平文例外である。したがってDemoチャットも完全E2EEとは表示しない。
+
+チャット画像は既存の添付画面・APIフローを共有し、Demoでは添付本体と画像マーカーを
+`demo-chat-v1` の共有チャット鍵で暗号化する。通常の端末証明、画像鍵、端末ごとの
+envelopeはDemoでは使用せず、通常の添付プロトコル側は `regular` 専用として拒否する。
 
 ## 9. マッチングのスコープ強制
 
@@ -303,6 +326,13 @@ resource readでも、scope不一致は同じ `404 not_found` として返し、
 ユーザー列挙を助けない。mutationでcross-scopeを作ろうとした場合もtransactionを
 commitしない。
 
+実装では `backend/internal/accountscope` の `Resolve` / `RequireCompatible` を
+matching、chat、meeting、safety のサービス入口とDBクエリに適用している。通常の
+chat Key envelope、端末証明、端末移行、Passkey、Recovery、本人確認セッションも
+regular専用で、Demo用公開鍵とDemoチャット添付は専用API・専用バージョンへ分離する。
+通知は認証ユーザー自身の行だけを読む構造で、通知生成はscope検査済みのmatch/chat
+操作からだけ行われる。
+
 ### 9.3 DB制約と既存データ
 
 新規migrationは既存の通常ユーザーを次の既定値で保護する。
@@ -324,7 +354,7 @@ migration前にcross-scope matchが存在しないことを検査する。存在
 - 通常ユーザーの検索・matchクエリにDemo行が混ざらないことをSQLテストで確認する。
 - Demo APIのfeature flagが無効なとき、発行APIはルーティングされないか明示的に拒否する。
 - ログは `account_type` とイベント種別だけを持ち、token、鍵、Phrase、本文を持たない。
-- 本番デプロイではDemo DB、Demo署名鍵、Demo URLが設定されていないことをCIで検査する。
+- 本番デプロイではDemoフラグが意図したときだけ有効で、通常運用へ戻せることをCI・運用手順で確認する。
 - Demo機能の障害時に通常ログインへ自動転送しない。
 
 ## 11. テストと受け入れ条件
@@ -341,6 +371,18 @@ migration前にcross-scope matchが存在しないことを検査する。存在
 - Demo暗号バージョンを通常ユーザーが保存・送信できない。
 - 通常の `chat-keyb-v1` が既存テストどおり動く。
 - 期限切れスイープが通常ユーザーの行を削除しない。
+
+コードレベルで次を確認済みである。
+
+- `bun run typecheck`
+- `bun test tests/demo-crypto.test.ts`
+- `bun test tests/crypto.test.ts tests/auth-contract.test.ts`
+- `go test -count=1 ./...`
+- `git diff --check`
+
+Demo環境の二端末操作、実機のKey-B準備時間、デプロイ済み設定、ネットワークキャプチャは
+まだ確認していない。既存の `tests/chat.test.ts` は今回の実装エラーではなく、Bunが
+React NativeのFlow記法 `import typeof` を直接解釈できないため分離して扱う。
 
 ### Frontend / Expo Go
 
@@ -359,19 +401,19 @@ migration前にcross-scope matchが存在しないことを検査する。存在
 
 1. Demo環境の二端末E2Eで、Demo同士のmatchとchatが成功している。
 2. 通常ユーザーとのcross-scope操作がAPIで拒否されている。
-3. 本番設定でDemo発行APIとDemoボタンが無効である。
+3. 本番設定でDemo発行APIとDemoボタンの有効化が意図した設定になっており、無効へ戻せる。
 4. 通常アカウントの既存認証・鍵・チャット回帰テストが通っている。
 5. ログ、DB、ネットワークキャプチャの確認で秘密鍵・Phrase・tokenが漏れていない。
 
 ## 12. 実装順序
 
-1. additive migrationとaccount scope読み取りを追加する。
-2. Demo専用発行API、期限検査、Demo専用公開鍵APIを追加する。
-3. matching / chat / attachmentの全入口へscope guardを追加する。
-4. フロントの専用モック画面を削除し、既存KeySetupへDemo crypto providerを接続する。
-5. `demo-chat-v1` の暗号化・復号を既存チャット画面へ接続する。
-6. Backend、Frontend、Expo Go二端末でテストする。
-7. Demo環境を有効化し、本番環境の無効設定を検証する。
+1. additive migrationとaccount scope読み取りを追加する（実装済み）。
+2. Demo専用発行API、期限検査、Demo専用公開鍵APIを追加する（実装済み）。
+3. matching / chat / attachmentの全入口へscope guardを追加する（実装済み）。
+4. フロントの専用モック画面を削除し、既存KeySetupへDemo crypto providerを接続する（実装済み）。
+5. `demo-chat-v1` の暗号化・復号を既存チャット画面へ接続する（実装済み）。
+6. Backend、Frontendの自動テストを実施し、Expo Go二端末E2Eを残課題とする。
+7. Demo環境または本番APIのDemoフラグを有効化し、発行・期限切れ・無効化を実機・デプロイ設定で検証する（残課題）。
 
 関連仕様: [認証](auth.md)、[マッチング](matching.md)、[チャット](chat.md)、
 [データベース](../database.md)、[API仕様](../api.md)

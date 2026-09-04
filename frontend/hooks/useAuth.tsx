@@ -2,6 +2,7 @@ import { AppState, type AppStateStatus } from 'react-native';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import * as Linking from 'expo-linking';
 import {
+  beginDemoAccount,
   beginGoogleLogin,
   beginPasskey,
   clearAuthStorage,
@@ -17,7 +18,7 @@ import {
   type PreAuth,
   type Session,
 } from '../services/auth';
-import type { AppLanguage } from '../services/onboarding-contract';
+import type { AppLanguage, AppMode } from '../services/onboarding-contract';
 import { clearLanguage } from '../services/onboarding';
 import { deleteAccount as deleteAccountRemote, deleteAccountWithPreAuth, recoverWithPreAuth } from '../services/key-management';
 
@@ -29,6 +30,7 @@ type AuthContextValue = AuthSnapshot & {
   error: string | null;
   getCurrentSession: () => Session | null;
   login: () => Promise<void>;
+  startDemoAccount: (language: AppLanguage, appMode: AppMode) => Promise<boolean>;
   continuePasskey: (language?: AppLanguage) => Promise<boolean>;
   recoverWithRecoveryKey: (recoveryKey: string) => Promise<void>;
   retryRestore: () => Promise<void>;
@@ -47,6 +49,12 @@ function message(error: unknown): string {
   }
   if (error.message === '429: recovery_rate_limited') {
     return 'Recovery Phraseの試行回数が多すぎます。しばらく待ってから再試行してください。';
+  }
+  if (error.message === '503: demo_account_disabled') {
+    return 'Demoアカウントはこのビルドまたは接続先APIで有効化されていません。';
+  }
+  if (error.message === '401: demo_account_expired') {
+    return 'Demoアカウントの有効期限が切れました。もう一度「デモを体験する」から開始してください。';
   }
   if (error.message === '401: recovery_verification_failed' || error.message.includes('aes-gcm: invalid tag')) {
     return 'Recovery Phraseが正しくありません。保存したRecovery Phraseを確認してください。';
@@ -174,6 +182,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback(async () => {
     await runAuth(beginGoogleLogin);
+  }, [runAuth]);
+
+  const startDemoAccount = useCallback(async (language: AppLanguage, appMode: AppMode): Promise<boolean> => {
+    const next = await runAuth(() => beginDemoAccount(language, appMode), true);
+    return next?.session?.account_type === 'demo';
   }, [runAuth]);
 
   const continuePasskey = useCallback(async (language?: AppLanguage): Promise<boolean> => {
@@ -331,6 +344,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     error,
     getCurrentSession,
     login,
+    startDemoAccount,
     continuePasskey,
     recoverWithRecoveryKey,
     retryRestore,
@@ -338,7 +352,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     logout,
     logoutAll,
     deleteAccount,
-  }), [busy, continuePasskey, deleteAccount, error, getCurrentSession, login, logout, logoutAll, recoverWithRecoveryKey, refresh, retryRestore, snapshot, status]);
+  }), [busy, continuePasskey, deleteAccount, error, getCurrentSession, login, logout, logoutAll, recoverWithRecoveryKey, refresh, retryRestore, snapshot, startDemoAccount, status]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

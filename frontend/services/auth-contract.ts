@@ -5,6 +5,8 @@ export type Session = {
   session_id: string;
   access_token: string;
   refresh_token: string;
+  account_type?: 'regular' | 'demo';
+  demo_expires_at?: string;
 };
 
 export type PreAuth = {
@@ -69,7 +71,12 @@ export function isSession(value: unknown): value is Session {
     && typeof candidate.access_token === 'string'
     && candidate.access_token.length > 0
     && typeof candidate.refresh_token === 'string'
-    && candidate.refresh_token.length > 0;
+    && candidate.refresh_token.length > 0
+    && (!('account_type' in candidate)
+      || candidate.account_type === 'regular'
+      || candidate.account_type === 'demo')
+    && (candidate.account_type !== 'demo'
+      || (typeof candidate.demo_expires_at === 'string' && candidate.demo_expires_at.length > 0));
 }
 
 export function isPasskeyBootstrap(value: unknown): value is PasskeyBootstrap {

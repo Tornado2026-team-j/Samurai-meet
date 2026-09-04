@@ -19,7 +19,7 @@ import {
 } from './auth-contract';
 import { API_BASE_URL, WEB_APP_ORIGIN, WEB_PASSKEY_URL } from './api-config';
 import { completeWebPasskey, reauthWebPasskey } from './passkey-web';
-import type { AppLanguage } from './onboarding-contract';
+import type { AppLanguage, AppMode } from './onboarding-contract';
 import { secureRandomUUID, sha256Base64 } from './runtime-crypto';
 
 export { buildPasskeyURL, encodeBase64URL, isPasskeyBootstrap, isPreAuth, isStoredSession, storedSession } from './auth-contract';
@@ -367,6 +367,21 @@ export async function beginGoogleLogin(): Promise<AuthSnapshot | null> {
   const result = await WebBrowser.openAuthSessionAsync(startURL, redirectURI);
   if (result.type !== 'success') return null;
   return completeAuthRedirect(result.url);
+}
+
+export async function beginDemoAccount(language: AppLanguage, appMode: AppMode): Promise<AuthSnapshot> {
+  const response = await request<SessionResponse>('/auth/demo/start', {
+    method: 'POST',
+    body: JSON.stringify({ language, app_mode: appMode }),
+  });
+  if (!response.data || !isSession(response.data) || response.data.account_type !== 'demo') {
+    throw new Error('demo account response is invalid');
+  }
+  await deleteStoredItem(OAUTH_VERIFIER_KEY);
+  await deleteStoredItem(SESSION_HANDOFF_VERIFIER_KEY);
+  await deleteStoredItem(SESSION_HANDOFF_REQUEST_KEY);
+  await persistSession(response.data);
+  return { session: response.data, preAuth: null };
 }
 
 async function completeAuthRedirectInternal(redirect: AuthRedirect): Promise<AuthSnapshot> {

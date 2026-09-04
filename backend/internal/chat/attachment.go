@@ -12,6 +12,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/accountscope"
 )
 
 const (
@@ -129,12 +131,21 @@ func (s *Service) UploadAttachment(ctx context.Context, userID, chatID string, i
 	if s.blobs == nil {
 		return Attachment{}, ErrChatAttachmentUnavailable
 	}
-	if err := validateAttachmentInput(input); err != nil {
-		return Attachment{}, err
-	}
 	access, err := s.loadChat(ctx, userID, chatID, false)
 	if err != nil {
 		return Attachment{}, err
+	}
+	switch access.AccountType {
+	case accountscope.Regular:
+		if err := validateAttachmentInput(input); err != nil {
+			return Attachment{}, err
+		}
+	case accountscope.Demo:
+		if err := validateDemoAttachmentInput(input); err != nil {
+			return Attachment{}, err
+		}
+	default:
+		return Attachment{}, ErrChatAttachmentKeysMissing
 	}
 	if access.MatchStatus != "accepted" {
 		return Attachment{}, ErrChatNotAvailable
@@ -215,6 +226,43 @@ func (s *Service) OpenAttachment(ctx context.Context, userID, chatID, attachment
 	return attachment, data, envelope, nil
 }
 
+// OpenDemoAttachment returns a Demo ciphertext without entering the normal
+// device-proof/envelope protocol. Both Demo participants derive the same
+// chat key locally, so no image key or device envelope is needed here.
+func (s *Service) OpenDemoAttachment(ctx context.Context, userID, chatID, attachmentID string) (Attachment, []byte, error) {
+	if s == nil || s.db == nil || s.blobs == nil || strings.TrimSpace(attachmentID) == "" {
+		return Attachment{}, nil, ErrChatAttachmentNotFound
+	}
+	access, err := s.loadChat(ctx, userID, chatID, true)
+	if err != nil {
+		return Attachment{}, nil, err
+	}
+	if access.AccountType != accountscope.Demo {
+		return Attachment{}, nil, ErrChatAttachmentNotFound
+	}
+	attachment, uploaderID, err := s.loadDemoAttachment(ctx, access.ChatID, attachmentID)
+	if err != nil {
+		return Attachment{}, nil, err
+	}
+	if attachment.SizeBytes < attachmentMinCiphertext || attachment.SizeBytes > s.MaxAttachmentBytes() {
+		return Attachment{}, nil, ErrChatAttachmentNotFound
+	}
+	data, err := s.blobs.ReadCiphertext(uploaderID, attachmentID, s.maxAttachmentBytes+1)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return Attachment{}, nil, ErrChatAttachmentNotFound
+		}
+		return Attachment{}, nil, err
+	}
+	if int64(len(data)) != attachment.SizeBytes {
+		return Attachment{}, nil, errors.New("chat attachment size mismatch")
+	}
+	if hash := sha256.Sum256(data); hex.EncodeToString(hash[:]) != attachment.CipherSHA256 {
+		return Attachment{}, nil, errors.New("chat attachment hash mismatch")
+	}
+	return attachment, data, nil
+}
+
 // OpenAttachmentEnvelope returns only the opaque envelope and ciphertext
 // metadata. It deliberately does not read the blob, and is used by the
 // device-proofed JSON envelope endpoint so the envelope is not exposed as a
@@ -240,6 +288,9 @@ func (s *Service) loadAttachmentForDevice(ctx context.Context, userID, chatID, a
 	access, err := s.loadChat(ctx, userID, chatID, true)
 	if err != nil {
 		return Attachment{}, "", "", err
+	}
+	if access.AccountType != accountscope.Regular {
+		return Attachment{}, "", "", ErrChatAttachmentNotFound
 	}
 	var attachment Attachment
 	var uploaderID, storagePath string
@@ -285,6 +336,9 @@ func (s *Service) ListAttachmentKeyRecipients(ctx context.Context, userID, chatI
 	if err != nil {
 		return nil, err
 	}
+	if access.AccountType != accountscope.Regular {
+		return nil, ErrChatAttachmentKeysMissing
+	}
 	if access.MatchStatus != "accepted" {
 		return nil, ErrChatNotAvailable
 	}
@@ -304,6 +358,9 @@ func (s *Service) SaveAttachmentKeyEnvelopes(ctx context.Context, userID, chatID
 	access, err := s.loadChat(ctx, userID, chatID, false)
 	if err != nil {
 		return err
+	}
+	if access.AccountType != accountscope.Regular {
+		return ErrChatAttachmentKeysMissing
 	}
 	if access.MatchStatus != "accepted" {
 		return ErrChatNotAvailable
@@ -508,6 +565,25 @@ func linkAttachmentTx(ctx context.Context, tx *sql.Tx, access chatAccess, upload
 }
 
 func ensureAttachmentReadyTx(ctx context.Context, tx *sql.Tx, access chatAccess, attachmentID string) error {
+	var keyVersion, algorithm string
+	if err := tx.QueryRowContext(ctx, `
+		SELECT key_version,algorithm
+		FROM chat_attachments
+		WHERE id=$1 AND chat_id=$2 AND deleted_at IS NULL`, attachmentID, access.ChatID).Scan(&keyVersion, &algorithm); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrChatAttachmentNotFound
+		}
+		return err
+	}
+	if access.AccountType == accountscope.Demo {
+		if keyVersion != DemoChatKeyVersion || algorithm != DemoChatAlgorithm {
+			return ErrChatAttachmentKeysMissing
+		}
+		return nil
+	}
+	if access.AccountType != accountscope.Regular || keyVersion != attachmentKeyVersion || algorithm != attachmentAlgorithm {
+		return ErrChatAttachmentKeysMissing
+	}
 	expected, err := attachmentKeyRecipients(ctx, tx, access)
 	if err != nil {
 		return err
@@ -640,6 +716,47 @@ func validateAttachmentInput(input AttachmentInput) error {
 		return ErrChatInvalidInput
 	}
 	return nil
+}
+
+func validateDemoAttachmentInput(input AttachmentInput) error {
+	if input.Algorithm != DemoChatAlgorithm || input.KeyVersion != DemoChatKeyVersion {
+		return ErrChatInvalidInput
+	}
+	if !attachmentContentTypes[input.ContentType] {
+		return ErrChatInvalidInput
+	}
+	nonce, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(input.Nonce))
+	if err != nil || len(nonce) != 12 || base64.RawURLEncoding.EncodeToString(nonce) != input.Nonce {
+		return ErrChatInvalidInput
+	}
+	return nil
+}
+
+func (s *Service) loadDemoAttachment(ctx context.Context, chatID, attachmentID string) (Attachment, string, error) {
+	var attachment Attachment
+	var uploaderID string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id,chat_id,uploader_user_id,content_type,size_bytes,cipher_sha256,nonce,algorithm,key_version,created_at
+		FROM chat_attachments
+		WHERE id=$1 AND chat_id=$2 AND message_id IS NOT NULL AND deleted_at IS NULL`, attachmentID, chatID).Scan(
+		&attachment.ID, &attachment.ChatID, &uploaderID, &attachment.ContentType, &attachment.SizeBytes, &attachment.CipherSHA256,
+		&attachment.Nonce, &attachment.Algorithm, &attachment.KeyVersion, &attachment.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Attachment{}, "", ErrChatAttachmentNotFound
+	}
+	if err != nil {
+		return Attachment{}, "", err
+	}
+	if attachment.Algorithm != DemoChatAlgorithm || attachment.KeyVersion != DemoChatKeyVersion ||
+		!attachmentContentTypes[attachment.ContentType] || !validDemoAttachmentNonce(attachment.Nonce) {
+		return Attachment{}, "", ErrChatAttachmentNotFound
+	}
+	return attachment, uploaderID, nil
+}
+
+func validDemoAttachmentNonce(value string) bool {
+	decoded, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(value))
+	return err == nil && len(decoded) == 12 && base64.RawURLEncoding.EncodeToString(decoded) == value
 }
 
 func attachmentRecipientKey(userID, deviceID string) string {

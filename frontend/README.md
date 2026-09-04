@@ -54,6 +54,23 @@ $env:EXPO_PUBLIC_WEB_APP_ORIGIN="http://localhost:8081"
 
 iPhoneのExpo GoからローカルGo APIを確認する場合だけ、`EXPO_PUBLIC_API_BASE_URL`へiPhoneから到達できるURL（例: `http://192.168.11.16:8080/api/v1`）を明示してください。通常は本番APIドメインへ接続します。API接続先を切り替えた場合、セッションはサーバー環境ごとに別なので、その環境で再ログインします。Google OAuthをトンネルで完結させる場合は、Go側のcallbackとGoogle Cloud Consoleの登録値も同じ公開Originに揃え、環境変数を変更した後はExpoを再起動してください。
 
+### ハッカソン審査用Demo入口
+
+Demoボタンは`EXPO_PUBLIC_DEMO_ACCOUNT_ENABLED=true`を明示したビルドに表示されます。
+現在の本番APIでDemoを使う場合は、API側でも`DEMO_ACCOUNT_ENABLED=true`を明示してください。
+分離したDemo APIを使う場合は、審査用API・DB・署名鍵・ストレージを分離したうえで、
+`frontend/.env.demo.example`を`frontend/.env`へコピーし、`<review-api-origin>`を
+実際のDemo APIへ置き換えてからExpoを再起動してください。フロント側だけ有効にすると
+`demo_account_disabled`になります。
+
+```powershell
+Copy-Item .env.demo.example .env
+bun run start -- --clear
+```
+
+この設定で、Googleログインの途中状態を含む未ログイン画面に「デモを体験する」が
+表示されます。API側のDemoフラグが無効な場合は、入口を表示してもアカウント発行は拒否されます。
+
 ## チャットの現行境界
 
 `app/chat/[id].tsx` は暗号化RESTの履歴・送信・既読、画像添付、本文編集・削除、チャットDEK復号、翻訳と`Original`切替に接続済みです。バックエンドのリアルタイム経路はHTTP/3 WebTransportですが、Expo Goにはnative WebTransport APIがないため、Expo GoではREST同期を使います。native bridgeを含むDevelopment Buildと2端末の実機E2Eは別ゲートです。

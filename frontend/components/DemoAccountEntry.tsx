@@ -16,8 +16,8 @@ type DemoAccountEntryProps = {
  */
 export default function DemoAccountEntry({ language, onPress, disabled = false }: DemoAccountEntryProps) {
   const copy = language === "ja"
-    ? { title: "審査用アカウントで試す", note: "登録不要・24時間限定" }
-    : { title: "Try a demo account", note: "No sign-up · 24-hour access" };
+    ? { title: "デモを体験する", note: "登録不要・24時間の審査用アカウント" }
+    : { title: "Try the demo", note: "No sign-up · 24-hour review account" };
 
   return (
     <Pressable

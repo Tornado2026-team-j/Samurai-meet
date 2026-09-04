@@ -7,6 +7,8 @@ import (
 	"errors"
 	"strings"
 	"time"
+
+	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/accountscope"
 )
 
 const (
@@ -67,6 +69,9 @@ func (s *Service) ListChatKeyRecipients(ctx context.Context, userID, chatID stri
 	if err != nil {
 		return nil, err
 	}
+	if access.AccountType != accountscope.Regular {
+		return nil, ErrChatKeyEnvelopeMissing
+	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT d.user_id,d.device_id,COALESCE(d.agreement_key_version,''),COALESCE(d.agreement_public_key,''),
 		       EXISTS(
@@ -109,8 +114,12 @@ func (s *Service) GetChatKeyEnvelopes(ctx context.Context, userID, chatID, devic
 	if s == nil || s.db == nil || !validIdentifier(userID, maxClientMessageID) || !validIdentifier(chatID, maxClientMessageID) || !validIdentifier(deviceID, maxClientMessageID) {
 		return ChatKeyEnvelopeBundle{}, ErrChatInvalidInput
 	}
-	if _, err := s.loadChat(ctx, userID, chatID, true); err != nil {
+	access, err := s.loadChat(ctx, userID, chatID, true)
+	if err != nil {
 		return ChatKeyEnvelopeBundle{}, err
+	}
+	if access.AccountType != accountscope.Regular {
+		return ChatKeyEnvelopeBundle{}, ErrChatKeyEnvelopeMissing
 	}
 	rows, err := s.db.QueryContext(ctx, `
 			SELECT e.scope,e.user_id,e.device_id,e.key_version,e.target_public_key,e.wrapping_algorithm,e.envelope,
@@ -161,6 +170,9 @@ func (s *Service) SaveChatKeyEnvelopes(ctx context.Context, userID, callerDevice
 	access, err := s.loadChat(ctx, userID, chatID, true)
 	if err != nil {
 		return err
+	}
+	if access.AccountType != accountscope.Regular {
+		return ErrChatKeyEnvelopeAuthority
 	}
 	var callerDeviceExists bool
 	if err := s.db.QueryRowContext(ctx, `

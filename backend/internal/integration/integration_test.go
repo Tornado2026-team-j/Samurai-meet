@@ -13,6 +13,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -307,6 +308,41 @@ func TestRecoveryReRegistrationRevokesPreviousPasskeys(t *testing.T) {
 	}
 	if !recoveryRegistrationClaims.RecoveryVerified {
 		t.Fatal("recovery registration pre-auth is missing the server-side recovery proof marker")
+	}
+}
+
+func TestDemoAccountMVPExpiresAtServerDeadline(t *testing.T) {
+	database := openIsolatedDatabase(t)
+	now := time.Date(2026, time.September, 4, 12, 0, 0, 0, time.UTC)
+	signer, err := auth.NewSigner(base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x44}, 32)), "integration-issuer", "integration-audience")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessions := auth.NewSessionService(database, signer)
+	demoAccounts := auth.NewDemoAccountService(database, sessions)
+
+	tokens, err := demoAccounts.Start(context.Background(), "ja", "local", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tokens.AccountType != "demo" || tokens.DemoExpiresAt == nil {
+		t.Fatalf("demo metadata = account_type %q expires %v", tokens.AccountType, tokens.DemoExpiresAt)
+	}
+	if got, want := tokens.DemoExpiresAt.UTC(), now.Add(auth.DemoAccountTTL).UTC(); !got.Equal(want) {
+		t.Fatalf("demo expiry = %s, want %s", got.Format(time.RFC3339Nano), want.Format(time.RFC3339Nano))
+	}
+	if _, err := sessions.Authenticate(context.Background(), tokens.AccessToken, now.Add(10*time.Second)); err != nil {
+		t.Fatalf("fresh demo access token rejected: %v", err)
+	}
+	if _, err := sessions.Refresh(context.Background(), tokens.RefreshToken, "demo-expired-refresh", now.Add(auth.DemoAccountTTL+time.Second)); !errors.Is(err, auth.ErrDemoAccountExpired) {
+		t.Fatalf("expired demo refresh error = %v, want %v", err, auth.ErrDemoAccountExpired)
+	}
+	expiredIDs, err := demoAccounts.ExpiredUserIDs(context.Background(), 10, now.Add(auth.DemoAccountTTL+time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(expiredIDs) != 1 || expiredIDs[0] != tokens.UserID {
+		t.Fatalf("expired demo IDs = %#v, want %q", expiredIDs, tokens.UserID)
 	}
 }
 

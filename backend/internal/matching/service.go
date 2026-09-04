@@ -13,6 +13,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/accountscope"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/notification"
 )
 
@@ -236,9 +237,38 @@ func NewService(database *sql.DB, notificationServices ...*notification.Service)
 	return &Service{db: database, notifications: notifications}
 }
 
+func matchingScopeNotFound(err error) error {
+	if errors.Is(err, accountscope.ErrUserNotFound) || errors.Is(err, accountscope.ErrInactive) ||
+		errors.Is(err, accountscope.ErrExpired) || errors.Is(err, accountscope.ErrMismatch) || errors.Is(err, accountscope.ErrInvalid) {
+		return ErrRecruitmentNotFound
+	}
+	return err
+}
+
+func matchScopeNotFound(err error) error {
+	if errors.Is(err, accountscope.ErrUserNotFound) || errors.Is(err, accountscope.ErrInactive) ||
+		errors.Is(err, accountscope.ErrExpired) || errors.Is(err, accountscope.ErrMismatch) || errors.Is(err, accountscope.ErrInvalid) {
+		return ErrMatchNotFound
+	}
+	return err
+}
+
+func (s *Service) requireMatchingUser(ctx context.Context, userID string, now time.Time) error {
+	_, err := accountscope.Resolve(ctx, s.db, userID, now)
+	return matchingScopeNotFound(err)
+}
+
+func (s *Service) requireMatchParticipants(ctx context.Context, firstUserID, secondUserID string, now time.Time) error {
+	_, err := accountscope.RequireCompatible(ctx, s.db, firstUserID, secondUserID, now)
+	return matchScopeNotFound(err)
+}
+
 func (s *Service) CreateRecruitment(ctx context.Context, userID string, input RecruitmentInput, now time.Time) (Recruitment, error) {
 	if s == nil || s.db == nil || strings.TrimSpace(userID) == "" {
 		return Recruitment{}, ErrRecruitmentNotFound
+	}
+	if err := s.requireMatchingUser(ctx, userID, now); err != nil {
+		return Recruitment{}, err
 	}
 	normalized, expiresAt, err := normalizeRecruitmentInput(input, now)
 	if err != nil {
@@ -283,7 +313,11 @@ func (s *Service) SearchRecruitments(ctx context.Context, userID string, params 
 	if s == nil || s.db == nil || strings.TrimSpace(userID) == "" {
 		return nil, ErrRecruitmentNotFound
 	}
-	params, err := normalizeSearchParams(params)
+	scope, err := accountscope.Resolve(ctx, s.db, userID, now)
+	if err != nil {
+		return nil, matchingScopeNotFound(err)
+	}
+	params, err = normalizeSearchParams(params)
 	if err != nil {
 		return nil, err
 	}
@@ -305,6 +339,8 @@ func (s *Service) SearchRecruitments(ctx context.Context, userID string, params 
 		JOIN users u ON u.id = r.owner_user_id AND u.status = 'active'
 		LEFT JOIN profiles p ON p.user_id = r.owner_user_id
 		WHERE r.owner_user_id <> $1
+		  AND u.account_type = $10
+		  AND (u.account_type = 'regular' OR u.demo_expires_at::timestamptz > $2::timestamptz)
 		  AND r.status IN ('open','matched')
 		  AND r.expires_at > $2
 		  AND ($3 = '' OR r.category = $3)
@@ -320,7 +356,7 @@ func (s *Service) SearchRecruitments(ctx context.Context, userID string, params 
 				   OR (b.blocker_user_id = r.owner_user_id AND b.blocked_user_id = $1)
 		  )
 		ORDER BY r.created_at DESC`, userID, nowText, params.Category, params.AvailableDate,
-		params.AvailableFrom, params.AvailableTo, params.StartTime, params.EndTime, params.VerifiedOnly)
+		params.AvailableFrom, params.AvailableTo, params.StartTime, params.EndTime, params.VerifiedOnly, scope.AccountType)
 	if err != nil {
 		return nil, err
 	}
@@ -391,6 +427,9 @@ func (s *Service) ListOwnedRecruitments(ctx context.Context, userID string, now 
 	if s == nil || s.db == nil || strings.TrimSpace(userID) == "" {
 		return nil, ErrRecruitmentNotFound
 	}
+	if err := s.requireMatchingUser(ctx, userID, now); err != nil {
+		return nil, err
+	}
 	nowText := now.UTC().Format(time.RFC3339Nano)
 	if _, err := s.db.ExecContext(ctx, `
 		UPDATE recruitment_cards SET status='expired',updated_at=$1
@@ -442,12 +481,18 @@ func (s *Service) ListOwnedRecruitments(ctx context.Context, userID string, now 
 }
 
 func (s *Service) GetRecruitment(ctx context.Context, userID, recruitmentID string, now time.Time) (Recruitment, error) {
+	if err := s.requireMatchingUser(ctx, userID, now); err != nil {
+		return Recruitment{}, err
+	}
 	record, err := s.loadCard(ctx, recruitmentID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Recruitment{}, ErrRecruitmentNotFound
 	}
 	if err != nil {
 		return Recruitment{}, err
+	}
+	if err := s.requireMatchParticipants(ctx, userID, record.OwnerUserID, now); err != nil {
+		return Recruitment{}, matchingScopeNotFound(err)
 	}
 	if record.OwnerUserID != userID {
 		blocked, blockErr := s.blocked(ctx, userID, record.OwnerUserID)
@@ -471,6 +516,9 @@ func (s *Service) GetRecruitment(ctx context.Context, userID, recruitmentID stri
 }
 
 func (s *Service) UpdateRecruitment(ctx context.Context, userID, recruitmentID string, patch RecruitmentPatch, now time.Time) (Recruitment, error) {
+	if err := s.requireMatchingUser(ctx, userID, now); err != nil {
+		return Recruitment{}, err
+	}
 	record, err := s.loadCard(ctx, recruitmentID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Recruitment{}, ErrRecruitmentNotFound
@@ -550,6 +598,9 @@ func (s *Service) UpdateRecruitment(ctx context.Context, userID, recruitmentID s
 }
 
 func (s *Service) CloseRecruitment(ctx context.Context, userID, recruitmentID string, now time.Time) error {
+	if err := s.requireMatchingUser(ctx, userID, now); err != nil {
+		return err
+	}
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE recruitment_cards SET status='closed',updated_at=$1
 		WHERE id=$2 AND owner_user_id=$3 AND status NOT IN ('expired','completed')`,
@@ -568,6 +619,9 @@ func (s *Service) CloseRecruitment(ctx context.Context, userID, recruitmentID st
 }
 
 func (s *Service) SendInterest(ctx context.Context, userID, recruitmentID string, now time.Time) (Match, error) {
+	if err := s.requireMatchingUser(ctx, userID, now); err != nil {
+		return Match{}, matchScopeNotFound(err)
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Match{}, err
@@ -584,6 +638,9 @@ func (s *Service) SendInterest(ctx context.Context, userID, recruitmentID string
 	}
 	if ownerID == userID {
 		return Match{}, ErrForbidden
+	}
+	if _, err = accountscope.RequireCompatible(ctx, tx, userID, ownerID, now); err != nil {
+		return Match{}, matchScopeNotFound(err)
 	}
 	if !beforeExpiry(expiresAt, now) {
 		_, _ = tx.ExecContext(ctx, `UPDATE recruitment_cards SET status='expired',updated_at=$1 WHERE id=$2 AND status IN ('open','matched')`, now.UTC().Format(time.RFC3339Nano), recruitmentID)
@@ -666,6 +723,9 @@ func (s *Service) WithdrawInterest(ctx context.Context, userID, matchID string, 
 	if s == nil || s.db == nil || strings.TrimSpace(userID) == "" || strings.TrimSpace(matchID) == "" {
 		return Match{}, ErrMatchNotFound
 	}
+	if err := s.requireMatchingUser(ctx, userID, now); err != nil {
+		return Match{}, matchScopeNotFound(err)
+	}
 	if err := s.expirePendingMatches(ctx, now); err != nil {
 		return Match{}, err
 	}
@@ -691,6 +751,9 @@ func (s *Service) WithdrawInterest(ctx context.Context, userID, matchID string, 
 	}
 	if matchedAt.Valid {
 		match.MatchedAt = matchedAt.String
+	}
+	if err = s.requireMatchParticipants(ctx, requesterID, ownerID, now); err != nil {
+		return Match{}, matchScopeNotFound(err)
 	}
 	if requesterID != userID {
 		return Match{}, ErrForbidden
@@ -743,7 +806,11 @@ func (s *Service) ListMatches(ctx context.Context, userID string, params MatchLi
 	if s == nil || s.db == nil || strings.TrimSpace(userID) == "" {
 		return nil, ErrMatchNotFound
 	}
-	params, err := normalizeMatchListParams(params)
+	scope, err := accountscope.Resolve(ctx, s.db, userID, now)
+	if err != nil {
+		return nil, matchScopeNotFound(err)
+	}
+	params, err = normalizeMatchListParams(params)
 	if err != nil {
 		return nil, err
 	}
@@ -761,13 +828,16 @@ func (s *Service) ListMatches(ctx context.Context, userID string, params MatchLi
 		       OR $2 = 'owner' AND m.owner_user_id=$1
 		       OR $2 = 'requester' AND m.requester_user_id=$1)
 		  AND ($3 = '' OR m.status=$3)
+		  AND requester.account_type=$5 AND owner.account_type=$5
+		  AND (requester.account_type='regular' OR requester.demo_expires_at::timestamptz > $6::timestamptz)
+		  AND (owner.account_type='regular' OR owner.demo_expires_at::timestamptz > $6::timestamptz)
 		  AND NOT EXISTS (
 				SELECT 1 FROM blocks b
 				WHERE (b.blocker_user_id=m.owner_user_id AND b.blocked_user_id=m.requester_user_id)
 				   OR (b.blocker_user_id=m.requester_user_id AND b.blocked_user_id=m.owner_user_id)
 		  )
 		ORDER BY m.updated_at DESC
-		LIMIT $4`, userID, params.Role, params.Status, params.Limit)
+		LIMIT $4`, userID, params.Role, params.Status, params.Limit, scope.AccountType, now.UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return nil, err
 	}
@@ -811,8 +881,12 @@ func (s *Service) GetMatch(ctx context.Context, userID, matchID string) (MatchVi
 	if err := s.expirePendingMatches(ctx, time.Now()); err != nil {
 		return MatchView{}, err
 	}
+	scope, err := accountscope.Resolve(ctx, s.db, userID, time.Now())
+	if err != nil {
+		return MatchView{}, matchScopeNotFound(err)
+	}
 	var record matchRecord
-	err := s.db.QueryRowContext(ctx, `
+	err = s.db.QueryRowContext(ctx, `
 		SELECT m.id,m.card_id,m.requester_user_id,m.owner_user_id,m.status,
 		       m.matched_at,m.created_at,m.updated_at,
 		       EXISTS(SELECT 1 FROM match_likes ml WHERE ml.match_id=m.id AND ml.liker_user_id=$2)
@@ -820,11 +894,14 @@ func (s *Service) GetMatch(ctx context.Context, userID, matchID string) (MatchVi
 		JOIN users requester ON requester.id=m.requester_user_id AND requester.status='active'
 		JOIN users owner ON owner.id=m.owner_user_id AND owner.status='active'
 		WHERE m.id=$1 AND (m.requester_user_id=$2 OR m.owner_user_id=$2)
+		  AND requester.account_type=$3 AND owner.account_type=$3
+		  AND (requester.account_type='regular' OR requester.demo_expires_at::timestamptz > $4::timestamptz)
+		  AND (owner.account_type='regular' OR owner.demo_expires_at::timestamptz > $4::timestamptz)
 		  AND NOT EXISTS (
 				SELECT 1 FROM blocks b
 				WHERE (b.blocker_user_id=m.owner_user_id AND b.blocked_user_id=m.requester_user_id)
 				   OR (b.blocker_user_id=m.requester_user_id AND b.blocked_user_id=m.owner_user_id)
-		  )`, matchID, userID).Scan(
+		  )`, matchID, userID, scope.AccountType, time.Now().UTC().Format(time.RFC3339Nano)).Scan(
 		&record.ID, &record.RecruitmentID, &record.RequesterID, &record.OwnerID,
 		&record.Status, &record.MatchedAt, &record.CreatedAt, &record.UpdatedAt, &record.LikedByMe)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -846,6 +923,9 @@ func (s *Service) expirePendingMatches(ctx context.Context, now time.Time) error
 }
 
 func (s *Service) RejectMatch(ctx context.Context, userID, matchID string, now time.Time) (Match, error) {
+	if err := s.requireMatchingUser(ctx, userID, now); err != nil {
+		return Match{}, matchScopeNotFound(err)
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Match{}, err
@@ -869,6 +949,9 @@ func (s *Service) RejectMatch(ctx context.Context, userID, matchID string, now t
 	}
 	if matchedAt.Valid {
 		match.MatchedAt = matchedAt.String
+	}
+	if _, err = accountscope.RequireCompatible(ctx, tx, requesterID, ownerID, now); err != nil {
+		return Match{}, matchScopeNotFound(err)
 	}
 	if ownerID != userID {
 		return Match{}, ErrForbidden
@@ -927,6 +1010,9 @@ func (s *Service) RejectMatch(ctx context.Context, userID, matchID string, now t
 }
 
 func (s *Service) AcceptMatch(ctx context.Context, userID, matchID string, now time.Time) (Match, error) {
+	if err := s.requireMatchingUser(ctx, userID, now); err != nil {
+		return Match{}, matchScopeNotFound(err)
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Match{}, err
@@ -969,6 +1055,9 @@ func (s *Service) AcceptMatch(ctx context.Context, userID, matchID string, now t
 	}
 	if matchedAt.Valid {
 		match.MatchedAt = matchedAt.String
+	}
+	if _, err = accountscope.RequireCompatible(ctx, tx, requesterID, ownerID, now); err != nil {
+		return Match{}, matchScopeNotFound(err)
 	}
 	if ownerID != userID {
 		return Match{}, ErrForbidden
@@ -1048,6 +1137,9 @@ func (s *Service) AcceptMatch(ctx context.Context, userID, matchID string, now t
 }
 
 func (s *Service) CompleteMatch(ctx context.Context, userID, matchID string, now time.Time) (Match, error) {
+	if err := s.requireMatchingUser(ctx, userID, now); err != nil {
+		return Match{}, matchScopeNotFound(err)
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Match{}, err
@@ -1067,6 +1159,9 @@ func (s *Service) CompleteMatch(ctx context.Context, userID, matchID string, now
 	}
 	if matchedAt.Valid {
 		match.MatchedAt = matchedAt.String
+	}
+	if _, err = accountscope.RequireCompatible(ctx, tx, requesterID, ownerID, now); err != nil {
+		return Match{}, matchScopeNotFound(err)
 	}
 	if userID != requesterID && userID != ownerID {
 		return Match{}, ErrForbidden
@@ -1091,6 +1186,9 @@ func (s *Service) LikeMatch(ctx context.Context, userID, matchID string, now tim
 	if s == nil || s.db == nil || strings.TrimSpace(userID) == "" || strings.TrimSpace(matchID) == "" {
 		return MatchLike{}, ErrMatchNotFound
 	}
+	if err := s.requireMatchingUser(ctx, userID, now); err != nil {
+		return MatchLike{}, matchScopeNotFound(err)
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return MatchLike{}, err
@@ -1108,6 +1206,9 @@ func (s *Service) LikeMatch(ctx context.Context, userID, matchID string, now tim
 	}
 	if err != nil {
 		return MatchLike{}, err
+	}
+	if _, err = accountscope.RequireCompatible(ctx, tx, requesterID, ownerID, now); err != nil {
+		return MatchLike{}, matchScopeNotFound(err)
 	}
 	if userID != requesterID && userID != ownerID {
 		return MatchLike{}, ErrForbidden
@@ -1162,6 +1263,9 @@ func (s *Service) UpdateLocation(ctx context.Context, userID string, input Locat
 		!finite(input.Longitude) || input.Longitude < -180 || input.Longitude > 180 ||
 		!finite(input.AccuracyM) || input.AccuracyM < 0 || input.AccuracyM > 100000 {
 		return ErrInvalidInput
+	}
+	if err := s.requireMatchingUser(ctx, userID, now); err != nil {
+		return err
 	}
 	capturedAt := now.UTC()
 	if strings.TrimSpace(input.CapturedAt) != "" {
@@ -1425,6 +1529,9 @@ func (s *Service) loadCard(ctx context.Context, recruitmentID string) (cardRecor
 func (s *Service) buildMatchView(ctx context.Context, userID string, record matchRecord) (MatchView, error) {
 	if userID != record.RequesterID && userID != record.OwnerID {
 		return MatchView{}, ErrMatchNotFound
+	}
+	if err := s.requireMatchParticipants(ctx, record.RequesterID, record.OwnerID, time.Now()); err != nil {
+		return MatchView{}, matchScopeNotFound(err)
 	}
 	card, err := s.loadCard(ctx, record.RecruitmentID)
 	if errors.Is(err, sql.ErrNoRows) {
