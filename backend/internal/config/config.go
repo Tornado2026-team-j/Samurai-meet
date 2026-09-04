@@ -50,7 +50,12 @@ type ChatConfig struct {
 type GoogleOIDCConfig struct{ ClientID, ClientSecret, RedirectURI string }
 type GeminiConfig struct{ APIKey, Model, ImageModel string }
 type StripeConfig struct{ SecretKey, IdentityWebhookSecret, IdentityReturnURL string }
-type WebAuthnConfig struct{ RPID, RPOrigin, RPDisplayName string }
+type WebAuthnConfig struct {
+	RPID                 string
+	RPOrigin             string
+	RPDisplayName        string
+	AdditionalRPOrigins  []string
+}
 type JWSConfig struct{ SigningKey, KeyID, VerifyKeys, Issuer, Audience string }
 
 type ImageStorageConfig struct {
@@ -142,6 +147,12 @@ func (c Config) ValidateForEnvironment() error {
 	if !validSecureOrigin(c.WebAuthn.RPOrigin) || strings.TrimSpace(c.WebAuthn.RPID) == "" {
 		missing = append(missing, "WEBAUTHN_RP_ID/WEBAUTHN_RP_ORIGIN (https origin)")
 	}
+	for _, origin := range c.WebAuthn.AdditionalRPOrigins {
+		if !validSecureOrigin(origin) {
+			missing = append(missing, "ADDITIONAL_CLIENT_ORIGINS (WebAuthn https origins)")
+			break
+		}
+	}
 	if len(missing) > 0 {
 		return fmt.Errorf("production configuration is incomplete: %s", strings.Join(missing, ", "))
 	}
@@ -194,6 +205,7 @@ func Load() Config {
 	if err := LoadDotEnv(".env"); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: .env を読み込めません: %v\n", err)
 	}
+	additionalClientOrigins := commaSeparatedValues(os.Getenv("ADDITIONAL_CLIENT_ORIGINS"))
 
 	return Config{
 		HTTPAddr:            valueOrDefault("HTTP_ADDR", ":8080"),
@@ -203,7 +215,7 @@ func Load() Config {
 		GoogleLoginEnabled:  boolValueOrDefault("GOOGLE_LOGIN_ENABLED", true),
 		DevClientOrigin:     valueOrDefault("DEV_CLIENT_ORIGIN", "http://localhost:8081"),
 		ClientOrigin:        os.Getenv("CLIENT_ORIGIN"),
-		AdditionalClientOrigins: commaSeparatedValues(os.Getenv("ADDITIONAL_CLIENT_ORIGINS")),
+		AdditionalClientOrigins: additionalClientOrigins,
 		Database: DatabaseConfig{
 			Host:     valueOrDefault("DB_HOST", "127.0.0.1"),
 			Port:     valueOrDefault("DB_PORT", "5432"),
@@ -224,7 +236,12 @@ func Load() Config {
 		GoogleOIDC: GoogleOIDCConfig{os.Getenv("GOOGLE_CLIENT_ID"), os.Getenv("GOOGLE_CLIENT_SECRET"), os.Getenv("GOOGLE_REDIRECT_URI")},
 		Gemini:     GeminiConfig{os.Getenv("GEMINI_API_KEY"), valueOrDefault("GEMINI_MODEL", "gemini-3.1-flash-lite"), valueOrDefault("GEMINI_IMAGE_MODEL", "gemini-3.1-flash-lite-image")},
 		Stripe:     StripeConfig{os.Getenv("STRIPE_SECRET_KEY"), os.Getenv("STRIPE_IDENTITY_WEBHOOK_SECRET"), os.Getenv("STRIPE_IDENTITY_RETURN_URL")},
-		WebAuthn:   WebAuthnConfig{valueOrDefault("WEBAUTHN_RP_ID", "localhost"), valueOrDefault("WEBAUTHN_RP_ORIGIN", "http://localhost:8081"), valueOrDefault("WEBAUTHN_RP_DISPLAY_NAME", "Samurai Meet")},
+		WebAuthn: WebAuthnConfig{
+			RPID:                valueOrDefault("WEBAUTHN_RP_ID", "localhost"),
+			RPOrigin:            valueOrDefault("WEBAUTHN_RP_ORIGIN", "http://localhost:8081"),
+			RPDisplayName:       valueOrDefault("WEBAUTHN_RP_DISPLAY_NAME", "Samurai Meet"),
+			AdditionalRPOrigins: append([]string(nil), additionalClientOrigins...),
+		},
 		JWS:        JWSConfig{os.Getenv("JWS_SIGNING_KEY"), valueOrDefault("JWS_KEY_ID", "v1"), os.Getenv("JWS_VERIFY_KEYS"), valueOrDefault("JWS_ISSUER", "samurai-meet-api"), valueOrDefault("JWS_AUDIENCE", "samurai-meet-mobile")},
 		Chat: ChatConfig{
 			SendBurst:                         intValueOrDefault("CHAT_SEND_BURST", 15),

@@ -58,6 +58,9 @@ func TestLoadReadsAdditionalClientOrigins(t *testing.T) {
 	if got != "https://samurai-meet-expo-go-pre.disnana.com/,https://samurai-meet-staging.disnana.com" {
 		t.Fatalf("AdditionalClientOrigins = %q", got)
 	}
+	if got := strings.Join(cfg.WebAuthn.AdditionalRPOrigins, ","); got != "https://samurai-meet-expo-go-pre.disnana.com/,https://samurai-meet-staging.disnana.com" {
+		t.Fatalf("WebAuthn.AdditionalRPOrigins = %q", got)
+	}
 }
 
 func TestLoadReadsDemoReviewSwitches(t *testing.T) {

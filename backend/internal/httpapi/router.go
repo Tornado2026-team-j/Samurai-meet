@@ -65,6 +65,7 @@ func NewRouterWithOptions(o RouterOptions) http.Handler {
 	m.HandleFunc("/readyz", readyz)
 	m.HandleFunc("/passkey", passkeyPage)
 	m.HandleFunc("/passkey/", passkeyPage)
+	m.HandleFunc("/.well-known/webauthn", webAuthnRelatedOrigins(o.Environment, o.ClientOrigin, o.DevClientOrigin, o.AdditionalClientOrigins))
 	m.HandleFunc(APIV1Prefix+"/healthz", healthz)
 	m.HandleFunc(APIV1Prefix+"/readyz", readyz)
 	if o.Identity != nil {
