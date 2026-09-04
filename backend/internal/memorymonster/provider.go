@@ -62,17 +62,16 @@ func (g *GeminiImageGenerator) Generate(ctx context.Context, input GenerateInput
 		return GeneratedImage{}, ErrGenerationUnavailable
 	}
 	model := strings.TrimPrefix(strings.TrimSpace(g.model), "models/")
+	poseDescription, err := g.extractPhotoPose(ctx, input, model)
+	if err != nil {
+		return GeneratedImage{}, err
+	}
 	requestPayload := geminiInteractionRequest{
 		Model: model,
 		Input: []geminiInteractionContent{
 			{
 				Type: "text",
-				Text: buildPrompt(input),
-			},
-			{
-				Type:     "image",
-				MIMEType: input.PhotoContentType,
-				Data:     base64.StdEncoding.EncodeToString(input.Photo),
+				Text: buildPrompt(input, poseDescription),
 			},
 		},
 		ResponseFormat: geminiImageResponseFormat{
@@ -83,37 +82,9 @@ func (g *GeminiImageGenerator) Generate(ctx context.Context, input GenerateInput
 		},
 		Store: false,
 	}
-	body, err := json.Marshal(requestPayload)
+	responsePayload, err := g.doInteraction(ctx, requestPayload)
 	if err != nil {
 		return GeneratedImage{}, err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, g.endpoint, bytes.NewReader(body))
-	if err != nil {
-		return GeneratedImage{}, err
-	}
-	req.Header.Set("x-goog-api-key", g.apiKey)
-	req.Header.Set("Content-Type", "application/json")
-	res, err := g.client.Do(req)
-	if err != nil {
-		return GeneratedImage{}, err
-	}
-	defer res.Body.Close()
-	responseBody, err := io.ReadAll(io.LimitReader(res.Body, 16*1024*1024))
-	if err != nil {
-		return GeneratedImage{}, err
-	}
-	if res.StatusCode == http.StatusUnauthorized || res.StatusCode == http.StatusForbidden {
-		return GeneratedImage{}, ErrGenerationUnavailable
-	}
-	if res.StatusCode == http.StatusTooManyRequests {
-		return GeneratedImage{}, ErrGenerationRateLimited
-	}
-	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return GeneratedImage{}, fmt.Errorf("%w: status %d", ErrGenerationFailed, res.StatusCode)
-	}
-	var responsePayload geminiInteractionResponse
-	if err := json.Unmarshal(responseBody, &responsePayload); err != nil {
-		return GeneratedImage{}, fmt.Errorf("%w: invalid provider response", ErrGenerationFailed)
 	}
 	if image, ok, err := decodeInteractionImage(responsePayload.OutputImage, model); ok || err != nil {
 		return image, err
@@ -137,6 +108,77 @@ func (g *GeminiImageGenerator) Generate(ctx context.Context, input GenerateInput
 	return GeneratedImage{}, fmt.Errorf("%w: provider returned no image", ErrGenerationFailed)
 }
 
+func (g *GeminiImageGenerator) extractPhotoPose(ctx context.Context, input GenerateInput, model string) (string, error) {
+	requestPayload := geminiInteractionRequest{
+		Model: model,
+		Input: []geminiInteractionContent{
+			{
+				Type: "text",
+				Text: poseExtractionPrompt(),
+			},
+			{
+				Type:     "image",
+				MIMEType: input.PhotoContentType,
+				Data:     base64.StdEncoding.EncodeToString(input.Photo),
+			},
+		},
+		ResponseFormat: geminiTextResponseFormat{
+			Type:     "text",
+			MIMEType: "text/plain",
+		},
+		GenerationConfig: &geminiGenerationConfig{
+			MaxOutputTokens: 80,
+			ThinkingLevel:   "minimal",
+		},
+		Store: false,
+	}
+	responsePayload, err := g.doInteraction(ctx, requestPayload)
+	if err != nil {
+		return "", err
+	}
+	text := normalizePoseDescription(extractInteractionText(responsePayload))
+	if text == "" {
+		return "", fmt.Errorf("%w: empty pose description", ErrGenerationFailed)
+	}
+	return text, nil
+}
+
+func (g *GeminiImageGenerator) doInteraction(ctx context.Context, requestPayload geminiInteractionRequest) (geminiInteractionResponse, error) {
+	body, err := json.Marshal(requestPayload)
+	if err != nil {
+		return geminiInteractionResponse{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, g.endpoint, bytes.NewReader(body))
+	if err != nil {
+		return geminiInteractionResponse{}, err
+	}
+	req.Header.Set("x-goog-api-key", g.apiKey)
+	req.Header.Set("Content-Type", "application/json")
+	res, err := g.client.Do(req)
+	if err != nil {
+		return geminiInteractionResponse{}, err
+	}
+	defer res.Body.Close()
+	responseBody, err := io.ReadAll(io.LimitReader(res.Body, 16*1024*1024))
+	if err != nil {
+		return geminiInteractionResponse{}, err
+	}
+	if res.StatusCode == http.StatusUnauthorized || res.StatusCode == http.StatusForbidden {
+		return geminiInteractionResponse{}, ErrGenerationUnavailable
+	}
+	if res.StatusCode == http.StatusTooManyRequests {
+		return geminiInteractionResponse{}, ErrGenerationRateLimited
+	}
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return geminiInteractionResponse{}, fmt.Errorf("%w: status %d", ErrGenerationFailed, res.StatusCode)
+	}
+	var responsePayload geminiInteractionResponse
+	if err := json.Unmarshal(responseBody, &responsePayload); err != nil {
+		return geminiInteractionResponse{}, fmt.Errorf("%w: invalid provider response", ErrGenerationFailed)
+	}
+	return responsePayload, nil
+}
+
 func decodeInteractionImage(content *geminiInteractionContent, model string) (GeneratedImage, bool, error) {
 	if content == nil || strings.TrimSpace(content.Data) == "" {
 		return GeneratedImage{}, false, nil
@@ -153,10 +195,11 @@ func decodeInteractionImage(content *geminiInteractionContent, model string) (Ge
 }
 
 type geminiInteractionRequest struct {
-	Model          string                     `json:"model"`
-	Input          []geminiInteractionContent `json:"input"`
-	ResponseFormat geminiImageResponseFormat  `json:"response_format"`
-	Store          bool                       `json:"store"`
+	Model            string                     `json:"model"`
+	Input            []geminiInteractionContent `json:"input"`
+	ResponseFormat   any                        `json:"response_format,omitempty"`
+	GenerationConfig *geminiGenerationConfig    `json:"generation_config,omitempty"`
+	Store            bool                       `json:"store"`
 }
 
 type geminiInteractionContent struct {
@@ -173,8 +216,19 @@ type geminiImageResponseFormat struct {
 	ImageSize   string `json:"image_size"`
 }
 
+type geminiTextResponseFormat struct {
+	Type     string `json:"type"`
+	MIMEType string `json:"mime_type"`
+}
+
+type geminiGenerationConfig struct {
+	MaxOutputTokens int    `json:"max_output_tokens,omitempty"`
+	ThinkingLevel   string `json:"thinking_level,omitempty"`
+}
+
 type geminiInteractionResponse struct {
 	OutputImage *geminiInteractionContent `json:"output_image"`
+	OutputText  string                    `json:"output_text"`
 	Steps       []struct {
 		Type    string                     `json:"type"`
 		Content []geminiInteractionContent `json:"content"`
@@ -197,13 +251,94 @@ func (PlaceholderGenerator) Generate(_ context.Context, input GenerateInput) (Ge
 	}, nil
 }
 
-func buildPrompt(input GenerateInput) string {
+func extractInteractionText(response geminiInteractionResponse) string {
+	if strings.TrimSpace(response.OutputText) != "" {
+		return response.OutputText
+	}
+	for _, step := range response.Steps {
+		if step.Type != "" && step.Type != "model_output" {
+			continue
+		}
+		for _, content := range step.Content {
+			if content.Type == "text" && strings.TrimSpace(content.Text) != "" {
+				return content.Text
+			}
+		}
+	}
+	return ""
+}
+
+func normalizePoseDescription(value string) string {
+	value = strings.Join(strings.Fields(strings.TrimSpace(value)), " ")
+	runes := []rune(value)
+	if len(runes) > 180 {
+		return string(runes[:180])
+	}
+	return value
+}
+
+func poseExtractionPrompt() string {
 	return strings.Join([]string{
-		"Create one cute original mascot monster illustration for Samurai Meet.",
-		"Use the attached photo only as reference for the people's friendly mood, clothing colors, and broad visual atmosphere. Do not make a realistic portrait.",
-		"The monster motif must clearly be: " + strings.TrimSpace(input.MemorableObject),
-		"Decorate the character with the memory: " + strings.TrimSpace(input.MemoryText),
-		"Style: bright Japanese mobile app collectible, clean outline, soft shading, full body, square composition, no text, no logo, no watermark.",
+		"Look at the photo and describe only the human pose information needed for a mascot prompt.",
+		"Do not describe identity, faces, age, gender, ethnicity, attractiveness, exact clothing logos, location, scenery, objects, or private details.",
+		"Return one concise English sentence about body posture, orientation, arm placement, leg placement, and whether the people are standing or sitting.",
+		"If there are multiple people, describe their shared pose or relative posture only.",
+	}, "\n")
+}
+
+func buildPrompt(input GenerateInput, poseDescription string) string {
+	return strings.Join([]string{
+		"Create an original cute mascot character for a mobile tourism matching app.",
+		"",
+		"Concept:",
+		"The character represents a memory from a guided experience between two users.",
+		"It should not be a direct portrait of the people in the photo.",
+		"The goal is to preserve the feeling of the day as a collectible memory character.",
+		"",
+		"Inputs:",
+		"",
+		"- Photo: " + strings.TrimSpace(poseDescription),
+		"- Most memorable object: " + strings.TrimSpace(input.MemorableObject),
+		"- Memory: " + strings.TrimSpace(input.MemoryText),
+		"",
+		"Character structure - strict rules:",
+		"",
+		"- The character must have exactly one head and one body.",
+		"- The character must have exactly two arms.",
+		"- The character must have exactly two legs.",
+		"- The character must have two eyes.",
+		"- The character must have one small mouth.",
+		"- The character must be a full-body character.",
+		"- The character must be standing or sitting in a stable, readable pose.",
+		"- Do not add extra arms, extra legs, extra hands, extra feet, extra heads, extra eyes, tentacles, wings, or duplicated body parts.",
+		"- Hands should be simple mitten-like hands, not detailed human fingers.",
+		"- Feet should be simple rounded feet.",
+		"- Accessories and object motifs must not look like additional limbs.",
+		"",
+		"How to reflect the inputs:",
+		"",
+		"- Use the photo only for the general pose described in the Photo input.",
+		"- Do not copy the users' faces or make the character look like a real person.",
+		"- Use the most memorable object as the main motif of the character's accessory, body pattern, hat, charm, or held item.",
+		"- Use the memory text to decide the character's expression, pose, warmth, and emotional tone.",
+		"- Keep the main body shape consistent and change only the character details based on the inputs.",
+		"",
+		"Style:",
+		"soft 3D illustration, rounded shapes, smooth surface, gentle highlights, subtle shadows, simple readable silhouette, friendly expression, cute but not childish, polished mobile app mascot style.",
+		"",
+		"Design direction:",
+		"The character should feel warm, memorable, and collectible.",
+		"Keep the design simple and uncluttered.",
+		"The character should visually match clean, modern app illustrations with a soft and approachable atmosphere.",
+		"Do not make the design too detailed or realistic.",
+		"",
+		"Strict background rule:",
+		"The background must be a solid pure white background: #FFFFFF.",
+		"Do not use a transparent background.",
+		"Do not add scenery, frames, gradients, patterns, or decorative background elements.",
+		"",
+		"Output:",
+		"single full-body mascot character, centered, solid #FFFFFF background, no text, no logo, no frame.",
 	}, "\n")
 }
 
