@@ -5,7 +5,6 @@ import DateTimePicker, {
 } from "@react-native-community/datetimepicker";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import {
-  ActivityIndicator,
   Animated,
   Easing,
   Image,
@@ -24,7 +23,7 @@ import {
 import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import DismissKeyboardView from "../../components/DismissKeyboardView";
-import { Button, Card, Pill, colors, opacity, radius, shadows, spacing, typography } from "../../components/ui";
+import { Button, Card, LoadingSpinner, Pill, colors, opacity, radius, shadows, spacing, typography } from "../../components/ui";
 import ForeignerHomeScreen from "../foreigner";
 import { useAuth } from "../../hooks/useAuth";
 import { APIError } from "../../services/api-client";
@@ -1485,9 +1484,9 @@ export default function SearchPreferencesScreen() {
                   value={location}
                 />
                 {locationSearchStatus === "loading" ? (
-                  <ActivityIndicator
+                  <LoadingSpinner
                     color={colors.brand.gold}
-                    size="small"
+                    size={18}
                     style={styles.locationStatusIcon}
                   />
                 ) : null}
@@ -1753,7 +1752,7 @@ export default function SearchPreferencesScreen() {
               <Card style={styles.summaryCard}>
                 {previewStatus === "loading" && (
                   <View style={styles.previewState}>
-                    <ActivityIndicator color={BLUE} size="small" />
+                    <LoadingSpinner color={BLUE} size={18} />
                   </View>
                 )}
 
