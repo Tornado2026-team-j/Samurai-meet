@@ -143,7 +143,8 @@ func main() {
 	chatModerationKey := strings.TrimSpace(os.Getenv("OPENAI_API_KEY"))
 	chatModeration := chat.NewModerationProvider(chatModerationKey, cfg.Chat.DevelopmentModerationFreeMode)
 	chatTranslation := translation.NewGemini(cfg.Gemini.APIKey, cfg.Gemini.Model)
-	webTransport, err := chat.StartWebTransport(context.Background(), chatService, chat.WebTransportConfig{Enabled: strings.EqualFold(strings.TrimSpace(os.Getenv("ENABLE_CHAT_WEBTRANSPORT")), "true"), UDPAddr: strings.TrimSpace(os.Getenv("CHAT_WEBTRANSPORT_UDP_ADDR")), CertFile: strings.TrimSpace(os.Getenv("CHAT_WEBTRANSPORT_TLS_CERT_FILE")), KeyFile: strings.TrimSpace(os.Getenv("CHAT_WEBTRANSPORT_TLS_KEY_FILE")), AllowedOrigins: []string{cfg.ClientOrigin, cfg.DevClientOrigin}, Logf: log.Printf})
+	webTransportAllowedOrigins := append([]string{cfg.ClientOrigin, cfg.DevClientOrigin}, cfg.AdditionalClientOrigins...)
+	webTransport, err := chat.StartWebTransport(context.Background(), chatService, chat.WebTransportConfig{Enabled: strings.EqualFold(strings.TrimSpace(os.Getenv("ENABLE_CHAT_WEBTRANSPORT")), "true"), UDPAddr: strings.TrimSpace(os.Getenv("CHAT_WEBTRANSPORT_UDP_ADDR")), CertFile: strings.TrimSpace(os.Getenv("CHAT_WEBTRANSPORT_TLS_CERT_FILE")), KeyFile: strings.TrimSpace(os.Getenv("CHAT_WEBTRANSPORT_TLS_KEY_FILE")), AllowedOrigins: webTransportAllowedOrigins, Logf: log.Printf})
 	if err != nil {
 		log.Fatalf("WebTransport initialization failed: %v", err)
 	}
@@ -184,7 +185,7 @@ func main() {
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       60 * time.Second,
 		MaxHeaderBytes:    32 * 1024,
-		Handler:           httpapi.NewRouterWithOptions(httpapi.RouterOptions{Environment: cfg.Environment, AllowExpoGoRedirect: cfg.AllowExpoGoRedirect, DevClientOrigin: cfg.DevClientOrigin, ClientOrigin: cfg.ClientOrigin, OAuthLogin: oauthLogin, DemoAccounts: demoAccounts, PreAuth: preauth, Sessions: sessions, SessionHandoffs: handoffs, PasskeyBootstraps: bootstraps, Recovery: recovery, Passkeys: passkeys, KeyEnvelopes: envelopes, Devices: devices, DeviceTransfers: deviceTransfers, Images: images, Accounts: accounts, Profiles: profiles, Matching: matchingService, RecruitmentClassifier: recruitmentClassifier, Chats: chatService, ChatModeration: chatModeration, ChatTranslation: chatTranslation, Meetings: meetingService, MemoryMonsters: memoryMonsters, Notifications: notifications, Safety: safetyService, Identity: identityService, Push: pushService}),
+		Handler:           httpapi.NewRouterWithOptions(httpapi.RouterOptions{Environment: cfg.Environment, AllowExpoGoRedirect: cfg.AllowExpoGoRedirect, DevClientOrigin: cfg.DevClientOrigin, ClientOrigin: cfg.ClientOrigin, AdditionalClientOrigins: cfg.AdditionalClientOrigins, OAuthLogin: oauthLogin, DemoAccounts: demoAccounts, PreAuth: preauth, Sessions: sessions, SessionHandoffs: handoffs, PasskeyBootstraps: bootstraps, Recovery: recovery, Passkeys: passkeys, KeyEnvelopes: envelopes, Devices: devices, DeviceTransfers: deviceTransfers, Images: images, Accounts: accounts, Profiles: profiles, Matching: matchingService, RecruitmentClassifier: recruitmentClassifier, Chats: chatService, ChatModeration: chatModeration, ChatTranslation: chatTranslation, Meetings: meetingService, MemoryMonsters: memoryMonsters, Notifications: notifications, Safety: safetyService, Identity: identityService, Push: pushService}),
 	}
 	log.Printf("chat message retention window: %d days", chatService.RetentionDays())
 	log.Printf("backend server listening on %s (environment=%s)", cfg.HTTPAddr, cfg.Environment)

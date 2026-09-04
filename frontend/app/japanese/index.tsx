@@ -37,7 +37,8 @@ import { isMatchCategory, type MatchCardData } from "../../types/match";
 import { getTabBarContentBottomPadding } from "../../utils/layout";
 
 const DATE_SWIPE_THRESHOLD = 42;
-const DATE_SWIPE_VERTICAL_LIMIT = 28;
+const DATE_SWIPE_VERTICAL_LIMIT = 20;
+const DATE_SWIPE_DOMINANCE_RATIO = 1.5;
 const SEARCH_LOCATION_CACHE_TTL_MS = 60_000;
 
 type SortMode = "near" | "deadline";
@@ -115,6 +116,17 @@ function todayDateKey(): string {
   return formatDateKey(jstDateParts(new Date()));
 }
 
+function isDateKey(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(Date.UTC(year, month - 1, day, 12));
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+}
+
 function addDaysToDateKey(dateKey: string, days: number): Date {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateKey);
   if (!match) return new Date();
@@ -122,9 +134,8 @@ function addDaysToDateKey(dateKey: string, days: number): Date {
   return date;
 }
 
-function weekDateButtons(language: AppLanguage, startDateKey: string): DateButtonItem[] {
+function weekDateButtons(language: AppLanguage, startDateKey: string, today: string): DateButtonItem[] {
   const copy = COPY[language];
-  const today = todayDateKey();
 
   return Array.from({ length: 7 }, (_, index) => {
     const date = addDaysToDateKey(startDateKey, index);
@@ -183,7 +194,15 @@ export default function JapaneseHomeScreen() {
   } | null>(null);
   const mountedRef = useRef(true);
   const locationCacheRef = useRef<{ coordinates: Coordinates; cachedAt: number } | null>(null);
-  const [selectedDate, setSelectedDate] = useState(params.date ?? todayDateKey);
+  const [todayKey] = useState(todayDateKey);
+  const dateSwipeBlockedRef = useRef(true);
+  const initialDateKey = isDateKey(params.date) ? params.date : todayKey;
+  const [selectedDate, setSelectedDate] = useState(initialDateKey);
+  useEffect(() => {
+    if (isDateKey(params.date) && params.date !== selectedDate) {
+      setSelectedDate(params.date);
+    }
+  }, [params.date, selectedDate]);
   const [sortMode, setSortMode] = useState<SortMode>(params.sort === "deadline" ? "deadline" : "near");
   const [todayPlanCount, setTodayPlanCount] = useState(0);
   const selectedCategory = isMatchCategory(params.category) ? params.category : undefined;
@@ -194,19 +213,18 @@ export default function JapaneseHomeScreen() {
     selectedCategory || selectedTime || params.availableFrom || params.availableTo || selectedRadius !== 3
   );
   const hasSearchConditions = Boolean(
-    query.trim() || submittedQuery.trim() || hasActiveFilters || sortMode !== "near" || selectedDate !== todayDateKey()
+    query.trim() || submittedQuery.trim() || hasActiveFilters || sortMode !== "near" || selectedDate !== todayKey
   );
 
   const resetSearchConditions = useCallback(() => {
     Keyboard.dismiss();
-    const today = todayDateKey();
     setQuery("");
     setSubmittedQuery("");
-    setSelectedDate(today);
+    setSelectedDate(todayKey);
     setSortMode("near");
     router.setParams({
       query: "",
-      date: today,
+      date: todayKey,
       sort: "near",
       category: "",
       time: "",
@@ -214,7 +232,7 @@ export default function JapaneseHomeScreen() {
       availableFrom: "",
       availableTo: "",
     });
-  }, [router]);
+  }, [router, todayKey]);
 
   const searchSignature = useMemo(() => [
     submittedQuery.trim(),
@@ -248,8 +266,8 @@ export default function JapaneseHomeScreen() {
   const copyRef = useRef(copy);
   copyRef.current = copy;
   const dateButtons = useMemo(
-    () => weekDateButtons(language ?? "ja", todayDateKey()),
-    [language],
+    () => weekDateButtons(language ?? "ja", todayKey, todayKey),
+    [language, todayKey],
   );
   const selectedDateIndex = useMemo(
     () => dateButtons.findIndex((item) => item.dateKey === selectedDate),
@@ -277,6 +295,7 @@ export default function JapaneseHomeScreen() {
     mode: "initial" | "refresh" = "refresh",
     options?: { preserveContent?: boolean },
   ) => {
+    dateSwipeBlockedRef.current = true;
     const previousRequest = activeSearchRequestRef.current;
     if (previousRequest) {
       previousRequest.cancelled = true;
@@ -302,7 +321,10 @@ export default function JapaneseHomeScreen() {
       setTodayPlanCount(0);
     }
     setLoading(mode === "initial" || !preserveContent);
-    setRefreshing(mode === "refresh");
+    // A refresh that replaces the list already has the full loading state
+    // below. Keep the refresh indicator only when existing cards remain
+    // visible, otherwise the two states render two spinners at once.
+    setRefreshing(mode === "refresh" && preserveContent);
     setLoadError(null);
 
     const run = async () => {
@@ -315,6 +337,7 @@ export default function JapaneseHomeScreen() {
           setLoading(false);
           setRefreshing(false);
           setLoadError(copyRef.current.signInRequired);
+          dateSwipeBlockedRef.current = false;
         }
         releaseRequest();
         return;
@@ -412,7 +435,7 @@ export default function JapaneseHomeScreen() {
           const nextStatuses: Record<string, NonNullable<MatchCardData["applicationStatus"]>> = {};
           for (const item of applicationResult) nextStatuses[item.recruitment.id] = item.status;
           setApplicationStatuses(nextStatuses);
-          setTodayPlanCount(applicationResult.filter((item) => item.status === "accepted" && item.recruitment.available_date === todayDateKey()).length);
+          setTodayPlanCount(applicationResult.filter((item) => item.status === "accepted" && item.recruitment.available_date === todayKey).length);
         })();
       } catch (error) {
         if (error instanceof Error && error.name === "AbortError" && (request.cancelled || controller.signal.aborted)) return;
@@ -423,6 +446,7 @@ export default function JapaneseHomeScreen() {
         if (isCurrentRequest()) {
           setLoading(false);
           setRefreshing(false);
+          dateSwipeBlockedRef.current = false;
         }
         releaseRequest();
       }
@@ -434,7 +458,7 @@ export default function JapaneseHomeScreen() {
       controller.abort();
       releaseRequest();
     };
-  }, [getCurrentSession, params.availableFrom, params.availableTo, refresh, selectedCategory, selectedDate, selectedRadius, session, status, submittedQuery, timeRange]);
+  }, [getCurrentSession, params.availableFrom, params.availableTo, refresh, selectedCategory, selectedDate, selectedRadius, session, status, submittedQuery, timeRange, todayKey]);
 
   useEffect(() => () => {
     mountedRef.current = false;
@@ -469,19 +493,26 @@ export default function JapaneseHomeScreen() {
   }, [searchSignature, status]);
 
   const moveSelectedDate = useCallback((offset: -1 | 1) => {
-    if (hasDateRange) return;
+    if (hasDateRange || dateSwipeBlockedRef.current) return;
     const currentIndex = selectedDateIndex < 0 ? 0 : selectedDateIndex;
     const next = dateButtons[currentIndex + offset];
     if (!next) return;
     Keyboard.dismiss();
     setSelectedDate(next.dateKey);
-  }, [dateButtons, hasDateRange, selectedDateIndex]);
+    router.setParams({ date: next.dateKey });
+  }, [dateButtons, hasDateRange, router, selectedDateIndex]);
 
   const dateSwipeResponder = useMemo(() => PanResponder.create({
-    onMoveShouldSetPanResponder: (_event, gesture) =>
-      Math.abs(gesture.dx) > DATE_SWIPE_THRESHOLD &&
-      Math.abs(gesture.dy) < DATE_SWIPE_VERTICAL_LIMIT,
+    onMoveShouldSetPanResponder: (_event, gesture) => {
+      if (dateSwipeBlockedRef.current) return false;
+      const horizontalDistance = Math.abs(gesture.dx);
+      const verticalDistance = Math.abs(gesture.dy);
+      return horizontalDistance > DATE_SWIPE_THRESHOLD &&
+        verticalDistance < DATE_SWIPE_VERTICAL_LIMIT &&
+        horizontalDistance > verticalDistance * DATE_SWIPE_DOMINANCE_RATIO;
+    },
     onPanResponderRelease: (_event, gesture) => {
+      if (dateSwipeBlockedRef.current) return;
       if (gesture.dx <= -DATE_SWIPE_THRESHOLD) {
         moveSelectedDate(1);
       } else if (gesture.dx >= DATE_SWIPE_THRESHOLD) {
@@ -539,7 +570,6 @@ export default function JapaneseHomeScreen() {
         showsVerticalScrollIndicator={false}
         style={styles.matchList}
         nestedScrollEnabled
-        {...dateSwipeResponder.panHandlers}
       >
         {todayPlanCount > 0 ? (
           <Pressable onPress={() => push("/plans")} style={styles.planShortcut}>
@@ -685,6 +715,7 @@ export default function JapaneseHomeScreen() {
             nestedScrollEnabled
             showsHorizontalScrollIndicator={false}
             style={[styles.dateList, { top: dateTop }]}
+            {...dateSwipeResponder.panHandlers}
           >
             {dateButtons.map((item) => {
               const selected = selectedDate === item.dateKey;
@@ -704,6 +735,7 @@ export default function JapaneseHomeScreen() {
                   onPress={() => {
                     Keyboard.dismiss();
                     setSelectedDate(item.dateKey);
+                    router.setParams({ date: item.dateKey });
                   }}
                   style={({ pressed }) => [
                     styles.dateButton,

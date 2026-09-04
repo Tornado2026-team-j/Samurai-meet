@@ -1052,17 +1052,12 @@ export default function OnboardingScreen() {
             loadStoredKeyEnvelope(userID),
           ]);
           const localKeyA = storedKeyA ?? pendingRotation?.keyA ?? null;
+          const envelope = pendingRotation?.envelope ?? storedEnvelope;
           if (!active) return;
-          if (localKeyA) {
+          if (localKeyA && envelope) {
             // A local Key-A means this device has already completed setup.
             // Use the securely cached envelope for ordinary startup; fetching
             // the server envelope is a recent-Passkey-gated operation.
-            const envelope = pendingRotation?.envelope ?? storedEnvelope;
-            if (!envelope) {
-              setKeySetupState({ status: "ready" });
-              setKeySetupFor(userID);
-              return;
-            }
             // Device registration is needed for protected photo requests, but
             // it is not needed to verify the local root key or open onboarding.
             // Do not make the whole app wait for this network round-trip.

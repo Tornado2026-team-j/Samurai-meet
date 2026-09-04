@@ -296,6 +296,32 @@ func TestAcceptMatchHonorsParticipantLimitConcurrently(t *testing.T) {
 	if acceptedCount != 1 {
 		t.Fatalf("accepted match count = %d, want 1", acceptedCount)
 	}
+	var cardStatus string
+	if err := database.QueryRow(`SELECT status FROM recruitment_cards WHERE id=$1`, card.ID).Scan(&cardStatus); err != nil {
+		t.Fatalf("recruitment status error = %v", err)
+	}
+	if cardStatus != "closed" {
+		t.Fatalf("recruitment status = %q, want closed after the final acceptance", cardStatus)
+	}
+	if _, err := database.Exec(`UPDATE recruitment_cards SET status='matched' WHERE id=$1`, card.ID); err != nil {
+		t.Fatalf("seed legacy full recruitment status error = %v", err)
+	}
+	owned, err := service.ListOwnedRecruitments(ctx, ownerID, now)
+	if err != nil {
+		t.Fatalf("ListOwnedRecruitments() error = %v", err)
+	}
+	found := false
+	for _, item := range owned {
+		if item.ID == card.ID {
+			found = true
+			if item.Status != "closed" {
+				t.Fatalf("legacy full recruitment status = %q, want closed", item.Status)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("legacy full recruitment %q was not returned", card.ID)
+	}
 }
 
 func TestRecruitmentMatchingLifecycle(t *testing.T) {

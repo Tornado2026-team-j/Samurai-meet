@@ -17,6 +17,7 @@ import {
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { Header, radius } from "../../components/ui";
+import WebDatePicker from "../../components/WebDatePicker";
 import type { ThemeColors } from "../../components/ui/tokens";
 import { useTheme, useThemeStyles } from "../../hooks/useTheme";
 import {
@@ -288,7 +289,18 @@ export default function JapaneseFiltersScreen() {
         <Pressable onPress={apply} style={styles.apply}><MaterialIcons color={colors.text.inverse} name="search" size={20} /><Text style={styles.applyText}>この条件で検索</Text></Pressable>
       </ScrollView>
 
-      {Platform.OS !== "ios" && datePickerField ? (
+      {Platform.OS === "web" && datePickerField ? (
+        <WebDatePicker
+          cancelLabel="キャンセル"
+          doneLabel="完了"
+          label={datePickerField === "from" ? "開始日" : "終了日"}
+          maximumDate={pickerBounds.maximumDate}
+          minimumDate={pickerBounds.minimumDate}
+          onChange={commitDate}
+          onDismiss={closeDatePicker}
+          value={pickerDate}
+        />
+      ) : Platform.OS !== "ios" && datePickerField ? (
         <DateTimePicker
           display="default"
           maximumDate={pickerBounds.maximumDate}

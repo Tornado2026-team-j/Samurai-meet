@@ -21,10 +21,14 @@ import { APIError } from "../services/api-client";
 import { cancelMeeting, createMeeting, endMeeting, getMeetingForMatch, meetingProximityCapability, resumeMeeting, startMeeting, type Meeting } from "../services/meeting";
 import { completeMatch, likeMatch, listMatches, type MatchView } from "../services/matching";
 import { type AppLanguage } from "../services/onboarding";
+import { clearReviewDeferral, deferReviewForMatch, loadDeferredReviewMatchIDs } from "../services/review-preferences";
+import { recruitmentDateTimeToInstant } from "../services/recruitment";
 import { formatTimeRange, isJSTScheduleEnded } from "../utils/time";
 import { getTabBarContentBottomPadding } from "../utils/layout";
 
 type PlanTab = "today" | "upcoming" | "past";
+
+const MEMORY_MONSTER_CREATION_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 const COPY = {
   ja: {
@@ -60,6 +64,7 @@ const COPY = {
     reviewPending: "未評価",
     reviewAlreadyLiked: "評価済み",
     reviewLater: "あとで評価する",
+    createMemory: "思い出を作る",
     people: (count: number) => `募集 ${count}人`,
   },
   en: {
@@ -95,6 +100,7 @@ const COPY = {
     reviewPending: "Not rated yet",
     reviewAlreadyLiked: "Already rated",
     reviewLater: "Rate later",
+    createMemory: "Create a memory",
     people: (count: number) => `${count} people needed`,
   },
 } as const;
@@ -135,6 +141,25 @@ function displayDate(value: string, language: AppLanguage): string {
     weekday: "short",
     timeZone: "Asia/Tokyo",
   });
+}
+
+export function canCreateMemoryMonster(
+  plan: Pick<MatchView, "status" | "updated_at" | "recruitment">,
+  now = new Date(),
+): boolean {
+  if (plan.status !== "completed" || !Number.isFinite(now.getTime())) return false;
+  try {
+    const completedAt = Date.parse(plan.updated_at);
+    const endAt = Number.isFinite(completedAt)
+      ? completedAt
+      : recruitmentDateTimeToInstant(
+          plan.recruitment.available_date,
+          plan.recruitment.end_time,
+        ).getTime();
+    return endAt <= now.getTime() && now.getTime() < endAt + MEMORY_MONSTER_CREATION_WINDOW_MS;
+  } catch {
+    return false;
+  }
 }
 
 export default function PlansScreen() {
@@ -183,6 +208,10 @@ export default function PlansScreen() {
       }
       const nextPlans = result.filter((item) => item.status === "accepted" || item.status === "completed");
       setPlans(nextPlans);
+      const deferredReviewMatchIDs = await loadDeferredReviewMatchIDs(activeSession.user_id);
+      for (const matchID of deferredReviewMatchIDs) {
+        reviewPromptedRef.current.add(matchID);
+      }
       const reviewCandidate = nextPlans.find((item) =>
         item.status === "completed" && !item.liked_by_me && !reviewPromptedRef.current.has(item.id));
       if (reviewCandidate) {
@@ -303,10 +332,11 @@ export default function PlansScreen() {
       if (next.status === "completed") {
         await completeMatch(plan.id, activeSession).catch(() => undefined);
         const completedPlan = { ...plan, status: "completed" as const };
-        reviewPromptedRef.current.add(plan.id);
+        // The result screen is the next step; do not leave the like prompt
+        // mounted underneath it. Re-evaluate the prompt when returning here.
+        reviewPromptedRef.current.delete(plan.id);
         setPlans((items) => items.map((item) => item.id === plan.id ? completedPlan : item));
-        reviewPromptedRef.current.add(completedPlan.id);
-        setReviewPlan(completedPlan);
+        setReviewPlan(null);
         router.push({
           pathname: "/meeting-result/[matchId]",
           params: { matchId: plan.id, meetingId: next.id },
@@ -339,11 +369,24 @@ export default function PlansScreen() {
         await likeMatch(plan.id, refreshedSession);
       }
       setPlans((items) => items.map((item) => item.id === plan.id ? { ...item, liked_by_me: true } : item));
+      reviewPromptedRef.current.delete(plan.id);
+      await clearReviewDeferral((getCurrentSession() ?? activeSession).user_id, plan.id).catch(() => undefined);
       setReviewPlan((current) => current?.id === plan.id ? null : current);
     } catch {
       setActionError(copy.likeError);
     } finally {
       setBusyMatchId(null);
+    }
+  };
+
+  const deferReview = async () => {
+    const current = reviewPlan;
+    if (!current) return;
+    reviewPromptedRef.current.add(current.id);
+    setReviewPlan(null);
+    const activeSession = getCurrentSession() ?? session;
+    if (activeSession) {
+      await deferReviewForMatch(activeSession.user_id, current.id).catch(() => undefined);
     }
   };
 
@@ -425,16 +468,33 @@ export default function PlansScreen() {
                 </Pressable>
               </View>
               {activeTab === "past" ? (
-                <Pressable
-                  accessibilityLabel={`${plan.other_user.name}に${copy.like}`}
-                  accessibilityState={{ disabled: plan.liked_by_me || busy }}
-                  disabled={plan.liked_by_me || busy}
-                  onPress={() => void sendLike(plan)}
-                  style={[styles.likeAction, (plan.liked_by_me || busy) && styles.disabled]}
-                >
-                  <MaterialIcons color={plan.liked_by_me ? colors.brand.sky : colors.text.secondary} name={plan.liked_by_me ? "thumb-up" : "thumb-up-off-alt"} size={18} />
-                  <Text style={[styles.likeActionText, plan.liked_by_me && styles.likeActionTextSelected]}>{plan.liked_by_me ? copy.liked : copy.like}</Text>
-                </Pressable>
+                <>
+                  <Pressable
+                    accessibilityLabel={`${plan.other_user.name}に${copy.like}`}
+                    accessibilityState={{ disabled: plan.liked_by_me || busy }}
+                    disabled={plan.liked_by_me || busy}
+                    onPress={() => void sendLike(plan)}
+                    style={[styles.likeAction, (plan.liked_by_me || busy) && styles.disabled]}
+                  >
+                    <MaterialIcons color={plan.liked_by_me ? colors.brand.sky : colors.text.secondary} name={plan.liked_by_me ? "thumb-up" : "thumb-up-off-alt"} size={18} />
+                    <Text style={[styles.likeActionText, plan.liked_by_me && styles.likeActionTextSelected]}>{plan.liked_by_me ? copy.liked : copy.like}</Text>
+                  </Pressable>
+                  {canCreateMemoryMonster(plan) ? (
+                    <Pressable
+                      accessibilityLabel={`${plan.other_user.name}との${copy.createMemory}`}
+                      accessibilityRole="button"
+                      disabled={busy}
+                      onPress={() => router.push({
+                        pathname: "/meeting-result/[matchId]",
+                        params: { matchId: plan.id },
+                      } as unknown as Parameters<typeof router.push>[0])}
+                      style={[styles.memoryAction, busy && styles.disabled]}
+                    >
+                      <MaterialIcons color={colors.text.onGold} name="auto-awesome" size={18} />
+                      <Text style={styles.memoryActionText}>{copy.createMemory}</Text>
+                    </Pressable>
+                  ) : null}
+                </>
               ) : null}
               {activeTab === "today" && plan.status === "accepted" ? (
                 <>
@@ -483,7 +543,7 @@ export default function PlansScreen() {
             </Pressable>
             <Pressable
               accessibilityRole="button"
-              onPress={() => setReviewPlan(null)}
+              onPress={() => void deferReview()}
               style={styles.reviewLater}
             >
               <Text style={styles.reviewLaterText}>{copy.reviewLater}</Text>
@@ -540,6 +600,8 @@ function createStyles(colors: ThemeColors) {
   likeAction: { minHeight: 42, marginTop: 8, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, borderWidth: 1, borderColor: colors.border.default, borderRadius: radius.md, backgroundColor: colors.surface.blueSoft },
   likeActionText: { color: colors.text.secondary, fontSize: 12, fontWeight: "800" },
   likeActionTextSelected: { color: colors.brand.sky },
+  memoryAction: { minHeight: 42, marginTop: 8, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, borderRadius: radius.md, backgroundColor: colors.brand.gold },
+  memoryActionText: { color: colors.text.onGold, fontSize: 12, fontWeight: "800" },
   primaryAction: { minHeight: 46, marginTop: 9, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7, borderRadius: radius.md, backgroundColor: colors.brand.sky },
   primaryActionText: { color: colors.text.onSky, fontSize: 14, fontWeight: "800" },
   meetingStatus: { marginTop: 10, color: colors.text.subtle, fontSize: 13, fontWeight: "700", textAlign: "center" },

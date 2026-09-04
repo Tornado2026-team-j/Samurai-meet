@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
+import DateTimePicker, { type DateTimePickerEvent } from "@react-native-community/datetimepicker";
 import { useRouter } from "expo-router";
 import {
   ActivityIndicator,
@@ -19,6 +20,7 @@ import {
 import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import DismissKeyboardView from "../../components/DismissKeyboardView";
+import WebDatePicker from "../../components/WebDatePicker";
 import { LoadingSpinner } from "../../components/ui";
 import type { ThemeColors } from "../../components/ui/tokens";
 import { useAuth } from "../../hooks/useAuth";
@@ -37,10 +39,38 @@ import {
   type RecruitmentStatus,
   type RecruitmentUpdateRequest,
 } from "../../services/matching";
+import {
+  formatRecruitmentISODate,
+  parseRecruitmentDateInput,
+  JST_TIME_ZONE,
+} from "../../services/recruitment";
 import { formatTimeRange } from "../../utils/time";
 import { MATCH_CATEGORIES, type MatchCategory } from "../../types/match";
 
 const CATEGORIES = MATCH_CATEGORIES;
+const TIME_PICKER_HOURS = Array.from({ length: 24 }, (_, hourValue) => hourValue);
+const TIME_PICKER_MINUTES = Array.from({ length: 12 }, (_, index) => index * 5);
+
+type EditTimeField = "start_time" | "end_time";
+
+function parseEditTime(value: string): { hour: number; minute: number } {
+  const match = /^(\d{1,2}):([0-5]\d)$/.exec(value.trim());
+  if (!match) return { hour: 0, minute: 0 };
+  const hour = Number(match[1]);
+  return hour <= 23 ? { hour, minute: Number(match[2]) } : { hour: 0, minute: 0 };
+}
+
+function parseEditDate(value: string): Date {
+  try {
+    return parseRecruitmentDateInput(value);
+  } catch {
+    try {
+      return parseRecruitmentDateInput(formatRecruitmentISODate(new Date()));
+    } catch {
+      return new Date();
+    }
+  }
+}
 
 const COPY = {
   ja: {
@@ -51,11 +81,15 @@ const COPY = {
     updateError: "募集を更新できませんでした。日付・時刻と入力内容を確認してください。",
     closeTitle: "募集を終了しますか？", closeMessage: "公開停止後も履歴として残ります。", cancel: "キャンセル",
     close: "終了する", closeError: "募集を終了できませんでした。最新の状態を確認してください。",
-    editing: "編集", edit: "編集", ending: "終了中…", endPublic: "公開を終了", applicants: "応募者",
+    editing: "編集", edit: "編集", publish: "公開する", publishing: "公開中…", moveToDraft: "下書きに戻す", movingToDraft: "移動中…",
+    ending: "終了中…", endPublic: "公開を終了", applicants: "応募者",
+    moveToDraftTitle: "募集を下書きに戻しますか？", moveToDraftMessage: "公開を一時停止し、あとで編集・再公開できます。",
     noApplicants: "まだ応募はありません。", userFallback: "ユーザー", review: "確認", state: "状態",
     editTitle: "募集を編集", closeEditor: "編集を閉じる", category: "カテゴリ", date: "日付（JST）",
     dateInput: "募集日付（JST）", start: "開始（JST）", startInput: "開始時刻（JST）", end: "終了（JST）",
     endInput: "終了時刻（JST）", description: "したいこと", descriptionInput: "募集内容",
+    datePickerHint: "OS標準の日付選択を開く", closeDatePicker: "日付選択を閉じる", pickerDateTitle: "日付を選択",
+    closeTimePicker: "時刻選択を閉じる", pickerTimeTitle: "時刻を選択", pickerCancel: "キャンセル", pickerDone: "完了",
     keywords: "キーワード（カンマ区切り）", keywordsInput: "キーワード", radius: "公開範囲",
     location: "場所表示名", people: "募集人数（1〜10人）",
     jstHint: "日時はサーバーと同じJST（Asia/Tokyo）で保存されます。", save: "保存", saving: "保存中…",
@@ -72,11 +106,15 @@ const COPY = {
     updateError: "The recruitment could not be updated. Check the date, time, and details.",
     closeTitle: "Close this recruitment?", closeMessage: "It will remain in your history after it is no longer public.", cancel: "Cancel",
     close: "Close", closeError: "The recruitment could not be closed. Check the latest status and try again.",
-    editing: "Edit", edit: "Edit", ending: "Closing…", endPublic: "Close recruitment", applicants: "Applicants",
+    editing: "Edit", edit: "Edit", publish: "Publish", publishing: "Publishing…", moveToDraft: "Move to draft", movingToDraft: "Moving…",
+    ending: "Closing…", endPublic: "Close recruitment", applicants: "Applicants",
+    moveToDraftTitle: "Move this recruitment to draft?", moveToDraftMessage: "It will stop being public and can be edited and published later.",
     noApplicants: "There are no applications yet.", userFallback: "User", review: "Review", state: "Status",
     editTitle: "Edit recruitment", closeEditor: "Close editor", category: "Category", date: "Date (JST)",
     dateInput: "Recruitment date (JST)", start: "Start (JST)", startInput: "Start time (JST)", end: "End (JST)",
     endInput: "End time (JST)", description: "What would you like to do?", descriptionInput: "Recruitment details",
+    datePickerHint: "Open the system date picker", closeDatePicker: "Close date picker", pickerDateTitle: "Choose date",
+    closeTimePicker: "Close time picker", pickerTimeTitle: "Choose time", pickerCancel: "Cancel", pickerDone: "Done",
     keywords: "Keywords (comma separated)", keywordsInput: "Keywords", radius: "Visibility range",
     location: "Location name", people: "People needed (1–10)",
     jstHint: "Times are saved in JST (Asia/Tokyo), the same time zone used by the server.", save: "Save", saving: "Saving…",
@@ -154,16 +192,14 @@ function canEdit(recruitment: Recruitment): boolean {
 }
 
 function canClose(recruitment: Recruitment): boolean {
-  return recruitment.status !== "closed"
-    && recruitment.status !== "expired"
-    && recruitment.status !== "completed";
+  return recruitment.status === "open" || recruitment.status === "matched";
 }
 
 export default function MyRecruitmentsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { getCurrentSession, refresh, session, status } = useAuth();
-  const { colors } = useTheme();
+  const { colors, scheme } = useTheme();
   const styles = useThemeStyles(createStyles);
   const BLUE = colors.brand.sky;
   const TEXT_GRAY = colors.text.secondary;
@@ -178,12 +214,19 @@ export default function MyRecruitmentsScreen() {
   const [operationError, setOperationError] = useState<string | null>(null);
   const [editing, setEditing] = useState<Recruitment | null>(null);
   const [editDraft, setEditDraft] = useState<EditDraft | null>(null);
+  const [editDatePickerVisible, setEditDatePickerVisible] = useState(false);
+  const [editPickerDate, setEditPickerDate] = useState(() => parseEditDate(""));
+  const [editTimePickerField, setEditTimePickerField] = useState<EditTimeField | null>(null);
+  const [editDraftHour, setEditDraftHour] = useState(0);
+  const [editDraftMinute, setEditDraftMinute] = useState(0);
   const [saving, setSaving] = useState(false);
+  const [statusChangingID, setStatusChangingID] = useState<string | null>(null);
   const [closingID, setClosingID] = useState<string | null>(null);
   const initialLoadStarted = useRef(false);
   const hasLoaded = useRef(false);
   const loadInFlightRef = useRef(false);
   const savingRef = useRef(false);
+  const statusChangingRef = useRef<string | null>(null);
   const closingIDRef = useRef<string | null>(null);
   const copy = COPY[language ?? "ja"];
 	const copyRef = useRef(copy);
@@ -311,6 +354,12 @@ export default function MyRecruitmentsScreen() {
     if (!canEdit(recruitment)) return;
     setOperationError(null);
     setEditing(recruitment);
+    setEditDatePickerVisible(false);
+    setEditTimePickerField(null);
+    setEditPickerDate(parseEditDate(recruitment.available_date));
+    const startTime = parseEditTime(recruitment.start_time);
+    setEditDraftHour(startTime.hour);
+    setEditDraftMinute(startTime.minute);
     setEditDraft({
       category: recruitment.category,
       available_date: recruitment.available_date,
@@ -326,13 +375,66 @@ export default function MyRecruitmentsScreen() {
 
   const closeEditor = () => {
     if (saving) return;
+    setEditDatePickerVisible(false);
+    setEditTimePickerField(null);
     setEditing(null);
     setEditDraft(null);
   };
 
   const closeEditorAfterSave = () => {
+    setEditDatePickerVisible(false);
+    setEditTimePickerField(null);
     setEditing(null);
     setEditDraft(null);
+  };
+
+  const openEditDatePicker = () => {
+    if (!editDraft || saving) return;
+    Keyboard.dismiss();
+    setEditPickerDate(parseEditDate(editDraft.available_date));
+    setEditDatePickerVisible(true);
+  };
+
+  const closeEditDatePicker = () => setEditDatePickerVisible(false);
+
+  const commitEditDate = (value: Date) => {
+    try {
+      const nextDate = formatRecruitmentISODate(value);
+      setEditPickerDate(parseEditDate(nextDate));
+      setEditDraft((current) => current ? { ...current, available_date: nextDate } : current);
+      closeEditDatePicker();
+    } catch {
+      setOperationError(copy.updateError);
+    }
+  };
+
+  const handleEditDatePickerChange = (event: DateTimePickerEvent, value?: Date) => {
+    if (event.type === "dismissed") {
+      closeEditDatePicker();
+      return;
+    }
+    if (!value) return;
+    if (Platform.OS === "android") {
+      commitEditDate(value);
+      return;
+    }
+    setEditPickerDate(value);
+  };
+
+  const openEditTimePicker = (field: EditTimeField) => {
+    if (!editDraft || saving) return;
+    Keyboard.dismiss();
+    const nextTime = parseEditTime(editDraft[field]);
+    setEditDraftHour(nextTime.hour);
+    setEditDraftMinute(nextTime.minute);
+    setEditTimePickerField(field);
+  };
+
+  const commitEditTime = () => {
+    if (!editTimePickerField) return;
+    const value = `${String(editDraftHour).padStart(2, "0")}:${String(editDraftMinute).padStart(2, "0")}`;
+    setEditDraft((current) => current ? { ...current, [editTimePickerField]: value } : current);
+    setEditTimePickerField(null);
   };
 
   const saveEditing = async () => {
@@ -378,6 +480,57 @@ export default function MyRecruitmentsScreen() {
       savingRef.current = false;
       setSaving(false);
     }
+  };
+
+  const changeRecruitmentStatus = async (
+    recruitment: Recruitment,
+    nextStatus: Extract<RecruitmentStatus, "draft" | "open">,
+  ) => {
+    if (statusChangingRef.current || saving || recruitment.status === nextStatus) return;
+    const activeSession = getCurrentSession() ?? session;
+    if (!activeSession || status !== "signed_in") {
+      setOperationError(copy.updateLoginRequired);
+      return;
+    }
+
+    statusChangingRef.current = recruitment.id;
+    setStatusChangingID(recruitment.id);
+    setOperationError(null);
+    try {
+      let result: Recruitment;
+      try {
+        result = await updateRecruitment(recruitment.id, activeSession, { status: nextStatus });
+      } catch (error) {
+        if (!(error instanceof APIError) || error.status !== 401) throw error;
+        await refresh();
+        const refreshedSession = getCurrentSession();
+        if (!refreshedSession) throw error;
+        result = await updateRecruitment(recruitment.id, refreshedSession, { status: nextStatus });
+      }
+      setRecruitments((current) => current.map((item) => item.id === result.id ? result : item));
+    } catch {
+      setOperationError(copy.updateError);
+    } finally {
+      statusChangingRef.current = null;
+      setStatusChangingID(null);
+    }
+  };
+
+  const publishDraft = (recruitment: Recruitment) => {
+    if (recruitment.status !== "draft") return;
+    void changeRecruitmentStatus(recruitment, "open");
+  };
+
+  const moveRecruitmentToDraft = (recruitment: Recruitment) => {
+    if (recruitment.status !== "open") return;
+    Alert.alert(
+      copy.moveToDraftTitle,
+      copy.moveToDraftMessage,
+      [
+        { text: copy.cancel, style: "cancel" },
+        { text: copy.moveToDraft, onPress: () => void changeRecruitmentStatus(recruitment, "draft") },
+      ],
+    );
   };
 
   const closeOwnedRecruitment = (recruitment: Recruitment) => {
@@ -543,9 +696,10 @@ export default function MyRecruitmentsScreen() {
           const ownedApplications = applicationsByRecruitment.get(recruitment.id) ?? [];
           const expired = isRecruitmentExpired(recruitment);
           const status = displayedRecruitmentStatus(recruitment);
-          const editable = !expired && canEdit(recruitment);
-          const closable = !expired && canClose(recruitment);
           const closing = closingID === recruitment.id;
+          const statusChanging = statusChangingID === recruitment.id;
+          const editable = !expired && !statusChanging && canEdit(recruitment);
+          const closable = !expired && !statusChanging && canClose(recruitment);
           return (
             <View key={recruitment.id} style={styles.recruitmentCard}>
               <View style={styles.recruitmentHeader}>
@@ -578,6 +732,32 @@ export default function MyRecruitmentsScreen() {
                   >
                     <MaterialIcons color={BLUE} name="edit" size={17} />
                     <Text style={styles.secondaryButtonText}>{copy.edit}</Text>
+                  </Pressable>
+                ) : null}
+                {recruitment.status === "draft" ? (
+                  <Pressable
+                    accessibilityLabel={statusChanging ? copy.publishing : `${recruitment.category} ${copy.publish}`}
+                    accessibilityRole="button"
+                    accessibilityState={{ busy: statusChanging, disabled: statusChanging }}
+                    disabled={statusChanging}
+                    onPress={() => publishDraft(recruitment)}
+                    style={({ pressed }) => [styles.publishButton, statusChanging && styles.disabled, pressed && styles.pressed]}
+                  >
+                    {statusChanging ? <ActivityIndicator color={colors.text.onGold} size="small" /> : <MaterialIcons color={colors.text.onGold} name="publish" size={17} />}
+                    <Text style={styles.publishButtonText}>{statusChanging ? copy.publishing : copy.publish}</Text>
+                  </Pressable>
+                ) : null}
+                {recruitment.status === "open" ? (
+                  <Pressable
+                    accessibilityLabel={statusChanging ? copy.movingToDraft : `${recruitment.category} ${copy.moveToDraft}`}
+                    accessibilityRole="button"
+                    accessibilityState={{ busy: statusChanging, disabled: statusChanging }}
+                    disabled={statusChanging}
+                    onPress={() => moveRecruitmentToDraft(recruitment)}
+                    style={({ pressed }) => [styles.pauseButton, statusChanging && styles.disabled, pressed && styles.pressed]}
+                  >
+                    {statusChanging ? <ActivityIndicator color={BLUE} size="small" /> : <MaterialIcons color={BLUE} name="pause-circle-outline" size={17} />}
+                    <Text style={styles.pauseButtonText}>{statusChanging ? copy.movingToDraft : copy.moveToDraft}</Text>
                   </Pressable>
                 ) : null}
                 {closable ? (
@@ -699,14 +879,17 @@ export default function MyRecruitmentsScreen() {
                   </View>
 
                   <Text style={styles.fieldLabel}>{copy.date}</Text>
-                  <TextInput
+                  <Pressable
                     accessibilityLabel={copy.dateInput}
-                    editable={!saving}
-                    onChangeText={(available_date) => setEditDraft((current) => current ? { ...current, available_date } : current)}
-                    placeholder="YYYY-MM-DD"
-                    style={styles.textInput}
-                    value={editDraft.available_date}
-                  />
+                    accessibilityHint={copy.datePickerHint}
+                    accessibilityRole="button"
+                    disabled={saving}
+                    onPress={openEditDatePicker}
+                    style={({ pressed }) => [styles.textInput, styles.pickerInput, saving && styles.disabled, pressed && styles.pressed]}
+                  >
+                    <Text style={styles.pickerValue}>{editDraft.available_date}</Text>
+                    <MaterialIcons color={colors.brand.sky} name="calendar-today" size={20} />
+                  </Pressable>
 
                   <Text style={styles.fieldLabel}>{copy.location}</Text>
                   <TextInput
@@ -732,25 +915,31 @@ export default function MyRecruitmentsScreen() {
                   <View style={styles.inlineFields}>
                     <View style={styles.inlineField}>
                       <Text style={styles.fieldLabel}>{copy.start}</Text>
-                      <TextInput
+                      <Pressable
                         accessibilityLabel={copy.startInput}
-                        editable={!saving}
-                        onChangeText={(start_time) => setEditDraft((current) => current ? { ...current, start_time } : current)}
-                        placeholder="HH:mm"
-                        style={styles.textInput}
-                        value={editDraft.start_time}
-                      />
+                        accessibilityRole="button"
+                        disabled={saving}
+                        onPress={() => openEditTimePicker("start_time")}
+                        style={({ pressed }) => [styles.textInput, styles.pickerInput, saving && styles.disabled, pressed && styles.pressed]}
+                      >
+                        <MaterialIcons color={colors.brand.gold} name="access-time" size={18} />
+                        <Text style={styles.pickerValue}>{editDraft.start_time}</Text>
+                        <MaterialIcons color={colors.brand.gold} name="expand-more" size={20} />
+                      </Pressable>
                     </View>
                     <View style={styles.inlineField}>
                       <Text style={styles.fieldLabel}>{copy.end}</Text>
-                      <TextInput
+                      <Pressable
                         accessibilityLabel={copy.endInput}
-                        editable={!saving}
-                        onChangeText={(end_time) => setEditDraft((current) => current ? { ...current, end_time } : current)}
-                        placeholder="HH:mm"
-                        style={styles.textInput}
-                        value={editDraft.end_time}
-                      />
+                        accessibilityRole="button"
+                        disabled={saving}
+                        onPress={() => openEditTimePicker("end_time")}
+                        style={({ pressed }) => [styles.textInput, styles.pickerInput, saving && styles.disabled, pressed && styles.pressed]}
+                      >
+                        <MaterialIcons color={colors.brand.gold} name="access-time" size={18} />
+                        <Text style={styles.pickerValue}>{editDraft.end_time}</Text>
+                        <MaterialIcons color={colors.brand.gold} name="expand-more" size={20} />
+                      </Pressable>
                     </View>
                   </View>
 
@@ -834,6 +1023,151 @@ export default function MyRecruitmentsScreen() {
           </DismissKeyboardView>
         </KeyboardAvoidingView>
       </Modal>
+
+      {Platform.OS === "web" && editDatePickerVisible ? (
+        <WebDatePicker
+          cancelLabel={copy.pickerCancel}
+          doneLabel={copy.pickerDone}
+          label={copy.pickerDateTitle}
+          onChange={commitEditDate}
+          onDismiss={closeEditDatePicker}
+          value={editPickerDate}
+        />
+      ) : Platform.OS !== "ios" && editDatePickerVisible ? (
+        <DateTimePicker
+          display="default"
+          mode="date"
+          onChange={handleEditDatePickerChange}
+          onDismiss={closeEditDatePicker}
+          timeZoneName={JST_TIME_ZONE}
+          value={editPickerDate}
+        />
+      ) : null}
+
+      {Platform.OS === "ios" ? (
+        <Modal
+          animationType="slide"
+          onRequestClose={closeEditDatePicker}
+          transparent
+          visible={editDatePickerVisible}
+        >
+          <View style={styles.modalBackdrop}>
+            <Pressable
+              accessibilityLabel={copy.closeDatePicker}
+              onPress={closeEditDatePicker}
+              style={StyleSheet.absoluteFill}
+            />
+            <View style={[styles.pickerSheet, { paddingBottom: Math.max(insets.bottom, 16) }]}>
+              <View style={styles.pickerHeader}>
+                <Pressable accessibilityRole="button" onPress={closeEditDatePicker} style={styles.pickerHeaderButton}>
+                  <Text style={styles.pickerCancelText}>{copy.pickerCancel}</Text>
+                </Pressable>
+                <Text style={styles.pickerTitle}>{copy.pickerDateTitle}</Text>
+                <Pressable accessibilityRole="button" onPress={() => commitEditDate(editPickerDate)} style={styles.pickerHeaderButton}>
+                  <Text style={styles.pickerDoneText}>{copy.pickerDone}</Text>
+                </Pressable>
+              </View>
+              <DateTimePicker
+                accentColor={colors.brand.sky}
+                display="spinner"
+                locale={language === "en" ? "en-US" : "ja-JP"}
+                mode="date"
+                onChange={handleEditDatePickerChange}
+                onDismiss={closeEditDatePicker}
+                style={styles.nativePicker}
+                themeVariant={scheme}
+                timeZoneName={JST_TIME_ZONE}
+                value={editPickerDate}
+              />
+            </View>
+          </View>
+        </Modal>
+      ) : null}
+
+      <Modal
+        animationType="slide"
+        onRequestClose={() => setEditTimePickerField(null)}
+        transparent
+        visible={editTimePickerField !== null}
+      >
+        <View style={styles.modalBackdrop}>
+          <Pressable
+            accessibilityLabel={copy.closeTimePicker}
+            onPress={() => setEditTimePickerField(null)}
+            style={StyleSheet.absoluteFill}
+          />
+          <View style={[styles.pickerSheet, styles.timePickerSheet, { paddingBottom: Math.max(insets.bottom, 16) }]}>
+            <View style={styles.pickerHeader}>
+              <Pressable accessibilityRole="button" onPress={() => setEditTimePickerField(null)} style={styles.pickerHeaderButton}>
+                <Text style={styles.pickerCancelText}>{copy.pickerCancel}</Text>
+              </Pressable>
+              <Text style={styles.pickerTitle}>
+                {editTimePickerField === "start_time" ? copy.start : copy.end}
+              </Text>
+              <Pressable accessibilityRole="button" onPress={commitEditTime} style={styles.pickerHeaderButton}>
+                <Text style={styles.pickerDoneText}>{copy.pickerDone}</Text>
+              </Pressable>
+            </View>
+            <View style={styles.wallClockPicker}>
+              <ScrollView
+                contentContainerStyle={styles.wallClockColumnContent}
+                showsVerticalScrollIndicator={false}
+                style={styles.wallClockColumn}
+              >
+                {TIME_PICKER_HOURS.map((hourValue) => {
+                  const selected = editDraftHour === hourValue;
+                  return (
+                    <Pressable
+                      key={hourValue}
+                      accessibilityLabel={`${String(hourValue).padStart(2, "0")}:00`}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected }}
+                      onPress={() => setEditDraftHour(hourValue)}
+                      style={({ pressed }) => [
+                        styles.wallClockOption,
+                        selected && styles.wallClockOptionSelected,
+                        pressed && styles.pressed,
+                      ]}
+                    >
+                      <Text style={[styles.wallClockOptionText, selected && styles.wallClockOptionTextSelected]}>
+                        {String(hourValue).padStart(2, "0")}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+              <Text style={styles.wallClockSeparator}>:</Text>
+              <ScrollView
+                contentContainerStyle={styles.wallClockColumnContent}
+                showsVerticalScrollIndicator={false}
+                style={styles.wallClockColumn}
+              >
+                {TIME_PICKER_MINUTES.map((minuteValue) => {
+                  const selected = editDraftMinute === minuteValue;
+                  return (
+                    <Pressable
+                      key={minuteValue}
+                      accessibilityLabel={`${minuteValue} minutes`}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected }}
+                      onPress={() => setEditDraftMinute(minuteValue)}
+                      style={({ pressed }) => [
+                        styles.wallClockOption,
+                        selected && styles.wallClockOptionSelected,
+                        pressed && styles.pressed,
+                      ]}
+                    >
+                      <Text style={[styles.wallClockOptionText, selected && styles.wallClockOptionTextSelected]}>
+                        {String(minuteValue).padStart(2, "0")}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -877,9 +1211,13 @@ function createStyles(colors: ThemeColors) {
   statusText: { fontSize: 12, fontWeight: "800" },
   description: { color: colors.text.secondary, fontSize: 14, fontWeight: "600", lineHeight: 20 },
   keywords: { color: colors.text.muted, fontSize: 12, lineHeight: 18 },
-  recruitmentActions: { flexDirection: "row", gap: 10 },
+  recruitmentActions: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
   secondaryButton: { minHeight: 40, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, paddingHorizontal: 14, borderWidth: 1, borderColor: colors.brand.sky, borderRadius: 20, backgroundColor: colors.surface.default },
   secondaryButtonText: { color: colors.brand.sky, fontSize: 13, fontWeight: "800" },
+  publishButton: { minHeight: 40, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, paddingHorizontal: 14, borderRadius: 20, backgroundColor: colors.brand.gold },
+  publishButtonText: { color: colors.text.onGold, fontSize: 13, fontWeight: "800" },
+  pauseButton: { minHeight: 40, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, paddingHorizontal: 14, borderWidth: 1, borderColor: colors.brand.sky, borderRadius: 20, backgroundColor: colors.surface.blueSoft },
+  pauseButtonText: { color: colors.brand.sky, fontSize: 13, fontWeight: "800" },
   closeButton: { minHeight: 40, flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingHorizontal: 12, borderWidth: 1, borderColor: colors.border.danger, borderRadius: 20, backgroundColor: colors.surface.dangerSoft },
   closeButtonText: { color: colors.state.danger, fontSize: 13, fontWeight: "800" },
   applicationsSection: { gap: 8, paddingTop: 4, borderTopWidth: 1, borderTopColor: colors.border.subtle },
@@ -908,6 +1246,8 @@ function createStyles(colors: ThemeColors) {
   categoryChoiceText: { color: colors.text.secondary, fontSize: 13, fontWeight: "700" },
   categoryChoiceTextSelected: { color: colors.brand.sky },
   textInput: { minHeight: 44, paddingHorizontal: 13, borderWidth: 1, borderColor: colors.border.default, borderRadius: 12, color: colors.text.secondary, backgroundColor: colors.surface.default, fontSize: 15 },
+  pickerInput: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
+  pickerValue: { flex: 1, color: colors.text.secondary, fontSize: 15, fontWeight: "600" },
   descriptionInput: { minHeight: 82, paddingTop: 11, textAlignVertical: "top" },
   inlineFields: { flexDirection: "row", gap: 10 },
   inlineField: { flex: 1, gap: 10 },
@@ -922,5 +1262,21 @@ function createStyles(colors: ThemeColors) {
   cancelText: { color: colors.text.secondary, fontSize: 14, fontWeight: "800" },
   saveButton: { minHeight: 46, flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7, borderRadius: 23, backgroundColor: colors.brand.gold },
   saveText: { color: colors.text.onGold, fontSize: 14, fontWeight: "900" },
+  pickerSheet: { minHeight: 286, paddingTop: 8, borderTopLeftRadius: 28, borderTopRightRadius: 28, backgroundColor: colors.surface.default },
+  pickerHeader: { height: 48, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16 },
+  pickerHeaderButton: { minWidth: 72, height: 40, alignItems: "center", justifyContent: "center" },
+  pickerTitle: { flex: 1, color: colors.text.secondary, fontSize: 16, fontWeight: "900", textAlign: "center" },
+  pickerCancelText: { color: colors.text.secondary, fontSize: 14, fontWeight: "700" },
+  pickerDoneText: { color: colors.brand.sky, fontSize: 14, fontWeight: "900" },
+  nativePicker: { alignSelf: "center", width: "100%", height: 216 },
+  timePickerSheet: { minHeight: 342 },
+  wallClockPicker: { height: 252, flexDirection: "row", alignItems: "center", justifyContent: "center", paddingHorizontal: 32, gap: 12 },
+  wallClockColumn: { width: 96, height: 224, borderWidth: 1, borderColor: colors.border.subtle, borderRadius: 18, backgroundColor: colors.surface.blueSoft },
+  wallClockColumnContent: { paddingVertical: 8, gap: 6 },
+  wallClockOption: { height: 38, alignItems: "center", justifyContent: "center", marginHorizontal: 8, borderRadius: 12 },
+  wallClockOptionSelected: { backgroundColor: colors.brand.sky },
+  wallClockOptionText: { color: colors.text.secondary, fontSize: 18, fontWeight: "800" },
+  wallClockOptionTextSelected: { color: colors.text.inverse },
+  wallClockSeparator: { width: 16, color: colors.text.secondary, fontSize: 28, fontWeight: "900", textAlign: "center" },
   });
 }

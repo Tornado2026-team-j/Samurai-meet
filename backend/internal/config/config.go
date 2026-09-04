@@ -22,6 +22,7 @@ type Config struct {
 	GoogleLoginEnabled  bool
 	DevClientOrigin     string
 	ClientOrigin        string
+	AdditionalClientOrigins []string
 	Database            DatabaseConfig
 	ImageStorage        ImageStorageConfig
 	GoogleOIDC          GoogleOIDCConfig
@@ -120,6 +121,12 @@ func (c Config) ValidateForEnvironment() error {
 	if !validSecureOrigin(c.ClientOrigin) {
 		missing = append(missing, "CLIENT_ORIGIN (https origin)")
 	}
+	for _, origin := range c.AdditionalClientOrigins {
+		if !validSecureOrigin(origin) {
+			missing = append(missing, "ADDITIONAL_CLIENT_ORIGINS (https origins)")
+			break
+		}
+	}
 	if strings.TrimSpace(c.Database.Password) == "" {
 		missing = append(missing, "DB_PASSWORD")
 	}
@@ -196,6 +203,7 @@ func Load() Config {
 		GoogleLoginEnabled:  boolValueOrDefault("GOOGLE_LOGIN_ENABLED", true),
 		DevClientOrigin:     valueOrDefault("DEV_CLIENT_ORIGIN", "http://localhost:8081"),
 		ClientOrigin:        os.Getenv("CLIENT_ORIGIN"),
+		AdditionalClientOrigins: commaSeparatedValues(os.Getenv("ADDITIONAL_CLIENT_ORIGINS")),
 		Database: DatabaseConfig{
 			Host:     valueOrDefault("DB_HOST", "127.0.0.1"),
 			Port:     valueOrDefault("DB_PORT", "5432"),
@@ -244,6 +252,17 @@ func boolValueOrDefault(key string, fallback bool) bool {
 		return fallback
 	}
 	return value
+}
+
+func commaSeparatedValues(value string) []string {
+	var values []string
+	for _, item := range strings.Split(value, ",") {
+		item = strings.TrimSpace(item)
+		if item != "" {
+			values = append(values, item)
+		}
+	}
+	return values
 }
 
 // LoadDotEnv loads a simple KEY=VALUE file without overriding existing

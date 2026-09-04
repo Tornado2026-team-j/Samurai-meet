@@ -29,14 +29,14 @@ func allowedAppRedirectURI(raw, environment string, allowExpoGo bool) bool {
 	return err == nil && uri.Scheme == "exp" && uri.Host != "" && uri.User == nil && strings.HasSuffix(uri.Path, "/--/auth") && uri.Fragment == ""
 }
 
-func allowedOAuthRedirectURI(raw, environment string, allowExpoGo bool, clientOrigin, devClientOrigin string) bool {
+func allowedOAuthRedirectURI(raw, environment string, allowExpoGo bool, clientOrigin, devClientOrigin string, additionalClientOrigins ...string) bool {
 	if allowedAppRedirectURI(raw, environment, allowExpoGo) {
 		return true
 	}
 	if raw == "" || strings.ContainsAny(raw, "\r\n") {
 		return false
 	}
-	for _, origin := range clientOrigins(environment, clientOrigin, devClientOrigin) {
+	for _, origin := range clientOrigins(environment, clientOrigin, devClientOrigin, additionalClientOrigins...) {
 		if raw == origin+"/auth/complete" {
 			return true
 		}
@@ -44,7 +44,7 @@ func allowedOAuthRedirectURI(raw, environment string, allowExpoGo bool, clientOr
 	return false
 }
 
-func googleStart(service *auth.OAuthLoginService, environment string, allowExpoGo bool, clientOrigin, devClientOrigin string) http.HandlerFunc {
+func googleStart(service *auth.OAuthLoginService, environment string, allowExpoGo bool, clientOrigin, devClientOrigin string, additionalClientOrigins []string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			w.Header().Set("Allow", http.MethodGet)
@@ -52,7 +52,7 @@ func googleStart(service *auth.OAuthLoginService, environment string, allowExpoG
 			return
 		}
 		redirectURI, challenge := r.URL.Query().Get("app_redirect_uri"), r.URL.Query().Get("handoff_challenge")
-		if !allowedOAuthRedirectURI(redirectURI, environment, allowExpoGo, clientOrigin, devClientOrigin) || challenge == "" {
+		if !allowedOAuthRedirectURI(redirectURI, environment, allowExpoGo, clientOrigin, devClientOrigin, additionalClientOrigins...) || challenge == "" {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_app_redirect"})
 			return
 		}
@@ -65,7 +65,7 @@ func googleStart(service *auth.OAuthLoginService, environment string, allowExpoG
 	}
 }
 
-func googleCallback(service *auth.OAuthLoginService, environment string, allowExpoGo bool, clientOrigin, devClientOrigin string) http.HandlerFunc {
+func googleCallback(service *auth.OAuthLoginService, environment string, allowExpoGo bool, clientOrigin, devClientOrigin string, additionalClientOrigins []string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		prepareSensitiveAuthResponse(w)
 		if r.Method != http.MethodGet {
@@ -79,7 +79,7 @@ func googleCallback(service *auth.OAuthLoginService, environment string, allowEx
 			return
 		}
 		uri, err := url.Parse(result.AppRedirectURI)
-		if err != nil || !allowedOAuthRedirectURI(result.AppRedirectURI, environment, allowExpoGo, clientOrigin, devClientOrigin) {
+		if err != nil || !allowedOAuthRedirectURI(result.AppRedirectURI, environment, allowExpoGo, clientOrigin, devClientOrigin, additionalClientOrigins...) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_app_redirect"})
 			return
 		}

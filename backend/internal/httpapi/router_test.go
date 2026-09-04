@@ -139,6 +139,24 @@ func TestProductionCORSAllowsOnlyPublicOrigin(t *testing.T) {
 	}
 }
 
+func TestProductionCORSAllowsExplicitAdditionalClientOrigin(t *testing.T) {
+	handler := NewRouterWithOptions(RouterOptions{
+		Environment:             "production",
+		ClientOrigin:            "https://samurai-meet.disnana.com",
+		AdditionalClientOrigins: []string{"https://samurai-meet-expo-go-pre.disnana.com"},
+	})
+	req := httptest.NewRequest(http.MethodOptions, APIV1Prefix+"/auth/google/exchange", nil)
+	req.Header.Set("Origin", "https://samurai-meet-expo-go-pre.disnana.com")
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", res.Code, http.StatusNoContent)
+	}
+	if got := res.Header().Get("Access-Control-Allow-Origin"); got != "https://samurai-meet-expo-go-pre.disnana.com" {
+		t.Fatalf("Access-Control-Allow-Origin = %q", got)
+	}
+}
+
 func TestCORSAllowsWebPasskeyBootstrapHeader(t *testing.T) {
 	handler := NewRouterWithOptions(RouterOptions{Environment: "development", DevClientOrigin: "http://127.0.0.1:5173"})
 	req := httptest.NewRequest(http.MethodOptions, APIV1Prefix+"/auth/passkey/web/options", nil)

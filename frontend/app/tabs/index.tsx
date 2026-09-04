@@ -23,6 +23,7 @@ import {
 import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import DismissKeyboardView from "../../components/DismissKeyboardView";
+import WebDatePicker from "../../components/WebDatePicker";
 import { Button, Card, LoadingSpinner, Pill, opacity, radius, shadows, spacing, typography } from "../../components/ui";
 import type { ThemeColors } from "../../components/ui/tokens";
 import ForeignerHomeScreen from "../foreigner";
@@ -1297,6 +1298,9 @@ export default function SearchPreferencesScreen() {
       );
       setSavedDraftID(savedRecruitment.id);
       setDraftSaveStatus("saved");
+      // Continue at the management screen so the saved draft has an obvious
+      // next step: edit it, publish it, or move it back to a draft later.
+      router.replace("/recruitments/mine");
       saved = true;
     } catch (error) {
       const localMessage = recruitmentInputMessage(error, language);
@@ -2070,7 +2074,18 @@ export default function SearchPreferencesScreen() {
         )}
       </Animated.View>
 
-      {Platform.OS !== "ios" && datePickerVisible ? (
+      {Platform.OS === "web" && datePickerVisible ? (
+        <WebDatePicker
+          cancelLabel={copy.pickerCancel}
+          doneLabel={copy.pickerDone}
+          label={copy.pickerDateTitle}
+          maximumDate={maximumDate}
+          minimumDate={minimumDate}
+          onChange={commitDate}
+          onDismiss={() => setDatePickerVisible(false)}
+          value={pickerDate}
+        />
+      ) : Platform.OS !== "ios" && datePickerVisible ? (
         <DateTimePicker
           display="default"
           maximumDate={maximumDate}
