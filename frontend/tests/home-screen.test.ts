@@ -135,6 +135,23 @@ describe("ホーム画面の更新契約", () => {
     expect(source).toContain("router.replace(href)");
   });
 
+  it("プロフィール本体とアカウント設定を分け、設定画面にも下部ナビを維持する", async () => {
+    const profileSource = await readScreen("../app/profile.tsx");
+    const accountSettingsSource = await readScreen("../app/account-settings.tsx");
+    const tabBarSource = await readScreen("../components/GlobalTabBar.tsx");
+
+    expect(profileSource).toContain("export function ProfileScreen");
+    expect(profileSource).toContain("settingsOnly?: boolean");
+    expect(profileSource).toContain('router.push("/account-settings")');
+    expect(profileSource).toContain("headerSettingsButton");
+    expect(profileSource).toContain("{!settingsOnly ? (");
+    expect(profileSource).toContain("{settingsOnly ? (");
+    expect(profileSource).toContain("settingsContent");
+    expect(accountSettingsSource).toContain('import { ProfileScreen } from "./profile"');
+    expect(accountSettingsSource).toContain("<ProfileScreen settingsOnly />");
+    expect(tabBarSource).toContain('pathname === "/profile" || pathname === "/account-settings"');
+  });
+
   it("起動・認証待ち・主要一覧は共通の滑らかなロードリングを使う", async () => {
     const rootSource = await readScreen("../app/index.tsx");
     const guardSource = await readScreen("../app/_layout.tsx");
