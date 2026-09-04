@@ -9,7 +9,10 @@ export type MemoryMonster = {
   id: string;
   match_id: string;
   meeting_id?: string;
+  guide_date?: string;
+  location_name?: string;
   source_photo_id: string;
+  source_photo_content_type?: string;
   memorable_object: string;
   memory_text: string;
   prompt_version: string;

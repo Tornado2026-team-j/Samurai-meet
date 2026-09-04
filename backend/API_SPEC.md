@@ -497,6 +497,8 @@ Request body:
 | `memorable_object` | 1〜15文字 |
 | `memory_text` | 1〜100文字 |
 
+`GET /api/v1/memory-monsters`の各要素は、生成キャラクターのメタデータに加えて、一覧・詳細表示向けに`guide_date`（募集カードの案内日）、`location_name`、`source_photo_content_type`を返します。撮影元写真そのものは返さず、既存のprivate写真APIで`source_photo_id`を指定してクライアント側で復号します。
+
 マッチ参加者だけが、`accepted`または`completed`のmatchに対して作成できます。画像生成はサーバー側の`GEMINI_API_KEY`と`GEMINI_IMAGE_MODEL`を使い、既定モデルは`gemini-3.1-flash-lite-image`です。Geminiへは最初に写真付きで人物のポーズだけを短いテキストへ変換するリクエストを送り、次にそのポーズテキスト、`memorable_object`、`memory_text`だけで白背景の単体マスコットを生成します。生成画像はサーバー管理の`IMAGE_STORAGE_DIR/memory-monsters/`配下に保存し、レスポンスには画像バイナリではなくメタデータだけを返します。画像取得は`Cache-Control: private, no-store`です。
 
 ### 6.7 チャット（REST同期 + HTTP/3 WebTransport）
