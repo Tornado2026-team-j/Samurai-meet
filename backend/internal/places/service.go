@@ -232,8 +232,8 @@ func (s *Service) Search(ctx context.Context, input SearchInput) ([]Suggestion, 
 	}
 
 	predictions := rankedPredictions(decoded.Suggestions, input.Query)
-	suggestions := make([]Suggestion, 0, min(input.Limit, len(predictions)))
-	seen := make(map[string]struct{}, len(predictions))
+	suggestions := make([]Suggestion, 0, suggestionCapacity(len(predictions)))
+	seen := make(map[string]struct{}, suggestionCapacity(len(predictions)))
 	for _, prediction := range predictions {
 		if len(suggestions) >= input.Limit {
 			break
@@ -332,8 +332,8 @@ func (s *Service) Nearby(ctx context.Context, input NearbyInput) ([]Suggestion, 
 	if err := json.NewDecoder(response.Body).Decode(&decoded); err != nil {
 		return nil, ErrProviderFailure
 	}
-	suggestions := make([]Suggestion, 0, min(input.Limit, len(decoded.Places)))
-	seen := make(map[string]struct{}, len(decoded.Places))
+	suggestions := make([]Suggestion, 0, suggestionCapacity(len(decoded.Places)))
+	seen := make(map[string]struct{}, suggestionCapacity(len(decoded.Places)))
 	for _, place := range decoded.Places {
 		if len(suggestions) >= input.Limit {
 			break
@@ -472,6 +472,16 @@ func nearbyIncludedTypes() []string {
 		"shopping_mall",
 		"store",
 	}
+}
+
+func suggestionCapacity(resultCount int) int {
+	if resultCount < 1 {
+		return 0
+	}
+	if resultCount > maxLimit {
+		return maxLimit
+	}
+	return resultCount
 }
 
 func normalizeSearchInput(input SearchInput) (SearchInput, error) {
