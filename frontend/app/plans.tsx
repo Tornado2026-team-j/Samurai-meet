@@ -12,12 +12,15 @@ import {
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { Header, colors, LoadingScreen, RefreshLoadingIndicator, radius, shadows, typography } from "../components/ui";
+import { Header, LoadingSpinner, RefreshLoadingIndicator, radius, shadows, typography } from "../components/ui";
+import type { ThemeColors } from "../components/ui/tokens";
 import { useAuth } from "../hooks/useAuth";
+import { useDisplayLanguage } from "../hooks/useDisplayLanguage";
+import { useTheme, useThemeStyles } from "../hooks/useTheme";
 import { APIError } from "../services/api-client";
 import { cancelMeeting, createMeeting, endMeeting, getMeetingForMatch, meetingProximityCapability, resumeMeeting, startMeeting, type Meeting } from "../services/meeting";
 import { completeMatch, likeMatch, listMatches, type MatchView } from "../services/matching";
-import { loadLanguage, subscribeLanguage, type AppLanguage } from "../services/onboarding";
+import { type AppLanguage } from "../services/onboarding";
 import { formatTimeRange, isJSTScheduleEnded } from "../utils/time";
 import { getTabBarContentBottomPadding } from "../utils/layout";
 
@@ -137,8 +140,10 @@ function displayDate(value: string, language: AppLanguage): string {
 export default function PlansScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { colors } = useTheme();
+  const styles = useThemeStyles(createStyles);
   const { getCurrentSession, refresh, session, status } = useAuth();
-  const [language, setLanguage] = useState<AppLanguage>("ja");
+  const language = useDisplayLanguage();
   const [activeTab, setActiveTab] = useState<PlanTab>("today");
   const [plans, setPlans] = useState<MatchView[]>([]);
   const [meetings, setMeetings] = useState<Record<string, Meeting>>({});
@@ -149,28 +154,14 @@ export default function PlansScreen() {
   const reviewPromptedRef = useRef(new Set<string>());
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-  const copy = COPY[language];
+  const copy = COPY[language ?? "ja"];
   const proximityCapability = meetingProximityCapability();
-
-  useEffect(() => {
-    let active = true;
-    const unsubscribe = subscribeLanguage((next) => {
-      if (active && next) setLanguage(next);
-    });
-    void loadLanguage().then((next) => {
-      if (active) setLanguage(next ?? "ja");
-    });
-    return () => {
-      active = false;
-      unsubscribe();
-    };
-  }, []);
 
   const load = useCallback(async (refreshMode = false) => {
     const activeSession = getCurrentSession() ?? session;
     if (status !== "signed_in" || !activeSession) {
       setLoading(false);
-      setError(COPY[language].loadError);
+      setError(copy.loadError);
       return;
     }
     if (refreshMode) {
@@ -200,12 +191,12 @@ export default function PlansScreen() {
       }
       setActionError(null);
     } catch {
-      setError(COPY[language].loadError);
+      setError(copy.loadError);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [getCurrentSession, language, refresh, session, status]);
+  }, [copy.loadError, getCurrentSession, refresh, session, status]);
 
   useFocusEffect(
     useCallback(() => {
@@ -265,8 +256,20 @@ export default function PlansScreen() {
       });
   }, [activeTab, plans]);
 
-  if (loading && plans.length === 0 && !error) {
-    return <LoadingScreen />;
+  if (!language) {
+    return (
+      <View style={styles.screen}>
+        <StatusBar style="dark" />
+        <Header
+          iconName="event-available"
+          style={[styles.header, { paddingTop: Math.max(insets.top, 20) }]}
+          variant="hero"
+        />
+        <View style={styles.languageLoadingPanel}>
+          <LoadingSpinner color={colors.brand.sky} size={24} />
+        </View>
+      </View>
+    );
   }
 
   const updateMeeting = async (plan: MatchView) => {
@@ -341,7 +344,7 @@ export default function PlansScreen() {
 
   return (
     <View style={styles.screen}>
-      <StatusBar style="light" />
+      <StatusBar style="dark" />
       <Header
         iconName="event-available"
         style={[styles.header, { paddingTop: Math.max(insets.top, 20) }]}
@@ -377,7 +380,12 @@ export default function PlansScreen() {
         }
         showsVerticalScrollIndicator={false}
       >
-        {loading && plans.length === 0 ? null : error ? (
+        {loading && plans.length === 0 && !error ? (
+          <View style={styles.state}>
+            <LoadingSpinner color={colors.brand.sky} size={24} />
+            <Text style={styles.stateText}>{copy.loading}</Text>
+          </View>
+        ) : error ? (
           <View style={styles.state}>
             <Text accessibilityRole="alert" style={styles.stateText}>{error}</Text>
             <Pressable onPress={() => void load()} style={styles.retry}><Text style={styles.retryText}>{copy.retry}</Text></Pressable>
@@ -482,7 +490,8 @@ export default function PlansScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ThemeColors) {
+  return StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.surface.screen },
   header: {
     minHeight: 178,
@@ -493,7 +502,7 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     marginTop: 8,
-    color: colors.text.inverse,
+    color: colors.text.onSky,
     fontSize: 28,
     fontWeight: "800",
     letterSpacing: 0,
@@ -505,10 +514,11 @@ const styles = StyleSheet.create({
   tabText: { color: colors.text.subtle, fontSize: 13, fontWeight: "700" },
   tabTextSelected: { color: colors.brand.sky },
   content: { padding: 20, gap: 14 },
+  languageLoadingPanel: { flex: 1, alignItems: "center", justifyContent: "center" },
   state: { minHeight: 220, alignItems: "center", justifyContent: "center", gap: 12 },
   stateText: { color: colors.text.subtle, ...typography.body, textAlign: "center" },
   retry: { minHeight: 42, justifyContent: "center", paddingHorizontal: 22, borderRadius: radius.pill, backgroundColor: colors.brand.sky },
-  retryText: { color: colors.text.inverse, fontWeight: "800" },
+  retryText: { color: colors.text.onSky, fontWeight: "800" },
   card: { padding: 16, borderWidth: 1, borderColor: colors.border.subtle, borderRadius: radius.lg, backgroundColor: colors.surface.default, ...shadows.card },
   cardTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   dateBadge: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: radius.pill, backgroundColor: colors.surface.blueSoft },
@@ -526,7 +536,7 @@ const styles = StyleSheet.create({
   likeActionText: { color: colors.text.secondary, fontSize: 12, fontWeight: "800" },
   likeActionTextSelected: { color: colors.brand.sky },
   primaryAction: { minHeight: 46, marginTop: 9, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7, borderRadius: radius.md, backgroundColor: colors.brand.sky },
-  primaryActionText: { color: colors.text.inverse, fontSize: 14, fontWeight: "800" },
+  primaryActionText: { color: colors.text.onSky, fontSize: 14, fontWeight: "800" },
   meetingStatus: { marginTop: 10, color: colors.text.subtle, fontSize: 13, fontWeight: "700", textAlign: "center" },
   disabled: { opacity: 0.55 },
   error: { color: colors.state.danger, fontSize: 13, fontWeight: "700", textAlign: "center" },
@@ -541,7 +551,8 @@ const styles = StyleSheet.create({
   reviewPlanPerson: { marginTop: 4, color: colors.text.secondary, fontSize: 13, fontWeight: "700" },
   reviewPlanStatus: { marginTop: 8, color: colors.brand.sky, fontSize: 12, fontWeight: "800" },
   reviewPrimary: { width: "100%", minHeight: 46, marginTop: 22, alignItems: "center", justifyContent: "center", borderRadius: radius.md, backgroundColor: colors.brand.sky },
-  reviewPrimaryText: { color: colors.text.inverse, fontSize: 14, fontWeight: "800" },
+  reviewPrimaryText: { color: colors.text.onSky, fontSize: 14, fontWeight: "800" },
   reviewLater: { minHeight: 42, marginTop: 8, alignItems: "center", justifyContent: "center", paddingHorizontal: 18 },
   reviewLaterText: { color: colors.text.subtle, fontSize: 13, fontWeight: "700" },
-});
+  });
+}

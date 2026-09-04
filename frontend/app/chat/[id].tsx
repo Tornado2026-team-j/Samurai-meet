@@ -23,7 +23,9 @@ import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import ChatBubble from "../../components/ChatBubble";
 import { LoadingSpinner } from "../../components/ui";
+import type { ThemeColors } from "../../components/ui/tokens";
 import { useAuth } from "../../hooks/useAuth";
+import { useTheme, useThemeStyles } from "../../hooks/useTheme";
 import { APIError } from "../../services/api-client";
 import {
 	blockUser,
@@ -86,13 +88,6 @@ import {
 import { formatTimeRange } from "../../utils/time";
 import type { MatchCategory } from "../../types/match";
 
-const BLUE = "#5ec5f5";
-const YELLOW = "#e7b454";
-const TEXT_GRAY = "#535353";
-const MUTED_GRAY = "#949494";
-const BORDER_GRAY = "#e4e4e4";
-const SOFT_BLUE = "#eff8ff";
-const DANGER = "#b42318";
 const MAX_RENDERED_MESSAGES = CHAT_MESSAGE_WINDOW_LIMIT;
 
 type ReportTarget = { kind: "account" } | { kind: "message"; messageID: string };
@@ -492,6 +487,13 @@ export default function ChatDetailScreen() {
   const { id } = useLocalSearchParams<{ id?: string | string[] }>();
   const chatID = Array.isArray(id) ? id[0] : id;
   const { getCurrentSession, refresh, session, status } = useAuth();
+  const { colors } = useTheme();
+  const styles = useThemeStyles(createStyles);
+  const BLUE = colors.brand.sky;
+  const YELLOW = colors.brand.gold;
+  const TEXT_GRAY = colors.text.secondary;
+  const MUTED_GRAY = colors.text.muted;
+  const DANGER = colors.state.danger;
   const [language, setLanguage] = useState<AppLanguage | null>(null);
   const [appMode, setAppMode] = useState<AppMode>("local");
   const [translationConsent, setTranslationConsent] = useState<TranslationConsent | null>(null);
@@ -1957,7 +1959,7 @@ export default function ChatDetailScreen() {
           onPress={() => router.back()}
           style={({ pressed }) => [styles.backButton, { top: Math.max(insets.top + 8, 49) }, pressed && styles.pressed]}
         >
-          <MaterialIcons color="#ffffff" name="chevron-left" size={30} />
+          <MaterialIcons color={colors.text.inverse} name="chevron-left" size={30} />
         </Pressable>
         <Pressable
           accessibilityLabel={copy.home}
@@ -1970,11 +1972,11 @@ export default function ChatDetailScreen() {
             pressed && styles.pressed,
           ]}
         >
-          <MaterialIcons color="#ffffff" name="home" size={24} />
+          <MaterialIcons color={colors.text.inverse} name="home" size={24} />
         </Pressable>
         <View style={styles.headerProfile}>
           <View style={styles.headerAvatar}>
-            <MaterialIcons color="#ffffff" name="account-circle" size={54} />
+            <MaterialIcons color={colors.text.inverse} name="account-circle" size={54} />
           </View>
           <View style={styles.headerText}>
             <Text numberOfLines={1} style={styles.headerName}>{chat?.other_user_name || "Samurai Meet user"}</Text>
@@ -1992,7 +1994,7 @@ export default function ChatDetailScreen() {
             pressed && styles.pressed,
           ]}
         >
-          <MaterialIcons color="#ffffff" name="more-horiz" size={30} />
+          <MaterialIcons color={colors.text.inverse} name="more-horiz" size={30} />
         </Pressable>
         </View>
 
@@ -2234,7 +2236,7 @@ export default function ChatDetailScreen() {
             onPress={() => void pickAndSendImage()}
             style={({ pressed }) => [styles.locationButton, (readOnly || chatKeyLoading || chatKeyUnavailable || !!editingMessageID || sending || sharingLocation || sendingPhoto) && styles.sendButtonDisabled, pressed && styles.pressed]}
           >
-            {sendingPhoto ? <ActivityIndicator color="#ffffff" size="small" /> : <MaterialIcons color="#ffffff" name="photo-library" size={22} />}
+            {sendingPhoto ? <ActivityIndicator color={colors.text.inverse} size="small" /> : <MaterialIcons color={colors.text.inverse} name="photo-library" size={22} />}
           </Pressable>
           <Pressable
             accessibilityLabel={copy.shareLocation}
@@ -2243,7 +2245,7 @@ export default function ChatDetailScreen() {
             onPress={() => void shareCurrentLocation()}
             style={({ pressed }) => [styles.locationButton, (readOnly || chatKeyLoading || chatKeyUnavailable || !!editingMessageID || sending || sharingLocation || sendingPhoto) && styles.sendButtonDisabled, pressed && styles.pressed]}
           >
-            {sharingLocation ? <ActivityIndicator color="#ffffff" size="small" /> : <MaterialIcons color="#ffffff" name="location-on" size={22} />}
+            {sharingLocation ? <ActivityIndicator color={colors.text.inverse} size="small" /> : <MaterialIcons color={colors.text.inverse} name="location-on" size={22} />}
           </Pressable>
           <TextInput
             accessibilityLabel={copy.input}
@@ -2263,7 +2265,7 @@ export default function ChatDetailScreen() {
             onPress={() => void submit()}
             style={({ pressed }) => [styles.sendButton, !canSend && styles.sendButtonDisabled, pressed && styles.pressed]}
           >
-            {sending ? <ActivityIndicator color="#ffffff" size="small" /> : <MaterialIcons color="#ffffff" name={editingMessageID ? "check" : "send"} size={24} />}
+            {sending ? <ActivityIndicator color={colors.text.inverse} size="small" /> : <MaterialIcons color={colors.text.inverse} name={editingMessageID ? "check" : "send"} size={24} />}
           </Pressable>
         </View>
         </View>
@@ -2400,7 +2402,7 @@ export default function ChatDetailScreen() {
                       style={({ pressed }) => [styles.modalPrimaryButton, safetySubmitting && styles.sendButtonDisabled, pressed && styles.pressed]}
                     >
                       {safetySubmitting ? (
-                        <ActivityIndicator color="#ffffff" size="small" />
+                        <ActivityIndicator color={colors.text.inverse} size="small" />
                       ) : (
                         <Text style={styles.modalPrimaryText}>{copy.confirm}</Text>
                       )}
@@ -2416,10 +2418,11 @@ export default function ChatDetailScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ThemeColors) {
+  return StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.screen,
   },
   screenContent: {
     flex: 1,
@@ -2430,10 +2433,10 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 14,
     paddingHorizontal: 32,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.screen,
   },
   loadingText: {
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 14,
     fontWeight: "700",
     lineHeight: 22,
@@ -2446,7 +2449,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 38,
     borderBottomLeftRadius: 50,
     borderBottomRightRadius: 50,
-    backgroundColor: BLUE,
+    backgroundColor: colors.brand.sky,
   },
   backButton: {
     position: "absolute",
@@ -2472,7 +2475,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderRadius: 17,
-    backgroundColor: "rgba(255,255,255,0.18)",
+    backgroundColor: colors.overlay.sheet,
   },
   headerProfile: {
     flexDirection: "row",
@@ -2484,7 +2487,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.7)",
+    borderColor: colors.text.inverse,
     borderRadius: 31,
   },
   headerText: {
@@ -2492,7 +2495,7 @@ const styles = StyleSheet.create({
     marginLeft: 16,
   },
   headerName: {
-    color: "#ffffff",
+    color: colors.text.inverse,
     fontSize: 26,
     fontWeight: "900",
     letterSpacing: 0,
@@ -2500,7 +2503,7 @@ const styles = StyleSheet.create({
   },
   headerSub: {
     marginTop: 5,
-    color: "#ffffff",
+    color: colors.text.inverse,
     fontSize: 12,
     fontWeight: "700",
     letterSpacing: 0,
@@ -2523,9 +2526,9 @@ const styles = StyleSheet.create({
     alignSelf: "center",
     padding: 18,
     borderWidth: 1,
-    borderColor: BORDER_GRAY,
+    borderColor: colors.border.default,
     borderRadius: 20,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.default,
   },
   scheduleIcon: {
     width: 58,
@@ -2533,14 +2536,14 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderRadius: 29,
-    backgroundColor: "#fff8e8",
+    backgroundColor: colors.surface.goldSoft,
   },
   scheduleText: {
     flex: 1,
     marginLeft: 14,
   },
   scheduleTitle: {
-    color: "#101318",
+    color: colors.text.primary,
     fontSize: 17,
     fontWeight: "900",
     letterSpacing: 0,
@@ -2558,7 +2561,7 @@ const styles = StyleSheet.create({
   },
   scheduleMetaText: {
     flex: 1,
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 13,
     fontWeight: "800",
     letterSpacing: 0,
@@ -2574,13 +2577,13 @@ const styles = StyleSheet.create({
     marginTop: 12,
     paddingHorizontal: 14,
     borderWidth: 1,
-    borderColor: BORDER_GRAY,
+    borderColor: colors.border.default,
     borderRadius: 18,
-    backgroundColor: SOFT_BLUE,
+    backgroundColor: colors.surface.blueSoft,
   },
   scheduleLikeActionDisabled: { opacity: 0.62 },
-  scheduleLikeText: { color: TEXT_GRAY, fontSize: 12, fontWeight: "800" },
-  scheduleLikeTextSelected: { color: BLUE },
+  scheduleLikeText: { color: colors.text.secondary, fontSize: 12, fontWeight: "800" },
+  scheduleLikeTextSelected: { color: colors.brand.sky },
   noticePanel: {
     width: "100%",
     maxWidth: 348,
@@ -2593,13 +2596,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderWidth: 1,
-    borderColor: "#caeafd",
+    borderColor: colors.border.blue,
     borderRadius: 10,
-    backgroundColor: SOFT_BLUE,
+    backgroundColor: colors.surface.blueSoft,
   },
   noticeText: {
     flex: 1,
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 12,
     fontWeight: "700",
     letterSpacing: 0,
@@ -2617,16 +2620,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderWidth: 1,
-    borderColor: "#f7dfaa",
+    borderColor: colors.border.gold,
     borderRadius: 10,
-    backgroundColor: "#fff8e8",
+    backgroundColor: colors.surface.goldSoft,
   },
   keyStateCopy: {
     flex: 1,
   },
   keyStateText: {
     flex: 1,
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 12,
     fontWeight: "800",
     letterSpacing: 0,
@@ -2638,10 +2641,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 8,
-    backgroundColor: YELLOW,
+    backgroundColor: colors.brand.gold,
   },
   stateActionText: {
-    color: "#ffffff",
+    color: colors.text.inverse,
     fontSize: 11,
     fontWeight: "900",
     letterSpacing: 0,
@@ -2659,9 +2662,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderWidth: 1,
-    borderColor: "#caeafd",
+    borderColor: colors.border.blue,
     borderRadius: 10,
-    backgroundColor: SOFT_BLUE,
+    backgroundColor: colors.surface.blueSoft,
   },
   localNotice: {
     width: "100%",
@@ -2671,12 +2674,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderWidth: 1,
-    borderColor: "#f7dfaa",
+    borderColor: colors.border.gold,
     borderRadius: 10,
-    backgroundColor: "#fff8e8",
+    backgroundColor: colors.surface.goldSoft,
   },
   localNoticeText: {
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 12,
     fontWeight: "800",
     letterSpacing: 0,
@@ -2685,7 +2688,7 @@ const styles = StyleSheet.create({
   translationNotice: {
     marginTop: 10,
     paddingHorizontal: 24,
-    color: MUTED_GRAY,
+    color: colors.text.muted,
     fontSize: 11,
     fontWeight: "700",
     lineHeight: 16,
@@ -2701,12 +2704,12 @@ const styles = StyleSheet.create({
     marginTop: 12,
     paddingHorizontal: 14,
     borderWidth: 1,
-    borderColor: "#caeafd",
+    borderColor: colors.border.blue,
     borderRadius: 19,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.default,
   },
   loadOlderText: {
-    color: BLUE,
+    color: colors.brand.sky,
     fontSize: 12,
     fontWeight: "900",
     lineHeight: 16,
@@ -2718,7 +2721,7 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   emptyText: {
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 14,
     fontWeight: "700",
     letterSpacing: 0,
@@ -2732,8 +2735,8 @@ const styles = StyleSheet.create({
     left: 0,
     paddingTop: 10,
     borderTopWidth: 1,
-    borderTopColor: "#f0f0f0",
-    backgroundColor: "#ffffff",
+    borderTopColor: colors.border.subtle,
+    backgroundColor: colors.surface.default,
   },
   quickReplyScroll: {
     maxHeight: 46,
@@ -2748,28 +2751,28 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingHorizontal: 14,
     borderWidth: 1,
-    borderColor: "#caeafd",
+    borderColor: colors.border.blue,
     borderRadius: 17,
-    backgroundColor: SOFT_BLUE,
+    backgroundColor: colors.surface.blueSoft,
   },
   quickReplyText: {
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 12,
     fontWeight: "800",
     letterSpacing: 0,
     lineHeight: 16,
   },
   disabledPill: {
-    borderColor: BORDER_GRAY,
-    backgroundColor: "#f7f7f7",
+    borderColor: colors.border.default,
+    backgroundColor: colors.surface.subtle,
   },
   disabledPillText: {
-    color: MUTED_GRAY,
+    color: colors.text.muted,
   },
   readOnlyText: {
     marginTop: 6,
     paddingHorizontal: 24,
-    color: MUTED_GRAY,
+    color: colors.text.muted,
     fontSize: 12,
     fontWeight: "800",
     letterSpacing: 0,
@@ -2779,7 +2782,7 @@ const styles = StyleSheet.create({
   moderationText: {
     marginTop: 6,
     paddingHorizontal: 24,
-    color: YELLOW,
+    color: colors.brand.gold,
     fontSize: 12,
     fontWeight: "800",
     letterSpacing: 0,
@@ -2789,7 +2792,7 @@ const styles = StyleSheet.create({
   editingNotice: {
     alignSelf: "flex-end",
     marginBottom: 4,
-    color: YELLOW,
+    color: colors.brand.gold,
     fontSize: 11,
     fontWeight: "800",
     lineHeight: 16,
@@ -2802,10 +2805,10 @@ const styles = StyleSheet.create({
     marginHorizontal: 24,
     paddingHorizontal: 14,
     borderRadius: 10,
-    backgroundColor: "#fff8e8",
+    backgroundColor: colors.surface.goldSoft,
   },
   editingBarText: {
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 12,
     fontWeight: "800",
     lineHeight: 17,
@@ -2815,13 +2818,13 @@ const styles = StyleSheet.create({
     paddingVertical: 7,
   },
   editingCancelText: {
-    color: DANGER,
+    color: colors.state.danger,
     fontSize: 12,
     fontWeight: "900",
     lineHeight: 17,
   },
   blockedModerationText: {
-    color: DANGER,
+    color: colors.state.danger,
   },
   inputRow: {
     minHeight: 58,
@@ -2840,17 +2843,17 @@ const styles = StyleSheet.create({
     paddingBottom: 11,
     paddingLeft: 16,
     borderWidth: 1,
-    borderColor: BORDER_GRAY,
+    borderColor: colors.border.default,
     borderRadius: 24,
-    color: "#101318",
+    color: colors.text.primary,
     fontSize: 15,
     fontWeight: "700",
     letterSpacing: 0,
     lineHeight: 21,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.default,
   },
   inputDisabled: {
-    backgroundColor: "#f7f7f7",
+    backgroundColor: colors.surface.subtle,
   },
   sendButton: {
     width: 50,
@@ -2858,10 +2861,10 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderRadius: 25,
-    backgroundColor: YELLOW,
+    backgroundColor: colors.brand.gold,
   },
   sendButtonDisabled: {
-    backgroundColor: BORDER_GRAY,
+    backgroundColor: colors.border.default,
   },
   retryButton: {
     minWidth: 92,
@@ -2870,10 +2873,10 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingHorizontal: 18,
     borderRadius: 10,
-    backgroundColor: YELLOW,
+    backgroundColor: colors.brand.gold,
   },
   retryButtonText: {
-    color: "#ffffff",
+    color: colors.text.inverse,
     fontSize: 13,
     fontWeight: "900",
     letterSpacing: 0,
@@ -2887,7 +2890,7 @@ const styles = StyleSheet.create({
   syncNotice: {
     marginTop: 8,
     paddingHorizontal: 24,
-    color: MUTED_GRAY,
+    color: colors.text.muted,
     fontSize: 12,
     fontWeight: "700",
     lineHeight: 17,
@@ -2897,7 +2900,7 @@ const styles = StyleSheet.create({
     alignSelf: "flex-end",
     marginTop: 4,
     marginRight: 12,
-    color: MUTED_GRAY,
+    color: colors.text.muted,
     fontSize: 11,
     fontWeight: "700",
     lineHeight: 16,
@@ -2908,24 +2911,24 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderRadius: 23,
-    backgroundColor: BLUE,
+    backgroundColor: colors.brand.sky,
   },
   locationCard: {
     maxWidth: "82%",
     marginTop: 8,
     padding: 12,
     borderWidth: 1,
-    borderColor: "#caeafd",
+    borderColor: colors.border.blue,
     borderRadius: 14,
-    backgroundColor: SOFT_BLUE,
+    backgroundColor: colors.surface.blueSoft,
   },
   locationCardMine: { alignSelf: "flex-end" },
   locationCardOther: { alignSelf: "flex-start" },
-  locationName: { color: TEXT_GRAY, fontSize: 14, fontWeight: "900", lineHeight: 20 },
-  locationMeta: { marginTop: 4, color: MUTED_GRAY, fontSize: 11, fontWeight: "700", lineHeight: 16 },
+  locationName: { color: colors.text.secondary, fontSize: 14, fontWeight: "900", lineHeight: 20 },
+  locationMeta: { marginTop: 4, color: colors.text.muted, fontSize: 11, fontWeight: "700", lineHeight: 16 },
   locationActions: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 10 },
-  locationAction: { minHeight: 32, justifyContent: "center", paddingHorizontal: 10, borderWidth: 1, borderColor: BLUE, borderRadius: 16, backgroundColor: "#ffffff" },
-  locationActionText: { color: BLUE, fontSize: 11, fontWeight: "900" },
+  locationAction: { minHeight: 32, justifyContent: "center", paddingHorizontal: 10, borderWidth: 1, borderColor: colors.brand.sky, borderRadius: 16, backgroundColor: colors.surface.default },
+  locationActionText: { color: colors.brand.sky, fontSize: 11, fontWeight: "900" },
   modalScrim: {
     position: "absolute",
     top: 0,
@@ -2934,7 +2937,7 @@ const styles = StyleSheet.create({
     left: 0,
     zIndex: 1001,
     elevation: 1,
-    backgroundColor: "rgba(8, 15, 28, 0.68)",
+    backgroundColor: colors.overlay.scrim,
   },
   modalLayer: {
     flex: 1,
@@ -2955,7 +2958,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.default,
     zIndex: 1003,
     elevation: 24,
   },
@@ -2964,12 +2967,12 @@ const styles = StyleSheet.create({
     height: 5,
     alignSelf: "center",
     borderRadius: 3,
-    backgroundColor: BORDER_GRAY,
+    backgroundColor: colors.border.default,
   },
   sheetTitle: {
     marginTop: 18,
     marginBottom: 8,
-    color: "#101318",
+    color: colors.text.primary,
     fontSize: 18,
     fontWeight: "900",
     letterSpacing: 0,
@@ -2981,7 +2984,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 14,
     borderBottomWidth: 1,
-    borderBottomColor: "#f0f0f0",
+    borderBottomColor: colors.border.subtle,
   },
   translationSheetAction: {
     minHeight: 64,
@@ -2991,20 +2994,20 @@ const styles = StyleSheet.create({
     gap: 3,
   },
   sheetActionHint: {
-    color: MUTED_GRAY,
+    color: colors.text.muted,
     fontSize: 11,
     fontWeight: "700",
     lineHeight: 16,
   },
   sheetActionText: {
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 15,
     fontWeight: "900",
     letterSpacing: 0,
     lineHeight: 20,
   },
   dangerText: {
-    color: DANGER,
+    color: colors.state.danger,
   },
   sheetCancel: {
     height: 46,
@@ -3012,10 +3015,10 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginTop: 14,
     borderRadius: 10,
-    backgroundColor: "#f7f7f7",
+    backgroundColor: colors.surface.subtle,
   },
   sheetCancelText: {
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 14,
     fontWeight: "900",
     letterSpacing: 0,
@@ -3026,12 +3029,12 @@ const styles = StyleSheet.create({
     maxWidth: 342,
     padding: 22,
     borderRadius: 20,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.default,
     zIndex: 1003,
     elevation: 24,
   },
   modalTitle: {
-    color: "#101318",
+    color: colors.text.primary,
     fontSize: 20,
     fontWeight: "900",
     letterSpacing: 0,
@@ -3039,7 +3042,7 @@ const styles = StyleSheet.create({
   },
   modalSubtitle: {
     marginTop: 8,
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 13,
     fontWeight: "700",
     letterSpacing: 0,
@@ -3054,12 +3057,12 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingHorizontal: 14,
     borderWidth: 1,
-    borderColor: BORDER_GRAY,
+    borderColor: colors.border.default,
     borderRadius: 10,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.default,
   },
   reasonText: {
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 14,
     fontWeight: "800",
     letterSpacing: 0,
@@ -3071,10 +3074,10 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginTop: 14,
     borderRadius: 10,
-    backgroundColor: "#f7f7f7",
+    backgroundColor: colors.surface.subtle,
   },
   modalCancelText: {
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 14,
     fontWeight: "900",
     letterSpacing: 0,
@@ -3091,12 +3094,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
-    borderColor: BLUE,
+    borderColor: colors.brand.sky,
     borderRadius: 10,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.default,
   },
   modalSecondaryText: {
-    color: BLUE,
+    color: colors.brand.sky,
     fontSize: 14,
     fontWeight: "900",
     letterSpacing: 0,
@@ -3108,10 +3111,10 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderRadius: 10,
-    backgroundColor: YELLOW,
+    backgroundColor: colors.brand.gold,
   },
   modalPrimaryText: {
-    color: "#ffffff",
+    color: colors.text.inverse,
     fontSize: 14,
     fontWeight: "900",
     letterSpacing: 0,
@@ -3120,4 +3123,5 @@ const styles = StyleSheet.create({
   pressed: {
     opacity: 0.72,
   },
-});
+  });
+}

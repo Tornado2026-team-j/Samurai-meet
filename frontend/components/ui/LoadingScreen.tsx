@@ -1,6 +1,8 @@
 import { StatusBar } from "expo-status-bar";
 import { StyleSheet, Text, type StyleProp, type ViewStyle, View } from "react-native";
+import { useTheme, useThemeStyles } from "../../hooks/useTheme";
 import LoadingSpinner, { LOADING_SPINNER_SPEED_MS } from "./LoadingSpinner";
+import type { ThemeColors } from "./tokens";
 
 type LoadingScreenProps = {
   color?: string;
@@ -11,31 +13,36 @@ type LoadingScreenProps = {
 
 /** A quiet full-screen loading state shared by screen transitions and first loads. */
 export default function LoadingScreen({
-  color = "#5EC5F5",
+  color: colorProp,
   label,
   size = 28,
   style,
 }: LoadingScreenProps) {
+  const { colors, scheme } = useTheme();
+  const color = colorProp ?? colors.brand.sky;
+  const styles = useThemeStyles(createStyles);
   return (
     <View style={[styles.screen, style]}>
-      <StatusBar style="dark" />
+      <StatusBar style={scheme === "dark" ? "light" : "dark"} />
       <LoadingSpinner color={color} size={size} speedMs={LOADING_SPINNER_SPEED_MS} />
       {label ? <Text style={styles.label}>{label}</Text> : null}
     </View>
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ThemeColors) {
+  return StyleSheet.create({
   screen: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.screen,
   },
   label: {
     marginTop: 12,
-    color: "#8A8A8A",
+    color: colors.text.subtle,
     fontSize: 13,
     fontWeight: "600",
   },
-});
+  });
+}

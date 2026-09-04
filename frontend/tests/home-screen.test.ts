@@ -1,39 +1,5 @@
-import { describe, expect, it, mock } from "bun:test";
-import { join } from "node:path";
-
-const noop = () => null;
-const testDir = import.meta.dir;
-
-mock.module("@expo/vector-icons", () => ({ MaterialIcons: noop }));
-mock.module("expo-router", () => ({ useRouter: () => ({ push: noop }) }));
-mock.module("expo-status-bar", () => ({ StatusBar: noop }));
-mock.module("react-native", () => ({
-  ActivityIndicator: noop,
-  Pressable: noop,
-  RefreshControl: noop,
-  ScrollView: noop,
-  StyleSheet: { create: (styles: unknown) => styles },
-  Text: noop,
-  View: noop,
-}));
-mock.module("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ bottom: 0, left: 0, right: 0, top: 0 }) }));
-mock.module(join(testDir, "../components/ui/index.ts"), () => ({
-  LoadingScreen: noop,
-  LoadingSpinner: noop,
-  RefreshLoadingIndicator: noop,
-  colors: {
-    brand: { sky: "#5ec5f5", gold: "#e7b454" },
-    border: { default: "#e4e4e4", subtle: "#e4e4e4" },
-    surface: { blueSoft: "#eff8ff" },
-    text: { muted: "#949494", secondary: "#535353" },
-  },
-  spacing: { md: 8, xl: 16 },
-}));
-mock.module(join(testDir, "../hooks/useAuth.tsx"), () => ({ useAuth: () => ({}) }));
-mock.module(join(testDir, "../hooks/useUnreadNotifications.ts"), () => ({ useUnreadNotifications: () => false }));
-mock.module(join(testDir, "../services/onboarding.ts"), () => ({ loadLanguage: noop, subscribeLanguage: () => noop }));
-
-const { formatApplicationBio } = await import("../app/foreigner/index");
+import { describe, expect, it } from "bun:test";
+import { formatApplicationBio } from "../services/profile-format";
 
 const readScreen = (relativePath: string) => Bun.file(new URL(relativePath, import.meta.url)).text();
 
@@ -75,8 +41,12 @@ describe("ホーム画面の更新契約", () => {
     expect(source).toContain('loadApplicationsRef.current("initial")');
     expect(source).toContain('loadApplications("refresh")');
     expect(source).toContain("<RefreshControl");
-    expect(source).toContain("useDelayedLoading");
-    expect(source).toContain("LoadingScreen");
+    expect(source).not.toContain("useDelayedLoading");
+    expect(source).toContain("LoadingSpinner");
+    expect(source).not.toContain("LoadingScreen");
+    expect(source).toContain("useDisplayLanguage");
+    expect(source).toContain("if (!language)");
+    expect(source).not.toContain('useState<AppLanguage>("en")');
     expect(source).toContain("RefreshLoadingIndicator");
     expect(source).toContain('colors={["transparent"]}');
     expect(source).toContain("getTabBarContentBottomPadding");
@@ -119,8 +89,10 @@ describe("ホーム画面の更新契約", () => {
 
   it("下部ナビはLINE風のテーマ連動半透明固定バーを使う", async () => {
     const source = await readScreen("../components/GlassTabBar.tsx");
+    const rootSource = await readScreen("../app/_layout.tsx");
 
-    expect(source).toContain("useColorScheme");
+    expect(source).toContain("useTheme");
+    expect(source).toContain("const isDark = scheme === \"dark\";");
     expect(source).toContain('tint={isDark ? "dark" : "light"}');
     expect(source).toContain('bar: "rgba(255, 255, 255, 0.84)"');
     expect(source).toContain("borderWidth: 0");
@@ -132,7 +104,9 @@ describe("ホーム画面の更新契約", () => {
     expect(source).toContain("bottom: -bottom");
     expect(source).toContain("top: 48");
     expect(source).not.toContain("contentShield");
-    expect(source).toContain("router.replace(href)");
+    expect(source).toContain("router.navigate(href)");
+    expect(rootSource).toContain('animation: "default"');
+    expect(rootSource).toContain("gestureEnabled: true");
   });
 
   it("プロフィール本体とアカウント設定を分け、設定画面にも下部ナビを維持する", async () => {
@@ -158,12 +132,32 @@ describe("ホーム画面の更新契約", () => {
   it("起動・認証待ち・主要一覧は共通の滑らかなロードリングを使う", async () => {
     const rootSource = await readScreen("../app/index.tsx");
     const guardSource = await readScreen("../app/_layout.tsx");
+    const japaneseSource = await readScreen("../app/japanese/index.tsx");
+    const foreignerSource = await readScreen("../app/foreigner/index.tsx");
     const chatSource = await readScreen("../app/chat/index.tsx");
+    const plansSource = await readScreen("../app/plans.tsx");
+    const profileSource = await readScreen("../app/profile.tsx");
+    const tabsSource = await readScreen("../app/tabs/index.tsx");
+    const glassTabBarSource = await readScreen("../components/GlassTabBar.tsx");
     const spinnerSource = await readScreen("../components/ui/LoadingSpinner.tsx");
 
     expect(rootSource).toContain("LoadingScreen");
     expect(guardSource).toContain("LoadingScreen");
-    expect(chatSource).toContain("LoadingScreen");
+    expect(chatSource).not.toContain("LoadingScreen");
+    expect(japaneseSource).toContain("LoadingSpinner");
+    expect(foreignerSource).toContain("LoadingSpinner");
+    expect(chatSource).toContain("LoadingSpinner");
+    expect(plansSource).toContain("LoadingSpinner");
+    expect(profileSource).toContain("!profileLoaded");
+    expect(profileSource).toContain("useDisplayLanguage");
+    expect(tabsSource).toContain("if (!resolvedLanguage)");
+    expect(glassTabBarSource).toContain("const labels = language ? TAB_LABELS[language] : null;");
+    expect(glassTabBarSource).toContain("labels?.[item.key]");
+    expect(glassTabBarSource).not.toContain("fallbackLanguage");
+    expect(japaneseSource).not.toContain("showInitialLoading");
+    expect(foreignerSource).not.toContain("showInitialLoading");
+    expect(chatSource).not.toContain("if (loading && chats.length === 0 && !loadError)");
+    expect(plansSource).not.toContain("if (loading && plans.length === 0 && !error)");
     expect(chatSource).toContain("RefreshLoadingIndicator");
     expect(spinnerSource).toContain("Animated.timing(opacity");
     expect(spinnerSource).toContain("useNativeDriver: true");
@@ -171,18 +165,30 @@ describe("ホーム画面の更新契約", () => {
     expect(spinnerSource).toContain("Easing.inOut(Easing.cubic)");
     expect(spinnerSource).toContain("Animated.delay");
     expect(spinnerSource).toContain("resetBeforeIteration: true");
-    expect(spinnerSource).toContain("trackColor = \"rgba(31, 45, 61, 0.12)\"");
+    expect(spinnerSource).toContain("trackColorProp ?? colors.border.subtle");
     expect(spinnerSource).toContain("borderWidth: Math.max(1, Math.round(size / 14))");
     expect(spinnerSource).toContain("borderColor: trackColor");
     expect(spinnerSource).toContain("borderTopColor: color");
     expect(spinnerSource).not.toContain("borderRightColor: color");
   });
 
+  it("テーマ設定は端末連動を初期値にして固定テーマを選べる", async () => {
+    const screenSource = await readScreen("../app/theme-settings.tsx");
+    const serviceSource = await readScreen("../services/theme.ts");
+
+    expect(screenSource).toContain('system: "端末の設定"');
+    expect(screenSource).toContain('light: "ライト"');
+    expect(screenSource).toContain('dark: "ダーク"');
+    expect(screenSource).toContain("setPreference");
+    expect(serviceSource).toContain('return value === "light" || value === "dark" || value === "system" ? value : "system"');
+  });
+
   it("外国人ホームは構造化プロフィールJSONをそのまま描画しない", async () => {
     const source = await readScreen("../app/foreigner/index.tsx");
+    const profileFormatSource = await readScreen("../services/profile-format.ts");
 
-    expect(source).toContain("export function formatApplicationBio");
-    expect(source).toContain("JSON.parse(trimmed)");
+    expect(profileFormatSource).toContain("export function formatApplicationBio");
+    expect(profileFormatSource).toContain("JSON.parse(trimmed)");
     expect(source).toContain("formatApplicationBio(application.other_user.bio, copy.noIntroduction)");
     expect(source).not.toContain("{application.other_user.bio || copy.noIntroduction}");
   });

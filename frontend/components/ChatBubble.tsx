@@ -1,7 +1,9 @@
 import { useState } from "react";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { ActivityIndicator, Image, Pressable, StyleSheet, Text, View } from "react-native";
-import { Button, colors, radius, typography } from "./ui";
+import { Button, radius, typography } from "./ui";
+import type { ThemeColors } from "./ui/tokens";
+import { useTheme, useThemeStyles } from "../hooks/useTheme";
 
 type ChatBubbleProps = {
   text: string;
@@ -72,6 +74,8 @@ export default function ChatBubble({
   onDelete,
   onReport,
 }: ChatBubbleProps) {
+  const { colors } = useTheme();
+  const styles = useThemeStyles(createStyles);
   const [actionsVisible, setActionsVisible] = useState(false);
   const canReport = !mine && !!onReport && !!reportLabel;
   const canTranslate = !!onTranslate && !!translateLabel;
@@ -222,7 +226,8 @@ export default function ChatBubble({
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ThemeColors) {
+  return StyleSheet.create({
   row: {
     width: "100%",
     marginTop: 18,
@@ -270,7 +275,7 @@ const styles = StyleSheet.create({
   },
   bubbleOther: {
     borderTopLeftRadius: radius.sm,
-    backgroundColor: "#f4f4f4",
+    backgroundColor: colors.surface.subtle,
   },
   pressedBubble: {
     opacity: 0.9,
@@ -282,7 +287,7 @@ const styles = StyleSheet.create({
     color: colors.text.inverse,
   },
   messageTextOther: {
-    color: "#30343b",
+    color: colors.text.primary,
   },
   encryptedLine: {
     flexDirection: "row",
@@ -345,7 +350,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
   },
   deleteAction: {
-    borderColor: "#f4c8c4",
+    borderColor: colors.border.danger,
   },
   deleteActionText: {
     color: colors.state.danger,
@@ -380,4 +385,5 @@ const styles = StyleSheet.create({
   translationOther: {
     textAlign: "left",
   },
-});
+  });
+}

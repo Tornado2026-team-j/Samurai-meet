@@ -26,3 +26,4 @@ backend/.tmp-pm-gopath/
 backend/.tmp-security-gomodcache/
 backend/.tmp-gosec-gopath/
 backend/.tmp-security-gopath/
+*.env

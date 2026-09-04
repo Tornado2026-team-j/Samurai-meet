@@ -4,6 +4,7 @@ import { View } from "react-native";
 import GlobalTabBar from "../components/GlobalTabBar";
 import { LoadingScreen } from "../components/ui";
 import { AuthProvider, useAuth } from "../hooks/useAuth";
+import { ThemeProvider } from "../hooks/useTheme";
 import {
   isProtectedRoute,
   shouldRedirectToSignedOutRoot,
@@ -53,7 +54,8 @@ function RootNavigator() {
         initialRouteName="index"
         screenLayout={({ children }) => <AuthRouteGuard>{children}</AuthRouteGuard>}
         screenOptions={{
-          animation: "none",
+          animation: "default",
+          gestureEnabled: true,
           headerShown: false,
         }}
       />
@@ -64,8 +66,10 @@ function RootNavigator() {
 
 export default function RootLayout() {
   return (
-    <AuthProvider>
-      <RootNavigator />
-    </AuthProvider>
+    <ThemeProvider>
+      <AuthProvider>
+        <RootNavigator />
+      </AuthProvider>
+    </ThemeProvider>
   );
 }

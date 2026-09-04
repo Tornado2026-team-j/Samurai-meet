@@ -9,7 +9,9 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import type { AppLanguage } from "../services/onboarding-contract";
-import { Button, colors, opacity, radius, typography } from "./ui";
+import { Button, opacity, radius, typography } from "./ui";
+import type { ThemeColors } from "./ui/tokens";
+import { useTheme, useThemeStyles } from "../hooks/useTheme";
 
 type IdentityVerificationPromptProps = {
   language: AppLanguage;
@@ -23,6 +25,8 @@ export default function IdentityVerificationPrompt({
   onProceed,
 }: IdentityVerificationPromptProps) {
   const insets = useSafeAreaInsets();
+  const { colors } = useTheme();
+  const styles = useThemeStyles(createStyles);
   const [pendingAction, setPendingAction] = useState<"proceed" | "later" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const copy = language === "ja"
@@ -139,7 +143,8 @@ export default function IdentityVerificationPrompt({
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ThemeColors) {
+  return StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: colors.surface.screen,
@@ -278,4 +283,5 @@ const styles = StyleSheet.create({
   pressed: {
     opacity: opacity.pressed,
   },
-});
+  });
+}

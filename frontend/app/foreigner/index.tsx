@@ -11,42 +11,17 @@ import {
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { colors, LoadingScreen, RefreshLoadingIndicator, spacing } from "../../components/ui";
+import { LoadingSpinner, RefreshLoadingIndicator, spacing } from "../../components/ui";
+import type { ThemeColors } from "../../components/ui/tokens";
 import { useAuth } from "../../hooks/useAuth";
+import { useDisplayLanguage } from "../../hooks/useDisplayLanguage";
 import { useUnreadNotifications } from "../../hooks/useUnreadNotifications";
-import { useDelayedLoading } from "../../hooks/useDelayedLoading";
+import { useTheme, useThemeStyles } from "../../hooks/useTheme";
 import { APIError } from "../../services/api-client";
 import { listChats } from "../../services/chat";
 import { listMatches, listMyRecruitments, type MatchView, type Recruitment } from "../../services/matching";
-import { loadLanguage, subscribeLanguage, type AppLanguage } from "../../services/onboarding";
+import { formatApplicationBio } from "../../services/profile-format";
 import { getTabBarContentBottomPadding } from "../../utils/layout";
-
-const BLUE = colors.brand.sky;
-const YELLOW = colors.brand.gold;
-const TEXT_GRAY = colors.text.secondary;
-const MUTED_GRAY = colors.text.muted;
-const BORDER_GRAY = colors.border.subtle;
-const SOFT_BLUE = colors.surface.blueSoft;
-
-export function formatApplicationBio(value: unknown, fallback: string): string {
-  if (typeof value !== "string") return fallback;
-  const trimmed = value.trim();
-  if (!trimmed) return fallback;
-
-  try {
-    const parsed: unknown = JSON.parse(trimmed);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return fallback;
-
-    const seed = (parsed as { monsterSeed?: unknown }).monsterSeed;
-    if (!seed || typeof seed !== "object" || Array.isArray(seed)) return fallback;
-
-    const freeText = (seed as { freeText?: unknown }).freeText;
-    return typeof freeText === "string" && freeText.trim() ? freeText.trim() : fallback;
-  } catch {
-    // Older profiles may contain ordinary prose instead of structured metadata.
-    return trimmed;
-  }
-}
 
 const COPY = {
   ja: {
@@ -110,9 +85,13 @@ const COPY = {
 export default function ForeignerHomeScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { colors } = useTheme();
+  const styles = useThemeStyles(createStyles);
+  const BLUE = colors.brand.sky;
+  const YELLOW = colors.brand.gold;
   const { getCurrentSession, refresh, session, status } = useAuth();
   const hasUnreadNotifications = useUnreadNotifications();
-  const [language, setLanguage] = useState<AppLanguage | null>(null);
+  const language = useDisplayLanguage();
   const [applications, setApplications] = useState<MatchView[]>([]);
   const [ownedRecruitments, setOwnedRecruitments] = useState<Recruitment[]>([]);
   const [unreadChatCount, setUnreadChatCount] = useState(0);
@@ -121,7 +100,8 @@ export default function ForeignerHomeScreen() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const initialLoadStarted = useRef(false);
   const loadInFlight = useRef(false);
-  const showInitialLoading = useDelayedLoading(loading && applications.length === 0);
+  // Keep the fallback internal until the stored language is ready. The
+  // neutral branch below prevents guessed copy from appearing on screen.
   const copy = COPY[language ?? "en"];
   const copyRef = useRef(copy);
   copyRef.current = copy;
@@ -214,22 +194,6 @@ export default function ForeignerHomeScreen() {
     };
   }, [getCurrentSession, refresh, session, status]);
 
-  useEffect(() => {
-    let active = true;
-    const unsubscribe = subscribeLanguage((nextLanguage) => {
-      if (active && nextLanguage) setLanguage(nextLanguage);
-    });
-    void loadLanguage().then((storedLanguage) => {
-      if (active) setLanguage(storedLanguage ?? "en");
-    }).catch(() => {
-      if (active) setLanguage("en");
-    });
-    return () => {
-      active = false;
-      unsubscribe();
-    };
-  }, []);
-
   const loadApplicationsRef = useRef(loadApplications);
   loadApplicationsRef.current = loadApplications;
 
@@ -255,16 +219,20 @@ export default function ForeignerHomeScreen() {
   };
 
   if (!language) {
-    return <LoadingScreen />;
-  }
-
-  if (showInitialLoading && loading && applications.length === 0 && !loadError) {
-    return <LoadingScreen />;
+    return (
+      <View style={styles.screen}>
+        <StatusBar style="dark" />
+        <View style={styles.header} />
+        <View style={styles.languageLoadingPanel}>
+          <LoadingSpinner color={BLUE} size={24} />
+        </View>
+      </View>
+    );
   }
 
   return (
     <View style={styles.screen}>
-      <StatusBar style="light" />
+      <StatusBar style="dark" />
 
       <View style={styles.header}>
         <View
@@ -282,7 +250,7 @@ export default function ForeignerHomeScreen() {
               pressed && styles.pressed,
             ]}
           >
-            <MaterialIcons color="#949494" name="search" size={24} />
+            <MaterialIcons color={colors.text.muted} name="search" size={24} />
             <Text numberOfLines={1} style={styles.searchPlaceholder}>
               {copy.searchPlaceholder}
             </Text>
@@ -299,7 +267,7 @@ export default function ForeignerHomeScreen() {
             ]}
           >
             <MaterialIcons
-              color="#ffffff"
+              color={colors.text.onSky}
               name="notifications-none"
               size={32}
             />
@@ -313,7 +281,7 @@ export default function ForeignerHomeScreen() {
             onPress={() => router.push("/profile")}
             style={styles.profileButton}
           >
-            <MaterialIcons color="#ffffff" name="account-circle" size={34} />
+            <MaterialIcons color={colors.text.onSky} name="account-circle" size={34} />
           </Pressable>
         </View>
 
@@ -353,7 +321,7 @@ export default function ForeignerHomeScreen() {
         showsVerticalScrollIndicator={false}
       >
         <Pressable onPress={openSearchPreferences} style={({ pressed }) => [styles.createButton, pressed && styles.pressed]}>
-          <MaterialIcons color="#ffffff" name="add-circle" size={23} />
+          <MaterialIcons color={colors.text.onGold} name="add-circle" size={23} />
           <Text style={styles.createButtonText}>{copy.createRecruitment}</Text>
         </Pressable>
 
@@ -388,7 +356,12 @@ export default function ForeignerHomeScreen() {
           </View>
         </View>
 
-        {loading && applications.length === 0 ? null : loadError && applications.length === 0 ? (
+        {loading && applications.length === 0 && !loadError ? (
+          <View style={styles.emptyPanel}>
+            <LoadingSpinner color={BLUE} size={24} />
+            <Text style={styles.emptyTitle}>{copy.loading}</Text>
+          </View>
+        ) : loadError && applications.length === 0 ? (
           <View style={styles.emptyPanel}>
             <Text accessibilityRole="alert" style={styles.emptyTitle}>{loadError}</Text>
             <Pressable
@@ -419,7 +392,7 @@ export default function ForeignerHomeScreen() {
                       ]}
                     >
                       <View style={styles.avatarCircle}>
-                        <MaterialIcons color="#d4d4d4" name="account-circle" size={52} />
+                      <MaterialIcons color={colors.text.muted} name="account-circle" size={52} />
                       </View>
 
                       <View style={styles.applicationText}>
@@ -469,7 +442,7 @@ export default function ForeignerHomeScreen() {
                       </View>
 
                       <View style={[styles.reviewButton, styles.matchedButton]}>
-                        <Text style={styles.reviewButtonText}>
+                        <Text style={[styles.reviewButtonText, styles.matchedButtonText]}>
                           {application.status === "completed" ? copy.completed : copy.matched}
                         </Text>
                       </View>
@@ -491,18 +464,24 @@ export default function ForeignerHomeScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ThemeColors) {
+  return StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.screen,
   },
   header: {
     position: "relative",
     width: "100%",
     height: 176,
-    backgroundColor: BLUE,
+    backgroundColor: colors.brand.sky,
     borderBottomLeftRadius: 50,
     borderBottomRightRadius: 50,
+  },
+  languageLoadingPanel: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
   },
   createButton: {
     width: "100%",
@@ -516,11 +495,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderRadius: 12,
-    backgroundColor: YELLOW,
+    backgroundColor: colors.brand.gold,
   },
   createButtonText: {
     flexShrink: 1,
-    color: "#ffffff",
+    color: colors.text.onGold,
     fontSize: 16,
     fontWeight: "900",
     lineHeight: 20,
@@ -539,18 +518,18 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
-    borderColor: BORDER_GRAY,
+    borderColor: colors.border.subtle,
     borderRadius: 12,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.default,
   },
   dashboardCount: {
-    color: BLUE,
+    color: colors.brand.sky,
     fontSize: 24,
     fontWeight: "900",
   },
   dashboardLabel: {
     marginTop: 3,
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 12,
     fontWeight: "700",
     textAlign: "center",
@@ -565,11 +544,11 @@ const styles = StyleSheet.create({
     gap: 8,
     paddingHorizontal: 14,
     borderRadius: 10,
-    backgroundColor: SOFT_BLUE,
+    backgroundColor: colors.surface.blueSoft,
   },
   unreadText: {
     flex: 1,
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 13,
     fontWeight: "800",
   },
@@ -591,11 +570,11 @@ const styles = StyleSheet.create({
     gap: 10,
     paddingHorizontal: 14,
     borderRadius: 22,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.default,
   },
   searchPlaceholder: {
     flex: 1,
-    color: "#949494",
+    color: colors.text.muted,
     fontSize: 15,
     fontWeight: "400",
     letterSpacing: 0,
@@ -614,9 +593,9 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderWidth: 1,
-    borderColor: BLUE,
+    borderColor: colors.brand.sky,
     borderRadius: 4,
-    backgroundColor: YELLOW,
+    backgroundColor: colors.brand.gold,
   },
   profileButton: {
     width: 44,
@@ -630,7 +609,7 @@ const styles = StyleSheet.create({
     top: 108,
     left: 0,
     right: 0,
-    color: "#ffffff",
+    color: colors.text.onSky,
     fontSize: 16,
     fontWeight: "900",
     letterSpacing: 0,
@@ -653,9 +632,9 @@ const styles = StyleSheet.create({
     paddingVertical: 20,
     paddingHorizontal: 20,
     borderWidth: 1,
-    borderColor: "#caeafd",
+    borderColor: colors.border.blue,
     borderRadius: 20,
-    backgroundColor: SOFT_BLUE,
+    backgroundColor: colors.surface.blueSoft,
   },
   pendingIconCircle: {
     width: 58,
@@ -663,16 +642,16 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
-    borderColor: "#f7dfaa",
+    borderColor: colors.border.gold,
     borderRadius: 29,
-    backgroundColor: "#fff8e8",
+    backgroundColor: colors.surface.goldSoft,
   },
   pendingHeaderText: {
     flex: 1,
     marginLeft: 16,
   },
   pendingEyebrow: {
-    color: BLUE,
+    color: colors.brand.sky,
     fontSize: 12,
     fontWeight: "900",
     letterSpacing: 0,
@@ -680,7 +659,7 @@ const styles = StyleSheet.create({
   },
   pendingTitle: {
     marginTop: 5,
-    color: "#101318",
+    color: colors.text.primary,
     fontSize: 22,
     fontWeight: "900",
     letterSpacing: 0,
@@ -692,12 +671,6 @@ const styles = StyleSheet.create({
     marginTop: 20,
     gap: 14,
   },
-  loadingScreen: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#ffffff",
-  },
   applicationSection: {
     width: "100%",
     maxWidth: 342,
@@ -705,7 +678,7 @@ const styles = StyleSheet.create({
   },
   sectionTitle: {
     marginBottom: 10,
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 14,
     fontWeight: "900",
     letterSpacing: 0,
@@ -718,9 +691,9 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     paddingHorizontal: 18,
     borderWidth: 1,
-    borderColor: BORDER_GRAY,
+    borderColor: colors.border.subtle,
     borderRadius: 20,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.default,
   },
   avatarCircle: {
     width: 58,
@@ -728,16 +701,16 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
-    borderColor: BORDER_GRAY,
+    borderColor: colors.border.subtle,
     borderRadius: 29,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.default,
   },
   applicationText: {
     flex: 1,
     marginLeft: 14,
   },
   applicantName: {
-    color: "#101318",
+    color: colors.text.primary,
     fontSize: 16,
     fontWeight: "900",
     letterSpacing: 0,
@@ -745,7 +718,7 @@ const styles = StyleSheet.create({
   },
   applicationBio: {
     marginTop: 6,
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 12,
     fontWeight: "700",
     letterSpacing: 0,
@@ -759,17 +732,20 @@ const styles = StyleSheet.create({
     marginLeft: 10,
     paddingHorizontal: 12,
     borderRadius: 10,
-    backgroundColor: YELLOW,
+    backgroundColor: colors.brand.gold,
   },
   reviewButtonText: {
-    color: "#ffffff",
+    color: colors.text.onGold,
     fontSize: 12,
     fontWeight: "900",
     letterSpacing: 0,
     lineHeight: 15,
   },
   matchedButton: {
-    backgroundColor: BLUE,
+    backgroundColor: colors.brand.sky,
+  },
+  matchedButtonText: {
+    color: colors.text.onSky,
   },
   emptyPanel: {
     width: "100%",
@@ -779,13 +755,13 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginTop: 20,
     borderWidth: 1,
-    borderColor: BORDER_GRAY,
+    borderColor: colors.border.subtle,
     borderRadius: 20,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.default,
   },
   emptyTitle: {
     marginTop: 12,
-    color: MUTED_GRAY,
+    color: colors.text.muted,
     fontSize: 13,
     fontWeight: "900",
     letterSpacing: 0,
@@ -799,14 +775,15 @@ const styles = StyleSheet.create({
     marginTop: 12,
     paddingHorizontal: 14,
     borderRadius: 15,
-    backgroundColor: YELLOW,
+    backgroundColor: colors.brand.gold,
   },
   retryButtonText: {
-    color: "#ffffff",
+    color: colors.text.onGold,
     fontSize: 12,
     fontWeight: "800",
   },
   pressed: {
     opacity: 0.72,
   },
-});
+  });
+}

@@ -7,7 +7,8 @@ import type {
   ViewStyle,
 } from "react-native";
 import type { ReactNode } from "react";
-import { colors, opacity, radius, shadows, spacing, typography } from "./tokens";
+import { useTheme, useThemeStyles } from "../../hooks/useTheme";
+import { opacity, radius, shadows, spacing, typography, type ThemeColors } from "./tokens";
 
 type ButtonVariant = "primary" | "secondary" | "ghost" | "danger";
 type ButtonSize = "sm" | "md" | "lg";
@@ -41,9 +42,11 @@ export default function Button({
   variant = "primary",
   ...pressableProps
 }: ButtonProps) {
+  const { colors } = useTheme();
+  const styles = useThemeStyles(createStyles);
   const inactive = disabled || loading;
   const spinnerColor = variant === "primary" || variant === "danger"
-    ? colors.text.inverse
+    ? variant === "primary" ? colors.text.onGold : colors.text.inverse
     : colors.brand.gold;
 
   return (
@@ -81,7 +84,8 @@ export default function Button({
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ThemeColors) {
+  return StyleSheet.create({
   base: {
     minHeight: 46,
     flexDirection: "row",
@@ -134,7 +138,7 @@ const styles = StyleSheet.create({
     fontWeight: "800",
   },
   primaryText: {
-    color: colors.text.inverse,
+    color: colors.text.onGold,
   },
   secondaryText: {
     color: colors.text.secondary,
@@ -154,4 +158,5 @@ const styles = StyleSheet.create({
   pressed: {
     opacity: opacity.pressed,
   },
-});
+  });
+}

@@ -3,8 +3,10 @@ import { useEffect, useState } from "react";
 import { Linking, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from "react-native";
 import { useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { Header, colors, radius } from "../components/ui";
+import { Header, radius } from "../components/ui";
+import type { ThemeColors } from "../components/ui/tokens";
 import { useAuth } from "../hooks/useAuth";
+import { useTheme, useThemeStyles } from "../hooks/useTheme";
 import { loadLanguage, subscribeLanguage, type AppLanguage } from "../services/onboarding";
 import { getPushSettings, requestPushToken, savePushSettings, type PushSettings } from "../services/push-notifications";
 
@@ -57,6 +59,8 @@ const COPY: Record<AppLanguage, {
 
 export default function NotificationSettingsScreen() {
   const router = useRouter();
+  const { colors } = useTheme();
+  const styles = useThemeStyles(createStyles);
   const { getCurrentSession, session } = useAuth();
   const [settings, setSettings] = useState(DEFAULTS);
   const [saving, setSaving] = useState(false);
@@ -125,6 +129,8 @@ export default function NotificationSettingsScreen() {
 }
 
 function SettingRow({ disabled = false, label, onValueChange, value }: { disabled?: boolean; label: string; onValueChange: (value: boolean) => void; value: boolean }) {
+  const { colors } = useTheme();
+  const styles = useThemeStyles(createStyles);
   return (
     <View style={[styles.row, disabled && styles.disabled]}>
       <Text style={styles.label}>{label}</Text>
@@ -133,7 +139,8 @@ function SettingRow({ disabled = false, label, onValueChange, value }: { disable
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ThemeColors) {
+  return StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.surface.screen },
   content: { padding: 22, gap: 10 },
   description: { marginBottom: 8, color: colors.text.secondary, fontSize: 14, lineHeight: 22 },
@@ -144,4 +151,5 @@ const styles = StyleSheet.create({
   settingsButton: { minHeight: 46, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7, borderWidth: 1, borderColor: colors.border.blue, borderRadius: radius.md },
   settingsButtonText: { color: colors.brand.sky, fontSize: 13, fontWeight: "800" },
   disabled: { opacity: 0.45 },
-});
+  });
+}

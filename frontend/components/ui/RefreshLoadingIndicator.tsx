@@ -1,4 +1,5 @@
 import { StyleSheet, View } from "react-native";
+import { useTheme } from "../../hooks/useTheme";
 import LoadingSpinner, { LOADING_SPINNER_SPEED_MS } from "./LoadingSpinner";
 
 type RefreshLoadingIndicatorProps = {
@@ -9,10 +10,12 @@ type RefreshLoadingIndicatorProps = {
 
 /** A quiet, fixed indicator for pull-to-refresh without replacing visible content. */
 export default function RefreshLoadingIndicator({
-  color = "#5EC5F5",
+  color: colorProp,
   size = 24,
   top = 0,
 }: RefreshLoadingIndicatorProps) {
+  const { colors } = useTheme();
+  const color = colorProp ?? colors.brand.sky;
   return (
     <View pointerEvents="none" style={[styles.container, { top }]}>
       <LoadingSpinner color={color} size={size} speedMs={LOADING_SPINNER_SPEED_MS} />

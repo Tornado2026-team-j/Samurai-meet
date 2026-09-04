@@ -2,9 +2,13 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { Redirect, useLocalSearchParams, useRouter } from 'expo-router';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useAuth } from '../../hooks/useAuth';
+import { useTheme, useThemeStyles } from '../../hooks/useTheme';
 import { LoadingSpinner } from '../../components/ui';
+import type { ThemeColors } from '../../components/ui/tokens';
 
 export default function OAuthCompleteScreen() {
+  const { colors } = useTheme();
+  const styles = useThemeStyles(createStyles);
   const {
     handoff_code: handoffCode,
     session_handoff_code: sessionHandoffCode,
@@ -21,14 +25,14 @@ export default function OAuthCompleteScreen() {
     return (
       <View style={styles.screen}>
         <View style={styles.iconCircle}>
-          <MaterialIcons color="#b42318" name="error-outline" size={38} />
+          <MaterialIcons color={colors.state.danger} name="error-outline" size={38} />
         </View>
         <Text accessibilityRole="header" style={styles.title}>ログインを完了できませんでした</Text>
         <Text accessibilityRole="alert" style={styles.message}>
           {invalid ? '認証コードが見つかりません。最初からやり直してください。' : error}
         </Text>
         <Pressable accessibilityRole="link" onPress={() => router.replace('/')} style={styles.button}>
-          <MaterialIcons color="#ffffff" name="arrow-back" size={20} />
+          <MaterialIcons color={colors.text.inverse} name="arrow-back" size={20} />
           <Text style={styles.buttonText}>アカウント作成へ戻る</Text>
         </Pressable>
       </View>
@@ -38,7 +42,7 @@ export default function OAuthCompleteScreen() {
   return (
     <View accessibilityLabel="Google認証を完了しています" style={styles.screen}>
       <View style={styles.iconCircle}>
-        <LoadingSpinner color="#e7b454" size={28} />
+        <LoadingSpinner color={colors.brand.gold} size={28} />
       </View>
       <Text accessibilityRole="header" style={styles.title}>Google認証を確認中</Text>
       <Text style={styles.message}>安全なログイン処理を完了しています。</Text>
@@ -46,13 +50,14 @@ export default function OAuthCompleteScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ThemeColors) {
+  return StyleSheet.create({
   screen: {
     flex: 1,
     paddingHorizontal: 28,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#5ec5f5',
+    backgroundColor: colors.brand.sky,
   },
   iconCircle: {
     width: 88,
@@ -61,12 +66,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 2,
-    borderColor: 'rgba(255, 255, 255, 0.82)',
+    borderColor: colors.text.inverse,
     borderRadius: 44,
-    backgroundColor: '#ffffff',
+    backgroundColor: colors.surface.default,
   },
   title: {
-    color: '#ffffff',
+    color: colors.text.inverse,
     fontSize: 24,
     fontWeight: '900',
     letterSpacing: 0,
@@ -75,7 +80,7 @@ const styles = StyleSheet.create({
   message: {
     maxWidth: 380,
     marginTop: 10,
-    color: '#ffffff',
+    color: colors.text.inverse,
     fontSize: 14,
     fontWeight: '600',
     lineHeight: 22,
@@ -93,12 +98,13 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 9,
     borderRadius: 8,
-    backgroundColor: '#e7b454',
+    backgroundColor: colors.brand.gold,
   },
   buttonText: {
-    color: '#ffffff',
+    color: colors.text.inverse,
     fontSize: 15,
     fontWeight: '800',
     letterSpacing: 0,
   },
-});
+  });
+}

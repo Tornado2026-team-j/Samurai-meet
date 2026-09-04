@@ -15,11 +15,8 @@ import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { canonicalizeRecoveryPhrase, recoveryPhraseMatches } from "../services/crypto";
 import type { AppLanguage } from "../services/onboarding";
-
-const BLUE = "#5ec5f5";
-const YELLOW = "#e7b454";
-const TEXT_GRAY = "#535353";
-const MUTED_GRAY = "#7d7d7d";
+import type { ThemeColors } from "./ui/tokens";
+import { useTheme, useThemeStyles } from "../hooks/useTheme";
 
 type RecoveryCopy = {
   back: string;
@@ -157,6 +154,9 @@ type RecoveryKeyInputProps = {
 
 export function RecoveryKeyInput({ accountID, language, busy, error, onBack, onSubmit, onDeleteAccount }: RecoveryKeyInputProps) {
   const insets = useSafeAreaInsets();
+  const { colors } = useTheme();
+  const styles = useThemeStyles(createStyles);
+  const BLUE = colors.brand.sky;
   const copy = COPY[language];
   const [recoveryKey, setRecoveryKey] = useState("");
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -184,7 +184,7 @@ export function RecoveryKeyInput({ accountID, language, busy, error, onBack, onS
           onPress={onBack}
           style={({ pressed }) => [styles.backButton, pressed && styles.pressed]}
         >
-          <MaterialIcons color="#ffffff" name="arrow-back-ios-new" size={21} />
+          <MaterialIcons color={colors.text.inverse} name="arrow-back-ios-new" size={21} />
         </Pressable>
         <Text style={styles.headerTitle}>{copy.title}</Text>
       </View>
@@ -207,7 +207,7 @@ export function RecoveryKeyInput({ accountID, language, busy, error, onBack, onS
             setSubmitError(null);
           }}
           placeholder={copy.inputPlaceholder}
-          placeholderTextColor="#a0a0a0"
+          placeholderTextColor={colors.text.muted}
           style={styles.input}
           textContentType="password"
           value={recoveryKey}
@@ -223,7 +223,7 @@ export function RecoveryKeyInput({ accountID, language, busy, error, onBack, onS
             pressed && styles.pressed,
           ]}
         >
-          {busy ? <ActivityIndicator color="#ffffff" /> : <Text style={styles.primaryButtonText}>{copy.submit}</Text>}
+          {busy ? <ActivityIndicator color={colors.text.inverse} /> : <Text style={styles.primaryButtonText}>{copy.submit}</Text>}
         </Pressable>
         {onDeleteAccount ? <AccountDeleteAction busy={busy} copy={copy} onDelete={onDeleteAccount} /> : null}
       </ScrollView>
@@ -245,6 +245,9 @@ type RecoveryKeyDisplayProps = {
 
 export function RecoveryKeyDisplay({ accountID, language, mode = "initial", recoveryKey, busy, error, onBack, onConfirm, onDeleteAccount }: RecoveryKeyDisplayProps) {
   const insets = useSafeAreaInsets();
+  const { colors } = useTheme();
+  const styles = useThemeStyles(createStyles);
+  const YELLOW = colors.brand.gold;
   const copy = COPY[language];
   const [saved, setSaved] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -281,7 +284,7 @@ export function RecoveryKeyDisplay({ accountID, language, mode = "initial", reco
           onPress={onBack}
           style={({ pressed }) => [styles.backButton, pressed && styles.pressed]}
         >
-          <MaterialIcons color="#ffffff" name="arrow-back-ios-new" size={21} />
+          <MaterialIcons color={colors.text.inverse} name="arrow-back-ios-new" size={21} />
         </Pressable>
         <Text style={styles.headerTitle}>{copy.title}</Text>
       </View>
@@ -322,7 +325,7 @@ export function RecoveryKeyDisplay({ accountID, language, mode = "initial", reco
             numberOfLines={3}
             onChangeText={setConfirmation}
             placeholder={copy.confirmPhrasePlaceholder}
-            placeholderTextColor="#a0a0a0"
+            placeholderTextColor={colors.text.muted}
             style={[styles.input, styles.confirmPhraseInput]}
             textAlignVertical="top"
             value={confirmation}
@@ -339,7 +342,7 @@ export function RecoveryKeyDisplay({ accountID, language, mode = "initial", reco
           style={({ pressed }) => [styles.savedRow, pressed && styles.pressed]}
         >
           <MaterialIcons
-            color={saved ? YELLOW : "#b0b0b0"}
+            color={saved ? YELLOW : colors.text.muted}
             name={saved ? "check-box" : "check-box-outline-blank"}
             size={25}
           />
@@ -356,7 +359,7 @@ export function RecoveryKeyDisplay({ accountID, language, mode = "initial", reco
             pressed && styles.pressed,
           ]}
         >
-          {busy ? <ActivityIndicator color="#ffffff" /> : <Text style={styles.primaryButtonText}>{rotating ? copy.rotateComplete : copy.complete}</Text>}
+          {busy ? <ActivityIndicator color={colors.text.inverse} /> : <Text style={styles.primaryButtonText}>{rotating ? copy.rotateComplete : copy.complete}</Text>}
         </Pressable>
         {onDeleteAccount ? <AccountDeleteAction busy={busy} copy={copy} onDelete={onDeleteAccount} /> : null}
       </ScrollView>
@@ -373,6 +376,8 @@ function AccountDeleteAction({
   copy: RecoveryCopy;
   onDelete: () => Promise<void>;
 }) {
+  const { colors } = useTheme();
+  const styles = useThemeStyles(createStyles);
   const [confirming, setConfirming] = useState(false);
   const [confirmation, setConfirmation] = useState("");
   const [deleteError, setDeleteError] = useState(false);
@@ -435,7 +440,7 @@ function AccountDeleteAction({
                 setDeleteError(false);
               }}
               placeholder={copy.confirmDeletePlaceholder}
-              placeholderTextColor="#a56d68"
+              placeholderTextColor={colors.state.dangerDark}
               style={styles.deleteInput}
               value={confirmation}
             />
@@ -459,7 +464,7 @@ function AccountDeleteAction({
             pressed && styles.pressed,
           ]}
         >
-          {busy ? <ActivityIndicator color="#ffffff" /> : <Text style={styles.confirmDeleteText}>{copy.deleteConfirm}</Text>}
+          {busy ? <ActivityIndicator color={colors.text.inverse} /> : <Text style={styles.confirmDeleteText}>{copy.deleteConfirm}</Text>}
         </Pressable>
             </View>
           </View>
@@ -508,6 +513,9 @@ function formatRecoveryPhrase(value: string): string {
 }
 
 export function SupportAccountID({ accountID, language }: { accountID: string; language: AppLanguage }) {
+  const { colors } = useTheme();
+  const styles = useThemeStyles(createStyles);
+  const BLUE = colors.brand.sky;
   const [copied, setCopied] = useState(false);
   const [copyError, setCopyError] = useState(false);
   const copy = COPY[language];
@@ -550,6 +558,8 @@ export function RecoveryCompletion({
   onContinue: () => void;
 }) {
   const insets = useSafeAreaInsets();
+  const { colors } = useTheme();
+  const styles = useThemeStyles(createStyles);
   const copy = language === "ja"
     ? {
         title: mode === "initial" ? "暗号鍵の登録が完了しました" : "復旧情報を更新しました",
@@ -574,7 +584,7 @@ export function RecoveryCompletion({
       </View>
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.successIcon}>
-          <MaterialIcons color="#3d9a68" name="check" size={44} />
+        <MaterialIcons color={colors.state.success} name="check" size={44} />
         </View>
         <Text style={styles.title}>{copy.title}</Text>
         <Text style={styles.description}>{copy.description}</Text>
@@ -587,34 +597,35 @@ export function RecoveryCompletion({
   );
 }
 
-const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: "#ffffff" },
+function createStyles(colors: ThemeColors) {
+  return StyleSheet.create({
+  screen: { flex: 1, backgroundColor: colors.surface.screen },
   header: {
     minHeight: 104,
     paddingHorizontal: 20,
     paddingBottom: 18,
     flexDirection: "row",
     alignItems: "flex-end",
-    backgroundColor: BLUE,
+    backgroundColor: colors.brand.sky,
     borderBottomLeftRadius: 36,
     borderBottomRightRadius: 36,
   },
   backButton: { width: 34, height: 34, alignItems: "center", justifyContent: "center", marginRight: 12 },
-  headerTitle: { color: "#ffffff", fontSize: 24, fontWeight: "700" },
+  headerTitle: { color: colors.text.onSky, fontSize: 24, fontWeight: "700" },
   content: { padding: 24, paddingBottom: 48, gap: 18 },
-  title: { color: TEXT_GRAY, fontSize: 24, fontWeight: "700" },
-  description: { color: MUTED_GRAY, fontSize: 15, lineHeight: 23 },
+  title: { color: colors.text.secondary, fontSize: 24, fontWeight: "700" },
+  description: { color: colors.text.muted, fontSize: 15, lineHeight: 23 },
   accountReference: {
     width: "100%",
     alignSelf: "stretch",
     gap: 5,
     padding: 12,
     borderWidth: 1,
-    borderColor: "#d9edf8",
+    borderColor: colors.border.blueStrong,
     borderRadius: 10,
-    backgroundColor: "#f5fbff",
+    backgroundColor: colors.surface.blueSoft,
   },
-  accountReferenceLabel: { color: MUTED_GRAY, fontSize: 12, fontWeight: "600" },
+  accountReferenceLabel: { color: colors.text.muted, fontSize: 12, fontWeight: "600" },
   accountReferenceRow: {
     width: "100%",
     minHeight: 38,
@@ -628,7 +639,7 @@ const styles = StyleSheet.create({
     flexShrink: 1,
     minWidth: 0,
     paddingTop: 8,
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 13,
     lineHeight: 19,
   },
@@ -641,11 +652,11 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 4,
     borderWidth: 1,
-    borderColor: "#b8dff1",
+    borderColor: colors.border.blueStrong,
     borderRadius: 18,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.default,
   },
-  accountReferenceButtonText: { color: TEXT_GRAY, fontSize: 12, fontWeight: "700" },
+  accountReferenceButtonText: { color: colors.text.secondary, fontSize: 12, fontWeight: "700" },
   successIcon: {
     width: 82,
     height: 82,
@@ -653,21 +664,21 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignSelf: "center",
     borderRadius: 41,
-    backgroundColor: "#eef8f2",
+    backgroundColor: colors.surface.successSoft,
   },
   input: {
     minHeight: 52,
     paddingHorizontal: 16,
     borderWidth: 1,
-    borderColor: "#d4d4d4",
+    borderColor: colors.border.default,
     borderRadius: 12,
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 15,
     letterSpacing: 0.4,
   },
   confirmPhraseSection: { gap: 8 },
-  confirmPhraseTitle: { color: TEXT_GRAY, fontSize: 16, fontWeight: "700" },
-  confirmPhraseDescription: { color: MUTED_GRAY, fontSize: 13, lineHeight: 20 },
+  confirmPhraseTitle: { color: colors.text.secondary, fontSize: 16, fontWeight: "700" },
+  confirmPhraseDescription: { color: colors.text.muted, fontSize: 13, lineHeight: 20 },
   confirmPhraseInput: {
     minHeight: 104,
     paddingTop: 13,
@@ -677,8 +688,8 @@ const styles = StyleSheet.create({
   recoveryKey: {
     padding: 18,
     borderRadius: 12,
-    backgroundColor: "#fff9e9",
-    color: TEXT_GRAY,
+    backgroundColor: colors.surface.goldSoft,
+    color: colors.text.secondary,
     fontSize: 17,
     fontWeight: "700",
     letterSpacing: 1,
@@ -688,7 +699,7 @@ const styles = StyleSheet.create({
     gap: 12,
     padding: 14,
     borderRadius: 12,
-    backgroundColor: "#fff9e9",
+    backgroundColor: colors.surface.goldSoft,
   },
   copyButton: {
     minHeight: 42,
@@ -697,39 +708,39 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 8,
     borderWidth: 1,
-    borderColor: YELLOW,
+    borderColor: colors.brand.gold,
     borderRadius: 21,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.default,
   },
-  copyButtonText: { color: TEXT_GRAY, fontSize: 14, fontWeight: "700" },
-  warning: { color: "#9b6b00", fontSize: 14, lineHeight: 21 },
+  copyButtonText: { color: colors.text.secondary, fontSize: 14, fontWeight: "700" },
+  warning: { color: colors.state.warning, fontSize: 14, lineHeight: 21 },
   savedRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 6 },
-  savedText: { flex: 1, color: TEXT_GRAY, fontSize: 15 },
-  errorText: { color: "#b42318", fontSize: 14, lineHeight: 20 },
+  savedText: { flex: 1, color: colors.text.secondary, fontSize: 15 },
+  errorText: { color: colors.state.danger, fontSize: 14, lineHeight: 20 },
   primaryButton: {
     minHeight: 52,
     alignItems: "center",
     justifyContent: "center",
     borderRadius: 26,
-    backgroundColor: YELLOW,
+    backgroundColor: colors.brand.gold,
   },
-  primaryButtonText: { color: "#ffffff", fontSize: 16, fontWeight: "700" },
+  primaryButtonText: { color: colors.text.inverse, fontSize: 16, fontWeight: "700" },
   deleteButton: {
     minHeight: 46,
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
-    borderColor: "#d92d20",
+    borderColor: colors.border.dangerStrong,
     borderRadius: 23,
   },
-  deleteButtonText: { color: "#b42318", fontSize: 15, fontWeight: "700" },
+  deleteButtonText: { color: colors.state.danger, fontSize: 15, fontWeight: "700" },
   deletePanel: {
     gap: 12,
     padding: 16,
     borderWidth: 1,
-    borderColor: "#f3b5af",
+    borderColor: colors.border.danger,
     borderRadius: 16,
-    backgroundColor: "#fff5f4",
+    backgroundColor: colors.surface.dangerSoft,
   },
   modalBackdrop: {
     flexGrow: 1,
@@ -737,24 +748,24 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     padding: 24,
-    backgroundColor: "rgba(0, 0, 0, 0.45)",
+    backgroundColor: colors.overlay.scrim,
   },
   modalScrollView: {
     flex: 1,
     width: "100%",
   },
-  deleteTitle: { color: "#7a271a", fontSize: 17, fontWeight: "700" },
-  deleteWarning: { color: "#7a271a", fontSize: 14, lineHeight: 21 },
-  deleteScope: { color: "#7a271a", fontSize: 13, lineHeight: 19, fontWeight: "600" },
-  confirmDeleteInstruction: { color: "#7a271a", fontSize: 13, lineHeight: 19 },
+  deleteTitle: { color: colors.state.dangerDark, fontSize: 17, fontWeight: "700" },
+  deleteWarning: { color: colors.state.dangerDark, fontSize: 14, lineHeight: 21 },
+  deleteScope: { color: colors.state.dangerDark, fontSize: 13, lineHeight: 19, fontWeight: "600" },
+  confirmDeleteInstruction: { color: colors.state.dangerDark, fontSize: 13, lineHeight: 19 },
   deleteInput: {
     minHeight: 48,
     paddingHorizontal: 14,
     borderWidth: 1,
-    borderColor: "#d69289",
+    borderColor: colors.border.danger,
     borderRadius: 10,
-    color: "#7a271a",
-    backgroundColor: "#ffffff",
+    color: colors.state.dangerDark,
+    backgroundColor: colors.surface.default,
     fontSize: 16,
     fontWeight: "700",
     letterSpacing: 1,
@@ -765,20 +776,21 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
-    borderColor: "#d4d4d4",
+    borderColor: colors.border.default,
     borderRadius: 22,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.default,
   },
-  cancelText: { color: TEXT_GRAY, fontSize: 15, fontWeight: "600" },
+  cancelText: { color: colors.text.secondary, fontSize: 15, fontWeight: "600" },
   confirmDeleteButton: {
     minHeight: 48,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 14,
     borderRadius: 24,
-    backgroundColor: "#d92d20",
+    backgroundColor: colors.border.dangerStrong,
   },
-  confirmDeleteText: { color: "#ffffff", fontSize: 14, fontWeight: "700", textAlign: "center" },
+  confirmDeleteText: { color: colors.text.inverse, fontSize: 14, fontWeight: "700", textAlign: "center" },
   disabled: { opacity: 0.5 },
   pressed: { opacity: 0.7 },
-});
+  });
+}

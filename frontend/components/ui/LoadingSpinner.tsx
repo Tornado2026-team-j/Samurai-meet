@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { Animated, Easing, StyleSheet, type StyleProp, type ViewStyle } from "react-native";
+import { useTheme } from "../../hooks/useTheme";
 
 type LoadingSpinnerProps = {
   color: string;
@@ -14,11 +15,13 @@ export const LOADING_SPINNER_SPEED_MS = 500;
 /** A small, native-driven spinner that starts smoothly and feels responsive. */
 export default function LoadingSpinner({
   color,
-  trackColor = "rgba(31, 45, 61, 0.12)",
+  trackColor: trackColorProp,
   size = 24,
   speedMs = LOADING_SPINNER_SPEED_MS,
   style,
 }: LoadingSpinnerProps) {
+  const { colors } = useTheme();
+  const trackColor = trackColorProp ?? colors.border.subtle;
   const rotation = useRef(new Animated.Value(0)).current;
   const opacity = useRef(new Animated.Value(0)).current;
 

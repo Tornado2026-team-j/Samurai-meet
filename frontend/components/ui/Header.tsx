@@ -3,7 +3,8 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 import type { ComponentProps, ReactNode } from "react";
 import type { StyleProp, TextStyle, ViewStyle } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { colors, opacity, radius, spacing, typography } from "./tokens";
+import { useTheme, useThemeStyles } from "../../hooks/useTheme";
+import { opacity, radius, spacing, typography, type ThemeColors } from "./tokens";
 
 type HeaderVariant = "compact" | "default" | "hero";
 type MaterialIconName = ComponentProps<typeof MaterialIcons>["name"];
@@ -37,6 +38,8 @@ export default function Header({
   titleStyle,
   variant = "default",
 }: HeaderProps) {
+  const { colors } = useTheme();
+  const styles = useThemeStyles(createStyles);
   const insets = useSafeAreaInsets();
   const topPadding = variant === "compact"
     ? Math.max(insets.top, spacing.xl)
@@ -58,14 +61,14 @@ export default function Header({
               onPress={onBack}
               style={({ pressed }) => [styles.iconButton, pressed && styles.pressed]}
             >
-              <MaterialIcons color={colors.text.inverse} name="chevron-left" size={30} />
+              <MaterialIcons color={colors.text.onSky} name="chevron-left" size={30} />
             </Pressable>
           ) : null)}
         </View>
         <View style={styles.sideSlot}>{right}</View>
       </View>
 
-      {iconName ? <MaterialIcons color={colors.text.inverse} name={iconName} size={42} /> : null}
+      {iconName ? <MaterialIcons color={colors.text.onSky} name={iconName} size={42} /> : null}
       {title ? <Text accessibilityRole="header" style={[styles.title, titleStyle]}>{title}</Text> : null}
       {subtitle ? <Text style={[styles.subtitle, subtitleStyle]}>{subtitle}</Text> : null}
       {children}
@@ -73,7 +76,8 @@ export default function Header({
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ThemeColors) {
+  return StyleSheet.create({
   base: {
     position: "relative",
     alignItems: "center",
@@ -121,16 +125,17 @@ const styles = StyleSheet.create({
   title: {
     ...typography.hero,
     marginTop: spacing.xl,
-    color: colors.text.inverse,
+    color: colors.text.onSky,
     textAlign: "center",
   },
   subtitle: {
     ...typography.caption,
     marginTop: spacing.sm,
-    color: "rgba(255, 255, 255, 0.94)",
+    color: colors.text.onSky,
     textAlign: "center",
   },
   pressed: {
     opacity: opacity.pressed,
   },
-});
+  });
+}

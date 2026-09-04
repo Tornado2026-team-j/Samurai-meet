@@ -16,16 +16,10 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import ChatBubble from "../components/ChatBubble";
 import DismissKeyboardView from "../components/DismissKeyboardView";
+import type { ThemeColors } from "../components/ui/tokens";
+import { useTheme, useThemeStyles } from "../hooks/useTheme";
 import { moderateChatText, translateChatText, validateChatDraft } from "../services/chat";
 import type { MatchCategory } from "../types/match";
-
-const BLUE = "#5ec5f5";
-const YELLOW = "#e7b454";
-const TEXT_GRAY = "#535353";
-const MUTED_GRAY = "#949494";
-const BORDER_GRAY = "#e4e4e4";
-const SOFT_BLUE = "#eff8ff";
-const DANGER = "#b42318";
 
 type PreviewMessage = {
   id: string;
@@ -185,6 +179,12 @@ const INITIAL_MESSAGES: PreviewMessage[] = [
 export default function ChatPreviewScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { colors } = useTheme();
+  const styles = useThemeStyles(createStyles);
+  const BLUE = colors.brand.sky;
+  const YELLOW = colors.brand.gold;
+  const MUTED_GRAY = colors.text.muted;
+  const DANGER = colors.state.danger;
   const { side } = useLocalSearchParams<{ side?: string | string[] }>();
   const scrollRef = useRef<ScrollView>(null);
   const rawSide = Array.isArray(side) ? side[0] : side;
@@ -298,11 +298,11 @@ export default function ChatPreviewScreen() {
             pressed && styles.pressed,
           ]}
         >
-          <MaterialIcons color="#ffffff" name="chevron-left" size={30} />
+          <MaterialIcons color={colors.text.inverse} name="chevron-left" size={30} />
         </Pressable>
         <View style={styles.headerProfile}>
           <View style={styles.headerAvatar}>
-            <MaterialIcons color="#ffffff" name="account-circle" size={54} />
+            <MaterialIcons color={colors.text.inverse} name="account-circle" size={54} />
           </View>
           <View style={styles.headerText}>
             <Text numberOfLines={1} style={styles.headerName}>{participant.name}</Text>
@@ -320,7 +320,7 @@ export default function ChatPreviewScreen() {
             pressed && styles.pressed,
           ]}
         >
-          <MaterialIcons color="#ffffff" name="more-horiz" size={30} />
+          <MaterialIcons color={colors.text.inverse} name="more-horiz" size={30} />
         </Pressable>
       </View>
 
@@ -411,7 +411,7 @@ export default function ChatPreviewScreen() {
               pressed && styles.pressed,
             ]}
           >
-            <MaterialIcons color="#ffffff" name="send" size={24} />
+            <MaterialIcons color={colors.text.inverse} name="send" size={24} />
           </Pressable>
         </View>
       </View>
@@ -485,10 +485,11 @@ export default function ChatPreviewScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ThemeColors) {
+  return StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.screen,
   },
   header: {
     position: "relative",
@@ -497,7 +498,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 38,
     borderBottomLeftRadius: 50,
     borderBottomRightRadius: 50,
-    backgroundColor: BLUE,
+    backgroundColor: colors.brand.sky,
   },
   backButton: {
     position: "absolute",
@@ -525,7 +526,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.7)",
+    borderColor: colors.text.inverse,
     borderRadius: 31,
   },
   headerText: {
@@ -533,7 +534,7 @@ const styles = StyleSheet.create({
     marginLeft: 16,
   },
   headerName: {
-    color: "#ffffff",
+    color: colors.text.inverse,
     fontSize: 26,
     fontWeight: "900",
     letterSpacing: 0,
@@ -541,7 +542,7 @@ const styles = StyleSheet.create({
   },
   headerSub: {
     marginTop: 5,
-    color: "#ffffff",
+    color: colors.text.inverse,
     fontSize: 12,
     fontWeight: "700",
     letterSpacing: 0,
@@ -561,9 +562,9 @@ const styles = StyleSheet.create({
     alignSelf: "center",
     padding: 18,
     borderWidth: 1,
-    borderColor: BORDER_GRAY,
+    borderColor: colors.border.default,
     borderRadius: 20,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.default,
   },
   scheduleIcon: {
     width: 58,
@@ -571,14 +572,14 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderRadius: 29,
-    backgroundColor: "#fff8e8",
+    backgroundColor: colors.surface.goldSoft,
   },
   scheduleText: {
     flex: 1,
     marginLeft: 14,
   },
   scheduleTitle: {
-    color: "#101318",
+    color: colors.text.primary,
     fontSize: 18,
     fontWeight: "900",
     letterSpacing: 0,
@@ -592,7 +593,7 @@ const styles = StyleSheet.create({
     marginTop: 10,
   },
   scheduleMetaText: {
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 12,
     fontWeight: "800",
     letterSpacing: 0,
@@ -602,7 +603,7 @@ const styles = StyleSheet.create({
     width: 1,
     height: 20,
     marginHorizontal: 3,
-    backgroundColor: BORDER_GRAY,
+    backgroundColor: colors.border.default,
   },
   noticePanel: {
     width: "100%",
@@ -616,13 +617,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderWidth: 1,
-    borderColor: "#caeafd",
+    borderColor: colors.border.blue,
     borderRadius: 10,
-    backgroundColor: SOFT_BLUE,
+    backgroundColor: colors.surface.blueSoft,
   },
   noticeText: {
     flex: 1,
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 12,
     fontWeight: "700",
     letterSpacing: 0,
@@ -636,12 +637,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderWidth: 1,
-    borderColor: "#f7dfaa",
+    borderColor: colors.border.gold,
     borderRadius: 10,
-    backgroundColor: "#fff8e8",
+    backgroundColor: colors.surface.goldSoft,
   },
   localNoticeText: {
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 12,
     fontWeight: "800",
     letterSpacing: 0,
@@ -654,13 +655,13 @@ const styles = StyleSheet.create({
     left: 0,
     paddingTop: 10,
     borderTopWidth: 1,
-    borderTopColor: "#f0f0f0",
-    backgroundColor: "#ffffff",
+    borderTopColor: colors.border.subtle,
+    backgroundColor: colors.surface.default,
   },
   moderationText: {
     marginTop: 8,
     paddingHorizontal: 24,
-    color: YELLOW,
+    color: colors.brand.gold,
     fontSize: 12,
     fontWeight: "800",
     letterSpacing: 0,
@@ -668,7 +669,7 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
   blockedModerationText: {
-    color: DANGER,
+    color: colors.state.danger,
   },
   inputRow: {
     minHeight: 58,
@@ -687,14 +688,14 @@ const styles = StyleSheet.create({
     paddingBottom: 11,
     paddingLeft: 16,
     borderWidth: 1,
-    borderColor: BORDER_GRAY,
+    borderColor: colors.border.default,
     borderRadius: 24,
-    color: "#101318",
+    color: colors.text.primary,
     fontSize: 15,
     fontWeight: "700",
     letterSpacing: 0,
     lineHeight: 21,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.default,
   },
   sendButton: {
     width: 50,
@@ -702,15 +703,15 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderRadius: 25,
-    backgroundColor: YELLOW,
+    backgroundColor: colors.brand.gold,
   },
   sendButtonDisabled: {
-    backgroundColor: BORDER_GRAY,
+    backgroundColor: colors.border.default,
   },
   sheetBackdrop: {
     flex: 1,
     justifyContent: "flex-end",
-    backgroundColor: "rgba(0,0,0,0.28)",
+    backgroundColor: colors.overlay.scrim,
   },
   bottomSheet: {
     width: "100%",
@@ -718,19 +719,19 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.default,
   },
   sheetHandle: {
     width: 48,
     height: 5,
     alignSelf: "center",
     borderRadius: 3,
-    backgroundColor: BORDER_GRAY,
+    backgroundColor: colors.border.default,
   },
   sheetTitle: {
     marginTop: 18,
     marginBottom: 8,
-    color: "#101318",
+    color: colors.text.primary,
     fontSize: 18,
     fontWeight: "900",
     letterSpacing: 0,
@@ -742,17 +743,17 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 14,
     borderBottomWidth: 1,
-    borderBottomColor: "#f0f0f0",
+    borderBottomColor: colors.border.subtle,
   },
   sheetActionText: {
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 15,
     fontWeight: "900",
     letterSpacing: 0,
     lineHeight: 20,
   },
   dangerText: {
-    color: DANGER,
+    color: colors.state.danger,
   },
   sheetCancel: {
     height: 46,
@@ -760,10 +761,10 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginTop: 14,
     borderRadius: 10,
-    backgroundColor: "#f7f7f7",
+    backgroundColor: colors.surface.subtle,
   },
   sheetCancelText: {
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 14,
     fontWeight: "900",
     letterSpacing: 0,
@@ -774,17 +775,17 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     padding: 24,
-    backgroundColor: "rgba(0,0,0,0.28)",
+    backgroundColor: colors.overlay.scrim,
   },
   modalCard: {
     width: "100%",
     maxWidth: 342,
     padding: 22,
     borderRadius: 20,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.default,
   },
   modalTitle: {
-    color: "#101318",
+    color: colors.text.primary,
     fontSize: 20,
     fontWeight: "900",
     letterSpacing: 0,
@@ -792,7 +793,7 @@ const styles = StyleSheet.create({
   },
   modalSubtitle: {
     marginTop: 8,
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 13,
     fontWeight: "700",
     letterSpacing: 0,
@@ -809,12 +810,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
-    borderColor: BLUE,
+    borderColor: colors.brand.sky,
     borderRadius: 10,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.default,
   },
   modalSecondaryText: {
-    color: BLUE,
+    color: colors.brand.sky,
     fontSize: 14,
     fontWeight: "900",
     letterSpacing: 0,
@@ -826,10 +827,10 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderRadius: 10,
-    backgroundColor: YELLOW,
+    backgroundColor: colors.brand.gold,
   },
   modalPrimaryText: {
-    color: "#ffffff",
+    color: colors.text.inverse,
     fontSize: 14,
     fontWeight: "900",
     letterSpacing: 0,
@@ -838,4 +839,5 @@ const styles = StyleSheet.create({
   pressed: {
     opacity: 0.72,
   },
-});
+  });
+}

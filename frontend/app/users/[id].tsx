@@ -3,8 +3,10 @@ import { useEffect, useMemo, useState } from "react";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { StatusBar } from "expo-status-bar";
-import { Header, LoadingSpinner, colors, radius, shadows } from "../../components/ui";
+import { Header, LoadingSpinner, radius, shadows } from "../../components/ui";
+import type { ThemeColors } from "../../components/ui/tokens";
 import { useAuth } from "../../hooks/useAuth";
+import { useTheme, useThemeStyles } from "../../hooks/useTheme";
 import { blockUser } from "../../services/chat";
 import { getMatch, type MatchParticipant } from "../../services/matching";
 
@@ -24,6 +26,8 @@ function profileDetails(bio: string): { interests: string[]; skills: string[]; n
 
 export default function UserProfileScreen() {
   const router = useRouter();
+  const { colors } = useTheme();
+  const styles = useThemeStyles(createStyles);
   const { id, matchId } = useLocalSearchParams<{ id?: string; matchId?: string }>();
   const { getCurrentSession, session } = useAuth();
   const [profile, setProfile] = useState<MatchParticipant | null>(null);
@@ -109,6 +113,7 @@ export default function UserProfileScreen() {
 }
 
 function InfoSection({ empty, items, title }: { empty: string; items: string[]; title: string }) {
+  const styles = useThemeStyles(createStyles);
   return (
     <View style={styles.section}>
       <Text style={styles.sectionTitle}>{title}</Text>
@@ -119,7 +124,8 @@ function InfoSection({ empty, items, title }: { empty: string; items: string[]; 
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ThemeColors) {
+  return StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.surface.screen },
   content: { padding: 22, paddingBottom: 48, gap: 14 },
   hero: { flexDirection: "row", alignItems: "center", gap: 16, padding: 18, borderRadius: radius.lg, backgroundColor: colors.surface.blueSoft },
@@ -138,4 +144,5 @@ const styles = StyleSheet.create({
   safetyButton: { flex: 1, minHeight: 46, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, borderWidth: 1, borderColor: colors.border.danger, borderRadius: radius.md },
   reportText: { color: colors.state.danger, fontSize: 13, fontWeight: "800" },
   error: { color: colors.state.danger, fontSize: 13, fontWeight: "700", textAlign: "center" },
-});
+  });
+}

@@ -4,8 +4,10 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import DismissKeyboardView from "../components/DismissKeyboardView";
-import { Header, colors, radius } from "../components/ui";
+import { Header, radius } from "../components/ui";
+import type { ThemeColors } from "../components/ui/tokens";
 import { useAuth } from "../hooks/useAuth";
+import { useTheme, useThemeStyles } from "../hooks/useTheme";
 import type { ChatReportReason, SafetyReportTargetType } from "../services/chat";
 import { loadLanguage, subscribeLanguage, type AppLanguage } from "../services/onboarding";
 import { reportSafetyIssue } from "../services/safety";
@@ -30,6 +32,8 @@ const COPY: Record<AppLanguage, { title: string; namedTitle: (name: string) => s
 
 export default function ReportScreen() {
   const router = useRouter();
+  const { colors } = useTheme();
+  const styles = useThemeStyles(createStyles);
   const params = useLocalSearchParams<{ targetType?: string; targetId?: string; name?: string }>();
   const { getCurrentSession, session } = useAuth();
   const [reason, setReason] = useState<ChatReportReason | null>(null);
@@ -102,7 +106,8 @@ export default function ReportScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ThemeColors) {
+  return StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.surface.screen },
   content: { padding: 22, paddingBottom: 48 },
   title: { color: colors.text.primary, fontSize: 20, fontWeight: "900" },
@@ -118,4 +123,5 @@ const styles = StyleSheet.create({
   submit: { minHeight: 50, marginTop: 18, alignItems: "center", justifyContent: "center", borderRadius: radius.md, backgroundColor: colors.state.danger },
   submitText: { color: colors.text.inverse, fontSize: 15, fontWeight: "900" },
   disabled: { opacity: 0.45 },
-});
+  });
+}

@@ -7,7 +7,8 @@ import type {
   ViewStyle,
 } from "react-native";
 import type { ReactNode } from "react";
-import { colors, opacity, radius, shadows, spacing, typography } from "./tokens";
+import { useThemeStyles } from "../../hooks/useTheme";
+import { opacity, radius, shadows, spacing, typography, type ThemeColors } from "./tokens";
 
 type PillVariant = "neutral" | "primary" | "accent" | "danger";
 
@@ -40,6 +41,7 @@ export default function Pill({
   textStyle,
   variant = "neutral",
 }: PillProps) {
+  const styles = useThemeStyles(createStyles);
   const content = (
     <>
       {iconLeft}
@@ -89,7 +91,8 @@ export default function Pill({
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ThemeColors) {
+  return StyleSheet.create({
   base: {
     minHeight: 30,
     flexDirection: "row",
@@ -145,4 +148,5 @@ const styles = StyleSheet.create({
   pressed: {
     opacity: opacity.pressed,
   },
-});
+  });
+}

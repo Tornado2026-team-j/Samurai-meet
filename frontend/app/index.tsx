@@ -19,7 +19,9 @@ import ProfileForm from "../components/ProfileForm";
 import { RecoveryAccountDeleteAction, RecoveryCompletion, RecoveryKeyDisplay, RecoveryKeyInput, SupportAccountID } from "../components/RecoveryFlow";
 import DemoAccountEntry from "../components/DemoAccountEntry";
 import { LoadingScreen, LoadingSpinner } from "../components/ui";
+import type { ThemeColors } from "../components/ui/tokens";
 import { useAuth } from "../hooks/useAuth";
+import { useTheme, useThemeStyles } from "../hooks/useTheme";
 import {
   completeInitialKeySetup,
   completeRecoveryKeyRotation,
@@ -70,11 +72,6 @@ type LoadedUserOnboardingState = {
   identityVerificationChoice: IdentityVerificationChoice;
 };
 
-const BLUE = "#5ec5f5";
-const YELLOW = "#e7b454";
-const TEXT_GRAY = "#535353";
-const MUTED_GRAY = "#7d7d7d";
-const BORDER_GRAY = "#d4d4d4";
 const KEY_SETUP_TIMEOUT_MS = 45_000;
 const KEY_SETUP_TIMEOUT_MESSAGE = "暗号鍵の準備に時間がかかっています。通信または端末の状態を確認して、もう一度お試しください。";
 
@@ -113,6 +110,7 @@ type ProgressProps = {
 };
 
 function Progress({ activeStep, language }: ProgressProps) {
+  const styles = useThemeStyles(createStyles);
   return (
     <View
       accessibilityLabel={language === "ja" ? `全3ステップ中${activeStep}` : `Step ${activeStep} of 3`}
@@ -136,6 +134,8 @@ type HeroProps = {
 
 function Hero({ children, compact = false, onBack }: HeroProps) {
   const insets = useSafeAreaInsets();
+  const { colors } = useTheme();
+  const styles = useThemeStyles(createStyles);
 
   return (
     <View
@@ -153,7 +153,7 @@ function Hero({ children, compact = false, onBack }: HeroProps) {
           onPress={onBack}
           style={({ pressed }) => [styles.backButton, pressed && styles.pressed]}
         >
-          <MaterialIcons color="#ffffff" name="arrow-back-ios-new" size={21} />
+          <MaterialIcons color={colors.text.inverse} name="arrow-back-ios-new" size={21} />
         </Pressable>
       ) : null}
       {children}
@@ -166,6 +166,10 @@ type LanguageStepProps = {
 };
 
 function LanguageStep({ onContinue }: LanguageStepProps) {
+  const { colors } = useTheme();
+  const styles = useThemeStyles(createStyles);
+  const YELLOW = colors.brand.gold;
+  const BORDER_GRAY = colors.border.default;
   const [selection, setSelection] = useState<AppLanguage>("ja");
   const [saving, setSaving] = useState(false);
 
@@ -182,13 +186,16 @@ function LanguageStep({ onContinue }: LanguageStepProps) {
   return (
     <View style={styles.screen}>
       <StatusBar style="light" />
-      <ScrollView
-        contentContainerStyle={styles.stepScrollContent}
-        showsVerticalScrollIndicator={false}
-      >
+  <ScrollView
+    alwaysBounceVertical={false}
+    bounces={false}
+    contentContainerStyle={styles.stepScrollContent}
+    overScrollMode="never"
+    showsVerticalScrollIndicator={false}
+  >
         <Hero>
           <View style={styles.heroIconCircle}>
-            <MaterialIcons color="#ffffff" name="language" size={54} />
+            <MaterialIcons color={colors.text.inverse} name="language" size={54} />
           </View>
           <Text style={styles.heroTitle}>表示言語を選択</Text>
           <Text style={styles.heroSubtitle}>Choose your language</Text>
@@ -251,13 +258,13 @@ function LanguageStep({ onContinue }: LanguageStepProps) {
               ]}
             >
               {saving ? (
-                <ActivityIndicator color="#ffffff" />
+                <ActivityIndicator color={colors.text.inverse} />
               ) : (
                 <>
                   <Text style={styles.primaryButtonText}>
                     {selection === "ja" ? "次へ" : "Continue"}
                   </Text>
-                  <MaterialIcons color="#ffffff" name="arrow-forward" size={20} />
+                  <MaterialIcons color={colors.text.inverse} name="arrow-forward" size={20} />
                 </>
               )}
             </Pressable>
@@ -277,6 +284,11 @@ type AuthStepProps = {
 };
 
 function AuthStep({ appMode, language, onAuthenticated, onBack }: AuthStepProps) {
+  const { colors } = useTheme();
+  const styles = useThemeStyles(createStyles);
+  const YELLOW = colors.brand.gold;
+  const TEXT_GRAY = colors.text.secondary;
+  const MUTED_GRAY = colors.text.muted;
   const { busy, continuePasskey, deleteAccount, error, login, logout, preAuth, recoverWithRecoveryKey, recoveryVerified, session, startDemoAccount, status } = useAuth();
   const [showRecovery, setShowRecovery] = useState(false);
   const demoEntryEnabled = process.env.EXPO_PUBLIC_DEMO_ACCOUNT_ENABLED === "true";
@@ -389,14 +401,17 @@ function AuthStep({ appMode, language, onAuthenticated, onBack }: AuthStepProps)
   return (
     <View style={styles.screen}>
       <StatusBar style="light" />
-      <ScrollView
-        contentContainerStyle={styles.stepScrollContent}
-        showsVerticalScrollIndicator={false}
-      >
+  <ScrollView
+    alwaysBounceVertical={false}
+    bounces={false}
+    contentContainerStyle={styles.stepScrollContent}
+    overScrollMode="never"
+    showsVerticalScrollIndicator={false}
+  >
         <Hero onBack={() => void leaveAuthentication()}>
           <View style={styles.authIllustration}>
             <MaterialIcons
-              color="#ffffff"
+              color={colors.text.inverse}
               name={signedIn ? "check-circle" : passkeyReady ? "key" : "person-outline"}
               size={64}
             />
@@ -419,7 +434,7 @@ function AuthStep({ appMode, language, onAuthenticated, onBack }: AuthStepProps)
                   </View>
                 )}
                 <Text style={styles.completedText}>{copy.verificationDone}</Text>
-                <MaterialIcons color="#3d9a68" name="check-circle" size={22} />
+                <MaterialIcons color={colors.state.success} name="check-circle" size={22} />
               </View>
             ) : null}
 
@@ -592,6 +607,8 @@ function KeySetupError({
   onLogout: () => void;
   onRetry: () => void;
 }) {
+  const { colors, scheme } = useTheme();
+  const styles = useThemeStyles(createStyles);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleteConfirmation, setDeleteConfirmation] = useState("");
   const copy = demo
@@ -665,8 +682,8 @@ function KeySetupError({
 
   return (
     <View style={styles.keySetupErrorScreen}>
-      <StatusBar style="dark" />
-      <MaterialIcons color="#b42318" name="error-outline" size={58} />
+      <StatusBar style={scheme === "dark" ? "light" : "dark"} />
+      <MaterialIcons color={colors.state.danger} name="error-outline" size={58} />
       <Text style={styles.keySetupErrorTitle}>{copy.title}</Text>
       <Text style={styles.keySetupErrorDescription}>{copy.description}</Text>
       <Text style={styles.keySetupErrorMessage}>{message}</Text>
@@ -674,7 +691,7 @@ function KeySetupError({
       <SupportAccountID accountID={accountID} language={language} />
       {!demo ? (
         <Pressable disabled={actionBusy} onPress={() => void onReauthenticate()} style={[styles.primaryButton, actionBusy && styles.disabled]}>
-          {actionBusy ? <ActivityIndicator color="#ffffff" /> : <Text style={styles.primaryButtonText}>{copy.reauthenticate}</Text>}
+          {actionBusy ? <ActivityIndicator color={colors.text.onGold} /> : <Text style={styles.primaryButtonText}>{copy.reauthenticate}</Text>}
         </Pressable>
       ) : null}
       <Pressable disabled={actionBusy} onPress={onRetry} style={[styles.secondaryButton, actionBusy && styles.disabled]}>
@@ -718,7 +735,7 @@ function KeySetupError({
               editable={!actionBusy}
               onChangeText={setDeleteConfirmation}
               placeholder={copy.confirmDeletePlaceholder}
-              placeholderTextColor="#a56d68"
+              placeholderTextColor={colors.state.dangerDark}
               style={styles.keySetupDeleteInput}
               value={deleteConfirmation}
             />
@@ -737,7 +754,7 @@ function KeySetupError({
               onPress={() => void onDeleteAccount().catch(() => undefined)}
               style={[styles.keySetupDeleteConfirm, (actionBusy || deleteConfirmation.trim().toUpperCase() !== expectedDeleteConfirmation) && styles.disabled]}
             >
-              {actionBusy ? <ActivityIndicator color="#ffffff" /> : <Text style={styles.primaryButtonText}>{copy.deleteConfirm}</Text>}
+              {actionBusy ? <ActivityIndicator color={colors.text.inverse} /> : <Text style={styles.primaryButtonText}>{copy.deleteConfirm}</Text>}
             </Pressable>
           </View>
         </ScrollView>
@@ -750,6 +767,8 @@ function KeySetupError({
 }
 
 function ProfileStep({ initialProfile, language, onBack, onSubmit }: ProfileStepProps) {
+  const { colors } = useTheme();
+  const styles = useThemeStyles(createStyles);
   const copy = language === "ja"
     ? {
         title: "プロフィールを設定",
@@ -771,7 +790,7 @@ function ProfileStep({ initialProfile, language, onBack, onSubmit }: ProfileStep
       >
         <Hero compact onBack={() => void onBack()}>
           <View style={styles.avatar}>
-            <MaterialIcons color="#ffffff" name="person" size={58} />
+            <MaterialIcons color={colors.text.inverse} name="person" size={58} />
           </View>
           <Text style={[styles.heroTitle, styles.profileTitle]}>{copy.title}</Text>
           <Text style={styles.heroSubtitle}>{copy.subtitle}</Text>
@@ -791,6 +810,10 @@ function ProfileStep({ initialProfile, language, onBack, onSubmit }: ProfileStep
 }
 
 export default function OnboardingScreen() {
+  const { colors, scheme } = useTheme();
+  const styles = useThemeStyles(createStyles);
+  const BLUE = colors.brand.sky;
+  const YELLOW = colors.brand.gold;
   const {
     continuePasskey,
     deleteAccount,
@@ -1114,7 +1137,7 @@ export default function OnboardingScreen() {
 
     return (
       <View style={styles.loadingScreen}>
-        <StatusBar style="dark" />
+        <StatusBar style={scheme === "dark" ? "light" : "dark"} />
         <MaterialIcons color={YELLOW} name="cloud-off" size={42} />
         <Text accessibilityRole="alert" style={styles.loadingText}>{authError}</Text>
         <Text style={styles.loadingHint}>
@@ -1131,7 +1154,7 @@ export default function OnboardingScreen() {
           ]}
         >
           {restoreRetrying ? (
-            <ActivityIndicator color="#ffffff" />
+            <ActivityIndicator color={colors.text.inverse} />
           ) : (
             <Text style={styles.restoreRetryButtonText}>再試行 / Retry</Text>
           )}
@@ -1198,7 +1221,7 @@ export default function OnboardingScreen() {
           : "Generating encryption keys…";
     return (
       <View style={styles.loadingScreen}>
-        <StatusBar style="dark" />
+        <StatusBar style={scheme === "dark" ? "light" : "dark"} />
         <LoadingSpinner color={BLUE} size={28} />
         <Text style={styles.loadingText}>
           {loadingText}
@@ -1451,25 +1474,26 @@ export default function OnboardingScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ThemeColors) {
+  return StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.screen,
   },
   loadingScreen: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.screen,
   },
   loadingText: {
     marginTop: 12,
-    color: MUTED_GRAY,
+    color: colors.text.muted,
     fontSize: 14,
   },
   loadingHint: {
     marginTop: 6,
-    color: MUTED_GRAY,
+    color: colors.text.muted,
     fontSize: 12,
   },
   restoreRetryButton: {
@@ -1480,10 +1504,10 @@ const styles = StyleSheet.create({
     marginTop: 18,
     paddingHorizontal: 18,
     borderRadius: 20,
-    backgroundColor: YELLOW,
+    backgroundColor: colors.brand.gold,
   },
   restoreRetryButtonText: {
-    color: "#ffffff",
+    color: colors.text.inverse,
     fontSize: 13,
     fontWeight: "800",
   },
@@ -1495,12 +1519,12 @@ const styles = StyleSheet.create({
     marginTop: 10,
     paddingHorizontal: 18,
     borderWidth: 1,
-    borderColor: BORDER_GRAY,
+    borderColor: colors.border.default,
     borderRadius: 19,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.default,
   },
   restoreSignOutButtonText: {
-    color: MUTED_GRAY,
+    color: colors.text.muted,
     fontSize: 13,
     fontWeight: "800",
   },
@@ -1510,22 +1534,22 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     padding: 28,
     gap: 16,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.screen,
   },
   keySetupErrorTitle: {
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 22,
     fontWeight: "700",
     textAlign: "center",
   },
   keySetupErrorDescription: {
-    color: MUTED_GRAY,
+    color: colors.text.muted,
     fontSize: 15,
     lineHeight: 23,
     textAlign: "center",
   },
   keySetupErrorMessage: {
-    color: "#b42318",
+    color: colors.state.danger,
     fontSize: 12,
     lineHeight: 18,
     textAlign: "center",
@@ -1538,7 +1562,7 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     borderBottomLeftRadius: 44,
     borderBottomRightRadius: 44,
-    backgroundColor: BLUE,
+    backgroundColor: colors.brand.sky,
   },
   heroDefault: {
     minHeight: 350,
@@ -1565,12 +1589,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 2,
-    borderColor: "rgba(255, 255, 255, 0.8)",
+    borderColor: colors.text.inverse,
     borderRadius: 50,
-    backgroundColor: "rgba(255, 255, 255, 0.12)",
+    backgroundColor: colors.surface.blueSoft,
   },
   heroTitle: {
-    color: "#ffffff",
+    color: colors.text.inverse,
     fontSize: 27,
     fontWeight: "900",
     lineHeight: 34,
@@ -1580,7 +1604,7 @@ const styles = StyleSheet.create({
   heroSubtitle: {
     maxWidth: 340,
     marginTop: 8,
-    color: "rgba(255, 255, 255, 0.94)",
+    color: colors.text.inverse,
     fontSize: 14,
     fontWeight: "600",
     lineHeight: 21,
@@ -1611,24 +1635,24 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     borderWidth: 1,
-    borderColor: BORDER_GRAY,
+    borderColor: colors.border.default,
     borderRadius: 8,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.default,
   },
   languageOptionSelected: {
     borderWidth: 2,
-    borderColor: YELLOW,
-    backgroundColor: "#fffaf0",
+    borderColor: colors.brand.gold,
+    backgroundColor: colors.surface.warningSoft,
   },
   languageName: {
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 18,
     fontWeight: "800",
     letterSpacing: 0,
   },
   languageCaption: {
     marginTop: 2,
-    color: MUTED_GRAY,
+    color: colors.text.muted,
     fontSize: 12,
     letterSpacing: 0,
   },
@@ -1647,10 +1671,10 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 9,
     borderRadius: 8,
-    backgroundColor: YELLOW,
+    backgroundColor: colors.brand.gold,
   },
   primaryButtonText: {
-    color: "#ffffff",
+    color: colors.text.inverse,
     fontSize: 16,
     fontWeight: "800",
     letterSpacing: 0,
@@ -1667,13 +1691,13 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: "#d9e6ec",
+    backgroundColor: colors.border.blueStrong,
   },
   progressDotActive: {
     width: 10,
     height: 10,
     borderRadius: 5,
-    backgroundColor: BLUE,
+    backgroundColor: colors.brand.sky,
   },
   authIllustration: {
     width: 112,
@@ -1682,9 +1706,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 2,
-    borderColor: "rgba(255, 255, 255, 0.78)",
+    borderColor: colors.text.inverse,
     borderRadius: 56,
-    backgroundColor: "rgba(255, 255, 255, 0.12)",
+    backgroundColor: colors.surface.blueSoft,
   },
   authActions: {
     width: "100%",
@@ -1699,12 +1723,12 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 13,
     borderWidth: 1,
-    borderColor: BORDER_GRAY,
+    borderColor: colors.border.default,
     borderRadius: 8,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.default,
   },
   authButtonText: {
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 16,
     fontWeight: "800",
     letterSpacing: 0,
@@ -1718,12 +1742,12 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 9,
     borderWidth: 1,
-    borderColor: YELLOW,
+    borderColor: colors.brand.gold,
     borderRadius: 24,
-    backgroundColor: "#fffaf0",
+    backgroundColor: colors.surface.warningSoft,
   },
   secondaryButtonText: {
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 14,
     fontWeight: "700",
   },
@@ -1732,12 +1756,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
-    borderColor: BORDER_GRAY,
+    borderColor: colors.border.default,
     borderRadius: 22,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.default,
   },
   authLogoutButtonText: {
-    color: MUTED_GRAY,
+    color: colors.text.muted,
     fontSize: 14,
     fontWeight: "700",
   },
@@ -1747,12 +1771,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
-    borderColor: "#d92d20",
+    borderColor: colors.border.dangerStrong,
     borderRadius: 24,
-    backgroundColor: "#fff5f4",
+    backgroundColor: colors.surface.dangerSoft,
   },
   deleteAccountButtonText: {
-    color: "#b42318",
+    color: colors.state.danger,
     fontSize: 14,
     fontWeight: "700",
   },
@@ -1761,9 +1785,9 @@ const styles = StyleSheet.create({
     gap: 12,
     padding: 16,
     borderWidth: 1,
-    borderColor: "#f3b5af",
+    borderColor: colors.border.danger,
     borderRadius: 16,
-    backgroundColor: "#fff5f4",
+    backgroundColor: colors.surface.dangerSoft,
   },
   keySetupModalBackdrop: {
     flexGrow: 1,
@@ -1771,19 +1795,19 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     padding: 24,
-    backgroundColor: "rgba(0, 0, 0, 0.45)",
+    backgroundColor: colors.overlay.scrim,
   },
   keySetupModalScrollView: {
     flex: 1,
     width: "100%",
   },
   keySetupDeleteTitle: {
-    color: "#7a271a",
+    color: colors.state.dangerDark,
     fontSize: 17,
     fontWeight: "700",
   },
   keySetupDeleteDescription: {
-    color: "#7a271a",
+    color: colors.state.dangerDark,
     fontSize: 14,
     lineHeight: 21,
   },
@@ -1791,10 +1815,10 @@ const styles = StyleSheet.create({
     minHeight: 48,
     paddingHorizontal: 14,
     borderWidth: 1,
-    borderColor: "#d69289",
+    borderColor: colors.border.danger,
     borderRadius: 10,
-    color: "#7a271a",
-    backgroundColor: "#ffffff",
+    color: colors.state.dangerDark,
+    backgroundColor: colors.surface.default,
     fontSize: 16,
     fontWeight: "700",
     letterSpacing: 1,
@@ -1804,7 +1828,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderRadius: 24,
-    backgroundColor: "#d92d20",
+    backgroundColor: colors.border.dangerStrong,
   },
   completedRow: {
     minHeight: 48,
@@ -1813,7 +1837,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 11,
     borderRadius: 8,
-    backgroundColor: "#eef8f2",
+    backgroundColor: colors.surface.successSoft,
   },
   googleMarkSmall: {
     width: 28,
@@ -1821,7 +1845,7 @@ const styles = StyleSheet.create({
   },
   completedText: {
     flex: 1,
-    color: "#357a55",
+    color: colors.state.success,
     fontSize: 14,
     fontWeight: "700",
     letterSpacing: 0,
@@ -1835,14 +1859,14 @@ const styles = StyleSheet.create({
   },
   securityNoteText: {
     flexShrink: 1,
-    color: MUTED_GRAY,
+    color: colors.text.muted,
     fontSize: 11,
     lineHeight: 17,
     letterSpacing: 0,
     textAlign: "center",
   },
   errorText: {
-    color: "#b42318",
+    color: colors.state.danger,
     fontSize: 12,
     lineHeight: 18,
     letterSpacing: 0,
@@ -1855,9 +1879,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 2,
-    borderColor: "#ffffff",
+    borderColor: colors.text.inverse,
     borderRadius: 48,
-    backgroundColor: "rgba(255, 255, 255, 0.2)",
+    backgroundColor: colors.surface.blueSoft,
   },
   profileTitle: {
     fontSize: 24,
@@ -1883,3 +1907,4 @@ const styles = StyleSheet.create({
     opacity: 0.72,
   },
 });
+}

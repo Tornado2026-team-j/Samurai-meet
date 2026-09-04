@@ -4,14 +4,13 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import type { ThemeColors } from "../../components/ui/tokens";
+import { useTheme, useThemeStyles } from "../../hooks/useTheme";
 import { useAuth } from "../../hooks/useAuth";
 import { APIError } from "../../services/api-client";
 import { getMatch, type MatchView } from "../../services/matching";
 import { loadLanguage, subscribeLanguage } from "../../services/onboarding";
 import type { AppLanguage } from "../../services/onboarding-contract";
-
-const HEADER_BLUE = "#5ec5f5";
-const YELLOW = "#e7b454";
 
 type MatchLoadErrorKey = "loginRequired" | "failed";
 
@@ -57,6 +56,8 @@ const COPY = {
 export default function JapaneseGuideRequestedScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { colors } = useTheme();
+  const styles = useThemeStyles(createStyles);
   const { getCurrentSession, refresh, session, status } = useAuth();
   const { matchId } = useLocalSearchParams<{
     matchId?: string | string[];
@@ -198,7 +199,7 @@ export default function JapaneseGuideRequestedScreen() {
                     })}
                     style={({ pressed }) => [styles.chatButton, pressed && styles.pressed]}
                   >
-                    <MaterialIcons color="#ffffff" name="chat-bubble-outline" size={21} />
+                    <MaterialIcons color={colors.text.inverse} name="chat-bubble-outline" size={21} />
                     <Text style={styles.chatButtonText}>{copy.openChat}</Text>
                   </Pressable>
                 ) : null}
@@ -216,7 +217,7 @@ export default function JapaneseGuideRequestedScreen() {
                 >
                   {matchLoadState === "loading" ? (
                     <View style={styles.refreshButtonContent}>
-                      <ActivityIndicator color="#ffffff" size="small" />
+                      <ActivityIndicator color={colors.text.inverse} size="small" />
                       <Text style={styles.refreshButtonText}>{copy.refreshing}</Text>
                     </View>
                   ) : (
@@ -231,7 +232,7 @@ export default function JapaneseGuideRequestedScreen() {
                 onPress={() => router.replace("/japanese")}
                 style={({ pressed }) => [styles.homeButton, pressed && styles.pressed]}
               >
-                <MaterialIcons color="#ffffff" name="home" size={21} />
+                <MaterialIcons color={colors.text.inverse} name="home" size={21} />
                 <Text style={styles.homeButtonText}>{copy.home}</Text>
               </Pressable>
             </View>
@@ -242,21 +243,22 @@ export default function JapaneseGuideRequestedScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ThemeColors) {
+  return StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.screen,
   },
   scrollContent: {
     flexGrow: 1,
     alignItems: "center",
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.screen,
   },
   canvas: {
     width: "100%",
     maxWidth: 390,
     flexGrow: 1,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.screen,
   },
   header: {
     height: 238,
@@ -266,10 +268,10 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     borderBottomLeftRadius: 50,
     borderBottomRightRadius: 50,
-    backgroundColor: HEADER_BLUE,
+    backgroundColor: colors.brand.sky,
   },
   headerTitle: {
-    color: "#ffffff",
+    color: colors.text.inverse,
     fontSize: 20,
     fontWeight: "900",
     letterSpacing: 0,
@@ -282,7 +284,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingHorizontal: 38,
     paddingBottom: 72,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.screen,
   },
   mainContent: {
     alignItems: "center",
@@ -299,7 +301,7 @@ const styles = StyleSheet.create({
     width: 224,
     height: 224,
     borderRadius: 112,
-    backgroundColor: "#5EC5F5",
+    backgroundColor: colors.brand.sky,
   },
   letterImage: {
     width: 260,
@@ -313,9 +315,9 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 10,
     borderWidth: 1,
-    borderColor: YELLOW,
+    borderColor: colors.brand.gold,
     borderRadius: 10,
-    backgroundColor: YELLOW,
+    backgroundColor: colors.brand.gold,
   },
   chatButton: {
     width: 258,
@@ -326,17 +328,17 @@ const styles = StyleSheet.create({
     gap: 8,
     marginTop: 16,
     borderRadius: 10,
-    backgroundColor: HEADER_BLUE,
+    backgroundColor: colors.brand.sky,
   },
   chatButtonText: {
-    color: "#ffffff",
+    color: colors.text.inverse,
     fontSize: 15,
     fontWeight: "900",
     letterSpacing: 0,
     lineHeight: 18,
   },
   homeButtonText: {
-    color: "#ffffff",
+    color: colors.text.inverse,
     fontSize: 15,
     fontWeight: "900",
     letterSpacing: 0,
@@ -351,13 +353,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderWidth: 1,
-    borderColor: "#d4d4d4",
+    borderColor: colors.border.default,
     borderRadius: 12,
-    backgroundColor: "#f7fbfd",
+    backgroundColor: colors.surface.blueSoft,
     gap: 8,
   },
   matchStatusText: {
-    color: "#535353",
+    color: colors.text.secondary,
     fontSize: 12,
     fontWeight: "700",
     lineHeight: 17,
@@ -370,7 +372,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingHorizontal: 14,
     borderRadius: 15,
-    backgroundColor: HEADER_BLUE,
+    backgroundColor: colors.brand.sky,
   },
   refreshButtonContent: {
     flexDirection: "row",
@@ -378,7 +380,7 @@ const styles = StyleSheet.create({
     gap: 7,
   },
   refreshButtonText: {
-    color: "#ffffff",
+    color: colors.text.inverse,
     fontSize: 12,
     fontWeight: "800",
   },
@@ -388,4 +390,5 @@ const styles = StyleSheet.create({
   pressed: {
     opacity: 0.72,
   },
-});
+  });
+}

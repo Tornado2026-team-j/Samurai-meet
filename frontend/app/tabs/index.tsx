@@ -23,9 +23,12 @@ import {
 import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import DismissKeyboardView from "../../components/DismissKeyboardView";
-import { Button, Card, LoadingSpinner, Pill, colors, opacity, radius, shadows, spacing, typography } from "../../components/ui";
+import { Button, Card, LoadingSpinner, Pill, opacity, radius, shadows, spacing, typography } from "../../components/ui";
+import type { ThemeColors } from "../../components/ui/tokens";
 import ForeignerHomeScreen from "../foreigner";
 import { useAuth } from "../../hooks/useAuth";
+import { useDisplayLanguage } from "../../hooks/useDisplayLanguage";
+import { useTheme, useThemeStyles } from "../../hooks/useTheme";
 import { APIError } from "../../services/api-client";
 import {
   resolveCurrentLocationDisplay,
@@ -34,10 +37,8 @@ import {
 } from "../../services/location";
 import type { Coordinates } from "../../services/matching";
 import {
-  loadLanguage,
   loadLocalProfile,
   serializeMonsterSeedForLegacyBio,
-  subscribeLanguage,
   type AppLanguage,
 } from "../../services/onboarding";
 import { updateMyProfile } from "../../services/profile";
@@ -71,11 +72,6 @@ import { MATCH_CATEGORIES, type MatchCategory } from "../../types/match";
 import { formatTimeRange } from "../../utils/time";
 import { translateRecruitmentTag } from "../../utils/recruitment-tags";
 
-const BLUE = "#5ec5f5";
-const YELLOW = "#e7b454";
-const TEXT_GRAY = "#535353";
-const PLACEHOLDER_GRAY = "#949494";
-const BORDER_GRAY = "#d4d4d4";
 const COLLAPSED_HEADER_HEIGHT = 156;
 const EXPANDED_HEADER_HEIGHT = 760;
 const HOME_PEEK_HEIGHT = 96;
@@ -485,9 +481,16 @@ export default function SearchPreferencesScreen() {
   const insets = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
   const { getCurrentSession, refresh, session, status } = useAuth();
+  const { colors, scheme } = useTheme();
+  const styles = useThemeStyles(createStyles);
+  const BLUE = colors.brand.sky;
+  const PLACEHOLDER_GRAY = colors.text.muted;
   const { query } = useLocalSearchParams<{ query?: string | string[] }>();
   const initialQuery = Array.isArray(query) ? query[0] : query;
-  const [language, setLanguage] = useState<AppLanguage>("en");
+  const resolvedLanguage = useDisplayLanguage();
+  // Keep a typed fallback for callbacks that can run while storage is being
+  // resolved. The render below stays neutral until the real value exists.
+  const language = resolvedLanguage ?? "en";
   const suggestedSchedule = useMemo(() => defaultRecruitmentSchedule(), []);
   const suggestedDate = suggestedSchedule.date;
   const [description, setDescription] = useState(initialQuery ?? "");
@@ -582,28 +585,6 @@ export default function SearchPreferencesScreen() {
     manualFallbackVisible || previewStatus === "success"
       ? viewportConfirmationHeight
       : compactConfirmationHeight;
-
-  useEffect(() => {
-    let active = true;
-    const unsubscribe = subscribeLanguage((nextLanguage) => {
-      if (active && nextLanguage) setLanguage(nextLanguage);
-    });
-
-    void loadLanguage()
-      .then((storedLanguage) => {
-        if (!active) return;
-        setLanguage(storedLanguage ?? "en");
-      })
-      .catch(() => {
-        if (!active) return;
-        setLanguage("en");
-      });
-
-    return () => {
-      active = false;
-      unsubscribe();
-    };
-  }, []);
 
   useEffect(() => {
     const animation = Animated.parallel([
@@ -1387,6 +1368,17 @@ export default function SearchPreferencesScreen() {
     });
   };
 
+  if (!resolvedLanguage) {
+    return (
+      <View style={styles.screen}>
+        <StatusBar style={scheme === "dark" ? "light" : "dark"} />
+        <View style={styles.languageLoadingPanel}>
+          <LoadingSpinner color={BLUE} size={24} />
+        </View>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.screen}>
       <View pointerEvents="none" style={styles.homeLayer}>
@@ -2056,7 +2048,7 @@ export default function SearchPreferencesScreen() {
                 </Text>
               </View>
               <View style={styles.compactNotificationIcon}>
-                <MaterialIcons color="#ffffff" name="notifications-none" size={30} />
+                <MaterialIcons color={colors.text.inverse} name="notifications-none" size={30} />
               </View>
               <Pressable
                 accessibilityLabel={copy.profile}
@@ -2068,7 +2060,7 @@ export default function SearchPreferencesScreen() {
                   pressed && styles.pressed,
                 ]}
               >
-                <MaterialIcons color="#ffffff" name="account-circle" size={30} />
+                <MaterialIcons color={colors.text.inverse} name="account-circle" size={30} />
               </Pressable>
             </View>
             <Text style={[styles.compactTitle, { top: Math.max(insets.top + 64, 108) }]}>{language === "ja" ? "あなたの日本を見つけよう！" : "Find Your Japan!"}</Text>
@@ -2133,7 +2125,7 @@ export default function SearchPreferencesScreen() {
                 mode="date"
                 onChange={handleDatePickerChange}
                 style={styles.nativePicker}
-                themeVariant="light"
+                themeVariant={scheme}
                 timeZoneName={JST_TIME_ZONE}
                 value={pickerDate}
               />
@@ -2303,7 +2295,8 @@ export default function SearchPreferencesScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ThemeColors) {
+  return StyleSheet.create({
   confirmationScrollContent: {
     alignItems: "center",
     paddingHorizontal: 24,
@@ -2423,6 +2416,11 @@ const styles = StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: colors.surface.screen,
+  },
+  languageLoadingPanel: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
   },
   homeLayer: {
     position: "absolute",
@@ -2906,7 +2904,7 @@ const styles = StyleSheet.create({
     borderColor: colors.border.default,
   },
   locationFieldDisabled: {
-    backgroundColor: "rgba(255, 255, 255, 0.94)",
+     backgroundColor: colors.surface.default,
   },
   locationSearchIcon: {
     position: "absolute",
@@ -3197,7 +3195,7 @@ const styles = StyleSheet.create({
   modalBackdrop: {
     flex: 1,
     justifyContent: "flex-end",
-    backgroundColor: "rgba(0, 0, 0, 0.28)",
+     backgroundColor: colors.overlay.scrim,
   },
   pickerSheet: {
     minHeight: 286,
@@ -3221,18 +3219,18 @@ const styles = StyleSheet.create({
   },
   pickerTitle: {
     flex: 1,
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 16,
     fontWeight: "900",
     textAlign: "center",
   },
   pickerCancelText: {
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 14,
     fontWeight: "700",
   },
   pickerDoneText: {
-    color: BLUE,
+    color: colors.brand.sky,
     fontSize: 14,
     fontWeight: "900",
   },
@@ -3272,10 +3270,10 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
   },
   wallClockOptionSelected: {
-    backgroundColor: BLUE,
+    backgroundColor: colors.brand.sky,
   },
   wallClockOptionText: {
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 18,
     fontWeight: "800",
   },
@@ -3284,7 +3282,7 @@ const styles = StyleSheet.create({
   },
   wallClockSeparator: {
     width: 16,
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 28,
     fontWeight: "900",
     textAlign: "center",
@@ -3297,10 +3295,10 @@ const styles = StyleSheet.create({
     paddingLeft: 22,
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.default,
   },
   selectionTitle: {
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 18,
     fontWeight: "900",
     lineHeight: 23,
@@ -3308,7 +3306,7 @@ const styles = StyleSheet.create({
   },
   selectionSubtitle: {
     marginTop: 5,
-    color: PLACEHOLDER_GRAY,
+    color: colors.text.muted,
     fontSize: 13,
     fontWeight: "600",
     lineHeight: 17,
@@ -3327,21 +3325,21 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
-    borderColor: BORDER_GRAY,
+    borderColor: colors.border.default,
     borderRadius: 14,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.default,
   },
   durationOptionSelected: {
-    borderColor: YELLOW,
-    backgroundColor: YELLOW,
+    borderColor: colors.brand.gold,
+    backgroundColor: colors.brand.gold,
   },
   durationOptionText: {
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 14,
     fontWeight: "900",
   },
   durationOptionTextSelected: {
-    color: "#ffffff",
+    color: colors.text.inverse,
   },
   modalCancelButton: {
     alignSelf: "center",
@@ -3351,12 +3349,12 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginTop: 18,
     borderWidth: 1,
-    borderColor: BORDER_GRAY,
+    borderColor: colors.border.default,
     borderRadius: 19,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.default,
   },
   modalCancelText: {
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 14,
     fontWeight: "800",
   },
@@ -3365,11 +3363,11 @@ const styles = StyleSheet.create({
     alignSelf: "center",
     padding: 24,
     borderRadius: 24,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.default,
   },
   warningMessage: {
     marginTop: 8,
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 15,
     fontWeight: "700",
     lineHeight: 20,
@@ -3380,10 +3378,10 @@ const styles = StyleSheet.create({
     marginTop: 18,
     padding: 14,
     borderRadius: 16,
-    backgroundColor: "#eff8ff",
+    backgroundColor: colors.surface.blueSoft,
   },
   warningSuggestionLabel: {
-    color: PLACEHOLDER_GRAY,
+    color: colors.text.muted,
     fontSize: 12,
     fontWeight: "700",
     lineHeight: 15,
@@ -3391,7 +3389,7 @@ const styles = StyleSheet.create({
   },
   warningSuggestionValue: {
     marginTop: 4,
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 15,
     fontWeight: "900",
     lineHeight: 20,
@@ -3404,10 +3402,10 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginTop: 18,
     borderRadius: 21,
-    backgroundColor: YELLOW,
+    backgroundColor: colors.brand.gold,
   },
   warningPrimaryText: {
-    color: "#ffffff",
+    color: colors.text.inverse,
     fontSize: 14,
     fontWeight: "900",
   },
@@ -3418,16 +3416,17 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginTop: 8,
     borderWidth: 1,
-    borderColor: BORDER_GRAY,
+    borderColor: colors.border.default,
     borderRadius: 21,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.default,
   },
   warningSecondaryText: {
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 14,
     fontWeight: "900",
   },
   pressed: {
     opacity: 0.72,
   },
-});
+  });
+}

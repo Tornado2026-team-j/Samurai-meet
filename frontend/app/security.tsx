@@ -12,8 +12,10 @@ import {
   View,
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
-import { Header, LoadingSpinner, colors, opacity, radius, spacing, typography } from "../components/ui";
+import { Header, LoadingSpinner, opacity, radius, spacing, typography } from "../components/ui";
+import type { ThemeColors } from "../components/ui/tokens";
 import { useAuth } from "../hooks/useAuth";
+import { useTheme, useThemeStyles } from "../hooks/useTheme";
 import { loadLanguage, subscribeLanguage, type AppLanguage } from "../services/onboarding";
 import {
   listPasskeys,
@@ -93,6 +95,8 @@ function formatDate(value: string, language: AppLanguage): string {
 
 export default function SecurityScreen() {
   const router = useRouter();
+  const { colors } = useTheme();
+  const styles = useThemeStyles(createStyles);
   const { continuePasskey, getCurrentSession, session } = useAuth();
   const [language, setLanguage] = useState<AppLanguage>("ja");
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
@@ -266,10 +270,14 @@ export default function SecurityScreen() {
 }
 
 function SectionTitle({ icon, title }: { icon: "devices" | "key"; title: string }) {
+  const { colors } = useTheme();
+  const styles = useThemeStyles(createStyles);
   return <View style={styles.sectionTitle}><MaterialIcons color={colors.brand.sky} name={icon} size={22} /><Text style={styles.sectionTitleText}>{title}</Text></View>;
 }
 
 function ActionButton({ busy, disabled = false, label, onPress }: { busy: boolean; disabled?: boolean; label: string; onPress: () => void }) {
+  const { colors } = useTheme();
+  const styles = useThemeStyles(createStyles);
   return (
     <Pressable disabled={busy || disabled} onPress={onPress} style={({ pressed }) => [styles.action, (busy || disabled) && styles.disabled, pressed && styles.pressed]}>
       {busy ? <ActivityIndicator color={colors.state.danger} size="small" /> : <Text style={styles.actionText}>{label}</Text>}
@@ -277,7 +285,8 @@ function ActionButton({ busy, disabled = false, label, onPress }: { busy: boolea
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ThemeColors) {
+  return StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.surface.screen },
   content: { padding: spacing.xl, paddingBottom: 130, gap: spacing.md },
   description: { color: colors.text.secondary, ...typography.body, lineHeight: 23 },
@@ -304,4 +313,5 @@ const styles = StyleSheet.create({
   retryText: { color: colors.text.inverse, ...typography.captionStrong },
   disabled: { opacity: opacity.disabled },
   pressed: { opacity: opacity.pressed },
-});
+  });
+}
