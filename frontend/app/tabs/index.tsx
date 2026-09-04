@@ -27,6 +27,7 @@ import { Button, Card, LoadingSpinner, Pill, opacity, radius, shadows, spacing, 
 import type { ThemeColors } from "../../components/ui/tokens";
 import ForeignerHomeScreen from "../foreigner";
 import { useAuth } from "../../hooks/useAuth";
+import { useDisplayLanguage } from "../../hooks/useDisplayLanguage";
 import { useTheme, useThemeStyles } from "../../hooks/useTheme";
 import { APIError } from "../../services/api-client";
 import {
@@ -36,10 +37,8 @@ import {
 } from "../../services/location";
 import type { Coordinates } from "../../services/matching";
 import {
-  loadLanguage,
   loadLocalProfile,
   serializeMonsterSeedForLegacyBio,
-  subscribeLanguage,
   type AppLanguage,
 } from "../../services/onboarding";
 import { updateMyProfile } from "../../services/profile";
@@ -488,7 +487,10 @@ export default function SearchPreferencesScreen() {
   const PLACEHOLDER_GRAY = colors.text.muted;
   const { query } = useLocalSearchParams<{ query?: string | string[] }>();
   const initialQuery = Array.isArray(query) ? query[0] : query;
-  const [language, setLanguage] = useState<AppLanguage>("en");
+  const resolvedLanguage = useDisplayLanguage();
+  // Keep a typed fallback for callbacks that can run while storage is being
+  // resolved. The render below stays neutral until the real value exists.
+  const language = resolvedLanguage ?? "en";
   const suggestedSchedule = useMemo(() => defaultRecruitmentSchedule(), []);
   const suggestedDate = suggestedSchedule.date;
   const [description, setDescription] = useState(initialQuery ?? "");
@@ -583,28 +585,6 @@ export default function SearchPreferencesScreen() {
     manualFallbackVisible || previewStatus === "success"
       ? viewportConfirmationHeight
       : compactConfirmationHeight;
-
-  useEffect(() => {
-    let active = true;
-    const unsubscribe = subscribeLanguage((nextLanguage) => {
-      if (active && nextLanguage) setLanguage(nextLanguage);
-    });
-
-    void loadLanguage()
-      .then((storedLanguage) => {
-        if (!active) return;
-        setLanguage(storedLanguage ?? "en");
-      })
-      .catch(() => {
-        if (!active) return;
-        setLanguage("en");
-      });
-
-    return () => {
-      active = false;
-      unsubscribe();
-    };
-  }, []);
 
   useEffect(() => {
     const animation = Animated.parallel([
@@ -1387,6 +1367,17 @@ export default function SearchPreferencesScreen() {
       }
     });
   };
+
+  if (!resolvedLanguage) {
+    return (
+      <View style={styles.screen}>
+        <StatusBar style={scheme === "dark" ? "light" : "dark"} />
+        <View style={styles.languageLoadingPanel}>
+          <LoadingSpinner color={BLUE} size={24} />
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.screen}>
@@ -2425,6 +2416,11 @@ function createStyles(colors: ThemeColors) {
   screen: {
     flex: 1,
     backgroundColor: colors.surface.screen,
+  },
+  languageLoadingPanel: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
   },
   homeLayer: {
     position: "absolute",

@@ -4,9 +4,10 @@ import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "r
 import { StatusBar } from "expo-status-bar";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { Header, LoadingScreen, RefreshLoadingIndicator } from "../../components/ui";
+import { Header, LoadingSpinner, RefreshLoadingIndicator } from "../../components/ui";
 import type { ThemeColors } from "../../components/ui/tokens";
 import { useAuth } from "../../hooks/useAuth";
+import { useDisplayLanguage } from "../../hooks/useDisplayLanguage";
 import { useTheme, useThemeStyles } from "../../hooks/useTheme";
 import { APIError } from "../../services/api-client";
 import {
@@ -15,7 +16,6 @@ import {
   type ChatListFilter,
   type ChatSummary,
 } from "../../services/chat";
-import { loadLanguage, subscribeLanguage, type AppLanguage } from "../../services/onboarding";
 import { getTabBarContentBottomPadding } from "../../utils/layout";
 
 const COPY = {
@@ -93,7 +93,7 @@ export default function ChatListScreen() {
   const { matchId } = useLocalSearchParams<{ matchId?: string | string[] }>();
   const targetMatchID = Array.isArray(matchId) ? matchId[0] : matchId;
   const { getCurrentSession, refresh, session, status } = useAuth();
-  const [language, setLanguage] = useState<AppLanguage | null>(null);
+  const language = useDisplayLanguage();
   const [chats, setChats] = useState<ChatSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -166,24 +166,6 @@ export default function ChatListScreen() {
     };
   }, [copy.loadError, copy.signInRequired, getCurrentSession, refresh, session, status]);
 
-  useEffect(() => {
-    let active = true;
-    const unsubscribe = subscribeLanguage((nextLanguage) => {
-      if (active) setLanguage(nextLanguage ?? "ja");
-    });
-    void loadLanguage().then((storedLanguage) => {
-      if (!active) return;
-      const nextLanguage = storedLanguage ?? "ja";
-      setLanguage(nextLanguage);
-    }).catch(() => {
-      if (active) setLanguage("ja");
-    });
-    return () => {
-      active = false;
-      unsubscribe();
-    };
-  }, []);
-
   useFocusEffect(
     useCallback(() => load("initial"), [load]),
   );
@@ -200,11 +182,19 @@ export default function ChatListScreen() {
   }, [chats, loadError, loading, router, targetMatchID]);
 
   if (!language) {
-    return <LoadingScreen />;
-  }
-
-  if (loading && chats.length === 0 && !loadError) {
-    return <LoadingScreen />;
+    return (
+      <View style={styles.screen}>
+        <StatusBar style="dark" />
+        <Header
+          iconName="chat-bubble-outline"
+          style={[styles.header, { paddingTop: Math.max(insets.top, 20) }]}
+          variant="hero"
+        />
+        <View style={styles.languageLoadingPanel}>
+          <LoadingSpinner color={BLUE} size={24} />
+        </View>
+      </View>
+    );
   }
 
   return (
@@ -262,7 +252,12 @@ export default function ChatListScreen() {
             </View>
           </View>
         ) : null}
-        {loading && chats.length === 0 ? null : loadError && chats.length === 0 ? (
+        {loading && chats.length === 0 && !loadError ? (
+          <View style={styles.statePanel}>
+            <LoadingSpinner color={BLUE} size={24} />
+            <Text style={styles.stateText}>{copy.loading}</Text>
+          </View>
+        ) : loadError && chats.length === 0 ? (
           <View style={styles.statePanel}>
             <Text accessibilityRole="alert" style={styles.stateText}>{loadError}</Text>
             <Pressable
@@ -361,12 +356,6 @@ function createStyles(colors: ThemeColors) {
     flex: 1,
     backgroundColor: colors.surface.screen,
   },
-  loadingScreen: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: colors.surface.screen,
-  },
   header: {
     minHeight: 178,
     paddingHorizontal: 24,
@@ -387,6 +376,11 @@ function createStyles(colors: ThemeColors) {
     alignItems: "center",
     paddingTop: 36,
     paddingHorizontal: 24,
+  },
+  languageLoadingPanel: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
   },
   filterSection: {
     width: "100%",

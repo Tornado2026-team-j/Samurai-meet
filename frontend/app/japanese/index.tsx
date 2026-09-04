@@ -15,11 +15,11 @@ import {
 import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import MatchCard from "../../components/MatchCard";
-import { LoadingScreen, RefreshLoadingIndicator } from "../../components/ui";
+import { LoadingSpinner, RefreshLoadingIndicator } from "../../components/ui";
 import type { ThemeColors } from "../../components/ui/tokens";
 import { useAuth } from "../../hooks/useAuth";
-import { useDelayedLoading } from "../../hooks/useDelayedLoading";
 import { useNavigationGuard } from "../../hooks/useNavigationGuard";
+import { useDisplayLanguage } from "../../hooks/useDisplayLanguage";
 import { useTheme, useThemeStyles } from "../../hooks/useTheme";
 import { useUnreadNotifications } from "../../hooks/useUnreadNotifications";
 import { APIError } from "../../services/api-client";
@@ -32,7 +32,7 @@ import {
   searchRecruitments,
   updateCurrentLocation,
 } from "../../services/matching";
-import { loadLanguage, subscribeLanguage, type AppLanguage } from "../../services/onboarding";
+import { type AppLanguage } from "../../services/onboarding";
 import { isMatchCategory, type MatchCardData } from "../../types/match";
 import { getTabBarContentBottomPadding } from "../../utils/layout";
 
@@ -166,7 +166,7 @@ export default function JapaneseHomeScreen() {
   const PLACEHOLDER_GRAY = colors.text.muted;
   const { getCurrentSession, refresh, session, status } = useAuth();
   const hasUnreadNotifications = useUnreadNotifications();
-  const [language, setLanguage] = useState<AppLanguage | null>(null);
+  const language = useDisplayLanguage();
   const [query, setQuery] = useState(params.query ?? "");
   const [submittedQuery, setSubmittedQuery] = useState(params.query ?? "");
   const [recruitments, setRecruitments] = useState<Recruitment[]>([]);
@@ -238,13 +238,13 @@ export default function JapaneseHomeScreen() {
     : selectedTime === "afternoon" ? { startTime: "12:00", endTime: "18:00" }
       : selectedTime === "evening" ? { startTime: "18:00", endTime: "23:59" }
         : {}, [selectedTime]);
+  // The fallback is only for effects that may finish while language storage
+  // is unresolved. The neutral branch below prevents it from being rendered.
   const copy = COPY[language ?? "ja"];
   const matches = useMemo(() => sortRecruitments(recruitments, sortMode).map((item) => ({
     ...recruitmentToMatchCard(item),
     applicationStatus: applicationStatuses[item.id],
   })), [applicationStatuses, recruitments, sortMode]);
-  const showLanguageLoading = useDelayedLoading(!language);
-  const showInitialLoading = useDelayedLoading(loading && matches.length === 0);
   const copyRef = useRef(copy);
   copyRef.current = copy;
   const dateButtons = useMemo(
@@ -445,22 +445,6 @@ export default function JapaneseHomeScreen() {
     activeSearchRequestRef.current = null;
   }, []);
 
-  useEffect(() => {
-    let active = true;
-    const unsubscribe = subscribeLanguage((nextLanguage) => {
-      if (active && nextLanguage) setLanguage(nextLanguage);
-    });
-    void loadLanguage().then((storedLanguage) => {
-      if (active) setLanguage(storedLanguage ?? "ja");
-    }).catch(() => {
-      if (active) setLanguage("ja");
-    });
-    return () => {
-      active = false;
-      unsubscribe();
-    };
-  }, []);
-
   const loadRecruitmentsRef = useRef(loadRecruitments);
   loadRecruitmentsRef.current = loadRecruitments;
 
@@ -515,11 +499,18 @@ export default function JapaneseHomeScreen() {
   };
 
   if (!language) {
-    return showLanguageLoading ? <LoadingScreen /> : <View style={styles.loadingScreen} />;
-  }
-
-  if (showInitialLoading && loading && matches.length === 0 && !loadError) {
-    return <LoadingScreen />;
+    return (
+      <View style={styles.screen}>
+        <StatusBar style="dark" />
+        <View style={styles.languageLoadingPanel}>
+          <LoadingSpinner color={BLUE} size={24} />
+        </View>
+        <View
+          pointerEvents="none"
+          style={[styles.header, { height: headerHeight }]}
+        />
+      </View>
+    );
   }
 
   return (
@@ -557,8 +548,11 @@ export default function JapaneseHomeScreen() {
             <MaterialIcons color={BLUE} name="chevron-right" size={22} />
           </Pressable>
         ) : null}
-        {loading && matches.length === 0 ? (
-          null
+        {loading && matches.length === 0 && !loadError ? (
+          <View style={styles.statePanel}>
+            <LoadingSpinner color={BLUE} size={24} />
+            <Text style={styles.stateText}>{copy.loading}</Text>
+          </View>
         ) : loadError && matches.length === 0 ? (
           <View style={styles.statePanel}>
             <Text accessibilityRole="alert" style={styles.stateText}>{loadError}</Text>
@@ -585,7 +579,7 @@ export default function JapaneseHomeScreen() {
               </View>
             ) : null}
             {filteredMatches.map((match) => (
-              <MatchCard key={match.id} language={language ?? "ja"} match={match} onOpen={openMatch} />
+              <MatchCard key={match.id} language={language} match={match} onOpen={openMatch} />
             ))}
           </>
         )}
@@ -939,12 +933,6 @@ function createStyles(colors: ThemeColors) {
     letterSpacing: 0,
     lineHeight: 20,
   },
-  loadingScreen: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: colors.surface.screen,
-  },
   emptyText: {
     marginTop: 40,
     color: colors.text.muted,
@@ -959,6 +947,12 @@ function createStyles(colors: ThemeColors) {
     justifyContent: "center",
     paddingHorizontal: 28,
     gap: 12,
+  },
+  languageLoadingPanel: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingTop: 246,
   },
   inlineError: {
     width: "100%",

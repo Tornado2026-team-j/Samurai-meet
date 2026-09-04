@@ -15,9 +15,10 @@ import {
 import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { RecoveryCompletion, RecoveryKeyDisplay } from "../components/RecoveryFlow";
-import { Header, LoadingScreen } from "../components/ui";
+import { Header, LoadingScreen, LoadingSpinner } from "../components/ui";
 import type { ThemeColors } from "../components/ui/tokens";
 import { useAuth } from "../hooks/useAuth";
+import { useDisplayLanguage } from "../hooks/useDisplayLanguage";
 import { useTheme, useThemeStyles } from "../hooks/useTheme";
 import {
   completeRecoveryKeyRotation,
@@ -37,7 +38,6 @@ import {
   loadLocalProfile,
   saveAppMode,
   saveLanguage,
-  subscribeLanguage,
   type AppMode,
 } from "../services/onboarding";
 import type {
@@ -297,7 +297,7 @@ export function ProfileScreen({ settingsOnly = false }: ProfileScreenProps = {})
   const TEXT_GRAY = colors.text.secondary;
   const MUTED_GRAY = colors.text.subtle;
   const { continuePasskey, deleteAccount, error, getCurrentSession, logout, session, status } = useAuth();
-  const [language, setLanguage] = useState<AppLanguage>("ja");
+  const language = useDisplayLanguage();
   const [appMode, setAppMode] = useState<AppMode>("local");
   const [profile, setProfile] = useState<LocalProfile | null>(null);
   const [profileLoaded, setProfileLoaded] = useState(false);
@@ -326,7 +326,7 @@ export function ProfileScreen({ settingsOnly = false }: ProfileScreenProps = {})
   sessionRef.current = session;
   const recoverySessionRef = useRef<Session | null>(null);
   const recoveryOperationRef = useRef(0);
-  const copy = COPY[language];
+  const copy = COPY[language ?? "ja"];
   const expectedDeleteConfirmation = copy.deleteConfirmation;
   const expectedDeviceResetConfirmation = language === "ja" ? "初期化" : "RESET";
 
@@ -344,7 +344,6 @@ export function ProfileScreen({ settingsOnly = false }: ProfileScreenProps = {})
       loadLocalProfile(activeSession.user_id),
     ]).then(([storedLanguage, storedMode, storedProfile]) => {
       if (!active) return;
-      setLanguage(storedLanguage ?? "ja");
       setAppMode(storedMode ?? (storedLanguage === "en" ? "traveler" : "local"));
       setProfile(storedProfile);
       setProfileLoaded(true);
@@ -356,13 +355,6 @@ export function ProfileScreen({ settingsOnly = false }: ProfileScreenProps = {})
       active = false;
     };
   }, [router, session?.session_id, session?.user_id]);
-
-  useEffect(() => {
-    const unsubscribe = subscribeLanguage((nextLanguage) => {
-      if (nextLanguage) setLanguage(nextLanguage);
-    });
-    return unsubscribe;
-  }, []);
 
   useEffect(() => {
     const userID = session?.user_id;
@@ -408,7 +400,6 @@ export function ProfileScreen({ settingsOnly = false }: ProfileScreenProps = {})
     setSettingsSaveFailed(false);
     try {
       await saveLanguage(nextLanguage);
-      setLanguage(nextLanguage);
     } catch {
       setSettingsSaveFailed(true);
     } finally {
@@ -448,7 +439,7 @@ export function ProfileScreen({ settingsOnly = false }: ProfileScreenProps = {})
     setRecoveryStage("reauthenticating");
     setRecoveryError(null);
     try {
-      const reauthenticated = await continuePasskey(language);
+      const reauthenticated = await continuePasskey(language ?? "ja");
       if (!reauthenticated) throw new Error(copy.recoveryError);
 
       const authenticatedSession = getCurrentSession() ?? rotationSession;
@@ -480,7 +471,7 @@ export function ProfileScreen({ settingsOnly = false }: ProfileScreenProps = {})
     setDeleting(true);
     setDeleteFailed(false);
     try {
-      const reauthenticated = await continuePasskey(language);
+      const reauthenticated = await continuePasskey(language ?? "ja");
       if (!reauthenticated) {
         throw new Error(copy.deleteError);
       }
@@ -504,7 +495,7 @@ export function ProfileScreen({ settingsOnly = false }: ProfileScreenProps = {})
     setDeviceKeyBusy(true);
     setDeviceInfoError(null);
     try {
-      const reauthenticated = await continuePasskey(language);
+      const reauthenticated = await continuePasskey(language ?? "ja");
       if (!reauthenticated) throw new Error(copy.deviceKeyBRevealError);
       setShowDeviceKeyB(true);
     } catch {
@@ -550,6 +541,22 @@ export function ProfileScreen({ settingsOnly = false }: ProfileScreenProps = {})
     setRecoveryPreparing(false);
     setRecoveryStage(null);
   }, [session]);
+
+  if (!language) {
+    return (
+      <View style={styles.screen}>
+        <StatusBar style="dark" />
+        <Header
+          iconName={settingsOnly ? "settings" : "person"}
+          style={[styles.header, { paddingTop: Math.max(insets.top, 20) }]}
+          variant="hero"
+        />
+        <View style={styles.languageLoadingPanel}>
+          <LoadingSpinner color={BLUE} size={24} />
+        </View>
+      </View>
+    );
+  }
 
   if (session && recoveryMaterial) {
     return (
@@ -600,7 +607,7 @@ export function ProfileScreen({ settingsOnly = false }: ProfileScreenProps = {})
     );
   }
 
-  if (!session || !profileLoaded) {
+  if (!session) {
     return <LoadingScreen label={copy.loading} style={{ paddingTop: Math.max(insets.top, 20) }} />;
   }
 
@@ -654,8 +661,15 @@ export function ProfileScreen({ settingsOnly = false }: ProfileScreenProps = {})
         ]}
         showsVerticalScrollIndicator={false}
       >
-        {!settingsOnly ? (
+        {!profileLoaded ? (
+          <View style={styles.loadingPanel}>
+            <LoadingSpinner color={BLUE} size={24} />
+            <Text style={styles.loadingText}>{copy.loading}</Text>
+          </View>
+        ) : (
           <>
+            {!settingsOnly ? (
+              <>
             <View style={styles.profileCard}>
               <View style={styles.profileIdentity}>
                 <View style={styles.avatar}>
@@ -737,11 +751,11 @@ export function ProfileScreen({ settingsOnly = false }: ProfileScreenProps = {})
                 <MaterialIcons color={BLUE} name="chevron-right" size={21} />
               </Pressable>
             </View>
-          </>
-        ) : null}
+              </>
+            ) : null}
 
-        {settingsOnly ? (
-          <View style={styles.settingsContent}>
+            {settingsOnly ? (
+              <View style={styles.settingsContent}>
           <View style={styles.managementSection}>
             <Text style={styles.managementTitle}>{copy.accountSecuritySection}</Text>
           {([
@@ -1146,8 +1160,10 @@ export function ProfileScreen({ settingsOnly = false }: ProfileScreenProps = {})
             </View>
           </ScrollView>
           </Modal>
-        </View>
-        ) : null}
+              </View>
+            ) : null}
+          </>
+        )}
       </ScrollView>
     </View>
   );
@@ -1275,6 +1291,17 @@ function createStyles(colors: ThemeColors) {
     justifyContent: "center",
     backgroundColor: colors.surface.screen,
     gap: 14,
+  },
+  loadingPanel: {
+    minHeight: 360,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 14,
+  },
+  languageLoadingPanel: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
   },
   loadingText: {
     color: colors.text.subtle,

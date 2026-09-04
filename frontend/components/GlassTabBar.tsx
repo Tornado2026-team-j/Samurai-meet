@@ -2,16 +2,12 @@ import { Ionicons } from "@expo/vector-icons";
 import { BlurView } from "expo-blur";
 import { LinearGradient } from "expo-linear-gradient";
 import { usePathname, useRouter, type Href } from "expo-router";
-import { useEffect, useRef, useState, type ComponentProps } from "react";
+import { useEffect, useRef, type ComponentProps } from "react";
 import { Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useDisplayLanguage } from "../hooks/useDisplayLanguage";
 import { useTheme } from "../hooks/useTheme";
-import {
-  loadLanguage,
-  subscribeLanguage,
-  type AppLanguage,
-  type AppMode,
-} from "../services/onboarding";
+import type { AppLanguage, AppMode } from "../services/onboarding";
 
 const BLUE = "#5EC5F5";
 
@@ -71,12 +67,11 @@ export default function GlassTabBar({
   const { scheme } = useTheme();
   const isDark = scheme === "dark";
   const pendingHref = useRef<string | null>(null);
-  const [language, setLanguage] = useState<AppLanguage | null>(null);
+  const language = useDisplayLanguage();
   const bottom = Math.max(insets.bottom + 3, 10);
   const defaultHomeHref: Href = appMode === "traveler" ? "/foreigner" : "/japanese";
   const defaultPlansHref: Href = "/plans";
-  const fallbackLanguage: AppLanguage = appMode === "traveler" ? "en" : "ja";
-  const labels = TAB_LABELS[language ?? fallbackLanguage];
+  const labels = language ? TAB_LABELS[language] : null;
   const visual = isDark
     ? {
       bar: "rgba(24, 29, 34, 0.88)",
@@ -101,24 +96,6 @@ export default function GlassTabBar({
     pendingHref.current = null;
   }, [pathname]);
 
-  useEffect(() => {
-    let active = true;
-    const unsubscribe = subscribeLanguage((nextLanguage) => {
-      if (active && nextLanguage) setLanguage(nextLanguage);
-    });
-    void loadLanguage()
-      .then((storedLanguage) => {
-        if (active) setLanguage(storedLanguage ?? fallbackLanguage);
-      })
-      .catch(() => {
-        if (active) setLanguage(fallbackLanguage);
-      });
-    return () => {
-      active = false;
-      unsubscribe();
-    };
-  }, [fallbackLanguage]);
-
   const hrefFor = (key: TabKey): Href => {
     switch (key) {
       case "home":
@@ -141,7 +118,8 @@ export default function GlassTabBar({
     if (targetPath === pathname || pendingHref.current === targetKey) return;
 
     pendingHref.current = targetKey;
-    router.replace(href);
+    // Keep the previous tab in the stack so iOS's edge-swipe can return to it.
+    router.navigate(href);
   };
 
   return (
@@ -164,7 +142,7 @@ export default function GlassTabBar({
         />
         {TAB_ITEMS.map((item) => {
           const selected = item.key === activeTab;
-          const label = labels[item.key];
+          const label = labels?.[item.key];
           return (
             <Pressable
               key={item.key}
@@ -184,9 +162,11 @@ export default function GlassTabBar({
                   size={22}
                 />
               </View>
-              <Text numberOfLines={1} style={[styles.label, { color: visual.text }, selected && styles.labelSelected]}>
-                {label}
-              </Text>
+              {label ? (
+                <Text numberOfLines={1} style={[styles.label, { color: visual.text }, selected && styles.labelSelected]}>
+                  {label}
+                </Text>
+              ) : <View style={styles.labelPlaceholder} />}
             </Pressable>
           );
         })}
@@ -252,6 +232,9 @@ const styles = StyleSheet.create({
   labelSelected: {
     color: BLUE,
     fontWeight: "700",
+  },
+  labelPlaceholder: {
+    height: 12,
   },
   pressed: {
     opacity: 0.72,

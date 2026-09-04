@@ -11,37 +11,17 @@ import {
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { LoadingScreen, RefreshLoadingIndicator, spacing } from "../../components/ui";
+import { LoadingSpinner, RefreshLoadingIndicator, spacing } from "../../components/ui";
 import type { ThemeColors } from "../../components/ui/tokens";
 import { useAuth } from "../../hooks/useAuth";
+import { useDisplayLanguage } from "../../hooks/useDisplayLanguage";
 import { useUnreadNotifications } from "../../hooks/useUnreadNotifications";
-import { useDelayedLoading } from "../../hooks/useDelayedLoading";
 import { useTheme, useThemeStyles } from "../../hooks/useTheme";
 import { APIError } from "../../services/api-client";
 import { listChats } from "../../services/chat";
 import { listMatches, listMyRecruitments, type MatchView, type Recruitment } from "../../services/matching";
-import { loadLanguage, subscribeLanguage, type AppLanguage } from "../../services/onboarding";
+import { formatApplicationBio } from "../../services/profile-format";
 import { getTabBarContentBottomPadding } from "../../utils/layout";
-
-export function formatApplicationBio(value: unknown, fallback: string): string {
-  if (typeof value !== "string") return fallback;
-  const trimmed = value.trim();
-  if (!trimmed) return fallback;
-
-  try {
-    const parsed: unknown = JSON.parse(trimmed);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return fallback;
-
-    const seed = (parsed as { monsterSeed?: unknown }).monsterSeed;
-    if (!seed || typeof seed !== "object" || Array.isArray(seed)) return fallback;
-
-    const freeText = (seed as { freeText?: unknown }).freeText;
-    return typeof freeText === "string" && freeText.trim() ? freeText.trim() : fallback;
-  } catch {
-    // Older profiles may contain ordinary prose instead of structured metadata.
-    return trimmed;
-  }
-}
 
 const COPY = {
   ja: {
@@ -111,7 +91,7 @@ export default function ForeignerHomeScreen() {
   const YELLOW = colors.brand.gold;
   const { getCurrentSession, refresh, session, status } = useAuth();
   const hasUnreadNotifications = useUnreadNotifications();
-  const [language, setLanguage] = useState<AppLanguage | null>(null);
+  const language = useDisplayLanguage();
   const [applications, setApplications] = useState<MatchView[]>([]);
   const [ownedRecruitments, setOwnedRecruitments] = useState<Recruitment[]>([]);
   const [unreadChatCount, setUnreadChatCount] = useState(0);
@@ -120,7 +100,8 @@ export default function ForeignerHomeScreen() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const initialLoadStarted = useRef(false);
   const loadInFlight = useRef(false);
-  const showInitialLoading = useDelayedLoading(loading && applications.length === 0);
+  // Keep the fallback internal until the stored language is ready. The
+  // neutral branch below prevents guessed copy from appearing on screen.
   const copy = COPY[language ?? "en"];
   const copyRef = useRef(copy);
   copyRef.current = copy;
@@ -213,22 +194,6 @@ export default function ForeignerHomeScreen() {
     };
   }, [getCurrentSession, refresh, session, status]);
 
-  useEffect(() => {
-    let active = true;
-    const unsubscribe = subscribeLanguage((nextLanguage) => {
-      if (active && nextLanguage) setLanguage(nextLanguage);
-    });
-    void loadLanguage().then((storedLanguage) => {
-      if (active) setLanguage(storedLanguage ?? "en");
-    }).catch(() => {
-      if (active) setLanguage("en");
-    });
-    return () => {
-      active = false;
-      unsubscribe();
-    };
-  }, []);
-
   const loadApplicationsRef = useRef(loadApplications);
   loadApplicationsRef.current = loadApplications;
 
@@ -254,11 +219,15 @@ export default function ForeignerHomeScreen() {
   };
 
   if (!language) {
-    return <LoadingScreen />;
-  }
-
-  if (showInitialLoading && loading && applications.length === 0 && !loadError) {
-    return <LoadingScreen />;
+    return (
+      <View style={styles.screen}>
+        <StatusBar style="dark" />
+        <View style={styles.header} />
+        <View style={styles.languageLoadingPanel}>
+          <LoadingSpinner color={BLUE} size={24} />
+        </View>
+      </View>
+    );
   }
 
   return (
@@ -387,7 +356,12 @@ export default function ForeignerHomeScreen() {
           </View>
         </View>
 
-        {loading && applications.length === 0 ? null : loadError && applications.length === 0 ? (
+        {loading && applications.length === 0 && !loadError ? (
+          <View style={styles.emptyPanel}>
+            <LoadingSpinner color={BLUE} size={24} />
+            <Text style={styles.emptyTitle}>{copy.loading}</Text>
+          </View>
+        ) : loadError && applications.length === 0 ? (
           <View style={styles.emptyPanel}>
             <Text accessibilityRole="alert" style={styles.emptyTitle}>{loadError}</Text>
             <Pressable
@@ -503,6 +477,11 @@ function createStyles(colors: ThemeColors) {
     backgroundColor: colors.brand.sky,
     borderBottomLeftRadius: 50,
     borderBottomRightRadius: 50,
+  },
+  languageLoadingPanel: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
   },
   createButton: {
     width: "100%",
@@ -691,12 +670,6 @@ function createStyles(colors: ThemeColors) {
     maxWidth: 342,
     marginTop: 20,
     gap: 14,
-  },
-  loadingScreen: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: colors.surface.screen,
   },
   applicationSection: {
     width: "100%",

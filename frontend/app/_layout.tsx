@@ -54,7 +54,8 @@ function RootNavigator() {
         initialRouteName="index"
         screenLayout={({ children }) => <AuthRouteGuard>{children}</AuthRouteGuard>}
         screenOptions={{
-          animation: "none",
+          animation: "default",
+          gestureEnabled: true,
           headerShown: false,
         }}
       />

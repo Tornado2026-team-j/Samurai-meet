@@ -6,11 +6,10 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { ThemeColors } from "../components/ui/tokens";
 import { LoadingSpinner } from "../components/ui";
 import { useAuth } from "../hooks/useAuth";
+import { useDisplayLanguage } from "../hooks/useDisplayLanguage";
 import { useTheme, useThemeStyles } from "../hooks/useTheme";
 import {
-  loadLanguage,
   loadLocalProfile,
-  subscribeLanguage,
   type AppLanguage,
   type LocalProfile,
 } from "../services/onboarding";
@@ -102,31 +101,19 @@ export default function MonstersScreen() {
   const styles = useThemeStyles(createStyles);
   const BLUE = colors.brand.sky;
   const { session } = useAuth();
-  const [language, setLanguage] = useState<AppLanguage>("ja");
+  const language = useDisplayLanguage();
   const [profile, setProfile] = useState<LocalProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const loadedUserID = useRef<string | null>(null);
-  const copy = COPY[language];
-
-  useEffect(() => {
-    const unsubscribe = subscribeLanguage((nextLanguage) => {
-      if (nextLanguage) setLanguage(nextLanguage);
-    });
-    return unsubscribe;
-  }, []);
+  const copy = COPY[language ?? "ja"];
 
   useEffect(() => {
     let active = true;
     const userID = session?.user_id;
     loadedUserID.current = userID ?? null;
 
-    void Promise.all([
-      loadLanguage(),
-      userID ? loadLocalProfile(userID) : Promise.resolve(null),
-    ]).then(([storedLanguage, storedProfile]) => {
+    void (userID ? loadLocalProfile(userID) : Promise.resolve(null)).then((storedProfile) => {
       if (!active || loadedUserID.current !== (userID ?? null)) return;
-      const nextLanguage = storedLanguage ?? "ja";
-      setLanguage(nextLanguage);
       setProfile(storedProfile);
     }).finally(() => {
       if (active) setLoading(false);
@@ -137,10 +124,24 @@ export default function MonstersScreen() {
     };
   }, [session?.user_id]);
 
-  const skillText = profile ? formatTags(profile.monsterSeed.skillTags, language) : "";
-  const interestText = profile ? formatTags(profile.monsterSeed.interestTags, language) : "";
+  const skillText = profile ? formatTags(profile.monsterSeed.skillTags, language ?? "ja") : "";
+  const interestText = profile ? formatTags(profile.monsterSeed.interestTags, language ?? "ja") : "";
   const noteText = profile?.monsterSeed.freeText.trim() ?? "";
   const hasDetails = Boolean(skillText || interestText || noteText);
+
+  if (!language) {
+    return (
+      <View style={styles.screen}>
+        <StatusBar style="dark" />
+        <View style={[styles.header, { paddingTop: Math.max(insets.top, 20) }]}>
+          <MaterialIcons color={colors.text.onSky} name="auto-awesome" size={42} />
+        </View>
+        <View style={styles.languageLoadingPanel}>
+          <LoadingSpinner color={BLUE} size={24} />
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.screen}>
@@ -224,6 +225,11 @@ function createStyles(colors: ThemeColors) {
     paddingHorizontal: 24,
     paddingTop: 28,
     gap: 16,
+  },
+  languageLoadingPanel: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
   },
   panel: {
     width: "100%",
