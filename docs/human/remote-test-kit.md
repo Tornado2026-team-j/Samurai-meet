@@ -15,7 +15,9 @@
 - アプリ内通知とチャット画面へ遷移できる。
 - チャット送信前Moderation、暗号化RESTチャット、画像添付など、現行実装済みの境界を説明できる。
 
-発表用MVPでは、審査用ビルドの「デモを体験する」から24時間の一時アカウントを発行します。Demo専用API、DB、署名鍵、ストレージを本番から分離し、プロフィール、募集、応募、承認、チャットは通常画面と通常APIフローを再利用します。
+発表用MVPでは、審査用ビルドの「デモを体験する」から24時間の一時アカウントを発行します。
+Demo専用APIへ分離する構成と、明示的な本番APIフラグで有効化する構成のどちらでも、
+プロフィール、募集、応募、承認、チャットは通常画面と通常APIフローを再利用します。
 
 ## 2. 配布物
 
@@ -40,10 +42,13 @@ Expo Goの公開URLやEAS UpdateはExpoログインが必要になるため、�
 
 この方式を審査本番で使う条件は次の通りです。
 
-- Demo API、Demo DB、署名鍵、ストレージ、ログ領域が本番環境から分離されている。
-- `DEMO_ACCOUNT_ENABLED=true` と `EXPO_PUBLIC_DEMO_ACCOUNT_ENABLED=true` が審査環境だけで有効。
-- `GOOGLE_LOGIN_ENABLED=false` と `EXPO_PUBLIC_GOOGLE_LOGIN_ENABLED=false` でGoogleログイン導線を閉じている。
-- 本番環境ではDemo発行APIとDemo入口が無効。
+- Demo APIを分離する場合は、Demo DB、署名鍵、ストレージ、ログ領域も分離されている。
+- 現在の本番APIで動かす場合は、`DEMO_ACCOUNT_ENABLED=true`をAPI側で明示し、
+  `account_type`・期限・Demo同士限定の全API境界を確認する。
+- `EXPO_PUBLIC_DEMO_ACCOUNT_ENABLED=true`をクライアント側で明示する。
+- Googleログインを閉じる審査ビルドでは`GOOGLE_LOGIN_ENABLED=false`と
+  `EXPO_PUBLIC_GOOGLE_LOGIN_ENABLED=false`を設定する。通常ログインと併用する場合は両方trueにする。
+- 本番APIのDemoフラグは既定falseとし、発表時だけ明示的に有効化する。
 - Demo同士の募集、応募、承認、チャットが二端末E2Eで成功している。
 - 審査員がGoogleログインを使わず、Demo入口から開始する案内になっている。
 
@@ -79,7 +84,8 @@ Demo入口、審査用API、端末配布のいずれかに問題がある場合�
 - `/healthz`、`/readyz`、`/api/v1/healthz`、`/api/v1/readyz` が成功する。
 - 審査用APIで `DEMO_ACCOUNT_ENABLED=true` が有効になっている。
 - 審査用APIで `GOOGLE_LOGIN_ENABLED=false` が有効になっている。
-- `APP_ENV=production` の本番APIでは `DEMO_ACCOUNT_ENABLED=false` のままにする。
+- `APP_ENV=production` のAPIでは、発表時だけ `DEMO_ACCOUNT_ENABLED=true` を明示し、
+  通常運用へ戻すときは `false` に戻す。
 - DBは審査用データだけを扱う。通常本番利用者へ通知が飛ぶ環境を使わない。
 - `GEMINI_API_KEY` は募集分類に使うサーバー側だけへ設定する。
 - `OPENAI_API_KEY` はチャット本文Moderation用に設定する。未設定時は送信がfail-closedになる。

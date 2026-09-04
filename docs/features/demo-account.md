@@ -56,30 +56,36 @@ Demo 用の暗号方式は、画面上で暗号鍵の準備を体験させるた
 
 ## 4. 実行環境の分離
 
-本番への影響を避けるため、Demo は本番の公開サービスとは別環境で運用する。
+Demoは通常のアカウントとサーバー側のアカウントスコープで分離し、
+`DEMO_ACCOUNT_ENABLED=true`を明示したAPIでのみ発行する。本番APIでの有効化も許可するが、
+既定値は`false`とし、24時間期限・Demo同士限定の業務API境界・暗号方式の分離を必須とする。
 
 ### 必須構成
 
-- Expo Go の審査ビルドは Demo API Base URL を明示的に持つ。
-- Demo API は Demo 用 PostgreSQL、セッション署名鍵、ログ領域、ストレージを使う。
-- Demo API のDBユーザーに本番DBへの権限を与えない。
-- `APP_ENV=production` では `DEMO_ACCOUNT_ENABLED` を既定値 `false` とする。
-- 本番起動時に Demo 機能が誤って有効なら、起動を失敗させる。
+- Expo Goの審査ビルドは、Demoを有効化したAPI Base URLを明示的に持つ。
+- `APP_ENV=production`でも`DEMO_ACCOUNT_ENABLED=true`を明示した場合だけDemo発行を許可する。
+- 通常アカウントとDemoアカウントの検索、応募、match、chat、添付、通知は、APIの全入口で
+  アカウントスコープを検査する。
+- 分離APIを使う場合は、Demo用PostgreSQL、セッション署名鍵、ログ領域、ストレージを使い、
+  Demo APIのDBユーザーに本番DBへの権限を与えない。
 - API接続先が使えない場合に、本番APIへ自動フォールバックしない。
 
-同一クラスタを使わざるを得ない場合も、DB、DBロール、ストレージprefix、
-セッション署名鍵は分離する。アプリケーション層のスコープ検査だけを分離策の根拠にしない。
+Demo APIを本番APIへ同居させる場合は、通常アカウントとDemoアカウントを同じDBで扱えるが、
+アカウントスコープ、期限検査、Demo専用の鍵/APIバージョンを全入口で強制する。
+分離APIを使う場合は、DB、DBロール、ストレージprefix、セッション署名鍵も分離する。
 
 ### Feature Flag
 
 | 設定 | 既定値 | 用途 |
 | --- | --- | --- |
-| `DEMO_ACCOUNT_ENABLED` | `false` | バックエンドのDemo発行APIとDemo機能を有効化 |
+| `DEMO_ACCOUNT_ENABLED` | `false` | 本番を含む、明示したAPIのDemo発行APIとDemo機能を有効化 |
 | `EXPO_PUBLIC_DEMO_ACCOUNT_ENABLED` | `false` | 審査用クライアントの入口ボタンを表示 |
 | `EXPO_PUBLIC_API_BASE_URL` | 通常値 | DemoビルドではDemo APIを明示指定 |
 
 フラグが片側だけ有効でも利用できないようにする。クライアントだけでフラグを
-判定せず、発行APIでもサーバー側フラグを確認する。
+判定せず、発行APIでもサーバー側フラグを確認する。本番APIで通常ログインと併用する場合は、
+`GOOGLE_LOGIN_ENABLED=true`を許可するが、Demoは通常アカウントと混在させず、
+サーバー側のaccount scope境界を必須とする。
 
 ## 5. アカウント発行と24時間期限
 
@@ -348,7 +354,7 @@ migration前にcross-scope matchが存在しないことを検査する。存在
 - 通常ユーザーの検索・matchクエリにDemo行が混ざらないことをSQLテストで確認する。
 - Demo APIのfeature flagが無効なとき、発行APIはルーティングされないか明示的に拒否する。
 - ログは `account_type` とイベント種別だけを持ち、token、鍵、Phrase、本文を持たない。
-- 本番デプロイではDemo DB、Demo署名鍵、Demo URLが設定されていないことをCIで検査する。
+- 本番デプロイではDemoフラグが意図したときだけ有効で、通常運用へ戻せることをCI・運用手順で確認する。
 - Demo機能の障害時に通常ログインへ自動転送しない。
 
 ## 11. テストと受け入れ条件
@@ -395,7 +401,7 @@ React NativeのFlow記法 `import typeof` を直接解釈できないため分�
 
 1. Demo環境の二端末E2Eで、Demo同士のmatchとchatが成功している。
 2. 通常ユーザーとのcross-scope操作がAPIで拒否されている。
-3. 本番設定でDemo発行APIとDemoボタンが無効である。
+3. 本番設定でDemo発行APIとDemoボタンの有効化が意図した設定になっており、無効へ戻せる。
 4. 通常アカウントの既存認証・鍵・チャット回帰テストが通っている。
 5. ログ、DB、ネットワークキャプチャの確認で秘密鍵・Phrase・tokenが漏れていない。
 
@@ -407,7 +413,7 @@ React NativeのFlow記法 `import typeof` を直接解釈できないため分�
 4. フロントの専用モック画面を削除し、既存KeySetupへDemo crypto providerを接続する（実装済み）。
 5. `demo-chat-v1` の暗号化・復号を既存チャット画面へ接続する（実装済み）。
 6. Backend、Frontendの自動テストを実施し、Expo Go二端末E2Eを残課題とする。
-7. Demo環境を有効化し、本番環境の無効設定を実機・デプロイ設定で検証する（残課題）。
+7. Demo環境または本番APIのDemoフラグを有効化し、発行・期限切れ・無効化を実機・デプロイ設定で検証する（残課題）。
 
 関連仕様: [認証](auth.md)、[マッチング](matching.md)、[チャット](chat.md)、
 [データベース](../database.md)、[API仕様](../api.md)

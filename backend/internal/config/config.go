@@ -80,7 +80,9 @@ type DatabaseConfig struct {
 // single-host deployment may use a loopback-only PostgreSQL connection when
 // PostgreSQL TLS is not enabled.
 func (c Config) ValidateForEnvironment() error {
-	if c.DemoAccountEnabled {
+	environment := strings.ToLower(strings.TrimSpace(c.Environment))
+	production := environment == "production" || environment == "prod"
+	if c.DemoAccountEnabled && !production {
 		var demoProblems []string
 		if c.GoogleLoginEnabled {
 			demoProblems = append(demoProblems, "GOOGLE_LOGIN_ENABLED must be false when DEMO_ACCOUNT_ENABLED is true")
@@ -99,8 +101,7 @@ func (c Config) ValidateForEnvironment() error {
 		}
 	}
 
-	environment := strings.ToLower(strings.TrimSpace(c.Environment))
-	if environment != "production" && environment != "prod" {
+	if !production {
 		return nil
 	}
 	var missing []string
@@ -130,9 +131,6 @@ func (c Config) ValidateForEnvironment() error {
 	}
 	if strings.TrimSpace(c.ImageStorage.ProfileWrappingPrivateKeyPEM) == "" {
 		missing = append(missing, "PROFILE_WRAPPING_PRIVATE_KEY_PEM")
-	}
-	if c.DemoAccountEnabled {
-		missing = append(missing, "DEMO_ACCOUNT_ENABLED must be false in production")
 	}
 	if !validSecureOrigin(c.WebAuthn.RPOrigin) || strings.TrimSpace(c.WebAuthn.RPID) == "" {
 		missing = append(missing, "WEBAUTHN_RP_ID/WEBAUTHN_RP_ORIGIN (https origin)")

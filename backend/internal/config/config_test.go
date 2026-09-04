@@ -85,11 +85,14 @@ func TestProductionValidationAllowsExplicitModerationFreeModeForTemporaryTesting
 	}
 }
 
-func TestProductionValidationRejectsDemoAccounts(t *testing.T) {
+func TestProductionValidationAllowsExplicitDemoAccounts(t *testing.T) {
 	cfg := completeProductionConfig()
 	cfg.DemoAccountEnabled = true
-	if err := cfg.ValidateForEnvironment(); err == nil {
-		t.Fatal("production configuration with demo accounts enabled should fail")
+	cfg.GoogleLoginEnabled = true
+	cfg.Database.Name = "samurai_meet"
+	cfg.ImageStorage.Directory = "storage/images"
+	if err := cfg.ValidateForEnvironment(); err != nil {
+		t.Fatalf("explicit production demo configuration rejected: %v", err)
 	}
 }
 

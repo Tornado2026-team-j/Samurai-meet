@@ -36,7 +36,7 @@ func main() {
 		log.Printf("WARNING: CHAT_MODERATION_DEV_FREE_MODE=true is enabled for APP_ENV=%s; chat moderation uses the local conservative provider instead of OpenAI. Do not use real user data; disable this flag and configure OPENAI_API_KEY before normal production operation", cfg.Environment)
 	}
 	if cfg.DemoAccountEnabled {
-		log.Printf("WARNING: DEMO_ACCOUNT_ENABLED=true is enabled for APP_ENV=%s; use only a separated hackathon review API, database, signing key, and storage", cfg.Environment)
+		log.Printf("WARNING: DEMO_ACCOUNT_ENABLED=true is enabled for APP_ENV=%s; demo accounts are short-lived and must remain account-scope isolated from regular accounts", cfg.Environment)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

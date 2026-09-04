@@ -56,9 +56,12 @@ iPhoneのExpo GoからローカルGo APIを確認する場合だけ、`EXPO_PUBL
 
 ### ハッカソン審査用Demo入口
 
-Demoボタンは通常ビルドには表示されません。審査用API・DB・署名鍵・ストレージを
-分離したうえで、`frontend/.env.demo.example`を`frontend/.env`へコピーし、
-`<review-api-origin>`を実際のDemo APIへ置き換えてからExpoを再起動してください。
+Demoボタンは`EXPO_PUBLIC_DEMO_ACCOUNT_ENABLED=true`を明示したビルドに表示されます。
+現在の本番APIでDemoを使う場合は、API側でも`DEMO_ACCOUNT_ENABLED=true`を明示してください。
+分離したDemo APIを使う場合は、審査用API・DB・署名鍵・ストレージを分離したうえで、
+`frontend/.env.demo.example`を`frontend/.env`へコピーし、`<review-api-origin>`を
+実際のDemo APIへ置き換えてからExpoを再起動してください。フロント側だけ有効にすると
+`demo_account_disabled`になります。
 
 ```powershell
 Copy-Item .env.demo.example .env
@@ -66,7 +69,7 @@ bun run start -- --clear
 ```
 
 この設定で、Googleログインの途中状態を含む未ログイン画面に「デモを体験する」が
-表示されます。通常の`.env.example`や本番APIへ向けたビルドではDemo入口を有効化しないでください。
+表示されます。API側のDemoフラグが無効な場合は、入口を表示してもアカウント発行は拒否されます。
 
 ## チャットの現行境界
 
