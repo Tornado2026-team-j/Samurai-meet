@@ -28,6 +28,22 @@
       "expo-web-browser",
       "expo-font",
       "expo-notifications",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Samurai Meet uses your camera to capture memories after a guide."
+        }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "Samurai Meet uses your photos only when saving generated memory characters.",
+          "savePhotosPermission": "Samurai Meet saves generated memory characters to your photos when you choose to save them.",
+          "granularPermissions": [
+            "photo"
+          ]
+        }
+      ],
       "react-native-libsodium",
       [
         "expo-image-picker",

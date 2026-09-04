@@ -305,7 +305,12 @@ export default function PlansScreen() {
         const completedPlan = { ...plan, status: "completed" as const };
         reviewPromptedRef.current.add(plan.id);
         setPlans((items) => items.map((item) => item.id === plan.id ? completedPlan : item));
+        reviewPromptedRef.current.add(completedPlan.id);
         setReviewPlan(completedPlan);
+        router.push({
+          pathname: "/meeting-result/[matchId]",
+          params: { matchId: plan.id, meetingId: next.id },
+        } as unknown as Parameters<typeof router.push>[0]);
       }
     } catch (error) {
       setActionError(meetingActionError(error, copy));

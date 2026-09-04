@@ -13,6 +13,7 @@
   - フロントの有効化フラグは`EXPO_PUBLIC_MEETING_PROXIMITY_ENABLED=true`。ただしBLE native module未導入の間は、Development Buildでも測定を開始せず要件を画面に表示する。
 - フロントの既存モック、言語選択画面、ログアウト後のナビゲーションは、このバックエンド実装メモの対象外である。現行フロントでは募集日時・JST入力・通知画面接続などを別作業で変更中のため、「モックを変更していない」とは扱わない。
 - 募集画面はAPI接続済みで、日時入力のISO内部値／`Asia/Tokyo`固定と自動テストは完了している。日時選択から公開・応募・通知遷移までのiOS実機全通しE2Eを確認する。
+- 募集の所要時間が日跨ぎ（例：23:00〜翌00:00）になる場合は、終了日を翌日としてAPI・DB・検索・UI・実機E2Eで扱う。現状は同日終了のみ対応し、日跨ぎは今後対応予定。
 - 募集日時の壁時計は`Asia/Tokyo`固定、絶対時刻はUTC。通常のネイティブ接続先はproduction domainで、LAN URLは明示設定時だけ使う。通知はアプリ内RESTまでで、OSプッシュは未実装。
 - chat transport tokenはhandler既定値・サービス受理値ともに`webtransport`で一致し、HTTP/3 WebTransportだけに発行する。旧WebSocket endpointは410でありfallbackではない。native Development BuildでのWebTransport module実装、UDP/TLS公開、実機E2Eは残タスク。
 - チャット送信前Moderationは通常OpenAIへ送信し、未設定・障害時はfail-closedとなる。`CHAT_MODERATION_DEV_FREE_MODE=true`を明示した場合はAPP_ENVにかかわらず外部送信をしない保守的なローカル判定へ切り替える一時確認例外で、起動時警告を出し、実データを使わず、通常の本番運用前に無効化・キー設定する。

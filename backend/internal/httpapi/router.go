@@ -14,6 +14,7 @@ import (
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/keys"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/matching"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/meeting"
+	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/memorymonster"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/notification"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/push"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/safety"
@@ -48,6 +49,7 @@ type RouterOptions struct {
 	ChatModeration        chat.ModerationProvider
 	ChatTranslation       *translation.Service
 	Meetings              *meeting.Service
+	MemoryMonsters        *memorymonster.Service
 	Notifications         *notification.Service
 	Safety                *safety.Service
 	Identity              *identity.Service
@@ -140,10 +142,14 @@ func NewRouterWithOptions(o RouterOptions) http.Handler {
 		m.HandleFunc(recruitmentPath+"/mine", ownedRecruitmentCollection(o.Matching, o.Sessions))
 		m.HandleFunc(recruitmentPath+"/", recruitmentItem(o.Matching, o.Sessions))
 		m.HandleFunc(APIV1Prefix+"/matches", matchCollection(o.Matching, o.Sessions))
-		m.HandleFunc(APIV1Prefix+"/matches/", matchAction(o.Matching, o.Sessions, o.Meetings))
+		m.HandleFunc(APIV1Prefix+"/matches/", matchActionOrMemoryMonster(o.Matching, o.MemoryMonsters, o.Sessions, o.Meetings))
 		m.HandleFunc(APIV1Prefix+"/me/location", updateLocation(o.Matching, o.Sessions))
 	} else if o.Sessions != nil && o.Meetings != nil {
-		m.HandleFunc(APIV1Prefix+"/matches/", matchAction(nil, o.Sessions, o.Meetings))
+		m.HandleFunc(APIV1Prefix+"/matches/", matchActionOrMemoryMonster(nil, o.MemoryMonsters, o.Sessions, o.Meetings))
+	}
+	if o.Sessions != nil && o.MemoryMonsters != nil {
+		m.HandleFunc(memoryMonstersPath, memoryMonsterCollection(o.MemoryMonsters, o.Sessions))
+		m.HandleFunc(memoryMonstersPath+"/", memoryMonsterItem(o.MemoryMonsters, o.Sessions))
 	}
 	if o.Sessions != nil && o.Chats != nil {
 		m.HandleFunc(APIV1Prefix+"/me/demo/device-key", demoDeviceKey(o.Chats, o.Sessions))

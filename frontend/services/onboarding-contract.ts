@@ -17,15 +17,6 @@ export const MONSTER_INPUT_LIMITS = {
   enItemCharacters: 30,
 } as const;
 
-export const MONSTER_GENERATION_RULES = {
-  primaryTheme: "monsterSeed.interestTags[0]",
-  primaryAbility: "monsterSeed.skillTags[0]",
-  secondaryDecoration: [
-    "monsterSeed.interestTags[1]",
-    "monsterSeed.skillTags[1]",
-  ],
-} as const;
-
 export type LocalProfile = {
   name: string;
   nationalityCode: string;

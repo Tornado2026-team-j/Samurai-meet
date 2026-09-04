@@ -39,4 +39,13 @@ describe("募集プレビュー fallback のレイアウト契約", () => {
     expect(source).not.toContain("handleTimePickerChange");
     expect(source).not.toContain("pickerTimeRef");
   });
+
+  it("スケジュール警告は内容確認画面で再表示しない", async () => {
+    const source = await Bun.file(join(root, "app/tabs/index.tsx")).text();
+    const confirmationStart = source.indexOf("styles.confirmationContent");
+    const finalAction = source.indexOf("onPress={() => void publish(true)}", confirmationStart);
+
+    expect(finalAction).toBeGreaterThan(confirmationStart);
+    expect(source).toContain("onPress={() => void publish(true)}");
+  });
 });

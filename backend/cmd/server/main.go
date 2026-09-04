@@ -15,6 +15,7 @@ import (
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/keys"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/matching"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/meeting"
+	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/memorymonster"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/notification"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/push"
 	"github.com/Tornado2026-team-j/Samurai-meet/backend/internal/safety"
@@ -162,6 +163,17 @@ func main() {
 	startChatAttachmentSweep(chatService)
 	startChatRetentionSweep(chatService)
 	meetingService := meeting.NewService(database)
+	memoryMonsterStore, e := memorymonster.NewStore(cfg.ImageStorage.Directory)
+	if e != nil {
+		log.Fatalf("memory monster storage initialization failed: %v", e)
+	}
+	memoryMonsterGenerator := memorymonster.Generator(memorymonster.PlaceholderGenerator{})
+	if provider := memorymonster.NewGeminiImageGenerator(cfg.Gemini.APIKey, cfg.Gemini.ImageModel); provider != nil {
+		memoryMonsterGenerator = provider
+	} else {
+		log.Printf("memory monster generation uses placeholder provider; configure GEMINI_API_KEY and GEMINI_IMAGE_MODEL for real image generation")
+	}
+	memoryMonsters := memorymonster.NewService(database, memoryMonsterStore, memoryMonsterGenerator)
 	safetyService := safety.NewService(database)
 	identityService := identity.NewService(database, cfg.Stripe.SecretKey, cfg.Stripe.IdentityWebhookSecret, cfg.Stripe.IdentityReturnURL)
 	pushService := push.NewService(database)
@@ -172,7 +184,7 @@ func main() {
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       60 * time.Second,
 		MaxHeaderBytes:    32 * 1024,
-		Handler:           httpapi.NewRouterWithOptions(httpapi.RouterOptions{Environment: cfg.Environment, AllowExpoGoRedirect: cfg.AllowExpoGoRedirect, DevClientOrigin: cfg.DevClientOrigin, ClientOrigin: cfg.ClientOrigin, OAuthLogin: oauthLogin, DemoAccounts: demoAccounts, PreAuth: preauth, Sessions: sessions, SessionHandoffs: handoffs, PasskeyBootstraps: bootstraps, Recovery: recovery, Passkeys: passkeys, KeyEnvelopes: envelopes, Devices: devices, DeviceTransfers: deviceTransfers, Images: images, Accounts: accounts, Profiles: profiles, Matching: matchingService, RecruitmentClassifier: recruitmentClassifier, Chats: chatService, ChatModeration: chatModeration, ChatTranslation: chatTranslation, Meetings: meetingService, Notifications: notifications, Safety: safetyService, Identity: identityService, Push: pushService}),
+		Handler:           httpapi.NewRouterWithOptions(httpapi.RouterOptions{Environment: cfg.Environment, AllowExpoGoRedirect: cfg.AllowExpoGoRedirect, DevClientOrigin: cfg.DevClientOrigin, ClientOrigin: cfg.ClientOrigin, OAuthLogin: oauthLogin, DemoAccounts: demoAccounts, PreAuth: preauth, Sessions: sessions, SessionHandoffs: handoffs, PasskeyBootstraps: bootstraps, Recovery: recovery, Passkeys: passkeys, KeyEnvelopes: envelopes, Devices: devices, DeviceTransfers: deviceTransfers, Images: images, Accounts: accounts, Profiles: profiles, Matching: matchingService, RecruitmentClassifier: recruitmentClassifier, Chats: chatService, ChatModeration: chatModeration, ChatTranslation: chatTranslation, Meetings: meetingService, MemoryMonsters: memoryMonsters, Notifications: notifications, Safety: safetyService, Identity: identityService, Push: pushService}),
 	}
 	log.Printf("chat message retention window: %d days", chatService.RetentionDays())
 	log.Printf("backend server listening on %s (environment=%s)", cfg.HTTPAddr, cfg.Environment)
