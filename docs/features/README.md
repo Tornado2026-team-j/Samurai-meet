@@ -15,5 +15,6 @@
 | F-07 | 写真 | [photos.md](photos.md) |
 | F-08 | 相互評価・いいね | [reviews.md](reviews.md) |
 | F-09 | 通報・ブロック | [safety.md](safety.md) |
+| F-10 | 審査・お試し用Demoアカウント（設計のみ） | [demo-account.md](demo-account.md) |
 
 機能間の共通仕様は、[API 仕様書](../api.md)、[DB 仕様書](../database.md)、[技術選定・実装分担](../tech-stack.md) に集約します。

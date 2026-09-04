@@ -12,8 +12,10 @@ import {
   View,
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
-import { Header, colors, opacity, radius, spacing, typography } from "../components/ui";
+import { Header, opacity, radius, spacing, typography } from "../components/ui";
+import type { ThemeColors } from "../components/ui/tokens";
 import { useAuth } from "../hooks/useAuth";
+import { useTheme, useThemeStyles } from "../hooks/useTheme";
 import {
   acceptDeviceTransfer,
   approveDeviceTransfer,
@@ -96,6 +98,8 @@ const COPY = {
 
 export default function DeviceTransferScreen() {
   const router = useRouter();
+  const { colors } = useTheme();
+  const styles = useThemeStyles(createStyles);
   const { continuePasskey, getCurrentSession, session } = useAuth();
   const [language, setLanguage] = useState<AppLanguage>("ja");
   const [draft, setDraft] = useState<DeviceTransferDraft | null>(null);
@@ -332,22 +336,31 @@ export default function DeviceTransferScreen() {
 }
 
 function Section({ children, icon, title }: { children: React.ReactNode; icon: "phone-iphone" | "smartphone"; title: string }) {
+  const { colors } = useTheme();
+  const styles = useThemeStyles(createStyles);
   return <View style={styles.section}><View style={styles.sectionTitle}><MaterialIcons color={colors.brand.sky} name={icon} size={23} /><Text style={styles.sectionTitleText}>{title}</Text></View>{children}</View>;
 }
 
 function ValueRow({ copyLabel, label, onCopy, prominent = false, value }: { copyLabel: string; label: string; onCopy: () => void; prominent?: boolean; value: string }) {
+  const { colors } = useTheme();
+  const styles = useThemeStyles(createStyles);
   return <View style={styles.valueBlock}><Text style={styles.valueLabel}>{label}</Text><View style={styles.valueRow}><Text selectable style={[styles.value, prominent && styles.valueProminent]}>{value}</Text><Pressable onPress={onCopy} style={styles.copyButton}><MaterialIcons color={colors.brand.sky} name="content-copy" size={17} /><Text style={styles.copyText}>{copyLabel}</Text></Pressable></View></View>;
 }
 
 function PrimaryButton({ busy, disabled = false, label, onPress }: { busy: boolean; disabled?: boolean; label: string; onPress: () => void }) {
+  const { colors } = useTheme();
+  const styles = useThemeStyles(createStyles);
   return <Pressable disabled={busy || disabled} onPress={onPress} style={({ pressed }) => [styles.primary, (busy || disabled) && styles.disabled, pressed && styles.pressed]}>{busy ? <ActivityIndicator color={colors.text.inverse} /> : <Text style={styles.primaryText}>{label}</Text>}</Pressable>;
 }
 
 function SecondaryButton({ busy, label, onPress }: { busy: boolean; label: string; onPress: () => void }) {
+  const { colors } = useTheme();
+  const styles = useThemeStyles(createStyles);
   return <Pressable disabled={busy} onPress={onPress} style={({ pressed }) => [styles.secondary, busy && styles.disabled, pressed && styles.pressed]}>{busy ? <ActivityIndicator color={colors.brand.sky} /> : <Text style={styles.secondaryText}>{label}</Text>}</Pressable>;
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ThemeColors) {
+  return StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.surface.screen },
   content: { padding: spacing.xl, paddingBottom: 130, gap: spacing.lg },
   description: { color: colors.text.secondary, ...typography.body, lineHeight: 23 },
@@ -382,4 +395,5 @@ const styles = StyleSheet.create({
   empty: { paddingVertical: spacing.lg, color: colors.text.muted, ...typography.caption, textAlign: "center" },
   disabled: { opacity: opacity.disabled },
   pressed: { opacity: opacity.pressed },
-});
+  });
+}

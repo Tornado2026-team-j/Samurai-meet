@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps 
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { useRouter } from "expo-router";
 import {
-  ActivityIndicator,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -12,7 +11,10 @@ import {
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { LoadingScreen, RefreshLoadingIndicator } from "../../components/ui";
+import type { ThemeColors } from "../../components/ui/tokens";
 import { useAuth } from "../../hooks/useAuth";
+import { useTheme, useThemeStyles } from "../../hooks/useTheme";
 import { APIError } from "../../services/api-client";
 import {
   loadLanguage,
@@ -33,22 +35,11 @@ import type {
   NotificationView,
 } from "../../types/notification";
 
-const BLUE = "#5ec5f5";
-const YELLOW = "#e7b454";
-const LINK_BLUE = "#168df0";
-const TEXT_GRAY = "#535353";
-const MUTED_GRAY = "#949494";
-const BORDER_GRAY = "#e4e4e4";
-const SOFT_BLUE = "#eff8ff";
-
 type MaterialIconName = ComponentProps<typeof MaterialIcons>["name"];
 type Filter = "all" | "unread";
 
 type NotificationIconStyle = {
   name: MaterialIconName;
-  color: string;
-  backgroundColor: string;
-  borderColor: string;
 };
 
 const COPY = {
@@ -92,74 +83,56 @@ const NOTIFICATION_ICONS: Record<
 > = {
   new_application: {
     name: "how-to-reg",
-    color: YELLOW,
-    backgroundColor: "#fff8e8",
-    borderColor: "#f7dfaa",
   },
   match_confirmed: {
     name: "verified",
-    color: LINK_BLUE,
-    backgroundColor: SOFT_BLUE,
-    borderColor: "#caeafd",
   },
   application_rejected: {
     name: "sentiment-dissatisfied",
-    color: MUTED_GRAY,
-    backgroundColor: "#f7f7f7",
-    borderColor: BORDER_GRAY,
   },
   new_message: {
     name: "chat-bubble-outline",
-    color: BLUE,
-    backgroundColor: SOFT_BLUE,
-    borderColor: "#caeafd",
   },
   application_withdrawn: {
     name: "undo",
-    color: MUTED_GRAY,
-    backgroundColor: "#f7f7f7",
-    borderColor: BORDER_GRAY,
   },
   guide_canceled: {
     name: "event-busy",
-    color: "#d45555",
-    backgroundColor: "#fff2f2",
-    borderColor: "#f1cfcf",
   },
   guide_updated: {
     name: "event-note",
-    color: LINK_BLUE,
-    backgroundColor: SOFT_BLUE,
-    borderColor: "#caeafd",
   },
   guide_reminder: {
     name: "event-available",
-    color: BLUE,
-    backgroundColor: SOFT_BLUE,
-    borderColor: "#caeafd",
   },
   recruitment_expired: {
     name: "hourglass-empty",
-    color: MUTED_GRAY,
-    backgroundColor: "#f7f7f7",
-    borderColor: BORDER_GRAY,
   },
 };
 
 function NotificationIcon({ type }: { type: NotificationType }) {
+  const { colors } = useTheme();
+  const styles = useThemeStyles(createStyles);
   const icon = NOTIFICATION_ICONS[type];
+  const themedIcon = type === "guide_canceled"
+    ? { name: icon.name, color: colors.state.danger, backgroundColor: colors.surface.dangerSoft, borderColor: colors.border.danger }
+    : type === "new_application" || type === "match_confirmed"
+      ? { name: icon.name, color: type === "match_confirmed" ? colors.state.link : colors.brand.gold, backgroundColor: colors.surface.goldSoft, borderColor: colors.border.gold }
+      : type === "application_rejected" || type === "application_withdrawn" || type === "recruitment_expired"
+        ? { name: icon.name, color: colors.text.muted, backgroundColor: colors.surface.subtle, borderColor: colors.border.default }
+        : { name: icon.name, color: type === "guide_updated" ? colors.state.link : colors.brand.sky, backgroundColor: colors.surface.blueSoft, borderColor: colors.border.blue };
 
   return (
     <View
       style={[
         styles.iconCircle,
         {
-          backgroundColor: icon.backgroundColor,
-          borderColor: icon.borderColor,
+          backgroundColor: themedIcon.backgroundColor,
+          borderColor: themedIcon.borderColor,
         },
       ]}
     >
-      <MaterialIcons color={icon.color} name={icon.name} size={30} />
+      <MaterialIcons color={themedIcon.color} name={themedIcon.name} size={30} />
     </View>
   );
 }
@@ -171,6 +144,8 @@ function NotificationCard({
   notification: NotificationView;
   onPress: (notification: NotificationView) => void;
 }) {
+  const { colors } = useTheme();
+  const styles = useThemeStyles(createStyles);
   return (
     <Pressable
       accessibilityLabel={`${notification.title}. ${notification.message}`}
@@ -197,7 +172,7 @@ function NotificationCard({
         </Text>
       </View>
 
-      <MaterialIcons color={MUTED_GRAY} name="chevron-right" size={30} />
+      <MaterialIcons color={colors.text.muted} name="chevron-right" size={30} />
     </Pressable>
   );
 }
@@ -205,6 +180,9 @@ function NotificationCard({
 export default function ForeignerNotificationsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { colors } = useTheme();
+  const styles = useThemeStyles(createStyles);
+  const BLUE = colors.brand.sky;
   const { getCurrentSession, refresh, session, status } = useAuth();
   const [language, setLanguage] = useState<AppLanguage | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
@@ -401,12 +379,16 @@ export default function ForeignerNotificationsScreen() {
   };
 
   if (!language) {
-    return <View style={styles.loadingScreen}><StatusBar style="dark" /><ActivityIndicator color={BLUE} size="large" /></View>;
+    return <LoadingScreen />;
+  }
+
+  if (loading && notificationRecords.length === 0 && !loadError) {
+    return <LoadingScreen />;
   }
 
   return (
     <View style={styles.screen}>
-      <StatusBar style="light" />
+      <StatusBar style="dark" />
 
       <View style={styles.header}>
         <Pressable
@@ -420,10 +402,10 @@ export default function ForeignerNotificationsScreen() {
             pressed && styles.pressed,
           ]}
         >
-          <MaterialIcons color="#ffffff" name="chevron-left" size={30} />
+          <MaterialIcons color={colors.text.onSky} name="chevron-left" size={30} />
         </Pressable>
 
-        <MaterialIcons color="#ffffff" name="notifications-none" size={43} />
+        <MaterialIcons color={colors.text.onSky} name="notifications-none" size={43} />
         <Text style={styles.headerTitle}>{copy.title}</Text>
       </View>
 
@@ -431,11 +413,13 @@ export default function ForeignerNotificationsScreen() {
         contentContainerStyle={styles.content}
         refreshControl={
           <RefreshControl
+            colors={["transparent"]}
             onRefresh={() => {
               void loadNotifications("refresh");
             }}
+            progressBackgroundColor="transparent"
             refreshing={refreshing}
-            tintColor={BLUE}
+            tintColor="transparent"
           />
         }
         showsVerticalScrollIndicator={false}
@@ -495,12 +479,7 @@ export default function ForeignerNotificationsScreen() {
           ) : null}
         </View>
 
-        {loading && notificationRecords.length === 0 ? (
-          <View style={styles.emptyState}>
-            <ActivityIndicator color={BLUE} size="small" />
-            <Text style={styles.emptyTitle}>{copy.loading}</Text>
-          </View>
-        ) : loadError && notificationRecords.length === 0 ? (
+        {loading && notificationRecords.length === 0 ? null : loadError && notificationRecords.length === 0 ? (
           <View style={styles.emptyState}>
             <Text accessibilityRole="alert" style={styles.emptyTitle}>{loadError}</Text>
             <Pressable
@@ -537,14 +516,16 @@ export default function ForeignerNotificationsScreen() {
           </View>
         )}
       </ScrollView>
+      {refreshing ? <RefreshLoadingIndicator color={BLUE} top={248} /> : null}
     </View>
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ThemeColors) {
+  return StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.screen,
   },
   header: {
     position: "relative",
@@ -554,7 +535,7 @@ const styles = StyleSheet.create({
     paddingTop: 38,
     borderBottomLeftRadius: 50,
     borderBottomRightRadius: 50,
-    backgroundColor: BLUE,
+    backgroundColor: colors.brand.sky,
   },
   backButton: {
     position: "absolute",
@@ -567,7 +548,7 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     marginTop: 22,
-    color: "#ffffff",
+    color: colors.text.onSky,
     fontSize: 30,
     fontWeight: "900",
     letterSpacing: 0,
@@ -588,9 +569,9 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     padding: 2,
     borderWidth: 1,
-    borderColor: BORDER_GRAY,
+    borderColor: colors.border.default,
     borderRadius: 24,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.default,
   },
   actions: {
     width: "100%",
@@ -604,15 +585,15 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingHorizontal: 16,
     borderWidth: 1,
-    borderColor: LINK_BLUE,
+    borderColor: colors.state.link,
     borderRadius: 21,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.default,
   },
   markAllButtonDisabled: {
     opacity: 0.45,
   },
   markAllButtonText: {
-    color: LINK_BLUE,
+    color: colors.state.link,
     fontSize: 14,
     fontWeight: "900",
     lineHeight: 18,
@@ -620,7 +601,7 @@ const styles = StyleSheet.create({
   },
   actionError: {
     marginTop: 8,
-    color: "#c25a24",
+    color: colors.state.warning,
     fontSize: 12,
     fontWeight: "800",
     lineHeight: 17,
@@ -634,17 +615,17 @@ const styles = StyleSheet.create({
     borderRadius: 21,
   },
   segmentSelected: {
-    backgroundColor: BLUE,
+    backgroundColor: colors.brand.sky,
   },
   segmentText: {
-    color: MUTED_GRAY,
+    color: colors.text.muted,
     fontSize: 15,
     fontWeight: "900",
     letterSpacing: 0,
     lineHeight: 18,
   },
   segmentTextSelected: {
-    color: "#ffffff",
+    color: colors.text.onSky,
   },
   section: {
     width: "100%",
@@ -652,7 +633,7 @@ const styles = StyleSheet.create({
     marginTop: 34,
   },
   sectionTitle: {
-    color: "#30343b",
+    color: colors.text.primary,
     fontSize: 22,
     fontWeight: "900",
     letterSpacing: 0,
@@ -672,13 +653,13 @@ const styles = StyleSheet.create({
     paddingBottom: 18,
     paddingLeft: 27,
     borderWidth: 1,
-    borderColor: BORDER_GRAY,
+    borderColor: colors.border.default,
     borderRadius: 20,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.default,
   },
   notificationCardUnread: {
-    borderColor: BLUE,
-    backgroundColor: "#f4f9fd",
+    borderColor: colors.brand.sky,
+    backgroundColor: colors.surface.blueSoft,
   },
   iconCircle: {
     width: 62,
@@ -700,7 +681,7 @@ const styles = StyleSheet.create({
   },
   notificationTitle: {
     flex: 1,
-    color: "#101318",
+    color: colors.text.primary,
     fontSize: 16,
     fontWeight: "900",
     letterSpacing: 0,
@@ -712,18 +693,18 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: LINK_BLUE,
+    backgroundColor: colors.state.link,
   },
   notificationMessage: {
     marginTop: 7,
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 13,
     fontWeight: "700",
     letterSpacing: 0,
     lineHeight: 18,
   },
   receivedAt: {
-    color: MUTED_GRAY,
+    color: colors.text.muted,
     fontSize: 13,
     fontWeight: "700",
     letterSpacing: 0,
@@ -740,13 +721,13 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
-    borderColor: BLUE,
+    borderColor: colors.brand.sky,
     borderRadius: 38,
-    backgroundColor: "#eff8ff",
+    backgroundColor: colors.surface.blueSoft,
   },
   emptyTitle: {
     marginTop: 18,
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 15,
     fontWeight: "900",
     letterSpacing: 0,
@@ -757,7 +738,7 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.screen,
   },
   retryButton: {
     minWidth: 78,
@@ -767,14 +748,15 @@ const styles = StyleSheet.create({
     marginTop: 14,
     paddingHorizontal: 16,
     borderRadius: 17,
-    backgroundColor: YELLOW,
+    backgroundColor: colors.brand.gold,
   },
   retryButtonText: {
-    color: "#ffffff",
+    color: colors.text.onGold,
     fontSize: 13,
     fontWeight: "800",
   },
   pressed: {
     opacity: 0.72,
   },
-});
+  });
+}

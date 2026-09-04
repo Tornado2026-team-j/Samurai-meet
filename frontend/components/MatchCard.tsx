@@ -4,7 +4,9 @@ import { StyleSheet, Text, View } from "react-native";
 import type { MatchCardData } from "../types/match";
 import { loadLanguage, subscribeLanguage, type AppLanguage } from "../services/onboarding";
 import { getMatchCardCopy, getMatchCardStatusLabel } from "../services/matching";
-import { Card, Pill, colors, radius, typography } from "./ui";
+import { Card, Pill, radius, typography } from "./ui";
+import type { ThemeColors } from "./ui/tokens";
+import { useTheme, useThemeStyles } from "../hooks/useTheme";
 import { formatTimeRange } from "../utils/time";
 import { translateLocationLabel } from "../utils/location-labels";
 import { translateRecruitmentTag } from "../utils/recruitment-tags";
@@ -76,6 +78,8 @@ function useSelectedAppLanguage(explicitLanguage?: AppLanguage): AppLanguage {
 }
 
 export default function MatchCard({ match, onOpen, language: explicitLanguage }: MatchCardProps) {
+  const { colors } = useTheme();
+  const styles = useThemeStyles(createStyles);
   const language = useSelectedAppLanguage(explicitLanguage);
   const copy = getMatchCardCopy(language);
   const locationName = match.locationName
@@ -132,7 +136,8 @@ export default function MatchCard({ match, onOpen, language: explicitLanguage }:
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ThemeColors) {
+  return StyleSheet.create({
   card: {
     width: 307,
     maxWidth: "78.72%",
@@ -265,4 +270,5 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     letterSpacing: 0,
   },
-});
+  });
+}

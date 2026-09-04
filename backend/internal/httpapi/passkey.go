@@ -29,6 +29,9 @@ func passkeyRegisterOptions(passkeys *auth.PasskeyService, sessions *auth.Sessio
 		preAuthToken := ""
 		preAuthRegistration := false
 		if ok {
+			if !requireRegularAccount(w, claims) {
+				return
+			}
 			if !requireRecentPasskey(r, sessions, claims) {
 				writeRecentPasskeyRequired(w)
 				return
@@ -74,6 +77,9 @@ func passkeyRegisterVerify(passkeys *auth.PasskeyService, sessions *auth.Session
 		userID := ""
 		preAuthToken := ""
 		if ok {
+			if !requireRegularAccount(w, claims) {
+				return
+			}
 			if !requireRecentPasskey(r, sessions, claims) {
 				writeRecentPasskeyRequired(w)
 				return
@@ -197,6 +203,9 @@ func passkeyReauthOptions(passkeys *auth.PasskeyService, sessions *auth.SessionS
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing_or_invalid_access_token"})
 			return
 		}
+		if !requireRegularAccount(w, claims) {
+			return
+		}
 		if r.Method != http.MethodPost {
 			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
 			return
@@ -219,6 +228,9 @@ func passkeyReauthVerify(passkeys *auth.PasskeyService, sessions *auth.SessionSe
 		claims, ok := accessClaims(r, sessions)
 		if !ok {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing_or_invalid_access_token"})
+			return
+		}
+		if !requireRegularAccount(w, claims) {
 			return
 		}
 		token := strings.TrimSpace(r.Header.Get(passkeyCeremonyHTTPHeader))
@@ -250,6 +262,9 @@ func passkeyList(passkeys *auth.PasskeyService, sessions *auth.SessionService) h
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing_or_invalid_access_token"})
 			return
 		}
+		if !requireRegularAccount(w, claims) {
+			return
+		}
 		result, err := passkeys.ListCredentials(r.Context(), claims.Subject)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "passkey_list_failed"})
@@ -264,6 +279,9 @@ func passkeyRemove(passkeys *auth.PasskeyService, sessions *auth.SessionService)
 		claims, ok := accessClaims(r, sessions)
 		if !ok {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing_or_invalid_access_token"})
+			return
+		}
+		if !requireRegularAccount(w, claims) {
 			return
 		}
 		if r.Method != http.MethodDelete {

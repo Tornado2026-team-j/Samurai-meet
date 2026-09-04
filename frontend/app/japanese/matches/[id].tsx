@@ -11,8 +11,10 @@ import {
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { colors, LoadingSpinner } from "../../../components/ui";
+import { LoadingSpinner } from "../../../components/ui";
+import type { ThemeColors } from "../../../components/ui/tokens";
 import { useAuth } from "../../../hooks/useAuth";
+import { useTheme, useThemeStyles } from "../../../hooks/useTheme";
 import { APIError } from "../../../services/api-client";
 import { loadLanguage, subscribeLanguage } from "../../../services/onboarding";
 import {
@@ -24,10 +26,6 @@ import type { AppLanguage } from "../../../services/onboarding";
 import type { MatchCardData } from "../../../types/match";
 import { formatTimeRange } from "../../../utils/time";
 
-const BLUE = colors.brand.sky;
-const YELLOW = colors.brand.gold;
-const TEXT_GRAY = colors.text.muted;
-const HEADER_BLUE = colors.brand.sky;
 const CATEGORY_ICONS = {
   Food: "restaurant",
   Places: "place",
@@ -108,6 +106,11 @@ const COPY: Record<AppLanguage, MatchDetailCopy> = {
 export default function JapaneseMatchDetailScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { colors } = useTheme();
+  const styles = useThemeStyles(createStyles);
+  const BLUE = colors.brand.sky;
+  const YELLOW = colors.brand.gold;
+  const HEADER_BLUE = colors.brand.sky;
   const { getCurrentSession, refresh, session, status } = useAuth();
   const { id } = useLocalSearchParams<{ id?: string | string[] }>();
   const matchId = Array.isArray(id) ? id[0] : id;
@@ -211,7 +214,7 @@ export default function JapaneseMatchDetailScreen() {
     return (
       <View style={styles.loadingScreen}>
         <StatusBar style="light" />
-        <LoadingSpinner color={HEADER_BLUE} size={26} speedMs={680} />
+        <LoadingSpinner color={HEADER_BLUE} size={26} />
       </View>
     );
   }
@@ -220,7 +223,7 @@ export default function JapaneseMatchDetailScreen() {
     return (
       <View style={styles.loadingScreen}>
         <StatusBar style="light" />
-        {loadState === "loading" ? <LoadingSpinner color={HEADER_BLUE} size={26} speedMs={680} /> : null}
+        {loadState === "loading" ? <LoadingSpinner color={HEADER_BLUE} size={26} /> : null}
         <Text accessibilityRole={loadState === "error" ? "alert" : undefined} style={styles.loadingText}>
           {loadState === "loading" ? copy.loading : loadError}
         </Text>
@@ -294,7 +297,7 @@ export default function JapaneseMatchDetailScreen() {
 
   return (
     <View style={styles.screen}>
-      <StatusBar style="light" />
+      <StatusBar style="dark" />
 
       <ScrollView
         contentContainerStyle={[
@@ -327,7 +330,7 @@ export default function JapaneseMatchDetailScreen() {
                 pressed && styles.pressed,
               ]}
             >
-              <MaterialIcons color="#ffffff" name="chevron-left" size={30} />
+              <MaterialIcons color={colors.text.onSky} name="chevron-left" size={30} />
             </Pressable>
 
             <Pressable
@@ -341,7 +344,7 @@ export default function JapaneseMatchDetailScreen() {
                 pressed && styles.pressed,
               ]}
             >
-              <MaterialIcons color="#ffffff" name="home" size={24} />
+              <MaterialIcons color={colors.text.onSky} name="home" size={24} />
             </Pressable>
 
             <View
@@ -360,7 +363,7 @@ export default function JapaneseMatchDetailScreen() {
         </View>
         <View style={styles.content}>
           <View style={styles.profileGroup}>
-            <MaterialIcons color="#d4d4d4" name="account-circle" size={50} />
+            <MaterialIcons color={colors.border.muted} name="account-circle" size={50} />
             <View style={styles.profileText}>
               <View style={styles.nameRow}>
                 <Text numberOfLines={1} style={styles.name}>
@@ -378,7 +381,7 @@ export default function JapaneseMatchDetailScreen() {
 
           <View style={styles.schedulePanel}>
             <View style={styles.scheduleRow}>
-              <MaterialIcons color="#168df0" name="calendar-today" size={25} />
+              <MaterialIcons color={colors.state.link} name="calendar-today" size={25} />
               <View style={styles.scheduleText}>
                 <Text style={styles.scheduleLabel}>{copy.date}</Text>
                 <Text style={styles.scheduleValue}>{match.detailDate}</Text>
@@ -386,7 +389,7 @@ export default function JapaneseMatchDetailScreen() {
             </View>
             <View style={styles.divider} />
             <View style={[styles.scheduleRow, styles.timeRow]}>
-              <MaterialIcons color="#168df0" name="schedule" size={27} />
+              <MaterialIcons color={colors.state.link} name="schedule" size={27} />
               <View style={styles.scheduleText}>
                 <Text style={styles.scheduleLabel}>{copy.time}</Text>
                 <Text style={styles.scheduleValue}>
@@ -405,7 +408,7 @@ export default function JapaneseMatchDetailScreen() {
 
           <View style={styles.keywordsPanel}>
             <View style={styles.keywordsTitleRow}>
-              <MaterialIcons color="#168df0" name="sell" size={21} />
+              <MaterialIcons color={colors.state.link} name="sell" size={21} />
               <Text style={styles.keywordsTitle}>{copy.keywords}</Text>
             </View>
             <View style={styles.keywordsRow}>
@@ -457,7 +460,7 @@ export default function JapaneseMatchDetailScreen() {
             })}
             style={({ pressed }) => [styles.reportButton, pressed && styles.pressed]}
           >
-            <MaterialIcons color="#b42318" name="outlined-flag" size={19} />
+            <MaterialIcons color={colors.state.danger} name="outlined-flag" size={19} />
             <Text style={styles.reportButtonText}>{copy.report}</Text>
           </Pressable>
         </View>
@@ -466,10 +469,11 @@ export default function JapaneseMatchDetailScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ThemeColors) {
+  return StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.screen,
   },
   loadingScreen: {
     flex: 1,
@@ -477,10 +481,10 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingHorizontal: 32,
     gap: 14,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.screen,
   },
   loadingText: {
-    color: TEXT_GRAY,
+    color: colors.text.muted,
     fontSize: 14,
     fontWeight: "700",
     lineHeight: 20,
@@ -493,10 +497,10 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingHorizontal: 16,
     borderRadius: 18,
-    backgroundColor: YELLOW,
+    backgroundColor: colors.brand.gold,
   },
   loadingBackButtonText: {
-    color: "#ffffff",
+    color: colors.text.onGold,
     fontSize: 13,
     fontWeight: "800",
   },
@@ -508,10 +512,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     borderRadius: 18,
     borderWidth: 1.5,
-    borderColor: BLUE,
+    borderColor: colors.brand.sky,
   },
   retryButtonText: {
-    color: BLUE,
+    color: colors.brand.sky,
     fontSize: 13,
     fontWeight: "800",
   },
@@ -524,13 +528,13 @@ const styles = StyleSheet.create({
     gap: 7,
   },
   reportButtonText: {
-    color: "#b42318",
+    color: colors.state.danger,
     fontSize: 13,
     fontWeight: "800",
   },
   scrollContent: {
     flexGrow: 1,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.screen,
   },
   header: {
     position: "relative",
@@ -538,7 +542,7 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     borderBottomLeftRadius: 50,
     borderBottomRightRadius: 50,
-    backgroundColor: HEADER_BLUE,
+    backgroundColor: colors.brand.sky,
   },
   backButton: {
     position: "absolute",
@@ -578,10 +582,10 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 8,
     borderRadius: 10,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.default,
   },
   categoryText: {
-    color: "#535353",
+    color: colors.text.secondary,
     fontSize: 15,
     fontWeight: "700",
     letterSpacing: 0,
@@ -610,7 +614,7 @@ const styles = StyleSheet.create({
   },
   name: {
     maxWidth: 154,
-    color: "#000000",
+    color: colors.text.primary,
     fontSize: 20,
     fontWeight: "900",
     letterSpacing: 0,
@@ -618,7 +622,7 @@ const styles = StyleSheet.create({
   },
   flag: {
     marginLeft: 13,
-    color: "#000000",
+    color: colors.text.primary,
     fontSize: 20,
     fontWeight: "900",
     letterSpacing: 0,
@@ -626,7 +630,7 @@ const styles = StyleSheet.create({
   },
   country: {
     marginTop: 2,
-    color: TEXT_GRAY,
+    color: colors.text.muted,
     fontSize: 12,
     fontWeight: "700",
     letterSpacing: 0,
@@ -640,7 +644,7 @@ const styles = StyleSheet.create({
   },
   rating: {
     marginLeft: 5,
-    color: YELLOW,
+    color: colors.brand.gold,
     fontSize: 12,
     fontWeight: "700",
     letterSpacing: 0,
@@ -653,9 +657,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingVertical: 15,
     borderWidth: 1,
-    borderColor: "#e4e4e4",
+    borderColor: colors.border.default,
     borderRadius: 12,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.default,
   },
   scheduleRow: {
     minHeight: 40,
@@ -669,7 +673,7 @@ const styles = StyleSheet.create({
     marginLeft: 17,
   },
   scheduleLabel: {
-    color: "#3d3d3d",
+    color: colors.text.secondary,
     fontSize: 12,
     fontWeight: "700",
     letterSpacing: 0,
@@ -677,7 +681,7 @@ const styles = StyleSheet.create({
   },
   scheduleValue: {
     marginTop: 3,
-    color: "#000000",
+    color: colors.text.primary,
     fontSize: 20,
     fontWeight: "900",
     letterSpacing: 0,
@@ -690,7 +694,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   peopleText: {
-    color: TEXT_GRAY,
+    color: colors.text.muted,
     fontSize: 13,
     fontWeight: "700",
   },
@@ -698,7 +702,7 @@ const styles = StyleSheet.create({
     width: "100%",
     height: 1,
     marginVertical: 5,
-    backgroundColor: "#e6e6e6",
+    backgroundColor: colors.border.subtle,
   },
   descriptionPanel: {
     width: "100%",
@@ -707,12 +711,12 @@ const styles = StyleSheet.create({
     paddingTop: 10,
     paddingHorizontal: 15,
     borderWidth: 1,
-    borderColor: BLUE,
+    borderColor: colors.brand.sky,
     borderRadius: 20,
-    backgroundColor: "#f4f9fd",
+    backgroundColor: colors.surface.blueSoft,
   },
   descriptionLabel: {
-    color: BLUE,
+    color: colors.brand.sky,
     fontSize: 12,
     fontWeight: "700",
     letterSpacing: 0,
@@ -720,7 +724,7 @@ const styles = StyleSheet.create({
   },
   description: {
     marginTop: 10,
-    color: "#000000",
+    color: colors.text.primary,
     fontSize: 12,
     fontWeight: "700",
     letterSpacing: 0,
@@ -738,7 +742,7 @@ const styles = StyleSheet.create({
   },
   keywordsTitle: {
     marginLeft: 7,
-    color: "#168df0",
+    color: colors.state.link,
     fontSize: 12,
     fontWeight: "700",
     letterSpacing: 0,
@@ -758,10 +762,10 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderRadius: 10,
-    backgroundColor: "#eff8ff",
+    backgroundColor: colors.surface.blueSoft,
   },
   keywordText: {
-    color: "#222222",
+    color: colors.text.primary,
     fontSize: 12,
     fontWeight: "700",
     letterSpacing: 0,
@@ -774,15 +778,15 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
-    borderColor: YELLOW,
+    borderColor: colors.brand.gold,
     borderRadius: 10,
-    backgroundColor: YELLOW,
+    backgroundColor: colors.brand.gold,
   },
   guideButtonDisabled: {
     opacity: 0.72,
   },
   guideButtonText: {
-    color: "#ffffff",
+    color: colors.text.onGold,
     fontSize: 15,
     fontWeight: "900",
     letterSpacing: 0,
@@ -791,7 +795,7 @@ const styles = StyleSheet.create({
   requestError: {
     width: "100%",
     marginTop: 10,
-    color: "#d45555",
+    color: colors.state.danger,
     fontSize: 11,
     fontWeight: "700",
     letterSpacing: 0,
@@ -801,4 +805,5 @@ const styles = StyleSheet.create({
   pressed: {
     opacity: 0.72,
   },
-});
+  });
+}

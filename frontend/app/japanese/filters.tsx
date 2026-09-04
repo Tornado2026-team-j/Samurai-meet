@@ -16,7 +16,9 @@ import {
   View,
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
-import { Header, colors, radius } from "../../components/ui";
+import { Header, radius } from "../../components/ui";
+import type { ThemeColors } from "../../components/ui/tokens";
+import { useTheme, useThemeStyles } from "../../hooks/useTheme";
 import {
   formatRecruitmentISODate,
   JST_TIME_ZONE,
@@ -106,6 +108,8 @@ function datePickerBounds(field: DateField, availableFrom: string, availableTo: 
 export default function JapaneseFiltersScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { colors, scheme } = useTheme();
+  const styles = useThemeStyles(createStyles);
   const params = useLocalSearchParams<{ category?: string; time?: string; radius?: string; query?: string; date?: string; sort?: string; availableFrom?: string; availableTo?: string }>();
   const [category, setCategory] = useState<MatchCategory | "">(CATEGORIES.some((item) => item.value === params.category) ? params.category as MatchCategory : "");
   const [time, setTime] = useState(TIMES.some((item) => item.value === params.time) ? params.time ?? "" : "");
@@ -217,18 +221,22 @@ export default function JapaneseFiltersScreen() {
       <StatusBar style="light" />
       <Header
         onBack={() => router.back()}
-        right={
+        right={hasActiveFilters ? (
           <Pressable
             accessibilityLabel="検索条件をリセット"
             accessibilityRole="button"
             hitSlop={8}
             onPress={resetFilters}
-            style={({ pressed }) => [styles.resetButton, pressed && styles.pressed]}
+            style={({ pressed }) => [
+              styles.resetButton,
+              hasActiveFilters && styles.resetButtonActive,
+              pressed && styles.pressed,
+            ]}
           >
-            <MaterialIcons color={hasActiveFilters ? colors.brand.gold : "rgba(255, 255, 255, 0.75)"} name="refresh" size={18} />
+            <MaterialIcons color={hasActiveFilters ? colors.text.primary : "rgba(255, 255, 255, 0.86)"} name="refresh" size={18} />
             <Text style={[styles.resetText, hasActiveFilters && styles.resetTextActive]}>リセット</Text>
           </Pressable>
-        }
+        ) : null}
         title="検索条件"
         titleStyle={{ marginLeft: 42 }}
         variant="compact"
@@ -326,7 +334,7 @@ export default function JapaneseFiltersScreen() {
                 onDismiss={closeDatePicker}
                 onChange={handleDatePickerChange}
                 style={styles.nativePicker}
-                themeVariant="light"
+                themeVariant={scheme}
                 timeZoneName={JST_TIME_ZONE}
                 value={pickerDate}
               />
@@ -339,9 +347,11 @@ export default function JapaneseFiltersScreen() {
 }
 
 function FilterGroup({ children, label }: { children: React.ReactNode; label: string }) {
+  const styles = useThemeStyles(createStyles);
   return <View style={styles.group}><Text style={styles.groupLabel}>{label}</Text>{children}</View>;
 }
 function Choice({ label, onPress, selected }: { label: string; onPress: () => void; selected: boolean }) {
+  const styles = useThemeStyles(createStyles);
   return <Pressable accessibilityRole="radio" accessibilityState={{ selected }} onPress={onPress} style={[styles.choice, selected && styles.choiceSelected]}><Text style={[styles.choiceText, selected && styles.choiceTextSelected]}>{label}</Text></Pressable>;
 }
 
@@ -356,6 +366,8 @@ function DateFilterField({
   onPress: () => void;
   value: string;
 }) {
+  const { colors } = useTheme();
+  const styles = useThemeStyles(createStyles);
   return (
     <View style={styles.dateFieldWrap}>
       <Pressable
@@ -385,7 +397,8 @@ function DateFilterField({
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ThemeColors) {
+  return StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.surface.screen },
   content: { paddingHorizontal: 18, paddingTop: 12, paddingBottom: 24, gap: 12 },
   group: { gap: 5 },
@@ -413,8 +426,9 @@ const styles = StyleSheet.create({
   apply: { minHeight: 46, marginTop: 4, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, borderRadius: radius.md, backgroundColor: colors.brand.sky },
   applyText: { color: colors.text.inverse, fontSize: 14, fontWeight: "900" },
   resetButton: { flexDirection: "row", alignItems: "center", gap: 3, paddingHorizontal: 8, paddingVertical: 4, borderRadius: radius.pill, backgroundColor: "rgba(255, 255, 255, 0.2)" },
+  resetButtonActive: { backgroundColor: colors.surface.default },
   resetText: { color: "rgba(255, 255, 255, 0.85)", fontSize: 12, fontWeight: "700" },
-  resetTextActive: { color: colors.brand.gold, fontWeight: "900" },
+  resetTextActive: { color: colors.text.primary, fontWeight: "900" },
   modalBackdrop: { flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0, 0, 0, 0.28)" },
   pickerSheet: { minHeight: 286, paddingTop: 8, borderTopLeftRadius: 28, borderTopRightRadius: 28, backgroundColor: colors.surface.default },
   pickerHeader: { height: 48, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16 },
@@ -424,4 +438,5 @@ const styles = StyleSheet.create({
   pickerDoneText: { color: colors.brand.sky, fontSize: 14, fontWeight: "900" },
   nativePicker: { alignSelf: "center", width: "100%", height: 216 },
   pressed: { opacity: 0.72 },
-});
+  });
+}

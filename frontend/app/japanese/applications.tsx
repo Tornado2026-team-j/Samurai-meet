@@ -13,7 +13,10 @@ import {
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { LoadingSpinner } from "../../components/ui";
+import type { ThemeColors } from "../../components/ui/tokens";
 import { useAuth } from "../../hooks/useAuth";
+import { useTheme, useThemeStyles } from "../../hooks/useTheme";
 import { APIError } from "../../services/api-client";
 import { loadLanguage, subscribeLanguage } from "../../services/onboarding";
 import type { AppLanguage } from "../../services/onboarding-contract";
@@ -25,12 +28,6 @@ import {
   type MatchView,
 } from "../../services/matching";
 import { formatTimeRange } from "../../utils/time";
-
-const BLUE = "#5ec5f5";
-const YELLOW = "#e7b454";
-const TEXT_GRAY = "#535353";
-const MUTED_GRAY = "#949494";
-const BORDER_GRAY = "#e4e4e4";
 
 type ApplicationFilter = "all" | "pending" | "expired" | "resolved";
 const APPLICATION_FILTERS: ApplicationFilter[] = ["all", "pending", "expired", "resolved"];
@@ -108,10 +105,10 @@ const COPY = {
   },
 } as const;
 
-function statusColor(status: MatchStatus): string {
-  if (status === "accepted" || status === "completed") return "#168df0";
-  if (status === "pending") return YELLOW;
-  return MUTED_GRAY;
+function statusColor(status: MatchStatus, colors: ThemeColors): string {
+  if (status === "accepted" || status === "completed") return colors.state.link;
+  if (status === "pending") return colors.brand.gold;
+  return colors.text.muted;
 }
 
 export function isApplicationExpired(application: MatchView, now: Date = new Date()): boolean {
@@ -142,6 +139,10 @@ export function matchesApplicationFilter(
 export default function JapaneseApplicationsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { colors } = useTheme();
+  const styles = useThemeStyles(createStyles);
+  const BLUE = colors.brand.sky;
+  const MUTED_GRAY = colors.text.muted;
   const { getCurrentSession, refresh, session, status } = useAuth();
   const [language, setLanguage] = useState<AppLanguage>("ja");
   const [applications, setApplications] = useState<MatchView[]>([]);
@@ -321,7 +322,7 @@ export default function JapaneseApplicationsScreen() {
 
   return (
     <View style={styles.screen}>
-      <StatusBar style="light" />
+      <StatusBar style="dark" />
       <View style={[styles.header, {
         minHeight: Math.max(108, insets.top + 72),
         paddingTop: Math.max(insets.top, 18),
@@ -333,7 +334,7 @@ export default function JapaneseApplicationsScreen() {
           onPress={goBack}
           style={({ pressed }) => [styles.backButton, pressed && styles.pressed]}
         >
-          <MaterialIcons color="#ffffff" name="chevron-left" size={30} />
+          <MaterialIcons color={colors.text.onSky} name="chevron-left" size={30} />
         </Pressable>
         <Text style={styles.headerTitle}>{copy.title}</Text>
       </View>
@@ -381,7 +382,7 @@ export default function JapaneseApplicationsScreen() {
 
         {loadState === "loading" ? (
           <View style={styles.statePanel}>
-            <ActivityIndicator color={BLUE} />
+            <LoadingSpinner color={BLUE} size={24} />
             <Text style={styles.stateText}>{copy.loading}</Text>
           </View>
         ) : loadState === "error" ? (
@@ -413,7 +414,7 @@ export default function JapaneseApplicationsScreen() {
             ) : null}
             {applications.length === 0 ? (
               <View style={styles.statePanel}>
-                <MaterialIcons color={MUTED_GRAY} name="history" size={36} />
+          <MaterialIcons color={MUTED_GRAY} name="history" size={36} />
                 <Text style={styles.stateText}>{copy.empty}</Text>
               </View>
             ) : filteredApplications.length === 0 ? (
@@ -437,7 +438,7 @@ export default function JapaneseApplicationsScreen() {
                   >
                     <View style={styles.cardHeader}>
                       <View style={styles.avatar}>
-                        <MaterialIcons color="#d4d4d4" name="account-circle" size={38} />
+                        <MaterialIcons color={colors.border.muted} name="account-circle" size={38} />
                       </View>
                       <View style={styles.recipientBlock}>
                         <Text numberOfLines={1} style={styles.recipientName}>
@@ -447,8 +448,8 @@ export default function JapaneseApplicationsScreen() {
                           {copy.ownerLabel} · {application.other_user.nationality_code || "—"}
                         </Text>
                       </View>
-                      <View style={[styles.statusPill, { borderColor: statusColor(displayedStatus) }]}>
-                        <Text style={[styles.statusText, { color: statusColor(displayedStatus) }]}>
+                      <View style={[styles.statusPill, { borderColor: statusColor(displayedStatus, colors) }]}>
+                        <Text style={[styles.statusText, { color: statusColor(displayedStatus, colors) }]}>
                           {copy.status[displayedStatus]}
                         </Text>
                       </View>
@@ -472,7 +473,7 @@ export default function JapaneseApplicationsScreen() {
                       onPress={() => withdraw(application)}
                       style={({ pressed }) => [styles.withdrawButton, withdrawing && styles.disabled, pressed && styles.pressed]}
                     >
-                      {withdrawing ? <ActivityIndicator color="#b42318" size="small" /> : null}
+                      {withdrawing ? <ActivityIndicator color={colors.state.danger} size="small" /> : null}
                       <Text style={styles.withdrawText}>{withdrawing ? copy.withdrawing : copy.withdraw}</Text>
                     </Pressable>
                   ) : (
@@ -488,15 +489,16 @@ export default function JapaneseApplicationsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: "#ffffff" },
+function createStyles(colors: ThemeColors) {
+  return StyleSheet.create({
+  screen: { flex: 1, backgroundColor: colors.surface.screen },
   header: {
     minHeight: 108,
     flexDirection: "row",
     alignItems: "flex-end",
     paddingHorizontal: 20,
     paddingBottom: 18,
-    backgroundColor: BLUE,
+    backgroundColor: colors.brand.sky,
     borderBottomLeftRadius: 36,
     borderBottomRightRadius: 36,
   },
@@ -507,7 +509,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginRight: 12,
   },
-  headerTitle: { color: "#ffffff", fontSize: 24, fontWeight: "800" },
+  headerTitle: { color: colors.text.onSky, fontSize: 24, fontWeight: "800" },
   content: {
     alignItems: "center",
     paddingHorizontal: 18,
@@ -516,7 +518,7 @@ const styles = StyleSheet.create({
   },
   intro: {
     alignSelf: "stretch",
-    color: MUTED_GRAY,
+    color: colors.text.muted,
     fontSize: 13,
     lineHeight: 19,
     textAlign: "center",
@@ -529,13 +531,13 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingHorizontal: 14,
     borderWidth: 1,
-    borderColor: BORDER_GRAY,
+    borderColor: colors.border.default,
     borderRadius: 18,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.default,
   },
-  filterButtonSelected: { borderColor: BLUE, backgroundColor: "#eff8ff" },
-  filterButtonText: { color: TEXT_GRAY, fontSize: 13, fontWeight: "800" },
-  filterButtonTextSelected: { color: BLUE },
+  filterButtonSelected: { borderColor: colors.brand.sky, backgroundColor: colors.surface.blueSoft },
+  filterButtonText: { color: colors.text.secondary, fontSize: 13, fontWeight: "800" },
+  filterButtonTextSelected: { color: colors.brand.sky },
   statePanel: {
     minHeight: 180,
     width: "100%",
@@ -551,13 +553,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
   },
   inlineErrorText: {
-    color: "#b42318",
+    color: colors.state.danger,
     fontSize: 13,
     fontWeight: "600",
     lineHeight: 19,
     textAlign: "center",
   },
-  stateText: { color: MUTED_GRAY, fontSize: 14, fontWeight: "600", lineHeight: 20, textAlign: "center" },
+  stateText: { color: colors.text.muted, fontSize: 14, fontWeight: "600", lineHeight: 20, textAlign: "center" },
   retryButton: {
     minWidth: 84,
     minHeight: 36,
@@ -565,17 +567,17 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingHorizontal: 16,
     borderRadius: 18,
-    backgroundColor: YELLOW,
+    backgroundColor: colors.brand.gold,
   },
-  retryText: { color: "#ffffff", fontSize: 13, fontWeight: "800" },
+  retryText: { color: colors.text.onGold, fontSize: 13, fontWeight: "800" },
   applicationCard: {
     width: "100%",
     maxWidth: 390,
     overflow: "hidden",
     borderWidth: 1,
-    borderColor: BORDER_GRAY,
+    borderColor: colors.border.default,
     borderRadius: 18,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.default,
   },
   cardMain: { padding: 16, gap: 10 },
   cardHeader: { flexDirection: "row", alignItems: "center", gap: 10 },
@@ -585,11 +587,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderRadius: 21,
-    backgroundColor: "#f6f6f6",
+    backgroundColor: colors.surface.subtle,
   },
   recipientBlock: { flex: 1, gap: 3 },
-  recipientName: { color: "#111111", fontSize: 17, fontWeight: "800" },
-  recipientCountry: { color: MUTED_GRAY, fontSize: 12, fontWeight: "600" },
+  recipientName: { color: colors.text.primary, fontSize: 17, fontWeight: "800" },
+  recipientCountry: { color: colors.text.muted, fontSize: 12, fontWeight: "600" },
   statusPill: {
     minHeight: 28,
     alignItems: "center",
@@ -599,9 +601,9 @@ const styles = StyleSheet.create({
     borderRadius: 14,
   },
   statusText: { fontSize: 12, fontWeight: "800" },
-  description: { color: TEXT_GRAY, fontSize: 14, fontWeight: "600", lineHeight: 20 },
-  schedule: { color: TEXT_GRAY, fontSize: 13, fontWeight: "700", lineHeight: 19 },
-  openHint: { color: BLUE, fontSize: 12, fontWeight: "700" },
+  description: { color: colors.text.secondary, fontSize: 14, fontWeight: "600", lineHeight: 20 },
+  schedule: { color: colors.text.secondary, fontSize: 13, fontWeight: "700", lineHeight: 19 },
+  openHint: { color: colors.brand.sky, fontSize: 12, fontWeight: "700" },
   withdrawButton: {
     minHeight: 44,
     flexDirection: "row",
@@ -611,19 +613,20 @@ const styles = StyleSheet.create({
     marginHorizontal: 16,
     marginBottom: 16,
     borderWidth: 1,
-    borderColor: "#d9aaa5",
+    borderColor: colors.border.danger,
     borderRadius: 22,
-    backgroundColor: "#fff8f7",
+    backgroundColor: colors.surface.dangerSoft,
   },
-  withdrawText: { color: "#b42318", fontSize: 13, fontWeight: "800" },
+  withdrawText: { color: colors.state.danger, fontSize: 13, fontWeight: "800" },
   resultText: {
     marginHorizontal: 16,
     marginBottom: 16,
-    color: MUTED_GRAY,
+    color: colors.text.muted,
     fontSize: 12,
     fontWeight: "600",
     textAlign: "center",
   },
   disabled: { opacity: 0.6 },
   pressed: { opacity: 0.72 },
-});
+  });
+}

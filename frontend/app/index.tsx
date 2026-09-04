@@ -17,7 +17,11 @@ import { StatusBar } from "expo-status-bar";
 import IdentityVerificationPrompt from "../components/IdentityVerificationPrompt";
 import ProfileForm from "../components/ProfileForm";
 import { RecoveryAccountDeleteAction, RecoveryCompletion, RecoveryKeyDisplay, RecoveryKeyInput, SupportAccountID } from "../components/RecoveryFlow";
+import DemoAccountEntry from "../components/DemoAccountEntry";
+import { LoadingScreen, LoadingSpinner } from "../components/ui";
+import type { ThemeColors } from "../components/ui/tokens";
 import { useAuth } from "../hooks/useAuth";
+import { useTheme, useThemeStyles } from "../hooks/useTheme";
 import {
   completeInitialKeySetup,
   completeRecoveryKeyRotation,
@@ -35,6 +39,14 @@ import {
   type GeneratedKeyMaterial,
 } from "../services/key-management";
 import { createRecoveryMaterial, deriveAccountDataKey, type KeyEnvelope } from "../services/crypto";
+import { createDemoKeyMaterial, type DemoKeyMaterial } from "../services/demo-crypto";
+import {
+  loadDemoKeyMaterialDraft,
+  loadStoredDemoAgreementPrivateKey,
+  registerDemoDeviceKey,
+  saveDemoKeyMaterial,
+  saveDemoKeyMaterialDraft,
+} from "../services/demo-key-management";
 import { updateMyProfile } from "../services/profile";
 import { resolveDefaultAppMode } from "../services/device-locale";
 import {
@@ -60,11 +72,6 @@ type LoadedUserOnboardingState = {
   identityVerificationChoice: IdentityVerificationChoice;
 };
 
-const BLUE = "#5ec5f5";
-const YELLOW = "#e7b454";
-const TEXT_GRAY = "#535353";
-const MUTED_GRAY = "#7d7d7d";
-const BORDER_GRAY = "#d4d4d4";
 const KEY_SETUP_TIMEOUT_MS = 45_000;
 const KEY_SETUP_TIMEOUT_MESSAGE = "暗号鍵の準備に時間がかかっています。通信または端末の状態を確認して、もう一度お試しください。";
 
@@ -103,6 +110,7 @@ type ProgressProps = {
 };
 
 function Progress({ activeStep, language }: ProgressProps) {
+  const styles = useThemeStyles(createStyles);
   return (
     <View
       accessibilityLabel={language === "ja" ? `全3ステップ中${activeStep}` : `Step ${activeStep} of 3`}
@@ -126,6 +134,8 @@ type HeroProps = {
 
 function Hero({ children, compact = false, onBack }: HeroProps) {
   const insets = useSafeAreaInsets();
+  const { colors } = useTheme();
+  const styles = useThemeStyles(createStyles);
 
   return (
     <View
@@ -143,7 +153,7 @@ function Hero({ children, compact = false, onBack }: HeroProps) {
           onPress={onBack}
           style={({ pressed }) => [styles.backButton, pressed && styles.pressed]}
         >
-          <MaterialIcons color="#ffffff" name="arrow-back-ios-new" size={21} />
+          <MaterialIcons color={colors.text.inverse} name="arrow-back-ios-new" size={21} />
         </Pressable>
       ) : null}
       {children}
@@ -156,6 +166,10 @@ type LanguageStepProps = {
 };
 
 function LanguageStep({ onContinue }: LanguageStepProps) {
+  const { colors } = useTheme();
+  const styles = useThemeStyles(createStyles);
+  const YELLOW = colors.brand.gold;
+  const BORDER_GRAY = colors.border.default;
   const [selection, setSelection] = useState<AppLanguage>("ja");
   const [saving, setSaving] = useState(false);
 
@@ -172,13 +186,16 @@ function LanguageStep({ onContinue }: LanguageStepProps) {
   return (
     <View style={styles.screen}>
       <StatusBar style="light" />
-      <ScrollView
-        contentContainerStyle={styles.stepScrollContent}
-        showsVerticalScrollIndicator={false}
-      >
+  <ScrollView
+    alwaysBounceVertical={false}
+    bounces={false}
+    contentContainerStyle={styles.stepScrollContent}
+    overScrollMode="never"
+    showsVerticalScrollIndicator={false}
+  >
         <Hero>
           <View style={styles.heroIconCircle}>
-            <MaterialIcons color="#ffffff" name="language" size={54} />
+            <MaterialIcons color={colors.text.inverse} name="language" size={54} />
           </View>
           <Text style={styles.heroTitle}>表示言語を選択</Text>
           <Text style={styles.heroSubtitle}>Choose your language</Text>
@@ -241,13 +258,13 @@ function LanguageStep({ onContinue }: LanguageStepProps) {
               ]}
             >
               {saving ? (
-                <ActivityIndicator color="#ffffff" />
+                <ActivityIndicator color={colors.text.inverse} />
               ) : (
                 <>
                   <Text style={styles.primaryButtonText}>
                     {selection === "ja" ? "次へ" : "Continue"}
                   </Text>
-                  <MaterialIcons color="#ffffff" name="arrow-forward" size={20} />
+                  <MaterialIcons color={colors.text.inverse} name="arrow-forward" size={20} />
                 </>
               )}
             </Pressable>
@@ -260,16 +277,26 @@ function LanguageStep({ onContinue }: LanguageStepProps) {
 }
 
 type AuthStepProps = {
+  appMode: AppMode;
   language: AppLanguage;
   onAuthenticated: () => void;
   onBack: () => Promise<void>;
 };
 
-function AuthStep({ language, onAuthenticated, onBack }: AuthStepProps) {
-  const { busy, continuePasskey, deleteAccount, error, login, logout, preAuth, recoverWithRecoveryKey, recoveryVerified, status } = useAuth();
+function AuthStep({ appMode, language, onAuthenticated, onBack }: AuthStepProps) {
+  const { colors } = useTheme();
+  const styles = useThemeStyles(createStyles);
+  const YELLOW = colors.brand.gold;
+  const TEXT_GRAY = colors.text.secondary;
+  const MUTED_GRAY = colors.text.muted;
+  const { busy, continuePasskey, deleteAccount, error, login, logout, preAuth, recoverWithRecoveryKey, recoveryVerified, session, startDemoAccount, status } = useAuth();
   const [showRecovery, setShowRecovery] = useState(false);
+  const demoEntryEnabled = process.env.EXPO_PUBLIC_DEMO_ACCOUNT_ENABLED === "true";
+  const googleLoginEnabled = process.env.EXPO_PUBLIC_GOOGLE_LOGIN_ENABLED === "true"
+    || (process.env.EXPO_PUBLIC_GOOGLE_LOGIN_ENABLED !== "false" && !demoEntryEnabled);
   const passkeyReady = status === "pre_auth" && preAuth !== null;
   const signedIn = status === "signed_in";
+  const signedInDemo = signedIn && session?.account_type === "demo";
   const leaveAuthentication = async () => {
     if (busy) return;
     await logout();
@@ -281,7 +308,7 @@ function AuthStep({ language, onAuthenticated, onBack }: AuthStepProps) {
         onAuthenticated();
       } else if (passkeyReady) {
         if (await continuePasskey(language)) onAuthenticated();
-      } else {
+      } else if (googleLoginEnabled) {
         await login();
       }
     } catch {
@@ -292,6 +319,13 @@ function AuthStep({ language, onAuthenticated, onBack }: AuthStepProps) {
     if (await deleteAccount()) return;
     throw new Error(language === "ja" ? "アカウント削除に失敗しました。" : "Account deletion failed.");
   };
+  const startDemo = async () => {
+    try {
+      if (await startDemoAccount(language, appMode)) onAuthenticated();
+    } catch {
+      // useAuth exposes the handled error through its error state.
+    }
+  };
   const copy = language === "ja"
     ? {
         title: signedIn
@@ -300,20 +334,24 @@ function AuthStep({ language, onAuthenticated, onBack }: AuthStepProps) {
             ? "Passkeyを設定"
             : "アカウントを作成",
         subtitle: signedIn
-          ? "Googleアカウントの確認が完了しました。次に本人確認へ進みます。"
+          ? signedInDemo
+            ? "審査用Demoアカウントを作成しました。次にプロフィールへ進みます。"
+            : "Googleアカウントの確認が完了しました。次に本人確認へ進みます。"
           : passkeyReady
             ? recoveryVerified
               ? (preAuth?.passkey_registered
                 ? "Recovery Phraseを確認しました。続けてPasskeyで本人確認します。"
                 : "Recovery Phraseを確認しました。続けてこの端末のPasskeyを登録します。")
               : "Google認証が完了しました。続けてこの端末を保護します。"
-          : "Googleアカウントで安全に登録・ログインできます。",
+          : googleLoginEnabled
+            ? "Googleアカウントで安全に登録・ログインできます。"
+            : "登録不要の審査用Demoアカウントで体験できます。",
         continue: "次へ",
         google: "Googleで続ける",
         passkey: preAuth?.passkey_registered ? "Passkeyで本人確認" : "Passkeyを登録",
         recovery: "Recovery Phraseで復旧",
         logout: "ログアウト",
-        verificationDone: recoveryVerified ? "Recovery Phrase確認済み" : "Google認証済み",
+        verificationDone: signedInDemo ? "Demoアカウント作成済み" : recoveryVerified ? "Recovery Phrase確認済み" : "Google認証済み",
         privacy: "メールアドレスは本人確認のためにのみ使用します",
         passkeyNote: "Passkeyはパスワードを保存せず、この端末の画面ロックで本人確認します",
       }
@@ -324,20 +362,24 @@ function AuthStep({ language, onAuthenticated, onBack }: AuthStepProps) {
             ? "Set up a passkey"
             : "Create your account",
         subtitle: signedIn
-          ? "Your Google account is verified. Next, review identity verification."
+          ? signedInDemo
+            ? "Your review demo account is ready. Continue to your profile."
+            : "Your Google account is verified. Next, review identity verification."
           : passkeyReady
             ? recoveryVerified
                 ? (preAuth?.passkey_registered
                 ? "Your Recovery Phrase was verified. Continue with Passkey verification."
                 : "Your Recovery Phrase was verified. Continue by creating a Passkey for this device.")
               : "Google verification is complete. Now protect this device."
-          : "Sign up or sign in securely with your Google account.",
+          : googleLoginEnabled
+            ? "Sign up or sign in securely with your Google account."
+            : "Try the app with a review demo account. No sign-up required.",
         continue: "Continue",
         google: "Continue with Google",
         passkey: preAuth?.passkey_registered ? "Verify with passkey" : "Create a passkey",
         recovery: "Recover with Recovery Phrase",
         logout: "Log out",
-        verificationDone: recoveryVerified ? "Recovery Phrase verified" : "Google verified",
+        verificationDone: signedInDemo ? "Demo account ready" : recoveryVerified ? "Recovery Phrase verified" : "Google verified",
         privacy: "Your email is used only to verify your account",
         passkeyNote: "Passkeys use your device screen lock, so there is no password to store",
       };
@@ -359,14 +401,17 @@ function AuthStep({ language, onAuthenticated, onBack }: AuthStepProps) {
   return (
     <View style={styles.screen}>
       <StatusBar style="light" />
-      <ScrollView
-        contentContainerStyle={styles.stepScrollContent}
-        showsVerticalScrollIndicator={false}
-      >
+  <ScrollView
+    alwaysBounceVertical={false}
+    bounces={false}
+    contentContainerStyle={styles.stepScrollContent}
+    overScrollMode="never"
+    showsVerticalScrollIndicator={false}
+  >
         <Hero onBack={() => void leaveAuthentication()}>
           <View style={styles.authIllustration}>
             <MaterialIcons
-              color="#ffffff"
+              color={colors.text.inverse}
               name={signedIn ? "check-circle" : passkeyReady ? "key" : "person-outline"}
               size={64}
             />
@@ -379,7 +424,9 @@ function AuthStep({ language, onAuthenticated, onBack }: AuthStepProps) {
           <View style={styles.authActions}>
             {passkeyReady || signedIn ? (
               <View style={styles.completedRow}>
-                {recoveryVerified ? (
+                {signedInDemo ? (
+                  <MaterialIcons color={YELLOW} name="play-circle-outline" size={22} />
+                ) : recoveryVerified ? (
                   <MaterialIcons color={YELLOW} name="vpn-key" size={22} />
                 ) : (
                   <View style={styles.googleMarkSmall}>
@@ -387,35 +434,45 @@ function AuthStep({ language, onAuthenticated, onBack }: AuthStepProps) {
                   </View>
                 )}
                 <Text style={styles.completedText}>{copy.verificationDone}</Text>
-                <MaterialIcons color="#3d9a68" name="check-circle" size={22} />
+                <MaterialIcons color={colors.state.success} name="check-circle" size={22} />
               </View>
             ) : null}
 
-            <Pressable
-              accessibilityRole="button"
-              disabled={busy}
-              onPress={() => void startAuthentication()}
-              style={({ pressed }) => [
-                styles.authButton,
-                busy && styles.disabled,
-                pressed && styles.pressed,
-              ]}
-            >
-              {busy ? (
-                <ActivityIndicator color={TEXT_GRAY} />
-              ) : signedIn ? (
-                <MaterialIcons color={YELLOW} name="arrow-forward" size={26} />
-              ) : passkeyReady ? (
-                <MaterialIcons color={YELLOW} name="key" size={26} />
-              ) : (
-                <FontAwesome color="#4285f4" name="google" size={23} />
-              )}
-              {!busy ? (
-                <Text style={styles.authButtonText}>
-                  {signedIn ? copy.continue : passkeyReady ? copy.passkey : copy.google}
-                </Text>
-              ) : null}
-            </Pressable>
+            {passkeyReady || signedIn || googleLoginEnabled ? (
+              <Pressable
+                accessibilityRole="button"
+                disabled={busy}
+                onPress={() => void startAuthentication()}
+                style={({ pressed }) => [
+                  styles.authButton,
+                  busy && styles.disabled,
+                  pressed && styles.pressed,
+                ]}
+              >
+                {busy ? (
+                  <ActivityIndicator color={TEXT_GRAY} />
+                ) : signedIn ? (
+                  <MaterialIcons color={YELLOW} name="arrow-forward" size={26} />
+                ) : passkeyReady ? (
+                  <MaterialIcons color={YELLOW} name="key" size={26} />
+                ) : (
+                  <FontAwesome color="#4285f4" name="google" size={23} />
+                )}
+                {!busy ? (
+                  <Text style={styles.authButtonText}>
+                    {signedIn ? copy.continue : passkeyReady ? copy.passkey : copy.google}
+                  </Text>
+                ) : null}
+              </Pressable>
+            ) : null}
+
+            {!signedIn && demoEntryEnabled ? (
+              <DemoAccountEntry
+                disabled={busy}
+                language={language}
+                onPress={() => void startDemo()}
+              />
+            ) : null}
 
             {passkeyReady && preAuth?.passkey_registered && preAuth.recovery_available === true ? (
               <Pressable
@@ -489,6 +546,7 @@ type ProfileStepProps = {
 type KeySetupState =
   | { status: "loading" }
   | { status: "create"; material: GeneratedKeyMaterial }
+  | { status: "demo-create"; material: DemoKeyMaterial }
   | { status: "recover"; envelope: KeyEnvelope; error?: string }
   | { status: "rotate"; material: GeneratedKeyMaterial; error?: string }
   | { status: "complete"; mode: "initial" | "recovery" }
@@ -528,6 +586,7 @@ function describeKeySetupError(reason: unknown, language: AppLanguage): string {
 
 function KeySetupError({
   accountID,
+  demo = false,
   actionError,
   actionBusy,
   language,
@@ -538,6 +597,7 @@ function KeySetupError({
   onRetry,
 }: {
   accountID: string;
+  demo?: boolean;
   actionError: string | null;
   actionBusy: boolean;
   language: AppLanguage;
@@ -547,9 +607,45 @@ function KeySetupError({
   onLogout: () => void;
   onRetry: () => void;
 }) {
+  const { colors, scheme } = useTheme();
+  const styles = useThemeStyles(createStyles);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleteConfirmation, setDeleteConfirmation] = useState("");
-  const copy = language === "ja"
+  const copy = demo
+    ? language === "ja"
+      ? {
+          title: "Demo鍵を準備できません",
+          description: "Demo用の通信または鍵登録に失敗しました。再試行するか、Demoアカウントを終了してください。",
+          reauthenticate: "",
+          retry: "もう一度試す",
+          logout: "Demoを終了",
+          deleteAccount: "",
+          deleteTitle: "",
+          deleteWarning: "",
+          deleteScope: "",
+          deleteConfirmation: "",
+          confirmDeleteInstruction: "",
+          confirmDeletePlaceholder: "",
+          deleteConfirm: "",
+          cancel: "",
+        }
+      : {
+          title: "Demo keys are not ready",
+          description: "The Demo key registration failed. Try again or end this Demo account.",
+          reauthenticate: "",
+          retry: "Try again",
+          logout: "End Demo",
+          deleteAccount: "",
+          deleteTitle: "",
+          deleteWarning: "",
+          deleteScope: "",
+          deleteConfirmation: "",
+          confirmDeleteInstruction: "",
+          confirmDeletePlaceholder: "",
+          deleteConfirm: "",
+          cancel: "",
+        }
+    : language === "ja"
     ? {
         title: "暗号鍵を準備できません",
         description: "通信またはサーバー設定を確認してから、もう一度お試しください。暗号鍵を登録するまでアプリは先へ進みません。",
@@ -586,30 +682,34 @@ function KeySetupError({
 
   return (
     <View style={styles.keySetupErrorScreen}>
-      <StatusBar style="dark" />
-      <MaterialIcons color="#b42318" name="error-outline" size={58} />
+      <StatusBar style={scheme === "dark" ? "light" : "dark"} />
+      <MaterialIcons color={colors.state.danger} name="error-outline" size={58} />
       <Text style={styles.keySetupErrorTitle}>{copy.title}</Text>
       <Text style={styles.keySetupErrorDescription}>{copy.description}</Text>
       <Text style={styles.keySetupErrorMessage}>{message}</Text>
       {actionError ? <Text style={styles.keySetupErrorMessage}>{actionError}</Text> : null}
       <SupportAccountID accountID={accountID} language={language} />
-      <Pressable disabled={actionBusy} onPress={() => void onReauthenticate()} style={[styles.primaryButton, actionBusy && styles.disabled]}>
-        {actionBusy ? <ActivityIndicator color="#ffffff" /> : <Text style={styles.primaryButtonText}>{copy.reauthenticate}</Text>}
-      </Pressable>
+      {!demo ? (
+        <Pressable disabled={actionBusy} onPress={() => void onReauthenticate()} style={[styles.primaryButton, actionBusy && styles.disabled]}>
+          {actionBusy ? <ActivityIndicator color={colors.text.onGold} /> : <Text style={styles.primaryButtonText}>{copy.reauthenticate}</Text>}
+        </Pressable>
+      ) : null}
       <Pressable disabled={actionBusy} onPress={onRetry} style={[styles.secondaryButton, actionBusy && styles.disabled]}>
         <Text style={styles.secondaryButtonText}>{copy.retry}</Text>
       </Pressable>
-      <Pressable
-        disabled={actionBusy}
-        onPress={() => {
-          setDeleteConfirmation("");
-          setConfirmDelete(true);
-        }}
-        style={[styles.deleteAccountButton, actionBusy && styles.disabled]}
-      >
-        <Text style={styles.deleteAccountButtonText}>{copy.deleteAccount}</Text>
-      </Pressable>
-      <Modal
+      {!demo ? (
+        <Pressable
+          disabled={actionBusy}
+          onPress={() => {
+            setDeleteConfirmation("");
+            setConfirmDelete(true);
+          }}
+          style={[styles.deleteAccountButton, actionBusy && styles.disabled]}
+        >
+          <Text style={styles.deleteAccountButtonText}>{copy.deleteAccount}</Text>
+        </Pressable>
+      ) : null}
+      {!demo ? <Modal
         animationType="fade"
         onRequestClose={() => {
           if (!actionBusy) setConfirmDelete(false);
@@ -635,7 +735,7 @@ function KeySetupError({
               editable={!actionBusy}
               onChangeText={setDeleteConfirmation}
               placeholder={copy.confirmDeletePlaceholder}
-              placeholderTextColor="#a56d68"
+              placeholderTextColor={colors.state.dangerDark}
               style={styles.keySetupDeleteInput}
               value={deleteConfirmation}
             />
@@ -654,11 +754,11 @@ function KeySetupError({
               onPress={() => void onDeleteAccount().catch(() => undefined)}
               style={[styles.keySetupDeleteConfirm, (actionBusy || deleteConfirmation.trim().toUpperCase() !== expectedDeleteConfirmation) && styles.disabled]}
             >
-              {actionBusy ? <ActivityIndicator color="#ffffff" /> : <Text style={styles.primaryButtonText}>{copy.deleteConfirm}</Text>}
+              {actionBusy ? <ActivityIndicator color={colors.text.inverse} /> : <Text style={styles.primaryButtonText}>{copy.deleteConfirm}</Text>}
             </Pressable>
           </View>
         </ScrollView>
-      </Modal>
+      </Modal> : null}
       <Pressable disabled={actionBusy} onPress={onLogout} style={[styles.secondaryButton, actionBusy && styles.disabled]}>
         <Text style={styles.secondaryButtonText}>{copy.logout}</Text>
       </Pressable>
@@ -667,6 +767,8 @@ function KeySetupError({
 }
 
 function ProfileStep({ initialProfile, language, onBack, onSubmit }: ProfileStepProps) {
+  const { colors } = useTheme();
+  const styles = useThemeStyles(createStyles);
   const copy = language === "ja"
     ? {
         title: "プロフィールを設定",
@@ -688,7 +790,7 @@ function ProfileStep({ initialProfile, language, onBack, onSubmit }: ProfileStep
       >
         <Hero compact onBack={() => void onBack()}>
           <View style={styles.avatar}>
-            <MaterialIcons color="#ffffff" name="person" size={58} />
+            <MaterialIcons color={colors.text.inverse} name="person" size={58} />
           </View>
           <Text style={[styles.heroTitle, styles.profileTitle]}>{copy.title}</Text>
           <Text style={styles.heroSubtitle}>{copy.subtitle}</Text>
@@ -708,6 +810,10 @@ function ProfileStep({ initialProfile, language, onBack, onSubmit }: ProfileStep
 }
 
 export default function OnboardingScreen() {
+  const { colors, scheme } = useTheme();
+  const styles = useThemeStyles(createStyles);
+  const BLUE = colors.brand.sky;
+  const YELLOW = colors.brand.gold;
   const {
     continuePasskey,
     deleteAccount,
@@ -920,6 +1026,25 @@ export default function OnboardingScreen() {
     void (async () => {
       try {
         await withTimeout((async () => {
+          if (activeSession.account_type === "demo") {
+            setKeySetupStage("generating");
+            const storedAgreementPrivateKey = await loadStoredDemoAgreementPrivateKey(userID);
+            if (storedAgreementPrivateKey) {
+              storedAgreementPrivateKey.fill(0);
+              if (!active) return;
+              setKeySetupState({ status: "ready" });
+              setKeySetupFor(userID);
+              return;
+            }
+            const demoDraft = await loadDemoKeyMaterialDraft(userID);
+            const material = demoDraft ?? await createDemoKeyMaterial();
+            if (!active) return;
+            if (!demoDraft) await saveDemoKeyMaterialDraft(userID, material);
+            if (!active) return;
+            setKeySetupState({ status: "demo-create", material });
+            setKeySetupFor(userID);
+            return;
+          }
           const [pendingRotation, initialDraft, storedKeyA, storedEnvelope] = await Promise.all([
             loadPendingRecoveryKeyRotation(userID),
             loadInitialKeyMaterialDraft(userID),
@@ -1008,48 +1133,44 @@ export default function OnboardingScreen() {
   }, [keySetupAttempt, languageLoaded, session?.session_id, session?.user_id]);
 
   if (!languageLoaded || status === "loading") {
+    if (!authError) return <LoadingScreen />;
+
     return (
       <View style={styles.loadingScreen}>
-        <StatusBar style="dark" />
-        {authError ? (
-          <>
-            <MaterialIcons color={YELLOW} name="cloud-off" size={42} />
-            <Text accessibilityRole="alert" style={styles.loadingText}>{authError}</Text>
-            <Text style={styles.loadingHint}>
-              接続を確認してから再試行してください。 / Check the connection and retry.
-            </Text>
-            <Pressable
-              accessibilityRole="button"
-              disabled={restoreRetrying}
-              onPress={() => void retryAuthRestore()}
-              style={({ pressed }) => [
-                styles.restoreRetryButton,
-                restoreRetrying && styles.disabled,
-                pressed && styles.pressed,
-              ]}
-            >
-              {restoreRetrying ? (
-                <ActivityIndicator color="#ffffff" />
-              ) : (
-                <Text style={styles.restoreRetryButtonText}>再試行 / Retry</Text>
-              )}
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              disabled={restoreRetrying}
-              onPress={() => void clearBlockedAuth()}
-              style={({ pressed }) => [
-                styles.restoreSignOutButton,
-                restoreRetrying && styles.disabled,
-                pressed && styles.pressed,
-              ]}
-            >
-              <Text style={styles.restoreSignOutButtonText}>ログアウト / Sign out</Text>
-            </Pressable>
-          </>
-        ) : (
-          <ActivityIndicator color={BLUE} size="large" />
-        )}
+        <StatusBar style={scheme === "dark" ? "light" : "dark"} />
+        <MaterialIcons color={YELLOW} name="cloud-off" size={42} />
+        <Text accessibilityRole="alert" style={styles.loadingText}>{authError}</Text>
+        <Text style={styles.loadingHint}>
+          接続を確認してから再試行してください。 / Check the connection and retry.
+        </Text>
+        <Pressable
+          accessibilityRole="button"
+          disabled={restoreRetrying}
+          onPress={() => void retryAuthRestore()}
+          style={({ pressed }) => [
+            styles.restoreRetryButton,
+            restoreRetrying && styles.disabled,
+            pressed && styles.pressed,
+          ]}
+        >
+          {restoreRetrying ? (
+            <ActivityIndicator color={colors.text.inverse} />
+          ) : (
+            <Text style={styles.restoreRetryButtonText}>再試行 / Retry</Text>
+          )}
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          disabled={restoreRetrying}
+          onPress={() => void clearBlockedAuth()}
+          style={({ pressed }) => [
+            styles.restoreSignOutButton,
+            restoreRetrying && styles.disabled,
+            pressed && styles.pressed,
+          ]}
+        >
+          <Text style={styles.restoreSignOutButtonText}>ログアウト / Sign out</Text>
+        </Pressable>
       </View>
     );
   }
@@ -1072,6 +1193,7 @@ export default function OnboardingScreen() {
   if (status !== "signed_in" || !session) {
     return (
       <AuthStep
+        appMode={appMode}
         language={language}
         onAuthenticated={() => setAccountStepCompleted(true)}
         onBack={async () => {
@@ -1099,8 +1221,8 @@ export default function OnboardingScreen() {
           : "Generating encryption keys…";
     return (
       <View style={styles.loadingScreen}>
-        <StatusBar style="dark" />
-        <ActivityIndicator color={BLUE} size="large" />
+        <StatusBar style={scheme === "dark" ? "light" : "dark"} />
+        <LoadingSpinner color={BLUE} size={28} />
         <Text style={styles.loadingText}>
           {loadingText}
         </Text>
@@ -1119,6 +1241,7 @@ export default function OnboardingScreen() {
         accountID={session.user_id}
         actionBusy={keySetupActionBusy}
         actionError={keySetupActionError}
+        demo={session.account_type === "demo"}
         language={language}
         message={keySetupState.message}
         onDeleteAccount={deleteBlockedAccount}
@@ -1136,6 +1259,38 @@ export default function OnboardingScreen() {
         language={language}
         mode={keySetupState.mode}
         onContinue={() => setKeySetupState({ status: "ready" })}
+      />
+    );
+  }
+
+  if (keySetupState.status === "demo-create") {
+    return (
+      <RecoveryKeyDisplay
+        accountID={session.user_id}
+        busy={keySetupBusy || keySetupActionBusy}
+        error={null}
+        language={language}
+        onBack={() => void logout()}
+        onConfirm={async () => {
+          setKeySetupBusy(true);
+          try {
+            // Demo registration is deliberately a different endpoint and a
+            // different local storage namespace. It never creates a normal
+            // /me/devices record or uploads a production Key-B envelope.
+            await registerDemoDeviceKey(session, keySetupState.material);
+            await saveDemoKeyMaterial(session.user_id, keySetupState.material);
+            setKeySetupState({ status: "complete", mode: "initial" });
+          } catch (reason) {
+            setKeySetupState({
+              status: "error",
+              message: reason instanceof Error ? reason.message : "demo key setup failed",
+            });
+          } finally {
+            setKeySetupBusy(false);
+          }
+        }}
+        onDeleteAccount={session.account_type === "demo" ? undefined : deleteBlockedAccount}
+        recoveryKey={keySetupState.material.recoveryKey}
       />
     );
   }
@@ -1236,16 +1391,13 @@ export default function OnboardingScreen() {
     profileLoadedFor !== session.user_id ||
     identityVerificationChoiceLoadedFor !== session.user_id
   ) {
-    return (
-      <View style={styles.loadingScreen}>
-        <ActivityIndicator color={BLUE} size="large" />
-      </View>
-    );
+    return <LoadingScreen />;
   }
 
   if (!profile?.completed && !accountStepCompleted) {
     return (
       <AuthStep
+        appMode={appMode}
         language={language}
         onAuthenticated={() => setAccountStepCompleted(true)}
         onBack={async () => {
@@ -1322,25 +1474,26 @@ export default function OnboardingScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ThemeColors) {
+  return StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.screen,
   },
   loadingScreen: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.screen,
   },
   loadingText: {
     marginTop: 12,
-    color: MUTED_GRAY,
+    color: colors.text.muted,
     fontSize: 14,
   },
   loadingHint: {
     marginTop: 6,
-    color: MUTED_GRAY,
+    color: colors.text.muted,
     fontSize: 12,
   },
   restoreRetryButton: {
@@ -1351,10 +1504,10 @@ const styles = StyleSheet.create({
     marginTop: 18,
     paddingHorizontal: 18,
     borderRadius: 20,
-    backgroundColor: YELLOW,
+    backgroundColor: colors.brand.gold,
   },
   restoreRetryButtonText: {
-    color: "#ffffff",
+    color: colors.text.inverse,
     fontSize: 13,
     fontWeight: "800",
   },
@@ -1366,12 +1519,12 @@ const styles = StyleSheet.create({
     marginTop: 10,
     paddingHorizontal: 18,
     borderWidth: 1,
-    borderColor: BORDER_GRAY,
+    borderColor: colors.border.default,
     borderRadius: 19,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.default,
   },
   restoreSignOutButtonText: {
-    color: MUTED_GRAY,
+    color: colors.text.muted,
     fontSize: 13,
     fontWeight: "800",
   },
@@ -1381,22 +1534,22 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     padding: 28,
     gap: 16,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.screen,
   },
   keySetupErrorTitle: {
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 22,
     fontWeight: "700",
     textAlign: "center",
   },
   keySetupErrorDescription: {
-    color: MUTED_GRAY,
+    color: colors.text.muted,
     fontSize: 15,
     lineHeight: 23,
     textAlign: "center",
   },
   keySetupErrorMessage: {
-    color: "#b42318",
+    color: colors.state.danger,
     fontSize: 12,
     lineHeight: 18,
     textAlign: "center",
@@ -1409,7 +1562,7 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     borderBottomLeftRadius: 44,
     borderBottomRightRadius: 44,
-    backgroundColor: BLUE,
+    backgroundColor: colors.brand.sky,
   },
   heroDefault: {
     minHeight: 350,
@@ -1436,12 +1589,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 2,
-    borderColor: "rgba(255, 255, 255, 0.8)",
+    borderColor: colors.text.inverse,
     borderRadius: 50,
-    backgroundColor: "rgba(255, 255, 255, 0.12)",
+    backgroundColor: colors.surface.blueSoft,
   },
   heroTitle: {
-    color: "#ffffff",
+    color: colors.text.inverse,
     fontSize: 27,
     fontWeight: "900",
     lineHeight: 34,
@@ -1451,7 +1604,7 @@ const styles = StyleSheet.create({
   heroSubtitle: {
     maxWidth: 340,
     marginTop: 8,
-    color: "rgba(255, 255, 255, 0.94)",
+    color: colors.text.inverse,
     fontSize: 14,
     fontWeight: "600",
     lineHeight: 21,
@@ -1482,24 +1635,24 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     borderWidth: 1,
-    borderColor: BORDER_GRAY,
+    borderColor: colors.border.default,
     borderRadius: 8,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.default,
   },
   languageOptionSelected: {
     borderWidth: 2,
-    borderColor: YELLOW,
-    backgroundColor: "#fffaf0",
+    borderColor: colors.brand.gold,
+    backgroundColor: colors.surface.warningSoft,
   },
   languageName: {
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 18,
     fontWeight: "800",
     letterSpacing: 0,
   },
   languageCaption: {
     marginTop: 2,
-    color: MUTED_GRAY,
+    color: colors.text.muted,
     fontSize: 12,
     letterSpacing: 0,
   },
@@ -1518,10 +1671,10 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 9,
     borderRadius: 8,
-    backgroundColor: YELLOW,
+    backgroundColor: colors.brand.gold,
   },
   primaryButtonText: {
-    color: "#ffffff",
+    color: colors.text.inverse,
     fontSize: 16,
     fontWeight: "800",
     letterSpacing: 0,
@@ -1538,13 +1691,13 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: "#d9e6ec",
+    backgroundColor: colors.border.blueStrong,
   },
   progressDotActive: {
     width: 10,
     height: 10,
     borderRadius: 5,
-    backgroundColor: BLUE,
+    backgroundColor: colors.brand.sky,
   },
   authIllustration: {
     width: 112,
@@ -1553,9 +1706,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 2,
-    borderColor: "rgba(255, 255, 255, 0.78)",
+    borderColor: colors.text.inverse,
     borderRadius: 56,
-    backgroundColor: "rgba(255, 255, 255, 0.12)",
+    backgroundColor: colors.surface.blueSoft,
   },
   authActions: {
     width: "100%",
@@ -1570,12 +1723,12 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 13,
     borderWidth: 1,
-    borderColor: BORDER_GRAY,
+    borderColor: colors.border.default,
     borderRadius: 8,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.default,
   },
   authButtonText: {
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 16,
     fontWeight: "800",
     letterSpacing: 0,
@@ -1589,12 +1742,12 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 9,
     borderWidth: 1,
-    borderColor: YELLOW,
+    borderColor: colors.brand.gold,
     borderRadius: 24,
-    backgroundColor: "#fffaf0",
+    backgroundColor: colors.surface.warningSoft,
   },
   secondaryButtonText: {
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 14,
     fontWeight: "700",
   },
@@ -1603,12 +1756,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
-    borderColor: BORDER_GRAY,
+    borderColor: colors.border.default,
     borderRadius: 22,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.default,
   },
   authLogoutButtonText: {
-    color: MUTED_GRAY,
+    color: colors.text.muted,
     fontSize: 14,
     fontWeight: "700",
   },
@@ -1618,12 +1771,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
-    borderColor: "#d92d20",
+    borderColor: colors.border.dangerStrong,
     borderRadius: 24,
-    backgroundColor: "#fff5f4",
+    backgroundColor: colors.surface.dangerSoft,
   },
   deleteAccountButtonText: {
-    color: "#b42318",
+    color: colors.state.danger,
     fontSize: 14,
     fontWeight: "700",
   },
@@ -1632,9 +1785,9 @@ const styles = StyleSheet.create({
     gap: 12,
     padding: 16,
     borderWidth: 1,
-    borderColor: "#f3b5af",
+    borderColor: colors.border.danger,
     borderRadius: 16,
-    backgroundColor: "#fff5f4",
+    backgroundColor: colors.surface.dangerSoft,
   },
   keySetupModalBackdrop: {
     flexGrow: 1,
@@ -1642,19 +1795,19 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     padding: 24,
-    backgroundColor: "rgba(0, 0, 0, 0.45)",
+    backgroundColor: colors.overlay.scrim,
   },
   keySetupModalScrollView: {
     flex: 1,
     width: "100%",
   },
   keySetupDeleteTitle: {
-    color: "#7a271a",
+    color: colors.state.dangerDark,
     fontSize: 17,
     fontWeight: "700",
   },
   keySetupDeleteDescription: {
-    color: "#7a271a",
+    color: colors.state.dangerDark,
     fontSize: 14,
     lineHeight: 21,
   },
@@ -1662,10 +1815,10 @@ const styles = StyleSheet.create({
     minHeight: 48,
     paddingHorizontal: 14,
     borderWidth: 1,
-    borderColor: "#d69289",
+    borderColor: colors.border.danger,
     borderRadius: 10,
-    color: "#7a271a",
-    backgroundColor: "#ffffff",
+    color: colors.state.dangerDark,
+    backgroundColor: colors.surface.default,
     fontSize: 16,
     fontWeight: "700",
     letterSpacing: 1,
@@ -1675,7 +1828,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderRadius: 24,
-    backgroundColor: "#d92d20",
+    backgroundColor: colors.border.dangerStrong,
   },
   completedRow: {
     minHeight: 48,
@@ -1684,7 +1837,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 11,
     borderRadius: 8,
-    backgroundColor: "#eef8f2",
+    backgroundColor: colors.surface.successSoft,
   },
   googleMarkSmall: {
     width: 28,
@@ -1692,7 +1845,7 @@ const styles = StyleSheet.create({
   },
   completedText: {
     flex: 1,
-    color: "#357a55",
+    color: colors.state.success,
     fontSize: 14,
     fontWeight: "700",
     letterSpacing: 0,
@@ -1706,14 +1859,14 @@ const styles = StyleSheet.create({
   },
   securityNoteText: {
     flexShrink: 1,
-    color: MUTED_GRAY,
+    color: colors.text.muted,
     fontSize: 11,
     lineHeight: 17,
     letterSpacing: 0,
     textAlign: "center",
   },
   errorText: {
-    color: "#b42318",
+    color: colors.state.danger,
     fontSize: 12,
     lineHeight: 18,
     letterSpacing: 0,
@@ -1726,9 +1879,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 2,
-    borderColor: "#ffffff",
+    borderColor: colors.text.inverse,
     borderRadius: 48,
-    backgroundColor: "rgba(255, 255, 255, 0.2)",
+    backgroundColor: colors.surface.blueSoft,
   },
   profileTitle: {
     fontSize: 24,
@@ -1754,3 +1907,4 @@ const styles = StyleSheet.create({
     opacity: 0.72,
   },
 });
+}

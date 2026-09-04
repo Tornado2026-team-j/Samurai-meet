@@ -7,7 +7,8 @@ import type {
   ViewStyle,
 } from "react-native";
 import type { ReactNode } from "react";
-import { colors, opacity, radius, shadows, spacing } from "./tokens";
+import { useThemeStyles } from "../../hooks/useTheme";
+import { opacity, radius, shadows, spacing, type ThemeColors } from "./tokens";
 
 type CardVariant = "default" | "soft" | "warning" | "danger";
 
@@ -32,6 +33,7 @@ export default function Card({
   testID,
   variant = "default",
 }: CardProps) {
+  const styles = useThemeStyles(createStyles);
   const cardStyle = [styles.base, styles[variant], style];
 
   if (!onPress) {
@@ -66,7 +68,8 @@ export default function Card({
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ThemeColors) {
+  return StyleSheet.create({
   base: {
     padding: spacing.lg,
     borderWidth: 1,
@@ -97,4 +100,5 @@ const styles = StyleSheet.create({
   pressed: {
     opacity: opacity.pressed,
   },
-});
+  });
+}

@@ -33,6 +33,9 @@ const PROFILE_KEY_PREFIX = "samurai_meet_profile_v1_";
 const IDENTITY_VERIFICATION_CHOICE_KEY_PREFIX =
   "samurai_meet_identity_verification_choice_v1_";
 const languageListeners = new Set<(language: AppLanguage | null) => void>();
+let cachedLanguage: AppLanguage | null = null;
+let languageLoadPromise: Promise<AppLanguage | null> | null = null;
+let languageRevision = 0;
 
 function notifyLanguageListeners(language: AppLanguage | null): void {
   for (const listener of languageListeners) {
@@ -78,17 +81,46 @@ async function deleteItem(key: string): Promise<void> {
   await SecureStore.deleteItemAsync(key);
 }
 
-export async function loadLanguage(): Promise<AppLanguage | null> {
-  return parseLanguage(await getItem(LANGUAGE_KEY));
+export function getCachedLanguage(): AppLanguage | null {
+  return cachedLanguage;
+}
+
+export function loadLanguage(): Promise<AppLanguage | null> {
+  if (languageLoadPromise) return languageLoadPromise;
+
+  const revision = languageRevision;
+  const request = getItem(LANGUAGE_KEY).then((value) => {
+    const nextLanguage = parseLanguage(value);
+    if (revision === languageRevision) {
+      cachedLanguage = nextLanguage;
+      return nextLanguage;
+    }
+    return cachedLanguage;
+  });
+  languageLoadPromise = request;
+  return request.catch((error) => {
+    if (languageLoadPromise === request) languageLoadPromise = null;
+    throw error;
+  });
 }
 
 export async function saveLanguage(language: AppLanguage): Promise<void> {
+  const revision = ++languageRevision;
   await setItem(LANGUAGE_KEY, language);
+  if (revision === languageRevision) {
+    cachedLanguage = language;
+    languageLoadPromise = Promise.resolve(language);
+  }
   notifyLanguageListeners(language);
 }
 
 export async function clearLanguage(): Promise<void> {
+  const revision = ++languageRevision;
   await deleteItem(LANGUAGE_KEY);
+  if (revision === languageRevision) {
+    cachedLanguage = null;
+    languageLoadPromise = Promise.resolve(null);
+  }
   notifyLanguageListeners(null);
 }
 

@@ -15,10 +15,12 @@ import {
 import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import MatchCard from "../../components/MatchCard";
-import { colors, LoadingSpinner } from "../../components/ui";
+import { LoadingSpinner, RefreshLoadingIndicator } from "../../components/ui";
+import type { ThemeColors } from "../../components/ui/tokens";
 import { useAuth } from "../../hooks/useAuth";
-import { useDelayedLoading } from "../../hooks/useDelayedLoading";
 import { useNavigationGuard } from "../../hooks/useNavigationGuard";
+import { useDisplayLanguage } from "../../hooks/useDisplayLanguage";
+import { useTheme, useThemeStyles } from "../../hooks/useTheme";
 import { useUnreadNotifications } from "../../hooks/useUnreadNotifications";
 import { APIError } from "../../services/api-client";
 import { getCurrentCoordinates } from "../../services/location";
@@ -30,17 +32,10 @@ import {
   searchRecruitments,
   updateCurrentLocation,
 } from "../../services/matching";
-import { loadLanguage, subscribeLanguage, type AppLanguage } from "../../services/onboarding";
+import { type AppLanguage } from "../../services/onboarding";
 import { isMatchCategory, type MatchCardData } from "../../types/match";
 import { getTabBarContentBottomPadding } from "../../utils/layout";
 
-const BLUE = colors.brand.sky;
-const YELLOW = colors.brand.gold;
-const TEXT_GRAY = colors.text.secondary;
-const PLACEHOLDER_GRAY = colors.text.muted;
-const BORDER_GRAY = colors.border.default;
-const SATURDAY_BLUE = "#0b70e0";
-const SUNDAY_RED = "#e11919";
 const DATE_SWIPE_THRESHOLD = 42;
 const DATE_SWIPE_VERTICAL_LIMIT = 28;
 const SEARCH_LOCATION_CACHE_TTL_MS = 60_000;
@@ -165,9 +160,13 @@ export default function JapaneseHomeScreen() {
   const { push } = useNavigationGuard();
   const params = useLocalSearchParams<{ query?: string; date?: string; sort?: string; category?: string; time?: string; radius?: string; availableFrom?: string; availableTo?: string }>();
   const insets = useSafeAreaInsets();
+  const { colors } = useTheme();
+  const styles = useThemeStyles(createStyles);
+  const BLUE = colors.brand.sky;
+  const PLACEHOLDER_GRAY = colors.text.muted;
   const { getCurrentSession, refresh, session, status } = useAuth();
   const hasUnreadNotifications = useUnreadNotifications();
-  const [language, setLanguage] = useState<AppLanguage | null>(null);
+  const language = useDisplayLanguage();
   const [query, setQuery] = useState(params.query ?? "");
   const [submittedQuery, setSubmittedQuery] = useState(params.query ?? "");
   const [recruitments, setRecruitments] = useState<Recruitment[]>([]);
@@ -190,7 +189,6 @@ export default function JapaneseHomeScreen() {
   const selectedCategory = isMatchCategory(params.category) ? params.category : undefined;
   const selectedTime = params.time === "morning" || params.time === "afternoon" || params.time === "evening" ? params.time : undefined;
   const selectedRadius: 1 | 3 | 5 = params.radius === "1" ? 1 : params.radius === "5" ? 5 : 3;
-  const verifiedOnly = false;
   const hasDateRange = Boolean(params.availableFrom || params.availableTo);
   const hasActiveFilters = Boolean(
     selectedCategory || selectedTime || params.availableFrom || params.availableTo || selectedRadius !== 3
@@ -240,13 +238,13 @@ export default function JapaneseHomeScreen() {
     : selectedTime === "afternoon" ? { startTime: "12:00", endTime: "18:00" }
       : selectedTime === "evening" ? { startTime: "18:00", endTime: "23:59" }
         : {}, [selectedTime]);
+  // The fallback is only for effects that may finish while language storage
+  // is unresolved. The neutral branch below prevents it from being rendered.
   const copy = COPY[language ?? "ja"];
   const matches = useMemo(() => sortRecruitments(recruitments, sortMode).map((item) => ({
     ...recruitmentToMatchCard(item),
     applicationStatus: applicationStatuses[item.id],
   })), [applicationStatuses, recruitments, sortMode]);
-  const showLanguageLoading = useDelayedLoading(!language);
-  const showInitialLoading = useDelayedLoading(loading && matches.length === 0);
   const copyRef = useRef(copy);
   copyRef.current = copy;
   const dateButtons = useMemo(
@@ -275,7 +273,10 @@ export default function JapaneseHomeScreen() {
   const sortTop = dateTop + (hasDateRange ? 0 : 76);
   const headerHeight = Math.max(hasDateRange ? 184 : 246, sortTop + 58);
 
-  const loadRecruitments = useCallback((mode: "initial" | "refresh" = "refresh") => {
+  const loadRecruitments = useCallback((
+    mode: "initial" | "refresh" = "refresh",
+    options?: { preserveContent?: boolean },
+  ) => {
     const previousRequest = activeSearchRequestRef.current;
     if (previousRequest) {
       previousRequest.cancelled = true;
@@ -294,11 +295,14 @@ export default function JapaneseHomeScreen() {
       }
     };
 
-    setRecruitments([]);
-    setApplicationStatuses({});
-    setTodayPlanCount(0);
-    setLoading(true);
-    setRefreshing(mode !== "initial");
+    const preserveContent = mode === "refresh" && options?.preserveContent === true;
+    if (!preserveContent) {
+      setRecruitments([]);
+      setApplicationStatuses({});
+      setTodayPlanCount(0);
+    }
+    setLoading(mode === "initial" || !preserveContent);
+    setRefreshing(mode === "refresh");
     setLoadError(null);
 
     const run = async () => {
@@ -441,22 +445,6 @@ export default function JapaneseHomeScreen() {
     activeSearchRequestRef.current = null;
   }, []);
 
-  useEffect(() => {
-    let active = true;
-    const unsubscribe = subscribeLanguage((nextLanguage) => {
-      if (active && nextLanguage) setLanguage(nextLanguage);
-    });
-    void loadLanguage().then((storedLanguage) => {
-      if (active) setLanguage(storedLanguage ?? "ja");
-    }).catch(() => {
-      if (active) setLanguage("ja");
-    });
-    return () => {
-      active = false;
-      unsubscribe();
-    };
-  }, []);
-
   const loadRecruitmentsRef = useRef(loadRecruitments);
   loadRecruitmentsRef.current = loadRecruitments;
 
@@ -512,16 +500,22 @@ export default function JapaneseHomeScreen() {
 
   if (!language) {
     return (
-      <View style={styles.loadingScreen}>
+      <View style={styles.screen}>
         <StatusBar style="dark" />
-        {showLanguageLoading ? <LoadingSpinner color={BLUE} size={28} speedMs={680} /> : null}
+        <View style={styles.languageLoadingPanel}>
+          <LoadingSpinner color={BLUE} size={24} />
+        </View>
+        <View
+          pointerEvents="none"
+          style={[styles.header, { height: headerHeight }]}
+        />
       </View>
     );
   }
 
   return (
     <View style={styles.screen}>
-      <StatusBar style="light" />
+      <StatusBar style="dark" />
 
       <ScrollView
         alwaysBounceVertical
@@ -535,9 +529,11 @@ export default function JapaneseHomeScreen() {
         ]}
         refreshControl={
           <RefreshControl
-            onRefresh={() => { void loadRecruitments("refresh"); }}
+            colors={["transparent"]}
+            onRefresh={() => { void loadRecruitments("refresh", { preserveContent: true }); }}
+            progressBackgroundColor="transparent"
             refreshing={refreshing}
-            tintColor={BLUE}
+            tintColor="transparent"
           />
         }
         showsVerticalScrollIndicator={false}
@@ -552,13 +548,11 @@ export default function JapaneseHomeScreen() {
             <MaterialIcons color={BLUE} name="chevron-right" size={22} />
           </Pressable>
         ) : null}
-        {loading && matches.length === 0 ? (
-          showInitialLoading ? (
-            <View style={styles.statePanel}>
-              <LoadingSpinner color={BLUE} size={24} speedMs={680} />
-              <Text style={styles.stateText}>{copy.loading}</Text>
-            </View>
-          ) : null
+        {loading && matches.length === 0 && !loadError ? (
+          <View style={styles.statePanel}>
+            <LoadingSpinner color={BLUE} size={24} />
+            <Text style={styles.stateText}>{copy.loading}</Text>
+          </View>
         ) : loadError && matches.length === 0 ? (
           <View style={styles.statePanel}>
             <Text accessibilityRole="alert" style={styles.stateText}>{loadError}</Text>
@@ -577,7 +571,7 @@ export default function JapaneseHomeScreen() {
                 <Text accessibilityRole="alert" style={styles.inlineErrorText}>{loadError}</Text>
                 <Pressable
                   accessibilityRole="button"
-                  onPress={() => loadRecruitments("refresh")}
+                  onPress={() => loadRecruitments("refresh", { preserveContent: true })}
                   style={({ pressed }) => [styles.retryButton, pressed && styles.pressed]}
                 >
                   <Text style={styles.retryButtonText}>{copy.retry}</Text>
@@ -585,7 +579,7 @@ export default function JapaneseHomeScreen() {
               </View>
             ) : null}
             {filteredMatches.map((match) => (
-              <MatchCard key={match.id} language={language ?? "ja"} match={match} onOpen={openMatch} />
+              <MatchCard key={match.id} language={language} match={match} onOpen={openMatch} />
             ))}
           </>
         )}
@@ -594,6 +588,8 @@ export default function JapaneseHomeScreen() {
           <Text style={styles.emptyText}>{copy.noRecruitments}</Text>
         )}
       </ScrollView>
+
+      {refreshing ? <RefreshLoadingIndicator color={BLUE} top={headerHeight + 10} /> : null}
 
       <View pointerEvents="box-none" style={[styles.header, { height: headerHeight }]}>
         <View pointerEvents="box-none" style={[styles.actionRow, { top: actionTop }]}>
@@ -662,7 +658,7 @@ export default function JapaneseHomeScreen() {
               pressed && styles.pressed,
             ]}
           >
-            <MaterialIcons color="#ffffff" name="notifications-none" size={32} />
+            <MaterialIcons color={colors.text.onSky} name="notifications-none" size={32} />
             {hasUnreadNotifications ? <View style={styles.notificationBadge} /> : null}
           </Pressable>
 
@@ -677,7 +673,7 @@ export default function JapaneseHomeScreen() {
               pressed && styles.pressed,
             ]}
           >
-            <MaterialIcons color="#ffffff" name="account-circle" size={34} />
+            <MaterialIcons color={colors.text.onSky} name="account-circle" size={34} />
           </Pressable>
         </View>
 
@@ -716,10 +712,10 @@ export default function JapaneseHomeScreen() {
                     pressed && styles.pressed,
                   ]}
                 >
-                  <Text numberOfLines={1} style={styles.dateLabel}>
+                  <Text numberOfLines={1} style={[styles.dateLabel, item.isToday && styles.todayDateLabel]}>
                     {item.label}
                   </Text>
-                  <Text numberOfLines={1} style={[styles.weekdayLabel, weekendStyle]}>
+                  <Text numberOfLines={1} style={[styles.weekdayLabel, weekendStyle, item.isToday && styles.todayDateLabel]}>
                     {item.weekdayLabel}
                   </Text>
                 </Pressable>
@@ -738,7 +734,7 @@ export default function JapaneseHomeScreen() {
             pressed && styles.pressed,
           ]}
         >
-          <MaterialIcons color={TEXT_GRAY} name="swap-vert" size={28} />
+          <MaterialIcons color={colors.text.onSky} name="swap-vert" size={28} />
           <Text style={styles.sortText}>{sortMode === "near" ? copy.nearest : copy.deadlineSoon}</Text>
         </Pressable>
       </View>
@@ -746,10 +742,11 @@ export default function JapaneseHomeScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ThemeColors) {
+  return StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.screen,
   },
   matchList: {
     flex: 1,
@@ -770,11 +767,11 @@ const styles = StyleSheet.create({
     gap: 8,
     paddingHorizontal: 14,
     borderRadius: 10,
-    backgroundColor: "#eff8ff",
+    backgroundColor: colors.surface.blueSoft,
   },
   planShortcutText: {
     flex: 1,
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 13,
     fontWeight: "800",
   },
@@ -787,7 +784,7 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     borderBottomLeftRadius: 50,
     borderBottomRightRadius: 50,
-    backgroundColor: BLUE,
+    backgroundColor: colors.brand.sky,
   },
   actionRow: {
     position: "absolute",
@@ -804,9 +801,9 @@ const styles = StyleSheet.create({
     height: 44,
     justifyContent: "center",
     borderWidth: 1,
-    borderColor: BORDER_GRAY,
+    borderColor: colors.border.default,
     borderRadius: 22,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.default,
   },
   searchIcon: {
     position: "absolute",
@@ -819,7 +816,7 @@ const styles = StyleSheet.create({
     paddingRight: 84,
     paddingBottom: 0,
     paddingLeft: 48,
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 15,
     fontWeight: "400",
     letterSpacing: 0,
@@ -857,9 +854,9 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderWidth: 1,
-    borderColor: BLUE,
+    borderColor: colors.brand.sky,
     borderRadius: 4,
-    backgroundColor: YELLOW,
+    backgroundColor: colors.brand.gold,
   },
   profileButton: {
     width: 44,
@@ -882,20 +879,20 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
-    borderColor: BORDER_GRAY,
+    borderColor: colors.border.default,
     borderRadius: 10,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.default,
   },
   todayButton: {
-    borderColor: YELLOW,
-    backgroundColor: YELLOW,
+    borderColor: colors.brand.gold,
+    backgroundColor: colors.brand.gold,
   },
   dateButtonSelected: {
-    borderColor: YELLOW,
+    borderColor: colors.brand.gold,
     borderWidth: 2,
   },
   dateLabel: {
-    color: "#000000",
+    color: colors.text.primary,
     fontSize: 12,
     fontWeight: "600",
     letterSpacing: 0,
@@ -903,18 +900,21 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
   weekdayLabel: {
-    color: "#000000",
+    color: colors.text.primary,
     fontSize: 12,
     fontWeight: "600",
     letterSpacing: 0,
     lineHeight: 15,
     textAlign: "center",
   },
+  todayDateLabel: {
+    color: colors.text.onGold,
+  },
   saturdayText: {
-    color: SATURDAY_BLUE,
+    color: colors.state.link,
   },
   sundayText: {
-    color: SUNDAY_RED,
+    color: colors.state.danger,
   },
   sortRow: {
     position: "absolute",
@@ -927,21 +927,15 @@ const styles = StyleSheet.create({
     paddingRight: 16,
   },
   sortText: {
-    color: TEXT_GRAY,
+    color: colors.text.onSky,
     fontSize: 16,
     fontWeight: "600",
     letterSpacing: 0,
     lineHeight: 20,
   },
-  loadingScreen: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#ffffff",
-  },
   emptyText: {
     marginTop: 40,
-    color: PLACEHOLDER_GRAY,
+    color: colors.text.muted,
     fontSize: 13,
     fontWeight: "600",
     letterSpacing: 0,
@@ -954,6 +948,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 28,
     gap: 12,
   },
+  languageLoadingPanel: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingTop: 246,
+  },
   inlineError: {
     width: "100%",
     alignItems: "center",
@@ -961,14 +961,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
   },
   inlineErrorText: {
-    color: "#b42318",
+    color: colors.state.danger,
     fontSize: 13,
     fontWeight: "600",
     lineHeight: 18,
     textAlign: "center",
   },
   stateText: {
-    color: PLACEHOLDER_GRAY,
+    color: colors.text.muted,
     fontSize: 13,
     fontWeight: "600",
     lineHeight: 18,
@@ -981,14 +981,15 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingHorizontal: 14,
     borderRadius: 16,
-    backgroundColor: YELLOW,
+    backgroundColor: colors.brand.gold,
   },
   retryButtonText: {
-    color: "#ffffff",
+    color: colors.text.onGold,
     fontSize: 12,
     fontWeight: "800",
   },
   pressed: {
     opacity: 0.72,
   },
-});
+  });
+}

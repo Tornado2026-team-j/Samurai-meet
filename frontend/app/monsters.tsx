@@ -1,21 +1,19 @@
 import { MaterialIcons } from "@expo/vector-icons";
 import { useCallback, useEffect, useState } from "react";
-import { ActivityIndicator, Image, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Image, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { Button, Header, colors, radius, spacing, typography } from "../components/ui";
+import type { ThemeColors } from "../components/ui/tokens";
+import { Button, LoadingSpinner } from "../components/ui";
 import { useAuth } from "../hooks/useAuth";
+import { useDisplayLanguage } from "../hooks/useDisplayLanguage";
+import { useTheme, useThemeStyles } from "../hooks/useTheme";
 import { saveDataURIImageToLibrary } from "../services/device-image-save";
 import {
   downloadMemoryMonsterImageDataURI,
   listMemoryMonsters,
   type MemoryMonster,
 } from "../services/memory-monsters";
-import {
-  loadLanguage,
-  subscribeLanguage,
-  type AppLanguage,
-} from "../services/onboarding";
 import { getTabBarContentBottomPadding } from "../utils/layout";
 
 const COPY = {
@@ -55,8 +53,10 @@ const COPY = {
 
 export default function MonstersScreen() {
   const insets = useSafeAreaInsets();
+  const { colors } = useTheme();
+  const styles = useThemeStyles(createStyles);
   const { session, getCurrentSession } = useAuth();
-  const [language, setLanguage] = useState<AppLanguage>("ja");
+  const language = useDisplayLanguage();
   const [items, setItems] = useState<MemoryMonster[]>([]);
   const [images, setImages] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
@@ -65,17 +65,7 @@ export default function MonstersScreen() {
   const [savedItemID, setSavedItemID] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [deviceSaveError, setDeviceSaveError] = useState<{ itemID: string; message: string } | null>(null);
-  const copy = COPY[language];
-
-  useEffect(() => {
-    const unsubscribe = subscribeLanguage((nextLanguage) => {
-      if (nextLanguage) setLanguage(nextLanguage);
-    });
-    void loadLanguage().then((storedLanguage) => {
-      if (storedLanguage) setLanguage(storedLanguage);
-    });
-    return unsubscribe;
-  }, []);
+  const copy = COPY[language ?? "ja"];
 
   const load = useCallback(async (refresh = false) => {
     const activeSession = getCurrentSession() ?? session;
@@ -142,16 +132,27 @@ export default function MonstersScreen() {
     }
   };
 
+  if (!language) {
+    return (
+      <View style={styles.screen}>
+        <StatusBar style="dark" />
+        <View style={[styles.header, { paddingTop: Math.max(insets.top, 20) }]}>
+          <MaterialIcons color={colors.text.onSky} name="auto-awesome" size={42} />
+        </View>
+        <View style={styles.languageLoadingPanel}>
+          <LoadingSpinner color={colors.brand.sky} size={24} />
+        </View>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.screen}>
-      <StatusBar style="light" />
-      <Header
-        iconName="auto-awesome"
-        style={[styles.header, { paddingTop: Math.max(insets.top, 20) }]}
-        title={copy.title}
-        titleStyle={styles.headerTitle}
-        variant="hero"
-      />
+      <StatusBar style="dark" />
+      <View style={[styles.header, { paddingTop: Math.max(insets.top, 20) }]}>
+        <MaterialIcons color={colors.text.onSky} name="auto-awesome" size={42} />
+        <Text accessibilityRole="header" style={styles.headerTitle}>{copy.title}</Text>
+      </View>
 
       <ScrollView
         contentContainerStyle={[
@@ -163,7 +164,7 @@ export default function MonstersScreen() {
       >
         {loading ? (
           <View style={styles.statePanel}>
-            <ActivityIndicator color={colors.brand.sky} />
+            <LoadingSpinner color={colors.brand.sky} size={24} />
             <Text style={styles.stateText}>{copy.loading}</Text>
           </View>
         ) : error ? (
@@ -215,6 +216,7 @@ export default function MonstersScreen() {
 }
 
 function InfoBlock({ label, value }: { label: string; value: string }) {
+  const styles = useThemeStyles(createStyles);
   return (
     <View style={styles.infoBlock}>
       <Text style={styles.infoLabel}>{label}</Text>
@@ -223,79 +225,130 @@ function InfoBlock({ label, value }: { label: string; value: string }) {
   );
 }
 
-const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.surface.screen },
-  header: {
-    minHeight: 178,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: spacing.sm,
-    paddingHorizontal: spacing["2xl"],
-    paddingBottom: spacing["3xl"],
-    borderBottomLeftRadius: 42,
-    borderBottomRightRadius: 42,
-    backgroundColor: colors.brand.sky,
-  },
-  headerTitle: { ...typography.title1, color: colors.text.inverse },
-  content: {
-    alignItems: "center",
-    gap: spacing.lg,
-    paddingHorizontal: spacing["2xl"],
-    paddingTop: spacing["3xl"],
-  },
-  card: {
-    width: "100%",
-    maxWidth: 420,
-    gap: spacing.md,
-    padding: spacing.lg,
-    borderWidth: 1,
-    borderColor: colors.border.subtle,
-    borderRadius: radius.sm,
-    backgroundColor: colors.surface.default,
-  },
-  monsterImage: {
-    width: "100%",
-    aspectRatio: 1,
-    borderRadius: radius.sm,
-    backgroundColor: colors.surface.subtle,
-  },
-  imageFallback: {
-    width: "100%",
-    aspectRatio: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: radius.sm,
-    backgroundColor: colors.surface.blueSoft,
-  },
-  statePanel: {
-    width: "100%",
-    maxWidth: 390,
-    alignItems: "center",
-    gap: spacing.md,
-    padding: spacing["2xl"],
-    borderWidth: 1,
-    borderColor: colors.border.subtle,
-    borderRadius: radius.sm,
-    backgroundColor: colors.surface.default,
-  },
-  emptyIconCircle: {
-    width: 72,
-    height: 72,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: 36,
-    backgroundColor: colors.surface.blueSoft,
-  },
-  emptyTitle: { ...typography.heading, color: colors.text.primary, textAlign: "center" },
-  stateText: { ...typography.caption, color: colors.text.secondary, textAlign: "center" },
-  successText: { ...typography.captionStrong, color: colors.state.success, textAlign: "center" },
-  saveError: { ...typography.caption, color: colors.state.danger, textAlign: "center" },
-  infoBlock: {
-    gap: spacing.xs,
-    padding: spacing.md,
-    borderRadius: radius.sm,
-    backgroundColor: colors.surface.subtle,
-  },
-  infoLabel: { ...typography.smallStrong, color: colors.text.subtle },
-  infoValue: { ...typography.body, color: colors.text.secondary },
-});
+function createStyles(colors: ThemeColors) {
+  return StyleSheet.create({
+    screen: {
+      flex: 1,
+      backgroundColor: colors.surface.screen,
+    },
+    header: {
+      minHeight: 178,
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 8,
+      paddingHorizontal: 24,
+      paddingBottom: 26,
+      borderBottomLeftRadius: 42,
+      borderBottomRightRadius: 42,
+      backgroundColor: colors.brand.sky,
+    },
+    headerTitle: {
+      color: colors.text.onSky,
+      fontSize: 28,
+      fontWeight: "800",
+      letterSpacing: 0,
+    },
+    content: {
+      alignItems: "center",
+      paddingHorizontal: 24,
+      paddingTop: 28,
+      gap: 16,
+    },
+    languageLoadingPanel: {
+      flex: 1,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    card: {
+      width: "100%",
+      maxWidth: 420,
+      gap: 14,
+      padding: 20,
+      borderWidth: 1,
+      borderColor: colors.border.default,
+      borderRadius: 24,
+      backgroundColor: colors.surface.default,
+    },
+    monsterImage: {
+      width: "100%",
+      aspectRatio: 1,
+      borderRadius: 16,
+      backgroundColor: colors.surface.subtle,
+    },
+    imageFallback: {
+      width: "100%",
+      aspectRatio: 1,
+      alignItems: "center",
+      justifyContent: "center",
+      borderRadius: 16,
+      backgroundColor: colors.surface.blueSoft,
+    },
+    statePanel: {
+      width: "100%",
+      maxWidth: 390,
+      minHeight: 420,
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 14,
+      paddingHorizontal: 20,
+    },
+    emptyIconCircle: {
+      width: 76,
+      height: 76,
+      alignItems: "center",
+      justifyContent: "center",
+      borderWidth: 1,
+      borderColor: colors.border.blue,
+      borderRadius: 38,
+      backgroundColor: colors.surface.blueSoft,
+    },
+    emptyTitle: {
+      color: colors.text.secondary,
+      fontSize: 17,
+      fontWeight: "800",
+      letterSpacing: 0,
+      textAlign: "center",
+    },
+    stateText: {
+      maxWidth: 290,
+      color: colors.text.muted,
+      fontSize: 14,
+      fontWeight: "600",
+      letterSpacing: 0,
+      lineHeight: 22,
+      textAlign: "center",
+    },
+    successText: {
+      color: colors.state.success,
+      fontSize: 14,
+      fontWeight: "700",
+      textAlign: "center",
+    },
+    saveError: {
+      color: colors.state.danger,
+      fontSize: 14,
+      fontWeight: "600",
+      textAlign: "center",
+    },
+    infoBlock: {
+      width: "100%",
+      gap: 6,
+      padding: 14,
+      borderRadius: 16,
+      backgroundColor: colors.surface.subtle,
+    },
+    infoLabel: {
+      color: colors.text.muted,
+      fontSize: 12,
+      fontWeight: "700",
+      letterSpacing: 0,
+    },
+    infoValue: {
+      color: colors.text.secondary,
+      fontSize: 15,
+      fontWeight: "700",
+      letterSpacing: 0,
+      lineHeight: 22,
+    },
+  });
+}

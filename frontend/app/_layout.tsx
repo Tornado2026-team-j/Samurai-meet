@@ -2,7 +2,9 @@ import { Redirect, Stack, usePathname, useRouter } from "expo-router";
 import { useEffect, useRef, type ReactNode } from "react";
 import { View } from "react-native";
 import GlobalTabBar from "../components/GlobalTabBar";
+import { LoadingScreen } from "../components/ui";
 import { AuthProvider, useAuth } from "../hooks/useAuth";
+import { ThemeProvider } from "../hooks/useTheme";
 import {
   isProtectedRoute,
   shouldRedirectToSignedOutRoot,
@@ -14,7 +16,7 @@ function AuthRouteGuard({ children }: { children: ReactNode }) {
   const { status } = useAuth();
 
   if (status === "loading" && isProtectedRoute(pathname)) {
-    return <View style={{ flex: 1, backgroundColor: "#ffffff" }} />;
+    return <LoadingScreen />;
   }
 
   if (shouldRedirectToSignedOutRoot(status, pathname)) {
@@ -52,7 +54,8 @@ function RootNavigator() {
         initialRouteName="index"
         screenLayout={({ children }) => <AuthRouteGuard>{children}</AuthRouteGuard>}
         screenOptions={{
-          animation: "none",
+          animation: "default",
+          gestureEnabled: true,
           headerShown: false,
         }}
       />
@@ -63,8 +66,10 @@ function RootNavigator() {
 
 export default function RootLayout() {
   return (
-    <AuthProvider>
-      <RootNavigator />
-    </AuthProvider>
+    <ThemeProvider>
+      <AuthProvider>
+        <RootNavigator />
+      </AuthProvider>
+    </ThemeProvider>
   );
 }

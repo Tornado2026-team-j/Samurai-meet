@@ -11,6 +11,8 @@ import {
   View,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
+import type { ThemeColors } from '../../components/ui/tokens';
+import { useTheme, useThemeStyles } from '../../hooks/useTheme';
 import { parsePasskeyBridgeRequest, type PasskeyBridgeRequest } from '../../services/auth-contract';
 import { completeWebPasskeyBridge } from '../../services/passkey-web';
 
@@ -28,6 +30,8 @@ function readBridgeRequest(): PasskeyBridgeRequest | null {
 }
 
 export default function PasskeyScreen() {
+  const { colors } = useTheme();
+  const styles = useThemeStyles(createStyles);
   const [request] = useState(readBridgeRequest);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -84,7 +88,7 @@ export default function PasskeyScreen() {
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         <View style={styles.hero}>
           <View style={styles.iconCircle}>
-            <MaterialIcons color="#ffffff" name="key" size={58} />
+            <MaterialIcons color={colors.text.inverse} name="key" size={58} />
           </View>
           <Text accessibilityRole="header" style={styles.title}>{title}</Text>
           <Text style={styles.description}>{description}</Text>
@@ -94,7 +98,7 @@ export default function PasskeyScreen() {
           {request ? (
             <>
               <View style={styles.securityRow}>
-                <MaterialIcons color="#3d9a68" name="verified-user" size={23} />
+                <MaterialIcons color={colors.state.success} name="verified-user" size={23} />
                 <View style={styles.securityCopy}>
                   <Text style={styles.securityTitle}>安全な本人確認</Text>
                   <Text style={styles.securityText}>顔・指紋などの生体情報がSamurai Meetへ送信されることはありません。</Text>
@@ -112,10 +116,10 @@ export default function PasskeyScreen() {
                 ]}
               >
                 {busy ? (
-                  <ActivityIndicator color="#ffffff" />
+                  <ActivityIndicator color={colors.text.inverse} />
                 ) : (
                   <>
-                    <MaterialIcons color="#ffffff" name="fingerprint" size={25} />
+                    <MaterialIcons color={colors.text.inverse} name="fingerprint" size={25} />
                     <Text style={styles.primaryButtonText}>{title}</Text>
                   </>
                 )}
@@ -123,7 +127,7 @@ export default function PasskeyScreen() {
             </>
           ) : (
             <View style={styles.invalidRequest}>
-              <MaterialIcons color="#b42318" name="error-outline" size={26} />
+              <MaterialIcons color={colors.state.danger} name="error-outline" size={26} />
               <Text accessibilityRole="alert" style={styles.invalidText}>
                 Passkeyリクエストが無効です。アプリからもう一度お試しください。
               </Text>
@@ -132,7 +136,7 @@ export default function PasskeyScreen() {
 
           {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
           <View style={styles.noteRow}>
-            <MaterialIcons color="#7d7d7d" name="lock-outline" size={16} />
+            <MaterialIcons color={colors.text.subtle} name="lock-outline" size={16} />
             <Text style={styles.note}>本人確認の完了後、一回限りの認証コードでアプリへ戻ります。</Text>
           </View>
         </View>
@@ -141,10 +145,11 @@ export default function PasskeyScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ThemeColors) {
+  return StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: '#ffffff',
+    backgroundColor: colors.surface.screen,
   },
   scrollContent: {
     flexGrow: 1,
@@ -159,7 +164,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderBottomLeftRadius: 44,
     borderBottomRightRadius: 44,
-    backgroundColor: '#5ec5f5',
+    backgroundColor: colors.brand.sky,
   },
   iconCircle: {
     width: 112,
@@ -168,12 +173,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 2,
-    borderColor: 'rgba(255, 255, 255, 0.82)',
+    borderColor: colors.text.inverse,
     borderRadius: 56,
     backgroundColor: 'rgba(255, 255, 255, 0.12)',
   },
   title: {
-    color: '#ffffff',
+    color: colors.text.inverse,
     fontSize: 27,
     fontWeight: '900',
     lineHeight: 34,
@@ -184,7 +189,7 @@ const styles = StyleSheet.create({
     width: '100%',
     maxWidth: 390,
     marginTop: 9,
-    color: 'rgba(255, 255, 255, 0.95)',
+    color: colors.text.inverse,
     fontSize: 14,
     fontWeight: '600',
     lineHeight: 22,
@@ -208,20 +213,20 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     gap: 12,
     borderRadius: 8,
-    backgroundColor: '#eef8f2',
+    backgroundColor: colors.surface.successSoft,
   },
   securityCopy: {
     flex: 1,
     gap: 3,
   },
   securityTitle: {
-    color: '#357a55',
+    color: colors.state.success,
     fontSize: 14,
     fontWeight: '800',
     letterSpacing: 0,
   },
   securityText: {
-    color: '#567064',
+    color: colors.text.secondary,
     fontSize: 11,
     lineHeight: 17,
     letterSpacing: 0,
@@ -235,10 +240,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 10,
     borderRadius: 8,
-    backgroundColor: '#e7b454',
+    backgroundColor: colors.brand.gold,
   },
   primaryButtonText: {
-    color: '#ffffff',
+    color: colors.text.inverse,
     fontSize: 16,
     fontWeight: '800',
     letterSpacing: 0,
@@ -251,19 +256,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 12,
     borderWidth: 1,
-    borderColor: '#f0c8c4',
+    borderColor: colors.border.danger,
     borderRadius: 8,
-    backgroundColor: '#fff5f4',
+    backgroundColor: colors.surface.dangerSoft,
   },
   invalidText: {
     flex: 1,
-    color: '#8f2d25',
+    color: colors.state.dangerDark,
     fontSize: 13,
     lineHeight: 20,
     letterSpacing: 0,
   },
   error: {
-    color: '#b42318',
+    color: colors.state.danger,
     fontSize: 12,
     lineHeight: 18,
     letterSpacing: 0,
@@ -278,7 +283,7 @@ const styles = StyleSheet.create({
   },
   note: {
     flexShrink: 1,
-    color: '#7d7d7d',
+    color: colors.text.subtle,
     fontSize: 11,
     lineHeight: 17,
     letterSpacing: 0,
@@ -290,4 +295,5 @@ const styles = StyleSheet.create({
   pressed: {
     opacity: 0.72,
   },
-});
+  });
+}

@@ -15,8 +15,11 @@ import {
 import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { RecoveryCompletion, RecoveryKeyDisplay } from "../components/RecoveryFlow";
-import { Header } from "../components/ui";
+import { Header, LoadingScreen, LoadingSpinner } from "../components/ui";
+import type { ThemeColors } from "../components/ui/tokens";
 import { useAuth } from "../hooks/useAuth";
+import { useDisplayLanguage } from "../hooks/useDisplayLanguage";
+import { useTheme, useThemeStyles } from "../hooks/useTheme";
 import {
   completeRecoveryKeyRotation,
   loadStoredDeviceKeyB,
@@ -35,7 +38,6 @@ import {
   loadLocalProfile,
   saveAppMode,
   saveLanguage,
-  subscribeLanguage,
   type AppMode,
 } from "../services/onboarding";
 import type {
@@ -43,17 +45,11 @@ import type {
   LocalProfile,
 } from "../services/onboarding-contract";
 
-const BLUE = "#5ec5f5";
-const YELLOW = "#e7b454";
-const TEXT_GRAY = "#535353";
-const MUTED_GRAY = "#7d7d7d";
-const BORDER_GRAY = "#d4d4d4";
-
 const COPY = {
   ja: {
-    title: "プロフィール",
+    title: "アカウント",
     back: "戻る",
-    loading: "プロフィールを読み込んでいます…",
+    loading: "アカウントを読み込んでいます…",
     name: "名前",
     nationality: "国籍",
     skills: "得意なこと",
@@ -88,6 +84,8 @@ const COPY = {
     appModeDescription: "ホーム画面の利用者区分を選びます。表示言語とは別に変更できます。",
     localMode: "地域案内モード",
     travelerMode: "旅行者モード",
+    theme: "テーマ",
+    themeDescription: "端末の設定に合わせるか、ライト／ダークを固定します。",
     settingsError: "設定を保存できませんでした。もう一度お試しください。",
     logout: "ログアウト",
     loggingOut: "ログアウト中…",
@@ -137,9 +135,9 @@ const COPY = {
     resetDeviceError: "端末データの初期化に失敗しました。もう一度お試しください。",
   },
   en: {
-    title: "Profile",
+    title: "Account",
     back: "Back",
-    loading: "Loading profile…",
+    loading: "Loading account…",
     name: "Name",
     nationality: "Nationality",
     skills: "Skills",
@@ -174,6 +172,8 @@ const COPY = {
     appModeDescription: "Choose the home experience separately from the display language.",
     localMode: "Local guide",
     travelerMode: "Traveler",
+    theme: "Theme",
+    themeDescription: "Follow your device setting or choose a fixed light or dark theme.",
     settingsError: "The setting could not be saved. Please try again.",
     logout: "Log out",
     loggingOut: "Logging out…",
@@ -283,11 +283,21 @@ function formatTags(tags: string[], language: AppLanguage): string {
     .join(" / ");
 }
 
-export default function ProfileScreen() {
+type ProfileScreenProps = {
+  settingsOnly?: boolean;
+};
+
+export function ProfileScreen({ settingsOnly = false }: ProfileScreenProps = {}) {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { colors } = useTheme();
+  const styles = useThemeStyles(createStyles);
+  const BLUE = colors.brand.sky;
+  const YELLOW = colors.brand.gold;
+  const TEXT_GRAY = colors.text.secondary;
+  const MUTED_GRAY = colors.text.subtle;
   const { continuePasskey, deleteAccount, error, getCurrentSession, logout, session, status } = useAuth();
-  const [language, setLanguage] = useState<AppLanguage>("ja");
+  const language = useDisplayLanguage();
   const [appMode, setAppMode] = useState<AppMode>("local");
   const [profile, setProfile] = useState<LocalProfile | null>(null);
   const [profileLoaded, setProfileLoaded] = useState(false);
@@ -316,7 +326,7 @@ export default function ProfileScreen() {
   sessionRef.current = session;
   const recoverySessionRef = useRef<Session | null>(null);
   const recoveryOperationRef = useRef(0);
-  const copy = COPY[language];
+  const copy = COPY[language ?? "ja"];
   const expectedDeleteConfirmation = copy.deleteConfirmation;
   const expectedDeviceResetConfirmation = language === "ja" ? "初期化" : "RESET";
 
@@ -334,7 +344,6 @@ export default function ProfileScreen() {
       loadLocalProfile(activeSession.user_id),
     ]).then(([storedLanguage, storedMode, storedProfile]) => {
       if (!active) return;
-      setLanguage(storedLanguage ?? "ja");
       setAppMode(storedMode ?? (storedLanguage === "en" ? "traveler" : "local"));
       setProfile(storedProfile);
       setProfileLoaded(true);
@@ -346,13 +355,6 @@ export default function ProfileScreen() {
       active = false;
     };
   }, [router, session?.session_id, session?.user_id]);
-
-  useEffect(() => {
-    const unsubscribe = subscribeLanguage((nextLanguage) => {
-      if (nextLanguage) setLanguage(nextLanguage);
-    });
-    return unsubscribe;
-  }, []);
 
   useEffect(() => {
     const userID = session?.user_id;
@@ -398,7 +400,6 @@ export default function ProfileScreen() {
     setSettingsSaveFailed(false);
     try {
       await saveLanguage(nextLanguage);
-      setLanguage(nextLanguage);
     } catch {
       setSettingsSaveFailed(true);
     } finally {
@@ -438,7 +439,7 @@ export default function ProfileScreen() {
     setRecoveryStage("reauthenticating");
     setRecoveryError(null);
     try {
-      const reauthenticated = await continuePasskey(language);
+      const reauthenticated = await continuePasskey(language ?? "ja");
       if (!reauthenticated) throw new Error(copy.recoveryError);
 
       const authenticatedSession = getCurrentSession() ?? rotationSession;
@@ -470,7 +471,7 @@ export default function ProfileScreen() {
     setDeleting(true);
     setDeleteFailed(false);
     try {
-      const reauthenticated = await continuePasskey(language);
+      const reauthenticated = await continuePasskey(language ?? "ja");
       if (!reauthenticated) {
         throw new Error(copy.deleteError);
       }
@@ -494,7 +495,7 @@ export default function ProfileScreen() {
     setDeviceKeyBusy(true);
     setDeviceInfoError(null);
     try {
-      const reauthenticated = await continuePasskey(language);
+      const reauthenticated = await continuePasskey(language ?? "ja");
       if (!reauthenticated) throw new Error(copy.deviceKeyBRevealError);
       setShowDeviceKeyB(true);
     } catch {
@@ -540,6 +541,22 @@ export default function ProfileScreen() {
     setRecoveryPreparing(false);
     setRecoveryStage(null);
   }, [session]);
+
+  if (!language) {
+    return (
+      <View style={styles.screen}>
+        <StatusBar style="dark" />
+        <Header
+          iconName={settingsOnly ? "settings" : "person"}
+          style={[styles.header, { paddingTop: Math.max(insets.top, 20) }]}
+          variant="hero"
+        />
+        <View style={styles.languageLoadingPanel}>
+          <LoadingSpinner color={BLUE} size={24} />
+        </View>
+      </View>
+    );
+  }
 
   if (session && recoveryMaterial) {
     return (
@@ -590,14 +607,8 @@ export default function ProfileScreen() {
     );
   }
 
-  if (!session || !profileLoaded) {
-    return (
-      <View style={[styles.loadingScreen, { paddingTop: Math.max(insets.top, 20) }]}>
-        <StatusBar style="dark" />
-        <ActivityIndicator color={BLUE} size="large" />
-        <Text style={styles.loadingText}>{copy.loading}</Text>
-      </View>
-    );
+  if (!session) {
+    return <LoadingScreen label={copy.loading} style={{ paddingTop: Math.max(insets.top, 20) }} />;
   }
 
   const displayedProfile = profile ?? {
@@ -614,11 +625,11 @@ export default function ProfileScreen() {
 
   return (
     <View style={styles.screen}>
-      <StatusBar style="light" />
+      <StatusBar style="dark" />
 
       <Header
         backAccessibilityLabel={copy.back}
-        iconName="person"
+        iconName={settingsOnly ? "settings" : "person"}
         onBack={() => {
           if (router.canGoBack()) {
             router.back();
@@ -626,19 +637,18 @@ export default function ProfileScreen() {
             router.replace(appMode === "local" ? "/japanese" : "/foreigner");
           }
         }}
-        right={(
+        right={!settingsOnly ? (
           <Pressable
-            accessibilityLabel={copy.editProfile}
+            accessibilityLabel={copy.settingsSection}
             accessibilityRole="button"
-            onPress={() => router.push("/profile-edit")}
-            style={({ pressed }) => [styles.headerEditButton, pressed && styles.pressed]}
+            onPress={() => router.push("/account-settings")}
+            style={({ pressed }) => [styles.headerSettingsButton, pressed && styles.pressed]}
           >
-            <MaterialIcons color="#ffffff" name="edit" size={17} />
-            <Text style={styles.headerEditText}>{copy.editProfile}</Text>
+            <MaterialIcons color={colors.text.onSky} name="settings" size={23} />
           </Pressable>
-        )}
+        ) : null}
         style={[styles.header, { paddingTop: Math.max(insets.top, 20) }]}
-        title={copy.title}
+        title={settingsOnly ? copy.settingsSection : copy.title}
         titleStyle={styles.headerTitle}
         variant="hero"
       />
@@ -651,87 +661,103 @@ export default function ProfileScreen() {
         ]}
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.profileCard}>
-          <View style={styles.avatar}>
-            <MaterialIcons color={BLUE} name="person" size={54} />
+        {!profileLoaded ? (
+          <View style={styles.loadingPanel}>
+            <LoadingSpinner color={BLUE} size={24} />
+            <Text style={styles.loadingText}>{copy.loading}</Text>
           </View>
+        ) : (
+          <>
+            {!settingsOnly ? (
+              <>
+            <View style={styles.profileCard}>
+              <View style={styles.profileIdentity}>
+                <View style={styles.avatar}>
+                  <MaterialIcons color={BLUE} name="person" size={50} />
+                </View>
+                <View style={styles.profileIdentityText}>
+                  <Text style={styles.profileName}>{displayedProfile.name || copy.notSet}</Text>
+                  <Text style={styles.profileNationality}>
+                    {displayedProfile.nationalityCode || copy.notSet}
+                  </Text>
+                </View>
+              </View>
 
-          <ProfileRow label={copy.name} value={displayedProfile.name || copy.notSet} />
-          <ProfileRow
-            label={copy.nationality}
-            value={displayedProfile.nationalityCode || copy.notSet}
-          />
-          <ProfileRow
-            label={copy.skills}
-            value={formatTags(displayedProfile.monsterSeed.skillTags, language) || copy.notSet}
-            multiline
-          />
-          <ProfileRow
-            label={copy.interests}
-            value={formatTags(displayedProfile.monsterSeed.interestTags, language) || copy.notSet}
-            multiline
-          />
-          <ProfileRow
-            label={copy.monsterNote}
-            value={displayedProfile.monsterSeed.freeText || copy.notSet}
-            multiline
-          />
-          <Pressable
-            accessibilityLabel={copy.editProfile}
-            accessibilityRole="button"
-            onPress={() => router.push("/profile-edit")}
-            style={({ pressed }) => [styles.editProfileButton, pressed && styles.pressed]}
-          >
-            <MaterialIcons color="#ffffff" name="edit" size={18} />
-            <Text style={styles.editProfileButtonText}>{copy.editProfile}</Text>
-          </Pressable>
-        </View>
-
-        <View style={styles.managementSection}>
-          <Text style={styles.managementTitle}>{copy.activitySection}</Text>
-          <Text style={styles.managementDescription}>{copy.myRecruitmentsDescription}</Text>
-          <Pressable
-            accessibilityLabel={copy.myRecruitments}
-            accessibilityRole="button"
-            disabled={loggingOut || deleting || recoveryPreparing}
-            onPress={() => router.push("/recruitments/mine")}
-            style={({ pressed }) => [
-              styles.managementButton,
-              pressed && !loggingOut && !deleting && !recoveryPreparing && styles.pressed,
-              (loggingOut || deleting || recoveryPreparing) && styles.disabledButton,
-            ]}
-          >
-            <View style={styles.managementButtonLabel}>
-              <MaterialIcons color={BLUE} name="work-outline" size={20} />
-              <Text style={styles.managementButtonText}>{copy.myRecruitments}</Text>
+              <ProfileRow
+                label={copy.skills}
+                value={formatTags(displayedProfile.monsterSeed.skillTags, language) || copy.notSet}
+                multiline
+              />
+              <ProfileRow
+                label={copy.interests}
+                value={formatTags(displayedProfile.monsterSeed.interestTags, language) || copy.notSet}
+                multiline
+              />
+              <ProfileRow
+                label={copy.monsterNote}
+                value={displayedProfile.monsterSeed.freeText || copy.notSet}
+                multiline
+              />
+              <Pressable
+                accessibilityLabel={copy.editProfile}
+                accessibilityRole="button"
+                onPress={() => router.push("/profile-edit")}
+                style={({ pressed }) => [styles.editProfileButton, pressed && styles.pressed]}
+              >
+                <MaterialIcons color={colors.text.onSky} name="edit" size={18} />
+                <Text style={styles.editProfileButtonText}>{copy.editProfile}</Text>
+              </Pressable>
             </View>
-            <MaterialIcons color={BLUE} name="chevron-right" size={21} />
-          </Pressable>
-          <Text style={styles.managementDescription}>{copy.myApplicationsDescription}</Text>
-          <Pressable
-            accessibilityLabel={copy.myApplications}
-            accessibilityRole="button"
-            disabled={loggingOut || deleting || recoveryPreparing}
-            onPress={() => router.push({
-              pathname: "/japanese/applications",
-              params: { language },
-            })}
-            style={({ pressed }) => [
-              styles.managementButton,
-              pressed && !loggingOut && !deleting && !recoveryPreparing && styles.pressed,
-              (loggingOut || deleting || recoveryPreparing) && styles.disabledButton,
-            ]}
-          >
-            <View style={styles.managementButtonLabel}>
-              <MaterialIcons color={BLUE} name="history" size={20} />
-              <Text style={styles.managementButtonText}>{copy.myApplications}</Text>
-            </View>
-            <MaterialIcons color={BLUE} name="chevron-right" size={21} />
-          </Pressable>
-        </View>
 
-        <View style={styles.managementSection}>
-          <Text style={styles.managementTitle}>{copy.accountSecuritySection}</Text>
+            <View style={styles.managementSection}>
+              <Text style={styles.managementTitle}>{copy.activitySection}</Text>
+              <Pressable
+                accessibilityLabel={copy.myRecruitments}
+                accessibilityHint={copy.myRecruitmentsDescription}
+                accessibilityRole="button"
+                disabled={loggingOut || deleting || recoveryPreparing}
+                onPress={() => router.push("/recruitments/mine")}
+                style={({ pressed }) => [
+                  styles.managementButton,
+                  pressed && !loggingOut && !deleting && !recoveryPreparing && styles.pressed,
+                  (loggingOut || deleting || recoveryPreparing) && styles.disabledButton,
+                ]}
+              >
+                <View style={styles.managementButtonLabel}>
+                  <MaterialIcons color={BLUE} name="work-outline" size={20} />
+                  <Text style={styles.managementButtonText}>{copy.myRecruitments}</Text>
+                </View>
+                <MaterialIcons color={BLUE} name="chevron-right" size={21} />
+              </Pressable>
+              <Pressable
+                accessibilityLabel={copy.myApplications}
+                accessibilityHint={copy.myApplicationsDescription}
+                accessibilityRole="button"
+                disabled={loggingOut || deleting || recoveryPreparing}
+                onPress={() => router.push({
+                  pathname: "/japanese/applications",
+                  params: { language },
+                })}
+                style={({ pressed }) => [
+                  styles.managementButton,
+                  pressed && !loggingOut && !deleting && !recoveryPreparing && styles.pressed,
+                  (loggingOut || deleting || recoveryPreparing) && styles.disabledButton,
+                ]}
+              >
+                <View style={styles.managementButtonLabel}>
+                  <MaterialIcons color={BLUE} name="history" size={20} />
+                  <Text style={styles.managementButtonText}>{copy.myApplications}</Text>
+                </View>
+                <MaterialIcons color={BLUE} name="chevron-right" size={21} />
+              </Pressable>
+            </View>
+              </>
+            ) : null}
+
+            {settingsOnly ? (
+              <View style={styles.settingsContent}>
+          <View style={styles.managementSection}>
+            <Text style={styles.managementTitle}>{copy.accountSecuritySection}</Text>
           {([
             [copy.security, "/security", "security"],
             [copy.deviceTransfer, "/device-transfer", "devices-other"],
@@ -762,9 +788,9 @@ export default function ProfileScreen() {
             </View>
             <Text style={styles.comingSoonText}>{copy.comingSoon}</Text>
           </View>
-        </View>
+          </View>
 
-        <View style={styles.settingsSection}>
+          <View style={styles.settingsSection}>
           <Text style={styles.managementTitle}>{copy.settingsSection}</Text>
           <Text style={styles.settingsTitle}>{copy.settingsTitle}</Text>
           <Text style={styles.settingsLabel}>{copy.displayLanguage}</Text>
@@ -799,11 +825,25 @@ export default function ProfileScreen() {
               onPress={() => void updateAppMode("traveler")}
             />
           </View>
+          <Text style={styles.settingsLabel}>{copy.theme}</Text>
+          <Text style={styles.settingsDescription}>{copy.themeDescription}</Text>
+          <Pressable
+            accessibilityLabel={copy.theme}
+            accessibilityRole="button"
+            onPress={() => router.push("/theme-settings")}
+            style={({ pressed }) => [styles.managementButton, pressed && styles.pressed]}
+          >
+            <View style={styles.managementButtonLabel}>
+              <MaterialIcons color={BLUE} name="brightness-6" size={20} />
+              <Text style={styles.managementButtonText}>{copy.theme}</Text>
+            </View>
+            <MaterialIcons color={MUTED_GRAY} name="chevron-right" size={23} />
+          </Pressable>
           {settingsSaving ? <ActivityIndicator color={BLUE} /> : null}
           {settingsSaveFailed ? <Text accessibilityRole="alert" style={styles.errorText}>{copy.settingsError}</Text> : null}
-        </View>
+          </View>
 
-        <View style={styles.settingsSection}>
+          <View style={styles.settingsSection}>
           <Text style={styles.settingsSubsectionTitle}>{copy.notificationPrivacySection}</Text>
           {([
             [copy.notificationSettings, "/notification-settings", "notifications-none"],
@@ -823,9 +863,9 @@ export default function ProfileScreen() {
               <MaterialIcons color={BLUE} name="chevron-right" size={21} />
             </Pressable>
           ))}
-        </View>
+          </View>
 
-        <View style={styles.managementSection}>
+          <View style={styles.managementSection}>
           <Text style={styles.managementTitle}>{copy.supportSection}</Text>
           {([
             [copy.terms, "/legal/terms", "description"],
@@ -846,9 +886,9 @@ export default function ProfileScreen() {
               <MaterialIcons color={BLUE} name="chevron-right" size={21} />
             </Pressable>
           ))}
-        </View>
+          </View>
 
-        <View style={styles.recoverySection}>
+          <View style={styles.recoverySection}>
           <Text style={styles.recoverySectionTitle}>{copy.regenerateRecoveryKey}</Text>
           <Text style={styles.recoveryDescription}>{copy.recoveryDescription}</Text>
           <Pressable
@@ -882,9 +922,9 @@ export default function ProfileScreen() {
             </Text>
           ) : null}
           {recoveryError ? <Text style={styles.errorText}>{recoveryError}</Text> : null}
-        </View>
+          </View>
 
-        <View style={styles.securityInfoSection}>
+          <View style={styles.securityInfoSection}>
           <Text style={styles.securityInfoTitle}>{copy.securityInfoTitle}</Text>
           <Text style={styles.securityInfoDescription}>{copy.securityInfoDescription}</Text>
           <CopyableInfoRow label={copy.accountId} value={session.user_id} copyLabel={copy.copy} copiedLabel={copy.copied} errorLabel={copy.copyFailed} />
@@ -949,11 +989,11 @@ export default function ProfileScreen() {
           >
             <Text style={styles.resetDeviceButtonText}>{copy.resetDeviceData}</Text>
           </Pressable>
-        </View>
+          </View>
 
-        {error && <Text style={styles.errorText}>{copy.authError}</Text>}
+          {error && <Text style={styles.errorText}>{copy.authError}</Text>}
 
-        <Pressable
+          <Pressable
           accessibilityLabel={copy.logout}
           accessibilityRole="button"
           disabled={loggingOut}
@@ -965,13 +1005,13 @@ export default function ProfileScreen() {
           ]}
         >
           {loggingOut ? (
-            <ActivityIndicator color="#ffffff" />
+            <ActivityIndicator color={colors.text.inverse} />
           ) : (
             <Text style={styles.logoutText}>{copy.logout}</Text>
           )}
-        </Pressable>
+          </Pressable>
 
-        <Pressable
+          <Pressable
           accessibilityLabel={copy.deleteAccount}
           accessibilityRole="button"
           disabled={loggingOut || deleting || recoveryPreparing}
@@ -987,9 +1027,9 @@ export default function ProfileScreen() {
           ]}
         >
           <Text style={styles.deleteButtonText}>{copy.deleteAccount}</Text>
-        </Pressable>
+          </Pressable>
 
-        <Modal
+          <Modal
           animationType="fade"
           onRequestClose={() => {
             if (!deleting) setShowDeleteConfirmation(false);
@@ -1017,7 +1057,7 @@ export default function ProfileScreen() {
                   setDeleteFailed(false);
                 }}
                 placeholder={copy.confirmDeletePlaceholder}
-                placeholderTextColor="#a56d68"
+                placeholderTextColor={colors.state.dangerDark}
                 style={styles.deleteInput}
                 value={deleteConfirmation}
               />
@@ -1047,7 +1087,7 @@ export default function ProfileScreen() {
                   ]}
                 >
                   {deleting ? (
-                    <ActivityIndicator color="#ffffff" />
+                    <ActivityIndicator color={colors.text.inverse} />
                   ) : (
                     <Text style={styles.confirmDeleteText}>{copy.deleteContinue}</Text>
                   )}
@@ -1055,9 +1095,9 @@ export default function ProfileScreen() {
               </View>
             </View>
           </ScrollView>
-        </Modal>
+          </Modal>
 
-        <Modal
+          <Modal
           animationType="fade"
           onRequestClose={() => {
             if (!resettingDevice) setShowDeviceReset(false);
@@ -1085,7 +1125,7 @@ export default function ProfileScreen() {
                   setDeviceResetFailed(false);
                 }}
                 placeholder={copy.resetDevicePlaceholder}
-                placeholderTextColor="#7a5a00"
+                placeholderTextColor={colors.state.warning}
                 style={styles.resetDeviceInput}
                 value={deviceResetConfirmation}
               />
@@ -1114,15 +1154,23 @@ export default function ProfileScreen() {
                     pressed && !resettingDevice && styles.pressed,
                   ]}
                 >
-                  {resettingDevice ? <ActivityIndicator color="#ffffff" /> : <Text style={styles.resetDeviceConfirmText}>{copy.resetDeviceConfirm}</Text>}
+                  {resettingDevice ? <ActivityIndicator color={colors.text.inverse} /> : <Text style={styles.resetDeviceConfirmText}>{copy.resetDeviceConfirm}</Text>}
                 </Pressable>
               </View>
             </View>
           </ScrollView>
-        </Modal>
+          </Modal>
+              </View>
+            ) : null}
+          </>
+        )}
       </ScrollView>
     </View>
   );
+}
+
+export default function ProfileRoute() {
+  return <ProfileScreen />;
 }
 
 function CopyableInfoRow({
@@ -1144,6 +1192,9 @@ function CopyableInfoRow({
 }) {
   const [copied, setCopied] = useState(false);
   const [copyFailed, setCopyFailed] = useState(false);
+  const { colors } = useTheme();
+  const styles = useThemeStyles(createStyles);
+  const BLUE = colors.brand.sky;
 
   const copyValue = async () => {
     try {
@@ -1189,6 +1240,7 @@ function ProfileRow({
   multiline?: boolean;
   value: string;
 }) {
+  const styles = useThemeStyles(createStyles);
   return (
     <View style={styles.profileRow}>
       <Text style={styles.rowLabel}>{label}</Text>
@@ -1208,6 +1260,7 @@ function SettingOption({
   label: string;
   onPress: () => void;
 }) {
+  const styles = useThemeStyles(createStyles);
   return (
     <Pressable
       accessibilityRole="button"
@@ -1226,20 +1279,32 @@ function SettingOption({
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ThemeColors) {
+  return StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.screen,
   },
   loadingScreen: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.screen,
     gap: 14,
   },
+  loadingPanel: {
+    minHeight: 360,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 14,
+  },
+  languageLoadingPanel: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   loadingText: {
-    color: MUTED_GRAY,
+    color: colors.text.subtle,
     fontSize: 15,
   },
   header: {
@@ -1253,31 +1318,23 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     marginTop: 8,
-    color: "#ffffff",
+    color: colors.text.onSky,
     fontSize: 28,
     fontWeight: "800",
     letterSpacing: 0,
     lineHeight: 34,
     textAlign: "center",
   },
-  headerEditButton: {
-    minHeight: 34,
-    maxWidth: 148,
-    flexDirection: "row",
+  headerSettingsButton: {
+    width: 40,
+    height: 40,
     alignItems: "center",
     justifyContent: "center",
-    gap: 4,
-    paddingHorizontal: 9,
-    borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.75)",
-    borderRadius: 17,
+    borderRadius: 20,
+    backgroundColor: "rgba(255, 255, 255, 0.16)",
   },
-  headerEditText: {
-    flexShrink: 1,
-    color: "#ffffff",
-    fontSize: 12,
-    fontWeight: "700",
-    textAlign: "center",
+  settingsContent: {
+    gap: 16,
   },
   content: {
     padding: 24,
@@ -1287,84 +1344,103 @@ const styles = StyleSheet.create({
   profileScrollView: {
     flex: 1,
   },
+  profileIdentity: {
+    minHeight: 84,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+    marginBottom: 4,
+  },
   avatar: {
-    width: 96,
-    height: 96,
+    width: 84,
+    height: 84,
     alignItems: "center",
     justifyContent: "center",
-    alignSelf: "center",
-    marginBottom: 8,
-    borderRadius: 48,
-    backgroundColor: "#eaf8ff",
+    borderRadius: 42,
+    backgroundColor: colors.surface.blueSoft,
+  },
+  profileIdentityText: {
+    flex: 1,
+    gap: 4,
+  },
+  profileName: {
+    color: colors.text.secondary,
+    fontSize: 22,
+    fontWeight: "800",
+  },
+  profileNationality: {
+    color: colors.text.subtle,
+    fontSize: 14,
+    fontWeight: "600",
   },
   profileCard: {
     gap: 0,
     padding: 16,
     borderWidth: 1,
-    borderColor: "#cfe9f7",
+    borderColor: colors.border.blue,
     borderRadius: 20,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.default,
   },
   editProfileButton: {
-    minHeight: 46,
+    minHeight: 44,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: 7,
-    marginTop: 16,
+    marginTop: 12,
     borderRadius: 23,
-    backgroundColor: BLUE,
+    backgroundColor: colors.brand.sky,
   },
   editProfileButtonText: {
-    color: "#ffffff",
+    color: colors.text.onSky,
     fontSize: 15,
     fontWeight: "700",
   },
   profileRow: {
-    paddingVertical: 12,
+    paddingVertical: 9,
     borderBottomWidth: 1,
-    borderBottomColor: BORDER_GRAY,
+    borderBottomColor: colors.border.default,
   },
   recoverySection: {
     gap: 10,
     marginTop: 8,
     padding: 16,
     borderWidth: 1,
-    borderColor: "#f0d28b",
+    borderColor: colors.border.gold,
     borderRadius: 16,
-    backgroundColor: "#fffaf0",
+    backgroundColor: colors.surface.warningSoft,
   },
   managementSection: {
     gap: 10,
-    marginTop: 8,
-    padding: 16,
+    marginTop: 4,
+    padding: 14,
     borderWidth: 1,
-    borderColor: "#cfe9f7",
+    borderColor: colors.border.blue,
     borderRadius: 16,
-    backgroundColor: "#f5fbff",
+    backgroundColor: colors.surface.blueSoft,
   },
   settingsSection: {
     gap: 8,
     marginTop: 8,
     padding: 16,
     borderWidth: 1,
-    borderColor: "#cfe9f7",
+    borderColor: colors.border.blue,
     borderRadius: 16,
-    backgroundColor: "#f5fbff",
+    backgroundColor: colors.surface.blueSoft,
   },
   settingsTitle: {
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 17,
     fontWeight: "700",
   },
   settingsLabel: {
     marginTop: 4,
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 14,
     fontWeight: "700",
   },
   settingsDescription: {
-    color: MUTED_GRAY,
+    color: colors.text.subtle,
     fontSize: 13,
     lineHeight: 19,
   },
@@ -1379,32 +1455,27 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingHorizontal: 10,
     borderWidth: 1,
-    borderColor: "#b8dff1",
+    borderColor: colors.border.blueStrong,
     borderRadius: 21,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.default,
   },
   settingOptionActive: {
-    borderColor: BLUE,
-    backgroundColor: BLUE,
+    borderColor: colors.brand.sky,
+    backgroundColor: colors.brand.sky,
   },
   settingOptionText: {
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 13,
     fontWeight: "700",
     textAlign: "center",
   },
   settingOptionTextActive: {
-    color: "#ffffff",
+    color: colors.text.onSky,
   },
   managementTitle: {
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 17,
     fontWeight: "700",
-  },
-  managementDescription: {
-    color: MUTED_GRAY,
-    fontSize: 14,
-    lineHeight: 21,
   },
   managementButton: {
     minHeight: 46,
@@ -1413,12 +1484,12 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingHorizontal: 14,
     borderWidth: 1,
-    borderColor: "#b8dff1",
+    borderColor: colors.border.blueStrong,
     borderRadius: 23,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.default,
   },
   settingsSubsectionTitle: {
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 15,
     fontWeight: "700",
   },
@@ -1429,23 +1500,23 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingHorizontal: 14,
     borderWidth: 1,
-    borderColor: BORDER_GRAY,
+    borderColor: colors.border.default,
     borderRadius: 23,
-    backgroundColor: "#f4f4f4",
+    backgroundColor: colors.surface.subtle,
     opacity: 0.75,
   },
   managementButtonText: {
-    color: BLUE,
+    color: colors.brand.sky,
     fontSize: 15,
     fontWeight: "700",
   },
   managementButtonDisabledText: {
-    color: MUTED_GRAY,
+    color: colors.text.subtle,
     fontSize: 15,
     fontWeight: "700",
   },
   comingSoonText: {
-    color: MUTED_GRAY,
+    color: colors.text.subtle,
     fontSize: 12,
     fontWeight: "700",
   },
@@ -1455,12 +1526,12 @@ const styles = StyleSheet.create({
     gap: 9,
   },
   recoverySectionTitle: {
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 17,
     fontWeight: "700",
   },
   recoveryDescription: {
-    color: MUTED_GRAY,
+    color: colors.text.subtle,
     fontSize: 14,
     lineHeight: 21,
   },
@@ -1469,17 +1540,17 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
-    borderColor: YELLOW,
+    borderColor: colors.brand.gold,
     borderRadius: 23,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.default,
   },
   recoveryButtonText: {
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 15,
     fontWeight: "700",
   },
   recoveryProgressText: {
-    color: MUTED_GRAY,
+    color: colors.text.subtle,
     fontSize: 13,
     lineHeight: 19,
     textAlign: "center",
@@ -1489,27 +1560,27 @@ const styles = StyleSheet.create({
     marginTop: 4,
     padding: 16,
     borderWidth: 1,
-    borderColor: "#cfe9f7",
+    borderColor: colors.border.blue,
     borderRadius: 16,
-    backgroundColor: "#f5fbff",
+    backgroundColor: colors.surface.blueSoft,
   },
   securityInfoTitle: {
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 17,
     fontWeight: "700",
   },
   securityInfoDescription: {
-    color: MUTED_GRAY,
+    color: colors.text.subtle,
     fontSize: 14,
     lineHeight: 21,
   },
   securityInfoLabel: {
-    color: MUTED_GRAY,
+    color: colors.text.subtle,
     fontSize: 13,
     fontWeight: "600",
   },
   securityInfoMuted: {
-    color: MUTED_GRAY,
+    color: colors.text.subtle,
     fontSize: 13,
   },
   copyableInfoRow: {
@@ -1529,7 +1600,7 @@ const styles = StyleSheet.create({
   },
   copyableInfoValue: {
     flex: 1,
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 13,
     lineHeight: 19,
   },
@@ -1541,12 +1612,12 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 5,
     borderWidth: 1,
-    borderColor: "#b8dff1",
+    borderColor: colors.border.blueStrong,
     borderRadius: 19,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.default,
   },
   copyableInfoButtonText: {
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 13,
     fontWeight: "700",
   },
@@ -1555,15 +1626,15 @@ const styles = StyleSheet.create({
     paddingTop: 4,
   },
   deviceSecretWarning: {
-    color: "#7a5a00",
+    color: colors.state.warning,
     fontSize: 13,
     lineHeight: 19,
   },
   deviceSecretValue: {
     padding: 12,
     borderRadius: 10,
-    backgroundColor: "#ffffff",
-    color: TEXT_GRAY,
+    backgroundColor: colors.surface.default,
+    color: colors.text.secondary,
     fontSize: 14,
     fontWeight: "700",
     letterSpacing: 0.5,
@@ -1573,12 +1644,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
-    borderColor: BORDER_GRAY,
+    borderColor: colors.border.default,
     borderRadius: 22,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.default,
   },
   deviceSecretButtonText: {
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 14,
     fontWeight: "700",
   },
@@ -1588,30 +1659,30 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginTop: 4,
     borderWidth: 1,
-    borderColor: YELLOW,
+    borderColor: colors.brand.gold,
     borderRadius: 22,
-    backgroundColor: "#fffaf0",
+    backgroundColor: colors.surface.warningSoft,
   },
   resetDeviceButtonText: {
-    color: "#7a5a00",
+    color: colors.state.warning,
     fontSize: 14,
     fontWeight: "700",
   },
   rowLabel: {
-    marginBottom: 5,
-    color: MUTED_GRAY,
+    marginBottom: 4,
+    color: colors.text.subtle,
     fontSize: 13,
     fontWeight: "600",
   },
   rowValue: {
-    color: TEXT_GRAY,
-    fontSize: 17,
+    color: colors.text.secondary,
+    fontSize: 15,
   },
   multilineValue: {
-    lineHeight: 24,
+    lineHeight: 21,
   },
   errorText: {
-    color: "#b42318",
+    color: colors.state.danger,
     fontSize: 14,
     lineHeight: 20,
   },
@@ -1621,13 +1692,13 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginTop: 12,
     borderRadius: 25,
-    backgroundColor: YELLOW,
+    backgroundColor: colors.brand.gold,
   },
   disabledButton: {
     opacity: 0.65,
   },
   logoutText: {
-    color: "#ffffff",
+    color: colors.text.onGold,
     fontSize: 16,
     fontWeight: "700",
   },
@@ -1637,11 +1708,11 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginTop: 4,
     borderWidth: 1,
-    borderColor: "#d92d20",
+    borderColor: colors.border.dangerStrong,
     borderRadius: 24,
   },
   deleteButtonText: {
-    color: "#b42318",
+    color: colors.state.danger,
     fontSize: 15,
     fontWeight: "700",
   },
@@ -1649,17 +1720,17 @@ const styles = StyleSheet.create({
     gap: 12,
     padding: 16,
     borderWidth: 1,
-    borderColor: "#f3b5af",
+    borderColor: colors.border.danger,
     borderRadius: 16,
-    backgroundColor: "#fff5f4",
+    backgroundColor: colors.surface.dangerSoft,
   },
   resetDevicePanel: {
     gap: 12,
     padding: 16,
     borderWidth: 1,
-    borderColor: "#f0d28b",
+    borderColor: colors.border.gold,
     borderRadius: 16,
-    backgroundColor: "#fffaf0",
+    backgroundColor: colors.surface.warningSoft,
   },
   modalBackdrop: {
     flexGrow: 1,
@@ -1674,23 +1745,23 @@ const styles = StyleSheet.create({
     width: "100%",
   },
   deleteTitle: {
-    color: "#7a271a",
+    color: colors.state.dangerDark,
     fontSize: 17,
     fontWeight: "700",
   },
   deleteDescription: {
-    color: "#7a271a",
+    color: colors.state.dangerDark,
     fontSize: 14,
     lineHeight: 21,
   },
   deleteScope: {
-    color: "#7a271a",
+    color: colors.state.dangerDark,
     fontSize: 13,
     lineHeight: 19,
     fontWeight: "600",
   },
   confirmDeleteInstruction: {
-    color: "#7a271a",
+    color: colors.state.dangerDark,
     fontSize: 13,
     lineHeight: 19,
   },
@@ -1698,32 +1769,32 @@ const styles = StyleSheet.create({
     minHeight: 48,
     paddingHorizontal: 14,
     borderWidth: 1,
-    borderColor: "#d69289",
+    borderColor: colors.border.danger,
     borderRadius: 10,
-    color: "#7a271a",
-    backgroundColor: "#ffffff",
+    color: colors.state.dangerDark,
+    backgroundColor: colors.surface.default,
     fontSize: 16,
     fontWeight: "700",
     letterSpacing: 1,
   },
   resetDeviceTitle: {
-    color: "#7a5a00",
+    color: colors.state.warning,
     fontSize: 17,
     fontWeight: "700",
   },
   resetDeviceDescription: {
-    color: "#7a5a00",
+    color: colors.state.warning,
     fontSize: 14,
     lineHeight: 21,
   },
   resetDeviceScope: {
-    color: "#7a5a00",
+    color: colors.state.warning,
     fontSize: 13,
     lineHeight: 19,
     fontWeight: "600",
   },
   resetDeviceInstruction: {
-    color: "#7a5a00",
+    color: colors.state.warning,
     fontSize: 13,
     lineHeight: 19,
   },
@@ -1731,10 +1802,10 @@ const styles = StyleSheet.create({
     minHeight: 48,
     paddingHorizontal: 14,
     borderWidth: 1,
-    borderColor: "#d8b462",
+    borderColor: colors.border.gold,
     borderRadius: 10,
-    color: "#7a5a00",
-    backgroundColor: "#ffffff",
+    color: colors.state.warning,
+    backgroundColor: colors.surface.default,
     fontSize: 16,
     fontWeight: "700",
     letterSpacing: 1,
@@ -1747,12 +1818,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
-    borderColor: BORDER_GRAY,
+    borderColor: colors.border.default,
     borderRadius: 22,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.surface.default,
   },
   cancelText: {
-    color: TEXT_GRAY,
+    color: colors.text.secondary,
     fontSize: 15,
     fontWeight: "600",
   },
@@ -1762,10 +1833,10 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingHorizontal: 14,
     borderRadius: 24,
-    backgroundColor: "#d92d20",
+    backgroundColor: colors.state.danger,
   },
   confirmDeleteText: {
-    color: "#ffffff",
+    color: colors.text.inverse,
     fontSize: 14,
     fontWeight: "700",
     textAlign: "center",
@@ -1776,10 +1847,10 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingHorizontal: 14,
     borderRadius: 24,
-    backgroundColor: YELLOW,
+    backgroundColor: colors.brand.gold,
   },
   resetDeviceConfirmText: {
-    color: "#ffffff",
+    color: colors.text.onGold,
     fontSize: 14,
     fontWeight: "700",
     textAlign: "center",
@@ -1787,4 +1858,5 @@ const styles = StyleSheet.create({
   pressed: {
     opacity: 0.7,
   },
-});
+  });
+}

@@ -3,8 +3,10 @@ import { useEffect, useState } from "react";
 import { Linking, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { Header, colors, radius } from "../components/ui";
+import { Header, radius } from "../components/ui";
+import type { ThemeColors } from "../components/ui/tokens";
 import { useAuth } from "../hooks/useAuth";
+import { useTheme, useThemeStyles } from "../hooks/useTheme";
 import { createIdentityVerificationSession } from "../services/identity";
 import { loadLanguage, subscribeLanguage, type AppLanguage } from "../services/onboarding";
 import { getMyProfile } from "../services/profile";
@@ -55,6 +57,8 @@ const COPY: Record<AppLanguage, {
 
 export default function IdentityVerificationScreen() {
   const router = useRouter();
+  const { colors } = useTheme();
+  const styles = useThemeStyles(createStyles);
   const { getCurrentSession, session } = useAuth();
   const [identityStatus, setIdentityStatus] = useState("unverified");
   const [loading, setLoading] = useState(false);
@@ -117,7 +121,8 @@ export default function IdentityVerificationScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ThemeColors) {
+  return StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.surface.screen },
   content: { alignItems: "center", padding: 24, paddingBottom: 48 },
   icon: { width: 96, height: 96, alignItems: "center", justifyContent: "center", borderRadius: 48, backgroundColor: colors.surface.blueSoft },
@@ -131,4 +136,5 @@ const styles = StyleSheet.create({
   caution: { marginTop: 16, color: colors.text.muted, fontSize: 12, lineHeight: 18, textAlign: "center" },
   error: { marginTop: 14, color: colors.state.danger, fontSize: 13, fontWeight: "700", textAlign: "center" },
   disabled: { opacity: 0.5 },
-});
+  });
+}

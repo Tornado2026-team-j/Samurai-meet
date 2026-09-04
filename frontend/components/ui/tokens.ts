@@ -1,6 +1,57 @@
 import type { TextStyle, ViewStyle } from "react-native";
 
-export const colors = {
+export type ColorScheme = "light" | "dark";
+
+export type ThemeColors = {
+  brand: {
+    sky: string;
+    gold: string;
+  };
+  text: {
+    primary: string;
+    secondary: string;
+    muted: string;
+    subtle: string;
+    inverse: string;
+    black: string;
+    onSky: string;
+    onGold: string;
+  };
+  surface: {
+    screen: string;
+    default: string;
+    subtle: string;
+    raised: string;
+    blueSoft: string;
+    goldSoft: string;
+    warningSoft: string;
+    dangerSoft: string;
+    successSoft: string;
+  };
+  border: {
+    default: string;
+    subtle: string;
+    muted: string;
+    blue: string;
+    blueStrong: string;
+    gold: string;
+    danger: string;
+    dangerStrong: string;
+  };
+  state: {
+    danger: string;
+    dangerDark: string;
+    warning: string;
+    link: string;
+    success: string;
+  };
+  overlay: {
+    scrim: string;
+    sheet: string;
+  };
+};
+
+const lightColors: ThemeColors = {
   brand: {
     sky: "#5ec5f5",
     gold: "#e7b454",
@@ -12,6 +63,8 @@ export const colors = {
     subtle: "#7d7d7d",
     inverse: "#ffffff",
     black: "#000000",
+    onSky: "#10212b",
+    onGold: "#3a2a00",
   },
   surface: {
     screen: "#ffffff",
@@ -45,7 +98,64 @@ export const colors = {
     scrim: "rgba(0, 0, 0, 0.45)",
     sheet: "rgba(31, 31, 31, 0.35)",
   },
-} as const;
+};
+
+const darkColors: ThemeColors = {
+  brand: {
+    sky: "#5ec5f5",
+    gold: "#f0c66f",
+  },
+  text: {
+    primary: "#f8fbfd",
+    secondary: "#e8f0f5",
+    muted: "#c7d5dd",
+    subtle: "#b1c1cb",
+    inverse: "#ffffff",
+    black: "#101318",
+    onSky: "#10212b",
+    onGold: "#3a2a00",
+  },
+  surface: {
+    screen: "#223543",
+    default: "#2a4050",
+    subtle: "#334b5a",
+    raised: "#304756",
+    blueSoft: "#255a73",
+    goldSoft: "#5b4924",
+    warningSoft: "#594c24",
+    dangerSoft: "#5d3533",
+    successSoft: "#2d5945",
+  },
+  border: {
+    default: "#607987",
+    subtle: "#506a79",
+    muted: "#9fb3bf",
+    blue: "#4e9fc0",
+    blueStrong: "#6db7d4",
+    gold: "#c49e50",
+    danger: "#b8685c",
+    dangerStrong: "#ff7166",
+  },
+  state: {
+    danger: "#ff8175",
+    dangerDark: "#ffad9d",
+    warning: "#f3d273",
+    link: "#78d0f6",
+    success: "#80d9a2",
+  },
+  overlay: {
+    scrim: "rgba(0, 0, 0, 0.65)",
+    sheet: "rgba(7, 12, 17, 0.78)",
+  },
+};
+
+// Kept for screens that have not migrated to useTheme yet. New themed code
+// should use the palette returned by getThemeColors instead.
+export const colors = lightColors;
+
+export function getThemeColors(scheme: ColorScheme): ThemeColors {
+  return scheme === "dark" ? darkColors : lightColors;
+}
 
 export const spacing = {
   none: 0,

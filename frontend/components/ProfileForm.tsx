@@ -16,7 +16,9 @@ import {
 import { MONSTER_INPUT_LIMITS, type AppLanguage, type LocalProfile } from "../services/onboarding-contract";
 import { resolveDefaultNationalityCode } from "../services/device-locale";
 import DismissKeyboardView from "./DismissKeyboardView";
-import { Button, colors, opacity, radius, typography } from "./ui";
+import { Button, opacity, radius, typography } from "./ui";
+import type { ThemeColors } from "./ui/tokens";
+import { useTheme, useThemeStyles } from "../hooks/useTheme";
 
 const MAX_INTEREST_ITEMS = MONSTER_INPUT_LIMITS?.interestMax ?? 2;
 const MAX_SKILL_ITEMS = MONSTER_INPUT_LIMITS?.skillMax ?? 2;
@@ -280,6 +282,8 @@ export default function ProfileForm({
   onSubmit,
   submitLabel,
 }: ProfileFormProps) {
+  const { colors } = useTheme();
+  const styles = useThemeStyles(createStyles);
   const itemLimit = language === "ja" ? JAPANESE_ITEM_LIMIT : ENGLISH_ITEM_LIMIT;
   const copy = language === "ja"
     ? {
@@ -693,6 +697,8 @@ function MonsterItemGroup({
   title: string;
 }) {
   const canAdd = items.length < 2;
+  const { colors } = useTheme();
+  const styles = useThemeStyles(createStyles);
 
   return (
     <View style={styles.itemGroup}>
@@ -754,7 +760,8 @@ function MonsterItemGroup({
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ThemeColors) {
+  return StyleSheet.create({
   form: {
     width: "100%",
     position: "relative",
@@ -824,7 +831,7 @@ const styles = StyleSheet.create({
   },
   inputError: {
     borderColor: colors.state.danger,
-    backgroundColor: "#fff8f8",
+    backgroundColor: colors.surface.dangerSoft,
   },
   itemCounter: {
     position: "absolute",
@@ -914,7 +921,7 @@ const styles = StyleSheet.create({
     left: 0,
     paddingTop: 12,
     paddingHorizontal: 0,
-    backgroundColor: "rgba(255, 255, 255, 0.94)",
+    backgroundColor: colors.surface.default,
   },
   submitButton: {
     width: "100%",
@@ -1003,7 +1010,7 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.border.default,
   },
   countryOptionSelected: {
-    backgroundColor: "#fff9ec",
+    backgroundColor: colors.surface.goldSoft,
   },
   countryFlag: {
     width: 30,
@@ -1041,4 +1048,5 @@ const styles = StyleSheet.create({
   pressed: {
     opacity: opacity.pressed,
   },
-});
+  });
+}

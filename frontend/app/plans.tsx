@@ -12,12 +12,15 @@ import {
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { Header, colors, LoadingSpinner, radius, shadows, typography } from "../components/ui";
+import { Header, LoadingSpinner, RefreshLoadingIndicator, radius, shadows, typography } from "../components/ui";
+import type { ThemeColors } from "../components/ui/tokens";
 import { useAuth } from "../hooks/useAuth";
+import { useDisplayLanguage } from "../hooks/useDisplayLanguage";
+import { useTheme, useThemeStyles } from "../hooks/useTheme";
 import { APIError } from "../services/api-client";
 import { cancelMeeting, createMeeting, endMeeting, getMeetingForMatch, meetingProximityCapability, resumeMeeting, startMeeting, type Meeting } from "../services/meeting";
 import { completeMatch, likeMatch, listMatches, type MatchView } from "../services/matching";
-import { loadLanguage, subscribeLanguage, type AppLanguage } from "../services/onboarding";
+import { type AppLanguage } from "../services/onboarding";
 import { formatTimeRange, isJSTScheduleEnded } from "../utils/time";
 import { getTabBarContentBottomPadding } from "../utils/layout";
 
@@ -52,6 +55,10 @@ const COPY = {
     likeError: "いいねを送信できませんでした。予定終了後にもう一度お試しください。",
     reviewTitle: "予定はいかがでしたか？",
     reviewMessage: "相手にいいねを送れます。",
+    reviewDate: "実施日時",
+    reviewPerson: "評価する相手",
+    reviewPending: "未評価",
+    reviewAlreadyLiked: "評価済み",
     reviewLater: "あとで評価する",
     people: (count: number) => `募集 ${count}人`,
   },
@@ -83,6 +90,10 @@ const COPY = {
     likeError: "The like could not be sent. Try again after the plan has ended.",
     reviewTitle: "How was your plan?",
     reviewMessage: "You can send the other participant a like.",
+    reviewDate: "When",
+    reviewPerson: "Person to rate",
+    reviewPending: "Not rated yet",
+    reviewAlreadyLiked: "Already rated",
     reviewLater: "Rate later",
     people: (count: number) => `${count} people needed`,
   },
@@ -129,8 +140,10 @@ function displayDate(value: string, language: AppLanguage): string {
 export default function PlansScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { colors } = useTheme();
+  const styles = useThemeStyles(createStyles);
   const { getCurrentSession, refresh, session, status } = useAuth();
-  const [language, setLanguage] = useState<AppLanguage>("ja");
+  const language = useDisplayLanguage();
   const [activeTab, setActiveTab] = useState<PlanTab>("today");
   const [plans, setPlans] = useState<MatchView[]>([]);
   const [meetings, setMeetings] = useState<Record<string, Meeting>>({});
@@ -141,28 +154,14 @@ export default function PlansScreen() {
   const reviewPromptedRef = useRef(new Set<string>());
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-  const copy = COPY[language];
+  const copy = COPY[language ?? "ja"];
   const proximityCapability = meetingProximityCapability();
-
-  useEffect(() => {
-    let active = true;
-    const unsubscribe = subscribeLanguage((next) => {
-      if (active && next) setLanguage(next);
-    });
-    void loadLanguage().then((next) => {
-      if (active) setLanguage(next ?? "ja");
-    });
-    return () => {
-      active = false;
-      unsubscribe();
-    };
-  }, []);
 
   const load = useCallback(async (refreshMode = false) => {
     const activeSession = getCurrentSession() ?? session;
     if (status !== "signed_in" || !activeSession) {
       setLoading(false);
-      setError(COPY[language].loadError);
+      setError(copy.loadError);
       return;
     }
     if (refreshMode) {
@@ -192,12 +191,12 @@ export default function PlansScreen() {
       }
       setActionError(null);
     } catch {
-      setError(COPY[language].loadError);
+      setError(copy.loadError);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [getCurrentSession, language, refresh, session, status]);
+  }, [copy.loadError, getCurrentSession, refresh, session, status]);
 
   useFocusEffect(
     useCallback(() => {
@@ -257,6 +256,22 @@ export default function PlansScreen() {
       });
   }, [activeTab, plans]);
 
+  if (!language) {
+    return (
+      <View style={styles.screen}>
+        <StatusBar style="dark" />
+        <Header
+          iconName="event-available"
+          style={[styles.header, { paddingTop: Math.max(insets.top, 20) }]}
+          variant="hero"
+        />
+        <View style={styles.languageLoadingPanel}>
+          <LoadingSpinner color={colors.brand.sky} size={24} />
+        </View>
+      </View>
+    );
+  }
+
   const updateMeeting = async (plan: MatchView) => {
     if (busyMatchId) return;
     const activeSession = getCurrentSession() ?? session;
@@ -288,6 +303,7 @@ export default function PlansScreen() {
       if (next.status === "completed") {
         await completeMatch(plan.id, activeSession).catch(() => undefined);
         const completedPlan = { ...plan, status: "completed" as const };
+        reviewPromptedRef.current.add(plan.id);
         setPlans((items) => items.map((item) => item.id === plan.id ? completedPlan : item));
         reviewPromptedRef.current.add(completedPlan.id);
         setReviewPlan(completedPlan);
@@ -333,7 +349,7 @@ export default function PlansScreen() {
 
   return (
     <View style={styles.screen}>
-      <StatusBar style="light" />
+      <StatusBar style="dark" />
       <Header
         iconName="event-available"
         style={[styles.header, { paddingTop: Math.max(insets.top, 20) }]}
@@ -358,11 +374,22 @@ export default function PlansScreen() {
 
       <ScrollView
         contentContainerStyle={[styles.content, { paddingBottom: getTabBarContentBottomPadding(insets.bottom) }]}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void load(true)} tintColor={colors.brand.sky} />}
+        refreshControl={
+          <RefreshControl
+            colors={["transparent"]}
+            onRefresh={() => void load(true)}
+            progressBackgroundColor="transparent"
+            refreshing={refreshing}
+            tintColor="transparent"
+          />
+        }
         showsVerticalScrollIndicator={false}
       >
-        {loading ? (
-          <View style={styles.state}><LoadingSpinner color={colors.brand.sky} size={26} speedMs={680} /><Text style={styles.stateText}>{copy.loading}</Text></View>
+        {loading && plans.length === 0 && !error ? (
+          <View style={styles.state}>
+            <LoadingSpinner color={colors.brand.sky} size={24} />
+            <Text style={styles.stateText}>{copy.loading}</Text>
+          </View>
         ) : error ? (
           <View style={styles.state}>
             <Text accessibilityRole="alert" style={styles.stateText}>{error}</Text>
@@ -426,6 +453,7 @@ export default function PlansScreen() {
         })}
         {actionError ? <Text accessibilityRole="alert" style={styles.error}>{actionError}</Text> : null}
       </ScrollView>
+      {refreshing ? <RefreshLoadingIndicator color={colors.brand.sky} top={248} /> : null}
       <Modal
         animationType="fade"
         onRequestClose={() => setReviewPlan(null)}
@@ -437,6 +465,14 @@ export default function PlansScreen() {
             <MaterialIcons color={colors.brand.sky} name="thumb-up" size={32} />
             <Text style={styles.reviewTitle}>{copy.reviewTitle}</Text>
             <Text style={styles.reviewMessage}>{copy.reviewMessage}</Text>
+            {reviewPlan ? (
+              <View style={styles.reviewPlanCard}>
+                <Text style={styles.reviewPlanDate}>{copy.reviewDate}: {displayDate(reviewPlan.recruitment.available_date, language)}</Text>
+                <Text style={styles.reviewPlanTime}>{formatTimeRange(reviewPlan.recruitment.start_time, reviewPlan.recruitment.duration_hours)}</Text>
+                <Text numberOfLines={1} style={styles.reviewPlanPerson}>{copy.reviewPerson}: {reviewPlan.other_user.name}</Text>
+                <Text style={styles.reviewPlanStatus}>{reviewPlan.liked_by_me ? copy.reviewAlreadyLiked : copy.reviewPending}</Text>
+              </View>
+            ) : null}
             <Pressable
               accessibilityRole="button"
               disabled={busyMatchId !== null || !reviewPlan}
@@ -459,7 +495,8 @@ export default function PlansScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ThemeColors) {
+  return StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.surface.screen },
   header: {
     minHeight: 178,
@@ -470,7 +507,7 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     marginTop: 8,
-    color: colors.text.inverse,
+    color: colors.text.onSky,
     fontSize: 28,
     fontWeight: "800",
     letterSpacing: 0,
@@ -482,10 +519,11 @@ const styles = StyleSheet.create({
   tabText: { color: colors.text.subtle, fontSize: 13, fontWeight: "700" },
   tabTextSelected: { color: colors.brand.sky },
   content: { padding: 20, gap: 14 },
+  languageLoadingPanel: { flex: 1, alignItems: "center", justifyContent: "center" },
   state: { minHeight: 220, alignItems: "center", justifyContent: "center", gap: 12 },
   stateText: { color: colors.text.subtle, ...typography.body, textAlign: "center" },
   retry: { minHeight: 42, justifyContent: "center", paddingHorizontal: 22, borderRadius: radius.pill, backgroundColor: colors.brand.sky },
-  retryText: { color: colors.text.inverse, fontWeight: "800" },
+  retryText: { color: colors.text.onSky, fontWeight: "800" },
   card: { padding: 16, borderWidth: 1, borderColor: colors.border.subtle, borderRadius: radius.lg, backgroundColor: colors.surface.default, ...shadows.card },
   cardTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   dateBadge: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: radius.pill, backgroundColor: colors.surface.blueSoft },
@@ -503,7 +541,7 @@ const styles = StyleSheet.create({
   likeActionText: { color: colors.text.secondary, fontSize: 12, fontWeight: "800" },
   likeActionTextSelected: { color: colors.brand.sky },
   primaryAction: { minHeight: 46, marginTop: 9, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7, borderRadius: radius.md, backgroundColor: colors.brand.sky },
-  primaryActionText: { color: colors.text.inverse, fontSize: 14, fontWeight: "800" },
+  primaryActionText: { color: colors.text.onSky, fontSize: 14, fontWeight: "800" },
   meetingStatus: { marginTop: 10, color: colors.text.subtle, fontSize: 13, fontWeight: "700", textAlign: "center" },
   disabled: { opacity: 0.55 },
   error: { color: colors.state.danger, fontSize: 13, fontWeight: "700", textAlign: "center" },
@@ -512,8 +550,14 @@ const styles = StyleSheet.create({
   reviewSheet: { width: "100%", maxWidth: 420, alignItems: "center", padding: 26, borderRadius: radius.xl, backgroundColor: colors.surface.default, ...shadows.card },
   reviewTitle: { marginTop: 12, color: colors.text.primary, fontSize: 20, fontWeight: "800", textAlign: "center" },
   reviewMessage: { marginTop: 8, color: colors.text.secondary, fontSize: 14, fontWeight: "600", textAlign: "center" },
+  reviewPlanCard: { width: "100%", marginTop: 18, padding: 14, borderRadius: radius.md, backgroundColor: colors.surface.blueSoft },
+  reviewPlanDate: { color: colors.text.secondary, fontSize: 12, fontWeight: "700" },
+  reviewPlanTime: { marginTop: 4, color: colors.text.primary, fontSize: 15, fontWeight: "800" },
+  reviewPlanPerson: { marginTop: 4, color: colors.text.secondary, fontSize: 13, fontWeight: "700" },
+  reviewPlanStatus: { marginTop: 8, color: colors.brand.sky, fontSize: 12, fontWeight: "800" },
   reviewPrimary: { width: "100%", minHeight: 46, marginTop: 22, alignItems: "center", justifyContent: "center", borderRadius: radius.md, backgroundColor: colors.brand.sky },
-  reviewPrimaryText: { color: colors.text.inverse, fontSize: 14, fontWeight: "800" },
+  reviewPrimaryText: { color: colors.text.onSky, fontSize: 14, fontWeight: "800" },
   reviewLater: { minHeight: 42, marginTop: 8, alignItems: "center", justifyContent: "center", paddingHorizontal: 18 },
   reviewLaterText: { color: colors.text.subtle, fontSize: 13, fontWeight: "700" },
-});
+  });
+}
