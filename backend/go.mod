@@ -3,20 +3,21 @@ module github.com/Tornado2026-team-j/Samurai-meet/backend
 go 1.26.7
 
 require (
-	github.com/coreos/go-oidc/v3 v3.20.0
-	github.com/go-webauthn/webauthn v0.17.4
+	github.com/coreos/go-oidc/v3 v3.21.0
+	github.com/go-webauthn/webauthn v0.18.0
 	github.com/jackc/pgx/v5 v5.10.0
-	github.com/quic-go/quic-go v0.61.0
-	github.com/quic-go/webtransport-go v0.12.0
-	golang.org/x/oauth2 v0.36.0
+	github.com/quic-go/quic-go v0.62.0
+	github.com/quic-go/webtransport-go v0.13.0
+	golang.org/x/crypto v0.55.0
+	golang.org/x/oauth2 v0.37.0
 )
 
 require (
-	github.com/dunglas/httpsfv v1.1.0 // indirect
-	github.com/fxamacker/cbor/v2 v2.9.2 // indirect
+	github.com/dunglas/httpsfv v1.1.1 // indirect
+	github.com/fxamacker/cbor/v2 v2.9.3 // indirect
 	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
-	github.com/go-webauthn/x v0.2.6 // indirect
+	github.com/go-webauthn/x v0.3.0 // indirect
 	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/google/go-tpm v0.9.8 // indirect
 	github.com/google/uuid v1.6.0 // indirect
@@ -27,7 +28,6 @@ require (
 	github.com/quic-go/qpack v0.6.0 // indirect
 	github.com/tinylib/msgp v1.6.4 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
-	golang.org/x/crypto v0.55.0 // indirect
 	golang.org/x/net v0.57.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
